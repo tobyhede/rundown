@@ -26,6 +26,7 @@ import { registerStopCommand } from '../../src/commands/stop.js';
 
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
+  claim_capability: string;
 }
 
 describe('stop command wiring', () => {
@@ -38,7 +39,9 @@ describe('stop command wiring', () => {
     expect(stop?.description()).toBe('Abort current runbook');
 
     const byLong = new Map(stop!.options.map((o) => [o.long, o]));
-    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining(['--claim-id', '--claim-capability', '--text']),
+    );
     expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
@@ -198,14 +201,17 @@ The result is {{ Result }}.
       const token = parentBefore?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       const claim = await runCliInProcess(['claim', token!], workspace);
-      const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+      const claimOutput = findActionOutput<ClaimOutput>(claim.stdout);
+      const claimId = claimOutput?.claim_id;
+      const claimCapability = claimOutput?.claim_capability;
       expect(typeof claimId).toBe('string');
+      expect(typeof claimCapability).toBe('string');
 
       // Mock sendAndSync to return null, simulating propagation not reaching parent
       jest.spyOn(RunbookActorService.prototype, 'sendAndSync').mockResolvedValueOnce(null);
 
       const result = await runCliInProcess(
-        ['stop', '--claim-id', String(claimId), 'child was interrupted', '--text'],
+        ['stop', '--claim-capability', String(claimCapability), 'child was interrupted', '--text'],
         workspace,
       );
 
@@ -281,7 +287,7 @@ The result is {{ Result }}.
       const stateDir = workspace.statePath();
 
       // Write a state with the wrong schemaVersion to trigger InvalidRunbookStateError
-      const invalidState = { ...state, schemaVersion: 2 };
+      const invalidState = { ...state, schemaVersion: 999 };
       await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(invalidState));
 
       // stop is a cleanup command — InvalidRunbookStateError must not propagate
@@ -453,13 +459,16 @@ Do work.
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
-      const claimId = String(findActionOutput(result.stdout)?.claim_id);
+      const claimCapability = String(findActionOutput(result.stdout)?.claim_capability);
 
       jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
-      result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
+      result = await runCliInProcess(
+        ['stop', '--claim-capability', claimCapability, '--text'],
+        workspace,
+      );
       if (result.exitCode !== 0) {
         throw new Error(`stop claimed parent failed:\n${result.stdout}\n${result.stderr}`);
       }
@@ -503,11 +512,16 @@ Do work.
       const claimOutput = findActionOutput(result.stdout);
       const childRunId = claimOutput?.run_id;
       const claimId = claimOutput?.claim_id;
+      const claimCapability = claimOutput?.claim_capability;
       expect(typeof childRunId).toBe('string');
       expect(typeof claimId).toBe('string');
+      expect(typeof claimCapability).toBe('string');
       await unlink(join(workspace.statePath(), `${String(childRunId)}.json`));
 
-      result = await runCliInProcess(['stop', '--claim-id', String(claimId)], workspace);
+      result = await runCliInProcess(
+        ['stop', '--claim-capability', String(claimCapability)],
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
       const errorResponse = JSON.parse(result.stdout) as Record<string, unknown>;
       expect(errorResponse).toEqual(
@@ -560,7 +574,7 @@ Do work.
       expect(result.exitCode).toBe(0);
       const claimOutput = findActionOutput(result.stdout);
       const childRunId = String(claimOutput?.run_id);
-      const claimId = String(claimOutput?.claim_id);
+      const claimCapability = String(claimOutput?.claim_capability);
 
       const childState = await readRunbookState(workspace, childRunId);
       expect(childState).not.toBeNull();
@@ -569,7 +583,7 @@ Do work.
         JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),
       );
 
-      result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
+      result = await runCliInProcess(['stop', '--claim-capability', claimCapability], workspace);
 
       expect(result.exitCode).toBe(0);
       // Idempotent confirm: the seam detects the child is already `stopped` and
@@ -617,12 +631,12 @@ Do work.
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimOutput = findActionOutput(result.stdout);
       const childRunId = String(claimOutput?.run_id);
-      const claimId = String(claimOutput?.claim_id);
+      const claimCapability = String(claimOutput?.claim_capability);
 
       // Stop the still-running claimed child: FORCE_STOP → stopped → the parent
       // receives a `fail` outcome row DERIVED BY CORE from the stopped lifecycle
       // (stopped→fail via lifecycleToDelegationOutcome — never a CLI literal).
-      result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
+      result = await runCliInProcess(['stop', '--claim-capability', claimCapability], workspace);
       expect(result.exitCode).toBe(0);
 
       const parent = await readRunbookState(workspace, parentId);
@@ -665,7 +679,11 @@ Do work.
       expect(parentId).toBeDefined();
 
       const result = await runCliInProcess(
-        ['stop', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'],
+        [
+          'stop',
+          '--claim-capability',
+          'rdcc_abcdefghijklmnopQRSTUV_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG',
+        ],
         workspace,
       );
 
@@ -870,15 +888,15 @@ Run the child task.
       // report-only close and exits 0.
       result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
-      const claimId1 = String(findActionOutput(result.stdout)?.claim_id);
-      result = await runCliInProcess(['stop', '--claim-id', claimId1], workspace);
+      const claimCapability1 = String(findActionOutput(result.stdout)?.claim_capability);
+      result = await runCliInProcess(['stop', '--claim-capability', claimCapability1], workspace);
       expect(result.exitCode).toBe(0);
 
       // Resolve the sibling substep the same way so collection can aggregate.
       result = await runCliInProcess(`claim ${token2}`, workspace);
       expect(result.exitCode).toBe(0);
-      const claimId2 = String(findActionOutput(result.stdout)?.claim_id);
-      result = await runCliInProcess(['stop', '--claim-id', claimId2], workspace);
+      const claimCapability2 = String(findActionOutput(result.stdout)?.claim_capability);
+      result = await runCliInProcess(['stop', '--claim-capability', claimCapability2], workspace);
       expect(result.exitCode).toBe(0);
 
       // The orchestrator collects with named authority: FAIL ANY fires STOP.
@@ -904,11 +922,11 @@ Run the child task.
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
-      const claimId = String(findActionOutput(result.stdout)?.claim_id);
+      const claimCapability = String(findActionOutput(result.stdout)?.claim_capability);
 
       // Stop with message — child stops, REPORTS fail to parent 1.1 (report-only).
       result = await runCliInProcess(
-        ['stop', 'Task cancelled by user', '--claim-id', claimId, '--text'],
+        ['stop', 'Task cancelled by user', '--claim-capability', claimCapability, '--text'],
         workspace,
       );
       expect(result.exitCode).toBe(0);
@@ -940,10 +958,10 @@ Run the child task.
       if (typeof token !== 'string') throw new Error('Expected delegation token');
 
       result = await runCliInProcess(`claim ${token}`, workspace);
-      const claimId = String(findActionOutput(result.stdout)?.claim_id);
+      const claimCapability = String(findActionOutput(result.stdout)?.claim_capability);
 
       // Stop with JSON — child stops, REPORTS fail to parent 1.1 (report-only).
-      result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
+      result = await runCliInProcess(['stop', '--claim-capability', claimCapability], workspace);
       expect(result.exitCode).toBe(0);
 
       const stopAction = findActionOutput(result.stdout);
@@ -1028,9 +1046,12 @@ Approve the deployment.
       result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
       const claimAction1 = findActionOutput(result.stdout);
-      const parentClaimId = String(claimAction1?.claim_id);
+      const parentClaimCapability = String(claimAction1?.claim_capability);
       const parentRunId = String(claimAction1?.run_id);
-      result = await runCliInProcess(['stop', '--claim-id', parentClaimId], workspace);
+      result = await runCliInProcess(
+        ['stop', '--claim-capability', parentClaimCapability],
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       // Verify parent is stopped
@@ -1041,8 +1062,8 @@ Approve the deployment.
       // Resolve the sibling substep the same way so collection can aggregate.
       result = await runCliInProcess(`claim ${token2}`, workspace);
       expect(result.exitCode).toBe(0);
-      const claimId2 = String(findActionOutput(result.stdout)?.claim_id);
-      result = await runCliInProcess(['stop', '--claim-id', claimId2], workspace);
+      const claimCapability2 = String(findActionOutput(result.stdout)?.claim_capability);
+      result = await runCliInProcess(['stop', '--claim-capability', claimCapability2], workspace);
       expect(result.exitCode).toBe(0);
 
       // The orchestrator collects the grandparent with named authority:

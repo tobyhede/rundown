@@ -963,7 +963,10 @@ describe('collect command', () => {
       expect(r.exitCode).toBe(0);
       const claim1 = findActionOutput(r.stdout);
       expect(claim1).not.toBeNull();
-      r = await runCliInProcess(['pass', '--claim-id', String(claim1!.claim_id)], workspace);
+      r = await runCliInProcess(
+        ['pass', '--claim-capability', String(claim1!.claim_capability)],
+        workspace,
+      );
       expect(r.exitCode).toBe(0);
 
       // Claim + pass second child. Report-only records the 1.2 outcome. Under
@@ -973,7 +976,10 @@ describe('collect command', () => {
       expect(r.exitCode).toBe(0);
       const claim2 = findActionOutput(r.stdout);
       expect(claim2).not.toBeNull();
-      r = await runCliInProcess(['pass', '--claim-id', String(claim2!.claim_id)], workspace);
+      r = await runCliInProcess(
+        ['pass', '--claim-capability', String(claim2!.claim_capability)],
+        workspace,
+      );
       expect(r.exitCode).toBe(0);
 
       // Plan 5 (report-only): both outcomes are reported but uncollected, so the
@@ -1311,8 +1317,11 @@ describe('collect command', () => {
       // Claim + explicitly close the delegated worker -> reports the outcome.
       const claim = await runCliInProcess(`claim ${token}`, workspace);
       expect(claim.exitCode).toBe(0);
-      const claimId = String(findActionOutput(claim.stdout)!.claim_id);
-      const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+      const claimCapability = String(findActionOutput(claim.stdout)!.claim_capability);
+      const closed = await runCliInProcess(
+        ['complete', '--claim-capability', claimCapability],
+        workspace,
+      );
       expect(closed.exitCode).toBe(0);
 
       return parentRunId;
@@ -1420,9 +1429,9 @@ describe('collect command', () => {
       const token = active!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
       const claim = await runCliInProcess(`claim ${token}`, workspace);
       expect(claim.exitCode).toBe(0);
-      const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+      const claimCapability = String(findActionOutput(claim.stdout)!.claim_capability);
       const cmd = result === 'pass' ? 'complete' : 'fail';
-      const closed = await runCliInProcess([cmd, '--claim-id', claimId], workspace);
+      const closed = await runCliInProcess([cmd, '--claim-capability', claimCapability], workspace);
       // A reported pass records cleanly (exit 0); a reported fail may surface a
       // non-zero exit when the child's own FAIL handler stops it — either way the
       // outcome is recorded, which is what the collecting run later drains.

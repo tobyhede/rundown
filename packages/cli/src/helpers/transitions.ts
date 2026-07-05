@@ -25,6 +25,7 @@ import {
   type ResolvedStep,
   type RunbookState,
   type ClaimId,
+  type ClaimCapability,
   type RunId,
   type LifecycleTransitionOutcome,
   type TransitionObservationEvent,
@@ -199,7 +200,11 @@ export type BaseBuildTransitionContextResult =
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
+  options: {
+    readonly claimId?: ClaimId;
+    readonly claimCapability?: ClaimCapability;
+    readonly runId?: RunId;
+  } = {},
 ): Promise<BaseBuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
@@ -213,6 +218,7 @@ export async function buildTransitionContext(
   let claim: ClaimRecord | undefined;
 
   const active = await resolveCommandTarget(sessionService, {
+    ...(options.claimCapability !== undefined ? { claimCapability: options.claimCapability } : {}),
     ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
     ...(options.runId !== undefined ? { runId: options.runId } : {}),
   });
@@ -336,6 +342,8 @@ export function emitDelegationCollectionPendingError(
 export interface SeamTransitionOptions {
   /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
   readonly claimId?: ClaimId;
+  /** Explicit claim capability target (`--claim-capability`). Mutually exclusive with `runId`. */
+  readonly claimCapability?: ClaimCapability;
   /**
    * Explicit run target and named authority (`--run`). Mutually exclusive with
    * `claimId` (enforced upstream by `parseRunOption`).
@@ -596,11 +604,15 @@ export async function runSeamTransition(
     // run, `explicitTarget` carries the step/index, and the seam derives
     // `targeted` from the explicit target's presence (run+step keeps the
     // targeted exemption from the collection guards).
-    targetSelector = options.claimId
-      ? { kind: 'claim', claimId: options.claimId }
-      : options.runId !== undefined
-        ? { kind: 'run', runId: options.runId }
-        : { kind: 'explicit-step', step: options.step };
+    targetSelector = options.claimCapability
+      ? { kind: 'claim-capability', claimCapability: options.claimCapability }
+      : options.claimId
+        ? { kind: 'claim', claimId: options.claimId }
+        : options.runId !== undefined
+          ? { kind: 'run', runId: options.runId }
+          : { kind: 'explicit-step', step: options.step };
+  } else if (options.claimCapability) {
+    targetSelector = { kind: 'claim-capability', claimCapability: options.claimCapability };
   } else if (options.claimId) {
     targetSelector = { kind: 'claim', claimId: options.claimId };
   } else if (options.runId !== undefined) {

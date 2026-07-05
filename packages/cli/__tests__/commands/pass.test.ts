@@ -153,7 +153,7 @@ describe('pass command', () => {
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).toBe('INVALID_SYNTAX');
+      expect(payload.code).toBe('CLAIM_CAPABILITY_REQUIRED');
     });
 
     it('drives the named run substep via pass --run <id> --step <n>', async () => {
@@ -181,12 +181,12 @@ describe('pass command', () => {
       expect(state?.step).toBe('2');
     });
 
-    it('fails closed on invalid non-v1 schemaVersion state instead of migrating it', async () => {
+    it('fails closed on invalid future schemaVersion state instead of migrating it', async () => {
       const state = await getActiveState(workspace);
       expect(state).toBeDefined();
       await writeFile(
         join(workspace.statePath(), `${state!.id}.json`),
-        JSON.stringify({ ...state, schemaVersion: 2 }),
+        JSON.stringify({ ...state, schemaVersion: 999 }),
       );
 
       const result = await runCliInProcess('pass --text', workspace);
@@ -196,7 +196,7 @@ describe('pass command', () => {
       const reloaded = JSON.parse(
         await readFile(join(workspace.statePath(), `${state!.id}.json`), 'utf-8'),
       ) as { schemaVersion?: unknown };
-      expect(reloaded.schemaVersion).toBe(2);
+      expect(reloaded.schemaVersion).toBe(999);
     });
   });
 
@@ -437,6 +437,10 @@ Do child work.
       }
       const child1Id = child1Output.run_id;
       const claimId1 = child1Output.claim_id;
+      const claimCapability1 = child1Output.claim_capability;
+      if (typeof claimCapability1 !== 'string') {
+        throw new Error('Expected claim output to include claim_capability string');
+      }
 
       result = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(result.exitCode).toBe(0);
@@ -464,7 +468,10 @@ Do child work.
       status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
       expect(JSON.parse(status.stdout).state).toContain(child2Id);
 
-      result = await runCliInProcess(['pass', '--claim-id', claimId1, '--text'], workspace);
+      result = await runCliInProcess(
+        ['pass', '--claim-capability', claimCapability1, '--text'],
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const child1 = await readRunbookState(workspace, child1Id);
@@ -801,23 +808,33 @@ This step stops on pass.
       expect(claimResult.exitCode).toBe(0);
       const claimOutput = findActionOutput(claimResult.stdout);
       const claimId = claimOutput?.claim_id;
+      const claimCapability = claimOutput?.claim_capability;
       if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
+      if (typeof claimCapability !== 'string') {
+        throw new Error('expected claim_capability from claim output');
+      }
 
       // Drive the child's single PASS COMPLETE step to terminal completion.
-      const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      const finish = await runCliInProcess(
+        ['pass', '--claim-capability', claimCapability],
+        workspace,
+      );
       expect(finish.exitCode).toBe(0);
       const runId = claimOutput?.run_id;
       if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
       const child = await readRunbookState(workspace, runId);
       expect(child?.lifecycle).toBe('completed');
 
-      return claimId;
+      return claimCapability;
     }
 
-    it('rd pass --claim-id is an idempotent no-op after the child completed', async () => {
-      const claimId = await completeDelegatedChild();
+    it('rd pass --claim-capability is an idempotent no-op after the child completed', async () => {
+      const claimCapability = await completeDelegatedChild();
 
-      const result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      const result = await runCliInProcess(
+        ['pass', '--claim-capability', claimCapability],
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -827,19 +844,26 @@ This step stops on pass.
       expect(ActionResponseSchema.safeParse(json).success).toBe(true);
     }, 30_000);
 
-    it('rd fail --claim-id on a passed child conflicts (DELEGATION_RESULT_CONFLICT)', async () => {
-      const claimId = await completeDelegatedChild();
+    it('rd fail --claim-capability on a passed child conflicts (DELEGATION_RESULT_CONFLICT)', async () => {
+      const claimCapability = await completeDelegatedChild();
 
-      const result = await runCliInProcess(['fail', '--claim-id', claimId], workspace);
+      const result = await runCliInProcess(
+        ['fail', '--claim-capability', claimCapability],
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
       expect(json).toMatchObject({ kind: 'error', code: 'DELEGATION_RESULT_CONFLICT' });
     }, 30_000);
 
-    it('rd pass --claim-id on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
+    it('rd pass --claim-capability on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
       const result = await runCliInProcess(
-        ['pass', '--claim-id', 'rdclm_AAAAAAAAAAAAAAAAAAAAAA'],
+        [
+          'pass',
+          '--claim-capability',
+          'rdcc_AAAAAAAAAAAAAAAAAAAAAA_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG',
+        ],
         workspace,
       );
 

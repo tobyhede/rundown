@@ -1,4 +1,5 @@
 import type { ActorContext, EffectiveRole } from './actor-context.js';
+import type { ClaimCapability } from './capability.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
@@ -69,6 +70,12 @@ export type CommandTargetSelector =
       readonly kind: 'claim';
       /** Claim id supplied by the caller. */
       readonly claimId: ClaimId;
+    }
+  | {
+      /** Explicit claim-capability target selector. */
+      readonly kind: 'claim-capability';
+      /** Claim capability supplied by the caller as authority. */
+      readonly claimCapability: ClaimCapability;
     }
   | {
       /** Explicit step/scope target selector. */

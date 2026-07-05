@@ -137,6 +137,7 @@ export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = [
   '--step',
   '--index',
   '--claim-id',
+  '--claim-capability',
   '--run',
 ] as const;
 

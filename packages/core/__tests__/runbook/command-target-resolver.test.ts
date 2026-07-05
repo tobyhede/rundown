@@ -9,6 +9,13 @@ import {
   resolveTransitionTarget,
 } from '../../src/runbook/command-target-resolver.js';
 import {
+  generateClaimCapability,
+  hashCapabilitySecret,
+  parseClaimCapability,
+  type ClaimCapability,
+  type CapabilityHash,
+} from '../../src/runbook/capability.js';
+import {
   assertClaimId,
   type ClaimId,
   type ClaimIdResolution,
@@ -34,6 +41,7 @@ const child = { id: 'child', lifecycle: 'running' } as RunbookState;
 const terminalCompletedChild = { ...child, lifecycle: 'completed' } as RunbookState;
 const terminalStoppedChild = { ...child, lifecycle: 'stopped' } as RunbookState;
 const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const claimCapability = generateClaimCapability(claimId);
 const secondClaimId = assertClaimId('rdclm_abcdefghijklmnopqrstu2');
 const claim = makeClaim(claimId);
 const secondClaim = makeClaim(secondClaimId);
@@ -73,6 +81,7 @@ function fakeReader(options: {
   readonly openClaims?: readonly ClaimRecord[];
   readonly claimResolution?: ClaimIdResolution;
   readonly expectedClaimId?: ClaimId;
+  readonly expectedClaimCapability?: ClaimCapability;
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
   readonly failOnOpenClaimRead?: boolean;
@@ -99,6 +108,15 @@ function fakeReader(options: {
         expect(includeOptions.includeStashed).toBe(options.expectedIncludeStashed);
       }
       return options.claimResolution ?? { status: 'missing', claimId: _claimId };
+    },
+    async getActiveForClaimCapability(capability, includeOptions) {
+      if (options.expectedClaimCapability !== undefined) {
+        expect(capability).toBe(options.expectedClaimCapability);
+      }
+      if (options.expectedIncludeStashed !== undefined) {
+        expect(includeOptions.includeStashed).toBe(options.expectedIncludeStashed);
+      }
+      return options.claimResolution ?? { status: 'missing', claimId };
     },
     async listOpenClaimsForParent(parentRunId) {
       if (options.failOnOpenClaimRead) {
@@ -218,6 +236,47 @@ describe('resolveTransitionTarget', () => {
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
+  it('refuses claim-id-only mutation authority for a claimed child', async () => {
+    const result = await resolveTransitionTarget(
+      fakeReader({ claimResolution: claimedResolution() }),
+      {
+        command: 'pass',
+        claimId,
+        targeted: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'stale_claim',
+      claimId,
+      message:
+        'Claim id is not an authority credential. Use --claim-capability with the capability returned by rundown claim.',
+    });
+  });
+
+  it('resolves a valid claim capability to claim evidence', async () => {
+    const capability = generateClaimCapability(claimId);
+    const { secret } = parseClaimCapability(capability);
+    const claimWithProof = {
+      ...makeClaim(claimId),
+      claimCapabilityHash: hashCapabilitySecret(secret),
+    };
+    const result = await resolveTransitionTarget(
+      fakeReader({
+        claimResolution: { status: 'claimed', claim: claimWithProof, state: child },
+        expectedClaimCapability: capability,
+        expectedIncludeStashed: false,
+      }),
+      {
+        command: 'pass',
+        claimCapability: capability,
+        targeted: true,
+      },
+    );
+
+    expect(result).toMatchObject({ kind: 'claim', claimId, state: child, claim: claimWithProof });
+  });
+
   it('refuses a bare transition when a delegated outcome is waiting for collection', async () => {
     const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     const pendingParent = {
@@ -308,11 +367,12 @@ describe('resolveTransitionTarget', () => {
       resolveTransitionTarget(
         fakeReader({
           claimResolution: claimedResolution(),
+          expectedClaimCapability: claimCapability,
           expectedIncludeStashed: false,
           failOnDefaultRead: true,
           failOnOpenClaimRead: true,
         }),
-        { command: 'pass', claimId },
+        { command: 'pass', claimCapability },
       ),
     ).resolves.toEqual({ kind: 'claim', claimId, claim, state: child });
   });
@@ -330,9 +390,10 @@ describe('resolveTransitionTarget', () => {
             lifecycle: caseDef.lifecycle,
             state: caseDef.state,
           },
+          expectedClaimCapability: claimCapability,
           expectedIncludeStashed: false,
         }),
-        { command: caseDef.command, claimId },
+        { command: caseDef.command, claimCapability },
       ),
     ).resolves.toMatchObject({
       kind: 'terminal_claim_confirmed',
@@ -352,9 +413,10 @@ describe('resolveTransitionTarget', () => {
             lifecycle: 'stopped',
             state: terminalStoppedChild,
           },
+          expectedClaimCapability: claimCapability,
           expectedIncludeStashed: false,
         }),
-        { command: 'pass', claimId },
+        { command: 'pass', claimCapability },
       ),
     ).resolves.toMatchObject({
       kind: 'terminal_claim_conflict',
@@ -395,9 +457,10 @@ describe('resolveTransitionTarget', () => {
       resolveTransitionTarget(
         fakeReader({
           claimResolution: caseDef.resolution,
+          expectedClaimCapability: claimCapability,
           expectedIncludeStashed: false,
         }),
-        { command: 'pass', claimId },
+        { command: 'pass', claimCapability },
       ),
     ).resolves.toEqual({
       kind: 'stale_claim',
@@ -410,7 +473,7 @@ describe('resolveTransitionTarget', () => {
     {
       label: 'explicit claim',
       reader: fakeReader({ claimResolution: claimedResolution() }),
-      options: { command: 'pass' as const, claimId },
+      options: { command: 'pass' as const, claimCapability },
     },
     {
       label: 'default active',
@@ -561,6 +624,7 @@ describe('resolveTerminalTarget', () => {
     const terminalChild = lifecycle === 'completed' ? terminalCompletedChild : terminalStoppedChild;
     return fakeReader({
       claimResolution: { status: 'terminal', claim, state: terminalChild, lifecycle },
+      expectedClaimCapability: claimCapability,
       expectedIncludeStashed: false,
     });
   }
@@ -572,7 +636,10 @@ describe('resolveTerminalTarget', () => {
     ['stop', 'completed', 'terminal_claim_conflict'],
   ] as const)('%s against a %s child resolves as %s', async (command, lifecycle, expectedKind) => {
     const terminalChild = lifecycle === 'completed' ? terminalCompletedChild : terminalStoppedChild;
-    const res = await resolveTerminalTarget(terminalReader(lifecycle), { command, claimId });
+    const res = await resolveTerminalTarget(terminalReader(lifecycle), {
+      command,
+      claimCapability,
+    });
     expect(res.kind).toBe(expectedKind);
     if (res.kind === 'terminal_claim_confirmed') {
       expect(res.command).toBe(command);
@@ -593,18 +660,20 @@ describe('resolveTerminalTarget', () => {
   it('passes through a live claim unchanged', async () => {
     const reader = fakeReader({
       claimResolution: claimedResolution(),
+      expectedClaimCapability: claimCapability,
       expectedIncludeStashed: false,
     });
-    const res = await resolveTerminalTarget(reader, { command: 'complete', claimId });
+    const res = await resolveTerminalTarget(reader, { command: 'complete', claimCapability });
     expect(res.kind).toBe('claim');
   });
 
   it('passes through a stale (missing) claim unchanged', async () => {
     const reader = fakeReader({
       claimResolution: { status: 'missing', claimId },
+      expectedClaimCapability: claimCapability,
       expectedIncludeStashed: false,
     });
-    const res = await resolveTerminalTarget(reader, { command: 'stop', claimId });
+    const res = await resolveTerminalTarget(reader, { command: 'stop', claimCapability });
     expect(res.kind).toBe('stale_claim');
   });
 });

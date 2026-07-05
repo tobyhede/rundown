@@ -5,6 +5,7 @@ import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
+import { parseClaimCapabilityOption } from '../helpers/claim-capability-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
@@ -19,12 +20,19 @@ export function registerGotoCommand(program: Command): void {
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
     .option('--index <number>', 'FOR loop iteration to target')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
     .action(
       async (
         stepArg: string,
-        options: { index?: string; claimId?: string; run?: string; text?: boolean },
+        options: {
+          index?: string;
+          claimId?: string;
+          claimCapability?: string;
+          run?: string;
+          text?: boolean;
+        },
       ) => {
         await withErrorHandling(
           async () => {
@@ -33,10 +41,32 @@ export function registerGotoCommand(program: Command): void {
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (claimTarget.claimId !== undefined) {
+              output.error(
+                'Claim id is not an authority credential. Use --claim-capability with the capability returned by rundown claim.',
+                'CLAIM_CAPABILITY_REQUIRED',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            const claimCapabilityTarget = parseClaimCapabilityOption(
+              options.claimCapability,
+              output,
+            );
+            if (!claimCapabilityTarget.ok) return;
+            const runTarget = parseRunOption(
+              options.run,
+              claimTarget.claimId,
+              output,
+              claimCapabilityTarget.claimCapability,
+            );
             if (!runTarget.ok) return;
             const contextResult = await buildGotoContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
+              ...(claimCapabilityTarget.claimCapability !== undefined
+                ? { claimCapability: claimCapabilityTarget.claimCapability }
+                : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
             switch (contextResult.kind) {

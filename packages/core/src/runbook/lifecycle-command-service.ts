@@ -9,6 +9,7 @@ import {
 } from './actor-context.js';
 import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
+import type { ClaimCapability } from './capability.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -1238,6 +1239,10 @@ export class RunbookLifecycleCommandService {
     const targeted = input.explicitTarget !== undefined;
     const claimId =
       input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
+    const claimCapability =
+      input.targetSelector.kind === 'claim-capability'
+        ? input.targetSelector.claimCapability
+        : undefined;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     const actorContext = await this.#resolveActorContext(input.callerEvidence, claimId);
@@ -1245,6 +1250,7 @@ export class RunbookLifecycleCommandService {
     const resolution = await resolveTransitionTarget(sessionService, {
       command: input.command,
       ...(claimId ? { claimId } : {}),
+      ...(claimCapability ? { claimCapability } : {}),
       ...(runId ? { runId } : {}),
       targeted,
       actorContext,
@@ -1297,6 +1303,8 @@ export class RunbookLifecycleCommandService {
     switch (input.targetSelector.kind) {
       case 'claim':
         return this.#driveTerminalClaim(input, input.targetSelector.claimId);
+      case 'claim-capability':
+        return this.#driveTerminalClaimCapability(input, input.targetSelector.claimCapability);
       case 'default':
         return this.#driveTerminalBare(input);
       case 'run':
@@ -1512,6 +1520,89 @@ export class RunbookLifecycleCommandService {
     // completed→pass / stopped→fail via lifecycleToDelegationOutcome.
     // recordChildCompletion self-guards when the child carries no linkage
     // (returns 'not-applicable').
+    const reported = await completionService.recordChildCompletion({
+      childState: syncResult.state,
+    });
+
+    await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+
+    return {
+      kind: 'applied_claim',
+      runId: state.id,
+      status: syncResult.state.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      events: observation.events,
+      reported,
+    };
+  }
+
+  async #driveTerminalClaimCapability(
+    input: LifecycleTerminalInput,
+    claimCapability: ClaimCapability,
+  ): Promise<LifecycleTerminalOutcome> {
+    const { sessionService, actorService, completionService } = this.#deps;
+    const resolution = await resolveTerminalTarget(sessionService, {
+      command: input.command,
+      claimCapability,
+    });
+
+    switch (resolution.kind) {
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+      case 'terminal_claim_confirmed':
+        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        return {
+          kind: 'terminal_claim_confirmed',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          command: resolution.command,
+        };
+      case 'terminal_claim_conflict':
+        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        return {
+          kind: 'terminal_claim_conflict',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          expectedCommand: resolution.expectedCommand,
+          requestedCommand: resolution.requestedCommand,
+        };
+      case 'claim':
+        break;
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
+    }
+
+    const state = resolution.state;
+    const steps = await this.#deps.loadSteps(state);
+    const currentStep = this.#findStep(steps, state.step);
+    const eventType = terminalForceEvent(input.command);
+
+    const syncResult = await actorService.sendAndSync(state.id, steps, {
+      type: eventType,
+      ...(input.message !== undefined ? { message: input.message } : {}),
+    });
+    if (!syncResult) {
+      await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+      return {
+        kind: 'applied_claim',
+        runId: state.id,
+        status: input.command === 'complete' ? 'completed' : 'stopped',
+        events: [],
+        reported: 'not-applicable',
+      };
+    }
+
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep,
+      previousState: state,
+      updatedState: syncResult.state,
+      snapshot: syncResult.snapshot,
+      result: input.command === 'complete' ? 'pass' : 'fail',
+      ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+    });
+
     const reported = await completionService.recordChildCompletion({
       childState: syncResult.state,
     });

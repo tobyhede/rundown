@@ -14,7 +14,9 @@ import {
   getErrorMessage,
   isError,
   logger,
+  parseClaimCapability,
   type ClaimId,
+  type ClaimCapability,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
   type RunbookEventInput,
@@ -87,6 +89,8 @@ export class ForceTerminalEventBridge {
 export interface SeamTerminalOptions {
   /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
   readonly claimId?: ClaimId;
+  /** Explicit claim capability target (`--claim-capability`). Mutually exclusive with `runId`. */
+  readonly claimCapability?: ClaimCapability;
   /**
    * Explicit run target and named authority (`--run`). Mutually exclusive with
    * `claimId` (enforced upstream by `parseRunOption`).
@@ -229,11 +233,13 @@ export async function runSeamTerminal(
 ): Promise<{ readonly manager: RunbookStateManager; readonly exitError: boolean }> {
   const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
-  const targetSelector: CommandTargetSelector = options.claimId
-    ? { kind: 'claim', claimId: options.claimId }
-    : options.runId !== undefined
-      ? { kind: 'run', runId: options.runId }
-      : { kind: 'default' };
+  const targetSelector: CommandTargetSelector = options.claimCapability
+    ? { kind: 'claim-capability', claimCapability: options.claimCapability }
+    : options.claimId
+      ? { kind: 'claim', claimId: options.claimId }
+      : options.runId !== undefined
+        ? { kind: 'run', runId: options.runId }
+        : { kind: 'default' };
 
   const outcome = await seam.runTerminal({
     command,
@@ -277,6 +283,8 @@ export async function runSeamTerminal(
 export interface TerminalRecoveryTarget {
   /** Explicit claim id when the command targeted a claimed child (`--claim-id`). */
   readonly claimId?: string;
+  /** Explicit claim capability when the command targeted a claimed child (`--claim-capability`). */
+  readonly claimCapability?: ClaimCapability;
   /** Explicit run id when the command named its target (`--run`). */
   readonly runId?: RunId;
 }
@@ -312,11 +320,14 @@ export async function handleTerminalRecovery(
 ): Promise<void> {
   // Claim path: orphan cleanup (a bare-command recovery) never applies to a
   // claim target, so an unusable snapshot maps to the command's claim outcome.
-  if (target.claimId !== undefined) {
+  const recoveryClaimId =
+    target.claimId ??
+    (target.claimCapability ? parseClaimCapability(target.claimCapability).claimId : undefined);
+  if (recoveryClaimId !== undefined) {
     if (error instanceof InvalidRunbookStateError) {
       if (command === 'complete') {
         output.error(
-          `Claimed runbook ${target.claimId} is unavailable`,
+          `Claimed runbook ${recoveryClaimId} is unavailable`,
           'CLAIMED_RUNBOOK_UNAVAILABLE',
         );
         output.flush();

@@ -11,6 +11,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
+import { parseClaimCapabilityOption } from './claim-capability-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
 import { parseRunOption } from './run-option.js';
 
@@ -55,6 +56,10 @@ const VALUE_TAKING_OPTION_PRESENTATION: Record<
   '--step': { value: 'stepId', description: 'Target specific substep' },
   '--index': { value: 'number', description: 'FOR loop iteration to target (requires --step)' },
   '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
+  '--claim-capability': {
+    value: 'capability',
+    description: 'Prove authority over a claimed delegated child',
+  },
   '--run': {
     value: 'runId',
     description: 'Name the run you control (explicit orchestrator targeting)',
@@ -97,6 +102,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
         step?: string;
         index?: string;
         claimId?: string;
+        claimCapability?: string;
         run?: string;
         text?: boolean;
       }) => {
@@ -114,7 +120,26 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (claimTarget.claimId !== undefined) {
+              output.error(
+                'Claim id is not an authority credential. Use --claim-capability with the capability returned by rundown claim.',
+                'CLAIM_CAPABILITY_REQUIRED',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            const claimCapabilityTarget = parseClaimCapabilityOption(
+              options.claimCapability,
+              output,
+            );
+            if (!claimCapabilityTarget.ok) return;
+            const runTarget = parseRunOption(
+              options.run,
+              claimTarget.claimId ?? undefined,
+              output,
+              claimCapabilityTarget.claimCapability,
+            );
             if (!runTarget.ok) return;
 
             const config = def.buildConfig();
@@ -127,6 +152,9 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // here we own the post-transition parent-propagation/exit-code contract.
             const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
+              ...(claimCapabilityTarget.claimCapability !== undefined
+                ? { claimCapability: claimCapabilityTarget.claimCapability }
+                : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
               ...(options.step !== undefined ? { step: options.step } : {}),
               ...(options.index !== undefined ? { index: options.index } : {}),

@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { parseClaimCapabilityOption } from '../helpers/claim-capability-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
@@ -33,12 +34,13 @@ export function registerCompleteCommand(program: Command): void {
     .description('Force early completion of current runbook (runbooks auto-complete on final step)')
     .argument('[message]', 'Completion message')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
     .action(
       async (
         message: string | undefined,
-        options: { claimId?: string; run?: string; text?: boolean },
+        options: { claimId?: string; claimCapability?: string; run?: string; text?: boolean },
       ) => {
         await withErrorHandling(
           async () => {
@@ -46,12 +48,34 @@ export function registerCompleteCommand(program: Command): void {
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (claimTarget.claimId !== undefined) {
+              output.error(
+                'Claim id is not an authority credential. Use --claim-capability with the capability returned by rundown claim.',
+                'CLAIM_CAPABILITY_REQUIRED',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            const claimCapabilityTarget = parseClaimCapabilityOption(
+              options.claimCapability,
+              output,
+            );
+            if (!claimCapabilityTarget.ok) return;
+            const runTarget = parseRunOption(
+              options.run,
+              claimTarget.claimId,
+              output,
+              claimCapabilityTarget.claimCapability,
+            );
             if (!runTarget.ok) return;
 
             try {
               const { exitError } = await runSeamTerminal(output, cwd, 'complete', {
                 ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
+                ...(claimCapabilityTarget.claimCapability
+                  ? { claimCapability: claimCapabilityTarget.claimCapability }
+                  : {}),
                 ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
                 ...(message !== undefined ? { message } : {}),
               });
@@ -59,6 +83,9 @@ export function registerCompleteCommand(program: Command): void {
             } catch (error: unknown) {
               await handleTerminalRecovery('complete', error, output, cwd, {
                 ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
+                ...(claimCapabilityTarget.claimCapability
+                  ? { claimCapability: claimCapabilityTarget.claimCapability }
+                  : {}),
                 ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
               });
             }

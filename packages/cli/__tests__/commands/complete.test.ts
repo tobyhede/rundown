@@ -21,6 +21,7 @@ import { registerCompleteCommand } from '../../src/commands/complete.js';
 
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
+  claim_capability: string;
 }
 
 describe('complete command wiring', () => {
@@ -35,7 +36,9 @@ describe('complete command wiring', () => {
     );
 
     const byLong = new Map(complete!.options.map((o) => [o.long, o]));
-    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining(['--claim-id', '--claim-capability', '--text']),
+    );
     expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
@@ -155,11 +158,20 @@ This step should not become the persisted cursor.
     const token = parentBefore?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
     const claim = await runCliInProcess(['claim', token!], workspace);
-    const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+    const claimOutput = findActionOutput<ClaimOutput>(claim.stdout);
+    const claimId = claimOutput?.claim_id;
+    const claimCapability = claimOutput?.claim_capability;
     expect(typeof claimId).toBe('string');
+    expect(typeof claimCapability).toBe('string');
 
     const result = await runCliInProcess(
-      ['complete', '--claim-id', String(claimId), 'child has enough evidence', '--text'],
+      [
+        'complete',
+        '--claim-capability',
+        String(claimCapability),
+        'child has enough evidence',
+        '--text',
+      ],
       workspace,
     );
 
@@ -235,8 +247,11 @@ This step should not become the persisted cursor.
     const token = parentBefore?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
     const claim = await runCliInProcess(['claim', token!], workspace);
-    const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+    const claimOutput = findActionOutput<ClaimOutput>(claim.stdout);
+    const claimId = claimOutput?.claim_id;
+    const claimCapability = claimOutput?.claim_capability;
     expect(typeof claimId).toBe('string');
+    expect(typeof claimCapability).toBe('string');
 
     // Install the spy AFTER delegate/claim so the FORCE_COMPLETE call is the
     // one consumed by mockResolvedValueOnce(null).
@@ -245,7 +260,7 @@ This step should not become the persisted cursor.
       .mockResolvedValueOnce(null);
 
     const result = await runCliInProcess(
-      ['complete', '--claim-id', String(claimId), 'race', '--text'],
+      ['complete', '--claim-capability', String(claimCapability), 'race', '--text'],
       workspace,
     );
 
@@ -363,15 +378,18 @@ Do work.
       const token = parentState?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       const claim = await runCliInProcess(['claim', token!], workspace);
-      const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+      const claimOutput = findActionOutput<ClaimOutput>(claim.stdout);
+      const claimId = claimOutput?.claim_id;
+      const claimCapability = claimOutput?.claim_capability;
       expect(typeof claimId).toBe('string');
+      expect(typeof claimCapability).toBe('string');
 
       jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess(
-        ['complete', '--claim-id', String(claimId), '--text'],
+        ['complete', '--claim-capability', String(claimCapability), '--text'],
         workspace,
       );
       expect(result.exitCode).toBe(1);
@@ -413,7 +431,7 @@ Do work.
       expect(result.exitCode).toBe(0);
       const claimOutput = findActionOutput(result.stdout);
       const childRunId = String(claimOutput?.run_id);
-      const claimId = String(claimOutput?.claim_id);
+      const claimCapability = String(claimOutput?.claim_capability);
 
       const childState = await readRunbookState(workspace, childRunId);
       expect(childState).not.toBeNull();
@@ -422,7 +440,10 @@ Do work.
         JSON.stringify({ ...childState, lifecycle: 'completed' }, null, 2),
       );
 
-      result = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+      result = await runCliInProcess(
+        ['complete', '--claim-capability', claimCapability],
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const session = await readSession(workspace);
@@ -464,7 +485,7 @@ Do work.
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimOutput = findActionOutput(result.stdout);
       const childRunId = String(claimOutput?.run_id);
-      const claimId = String(claimOutput?.claim_id);
+      const claimCapability = String(claimOutput?.claim_capability);
 
       // Drive the claimed child to STOPPED, then attempt `complete` on it: the
       // requested command (complete → expects completed) conflicts with the
@@ -476,7 +497,10 @@ Do work.
         JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),
       );
 
-      result = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+      result = await runCliInProcess(
+        ['complete', '--claim-capability', claimCapability],
+        workspace,
+      );
 
       // The seam streams JSON; scan the concatenated objects for the refusal code.
       const codes = parseConcatenatedJson(result.stdout).map((o) => (o as { code?: string }).code);

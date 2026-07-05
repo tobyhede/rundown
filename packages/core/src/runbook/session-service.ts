@@ -17,6 +17,7 @@ import {
   generateClaimCapability,
   hashCapabilitySecret,
   parseClaimCapability,
+  verifyCapabilitySecret,
   type ClaimCapability,
   type CapabilityHash,
 } from './capability.js';
@@ -515,6 +516,30 @@ export class SessionService {
     }
 
     return { status: 'claimed', claim, state };
+  }
+
+  /**
+   * Resolve a claim capability to an active child runbook after verifying its secret proof.
+   *
+   * @param capability - Claim capability presented by the caller
+   * @param options - Optional resolution flags
+   * @param options.includeStashed - When true, do not gate on the stashed runbook
+   * @returns Claim resolution when the capability verifies, otherwise `missing`
+   */
+  async getActiveForClaimCapability(
+    capability: ClaimCapability,
+    options: { readonly includeStashed?: boolean } = {},
+  ): Promise<ClaimIdResolution> {
+    const parsed = parseClaimCapability(capability);
+    const resolved = await this.getActiveForClaimId(parsed.claimId, options);
+    if (resolved.status !== 'claimed') return resolved;
+    if (resolved.claim.claimCapabilityHash === undefined) {
+      return { status: 'missing', claimId: parsed.claimId };
+    }
+    if (!verifyCapabilitySecret(parsed.secret, resolved.claim.claimCapabilityHash)) {
+      return { status: 'missing', claimId: parsed.claimId };
+    }
+    return resolved;
   }
 
   /**

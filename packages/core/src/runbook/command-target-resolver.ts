@@ -1,4 +1,5 @@
 import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
+import type { ClaimCapability } from './capability.js';
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import { resolveCommandIntent, type CommandTargetSelector } from './command-policy.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
@@ -142,6 +143,8 @@ export type TransitionTargetResolution =
 export interface ResolveCommandTargetOptions {
   /** Explicit claim id to target instead of the default stack. */
   readonly claimId?: ClaimId;
+  /** Capability proving authority over a claimed delegated child. */
+  readonly claimCapability?: ClaimCapability;
   /**
    * Explicit run id to target from `--run`. Mutually exclusive with `claimId`;
    * the CLI enforces exclusivity — the resolver gives `claimId` precedence and
@@ -162,6 +165,8 @@ export interface ResolveTransitionTargetOptions {
   readonly command: TransitionCommandName;
   /** Explicit claim id to target instead of the default stack. */
   readonly claimId?: ClaimId;
+  /** Capability proving authority over a claimed delegated child. */
+  readonly claimCapability?: ClaimCapability;
   /**
    * Explicit run id to target from `--run`. Mutually exclusive with `claimId`;
    * the CLI enforces exclusivity — the resolver gives `claimId` precedence and
@@ -178,6 +183,9 @@ export interface ResolveTransitionTargetOptions {
   /** Actor context supplied by the frontend adapter; strict core default is unknown. */
   readonly actorContext?: ActorContext;
 }
+
+const CLAIM_CAPABILITY_REQUIRED_MESSAGE =
+  'Claim id is not an authority credential. Use --claim-capability with the capability returned by rundown claim.';
 
 /**
  * Read-side dependency required to resolve command targets.
@@ -218,6 +226,19 @@ export interface CommandTargetReader {
    */
   getActiveForClaimId(
     claimId: ClaimId,
+    options: { readonly includeStashed: boolean },
+  ): Promise<ClaimIdResolution>;
+
+  /**
+   * Resolve an explicit claim capability to its child runbook state or failure status.
+   *
+   * @param capability - Claim capability requested by the caller
+   * @param options - Read visibility flags
+   * @param options.includeStashed - Whether stashed claimed children are visible
+   * @returns Claim id resolution status
+   */
+  getActiveForClaimCapability(
+    capability: ClaimCapability,
     options: { readonly includeStashed: boolean },
   ): Promise<ClaimIdResolution>;
 
@@ -280,6 +301,59 @@ async function resolveClaimTarget(
           claimed.reason === 'stashed'
             ? `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`
             : `Claim id ${claimId} is no longer linked to an active delegation (${claimed.reason}).`,
+      };
+    default: {
+      const _exhaustive: never = claimed;
+      return _exhaustive;
+    }
+  }
+}
+
+async function resolveClaimCapabilityTarget(
+  targetReader: CommandTargetReader,
+  claimCapability: ClaimCapability,
+  options: { readonly includeStashed: boolean },
+): Promise<ClaimTargetResolution> {
+  const claimed = await targetReader.getActiveForClaimCapability(claimCapability, {
+    includeStashed: options.includeStashed,
+  });
+  switch (claimed.status) {
+    case 'claimed':
+      return {
+        kind: 'claim',
+        claimId: claimed.claim.claimId,
+        claim: claimed.claim,
+        state: claimed.state,
+      };
+    case 'terminal':
+      return {
+        kind: 'terminal_claim',
+        claimId: claimed.claim.claimId,
+        claim: claimed.claim,
+        state: claimed.state,
+        lifecycle: claimed.lifecycle,
+        message: `Claim id ${claimed.claim.claimId} points at a ${claimed.lifecycle} child runbook.`,
+      };
+    case 'stale':
+      return {
+        kind: 'stale_claim',
+        claimId: claimed.claim.claimId,
+        message: `Claim id ${claimed.claim.claimId} points at missing child state (${claimed.reason}).`,
+      };
+    case 'unlinked':
+      return {
+        kind: 'stale_claim',
+        claimId: claimed.claim.claimId,
+        message:
+          claimed.reason === 'stashed'
+            ? `Claim id ${claimed.claim.claimId} is currently stashed. Run \`rundown pop --claim-id ${claimed.claim.claimId}\` to resume.`
+            : `Claim id ${claimed.claim.claimId} is no longer linked to an active delegation (${claimed.reason}).`,
+      };
+    case 'missing':
+      return {
+        kind: 'stale_claim',
+        claimId: claimed.claimId,
+        message: `Claim id ${claimed.claimId} does not exist.`,
       };
     default: {
       const _exhaustive: never = claimed;
@@ -367,6 +441,11 @@ export async function resolveCommandTarget(
   targetReader: CommandTargetReader,
   options: ResolveCommandTargetOptions = {},
 ): Promise<CommandTargetResolution> {
+  if (options.claimCapability !== undefined) {
+    return resolveClaimCapabilityTarget(targetReader, options.claimCapability, {
+      includeStashed: options.allowStashed === true,
+    });
+  }
   if (options.claimId !== undefined) {
     return resolveClaimTarget(targetReader, options.claimId, {
       includeStashed: options.allowStashed === true,
@@ -396,10 +475,10 @@ export async function resolveTransitionTarget(
   targetReader: CommandTargetReader,
   options: ResolveTransitionTargetOptions,
 ): Promise<TransitionTargetResolution> {
-  if (options.claimId !== undefined) {
+  if (options.claimCapability !== undefined) {
     // Write command: a stashed child must resolve to stale_claim, so the head is
     // called with includeStashed: false.
-    const claimed = await resolveClaimTarget(targetReader, options.claimId, {
+    const claimed = await resolveClaimCapabilityTarget(targetReader, options.claimCapability, {
       includeStashed: false,
     });
     if (claimed.kind !== 'terminal_claim') {
@@ -431,6 +510,13 @@ export async function resolveTransitionTarget(
           expectedResult,
           requestedResult: options.command,
         };
+  }
+  if (options.claimId !== undefined) {
+    return {
+      kind: 'stale_claim',
+      claimId: options.claimId,
+      message: CLAIM_CAPABILITY_REQUIRED_MESSAGE,
+    };
   }
 
   if (options.runId !== undefined) {
@@ -591,9 +677,23 @@ export type TerminalTargetResolution =
  */
 export async function resolveTerminalTarget(
   targetReader: CommandTargetReader,
-  options: { readonly command: TerminalCommandName; readonly claimId: ClaimId },
+  options: {
+    readonly command: TerminalCommandName;
+    readonly claimId?: ClaimId;
+    readonly claimCapability?: ClaimCapability;
+  },
 ): Promise<TerminalTargetResolution> {
-  const claimed = await resolveClaimTarget(targetReader, options.claimId, {
+  if (options.claimId !== undefined) {
+    return {
+      kind: 'stale_claim',
+      claimId: options.claimId,
+      message: CLAIM_CAPABILITY_REQUIRED_MESSAGE,
+    };
+  }
+  if (options.claimCapability === undefined) {
+    throw new Error('resolveTerminalTarget requires claimId or claimCapability');
+  }
+  const claimed = await resolveClaimCapabilityTarget(targetReader, options.claimCapability, {
     includeStashed: false,
   });
   if (claimed.kind !== 'terminal_claim') {

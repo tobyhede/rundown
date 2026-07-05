@@ -20,6 +20,7 @@ import {
   type StepId,
   type RunbookState,
   type ClaimId,
+  type ClaimCapability,
   type RunId,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
@@ -125,7 +126,11 @@ export async function resolveTerminalReleaseModeForRunbook(
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
+  options: {
+    readonly claimId?: ClaimId;
+    readonly claimCapability?: ClaimCapability;
+    readonly runId?: RunId;
+  } = {},
 ): Promise<BuildGotoContextResult> {
   const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
@@ -135,11 +140,13 @@ export async function buildGotoContext(
       options.runId !== undefined ? { runId: options.runId } : {},
     ),
     targetSelector:
-      options.claimId !== undefined
-        ? { kind: 'claim', claimId: options.claimId }
-        : options.runId !== undefined
-          ? { kind: 'run', runId: options.runId }
-          : { kind: 'default' },
+      options.claimCapability !== undefined
+        ? { kind: 'claim-capability', claimCapability: options.claimCapability }
+        : options.claimId !== undefined
+          ? { kind: 'claim', claimId: options.claimId }
+          : options.runId !== undefined
+            ? { kind: 'run', runId: options.runId }
+            : { kind: 'default' },
   });
   if (outcome.kind !== 'allowed') {
     return outcome;
