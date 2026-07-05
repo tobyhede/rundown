@@ -68,7 +68,7 @@ if (!availability.available) {
     });
 
     const run = (command: string, options: Partial<SandboxOptionsWithNetwork> = {}) => {
-      const sandboxOptions = {
+      const sandboxOptions: SandboxOptionsWithNetwork = {
         cwd: repoCwd,
         repoRoot: repoCwd,
         readOnlyPaths: [repoCwd, grantedReadDir],
@@ -80,7 +80,7 @@ if (!availability.available) {
         allowUnsandboxed: false,
         ...options,
         network: options.network ?? 'deny',
-      } as SandboxOptions;
+      };
 
       return sandbox.execute(command, sandboxOptions);
     };
@@ -135,20 +135,21 @@ if (!availability.available) {
     usersMetadataIt(
       'allows Node startup and cwd package reads from a /Users-rooted repo using metadata ancestors',
       async () => {
+        const sandboxOptions: SandboxOptionsWithNetwork = {
+          cwd: repoCwd,
+          repoRoot: repoCwd,
+          readOnlyPaths: [repoCwd],
+          readWritePaths: [],
+          metadataReadPaths: metadataAncestorsFor(repoCwd),
+          denyPaths: [],
+          denyPatterns: [],
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+          allowUnsandboxed: false,
+          network: 'deny',
+        };
         const result = await sandbox.execute(
           "node -e \"require('fs').readFileSync(require.resolve('./package.json'), 'utf8')\"",
-          {
-            cwd: repoCwd,
-            repoRoot: repoCwd,
-            readOnlyPaths: [repoCwd],
-            readWritePaths: [],
-            metadataReadPaths: metadataAncestorsFor(repoCwd),
-            denyPaths: [],
-            denyPatterns: [],
-            env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
-            allowUnsandboxed: false,
-            network: 'deny',
-          } as SandboxOptions,
+          sandboxOptions,
         );
 
         expect(result.sandboxed).toBe(true);
