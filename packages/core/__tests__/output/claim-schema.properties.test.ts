@@ -16,11 +16,15 @@ const claimIdArb: fc.Arbitrary<string> = fc
   .array(fc.constantFrom(...CLAIM_ID_ALPHABET), { minLength: 22, maxLength: 22 })
   .map((chars) => `rdclm_${chars.join('')}`);
 
+const VALID_CLAIM_CAPABILITY =
+  'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
 const validClaimPayloadArb = fc.record({
   kind: fc.constant('claim' as const),
   action: fc.constant('claimed' as const),
   token: fc.string({ minLength: 1, maxLength: 64 }),
   claim_id: claimIdArb,
+  claim_capability: fc.constant(VALID_CLAIM_CAPABILITY),
   run_id: fc.string({ minLength: 1, maxLength: 64 }),
   runbook: fc.string({ minLength: 1, maxLength: 128 }),
   parent_run_id: fc.string({ minLength: 1, maxLength: 64 }),
@@ -35,6 +39,21 @@ describe('ClaimResponseSchema property tests', () => {
         expect(result.success).toBe(true);
       }),
     );
+  });
+
+  it('accepts claimed output with claim_capability', () => {
+    const parsed = ClaimResponseSchema.parse({
+      kind: 'claim',
+      action: 'claimed',
+      token: 'rdtk_ABC...WXYZ',
+      claim_id: 'rdclm_abcdefghijklmnopqrstu1',
+      claim_capability: VALID_CLAIM_CAPABILITY,
+      run_id: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      runbook: 'child.md',
+      parent_run_id: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    });
+
+    expect(parsed.claim_capability).toBe(VALID_CLAIM_CAPABILITY);
   });
 
   it('rejects payloads with a non-"claim" kind discriminant', () => {

@@ -299,12 +299,17 @@ flattened onto the JSONL object alongside envelope fields such as `timestamp`,
 `runbookId`, `runbook`, and `seq`. The final line is a terminal lifecycle event.
 
 ```jsonl
-{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","runCapability":"rdrc_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
 {"type":"command_started","command":"echo \"hello\"","displayCommand":"echo \"hello\"","position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":3}
 {"type":"command_completed","command":"echo \"hello\"","success":true,"exitCode":0,"position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":4}
 {"type":"runbook_completed","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":5}
 ```
+
+The `runbook_started.runCapability` value is returned once to the orchestrator.
+Use it with mutating orchestrator commands such as
+`rundown pass --run-capability <run_capability>` and do not expect it to be
+recoverable from persisted state.
 
 The internal event payload field is `STEP_ENTERED.payload.artifacts`; the CLI
 JSONL field is flattened as `artifacts` on the `step_entered` line. `artifacts`
@@ -378,7 +383,8 @@ discriminants. Authoritative shapes live in
 ### `rundown claim <token>`
 
 Claims a delegation token, launches the delegated child runbook, and returns the
-`claim_id` used for subsequent child-targeting commands.
+`claim_id` used for read-only inspection plus the `claim_capability` credential
+used for subsequent child-targeting mutations.
 
 **Text:**
 
@@ -394,6 +400,7 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
   "action": "claimed",
   "token": "rdtk_abcd...",
   "claim_id": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
+  "claim_capability": "rdcc_F3J3n3d_f8fo0a0b1B2c3Q_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "run_id": "rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "runbook": "child.runbook.md",
   "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -401,17 +408,19 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
 }
 ```
 
-Use the returned `claim_id` with `rundown status --claim-id <claim_id>`,
-`rundown pass --claim-id <claim_id>`, or `rundown fail --claim-id <claim_id>`
-for delegated child work.
+Use the returned `claim_id` with `rundown status --claim-id <claim_id>`. Use the
+returned `claim_capability` with
+`rundown pass --claim-capability <claim_capability>` or
+`rundown fail --claim-capability <claim_capability>` for delegated child work.
 
 ---
 
 ## pass
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--run-capability <run_capability>` (orchestrator) or
+`--claim-capability <claimCapability>` (delegated child).
 
 ### `rundown pass`
 
@@ -451,7 +460,7 @@ Next step description.
 `from` and `at` are plain qualified step-ID strings (the step before the
 transition, and the step after). There is no `to` field.
 
-### `rundown pass --claim-id <claim_id>`
+### `rundown pass --claim-capability <claim_capability>`
 
 Same output shape as `rundown pass`, but targets the delegated child identified
 by `claim_id` instead of the default stack.
@@ -461,8 +470,9 @@ by `claim_id` instead of the default stack.
 ## fail
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--run-capability <run_capability>` (orchestrator) or
+`--claim-capability <claimCapability>` (delegated child).
 
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
 for stopping).
@@ -518,7 +528,7 @@ Runbook:  STOP
 }
 ```
 
-### `rundown fail --claim-id <claim_id>`
+### `rundown fail --claim-capability <claim_capability>`
 
 Same output shape as `rundown fail`, but targets the delegated child identified
 by `claim_id` instead of the default stack.
@@ -528,9 +538,10 @@ by `claim_id` instead of the default stack.
 ## goto
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child). `goto` is
-additionally gated behind the `run-navigation` policy intent.
+see [Error Output](#actor-context-required). Name your lane with
+`--run-capability <run_capability>` (orchestrator) or
+`--claim-capability <claimCapability>` (delegated child). `goto` is additionally
+gated behind the `run-navigation` policy intent.
 
 ### `rundown goto <step>`
 
@@ -571,8 +582,9 @@ Step description.
 ## stop
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--run-capability <run_capability>` (orchestrator) or
+`--claim-capability <claimCapability>` (delegated child).
 
 ### `rundown stop [message]`
 
@@ -617,8 +629,9 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 ## complete
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--run-capability <run_capability>` (orchestrator) or
+`--claim-capability <claimCapability>` (delegated child).
 
 ### `rundown complete [message]`
 
@@ -676,7 +689,7 @@ Runbook:  STASHED
 }
 ```
 
-### `rundown stash --claim-id <claim_id>`
+### `rundown stash --claim-capability <claim_capability>`
 
 Same output shape as `rundown stash`, but stashes the delegated child identified
 by `claim_id`.
@@ -718,7 +731,7 @@ Step description.
 }
 ```
 
-### `rundown pop --claim-id <claim_id>`
+### `rundown pop --claim-capability <claim_capability>`
 
 Same output shape as `rundown pop`, but restores the stashed delegated child
 identified by `claim_id`.
@@ -1095,7 +1108,7 @@ Error: Runbook file not found: missing.runbook.md
 
 <!--
   RUN_TARGET_MISMATCH is intentionally NOT documented here. It is emitted by
-  `rundown delegate --retry <token> --run <rd_…>` (packages/cli/src/commands/delegate.ts,
+  `rundown delegate --retry <token> --run-capability <run_capability>` (packages/cli/src/commands/delegate.ts,
   case 'run_target_mismatch') when the named run does not own the token, but it is
   NOT registered in CLISymbolicErrorCodeValues (packages/core/src/output/zod-schemas.ts),
   so its envelope fails ErrorCodeSchema / --schema validation. Documenting it would
@@ -1116,7 +1129,7 @@ is pinned by the explicit-run-targeting tests.
 **Text:**
 
 ```text
-Error: This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` if you are completing delegated work.
+Error: This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run-capability <run_capability>` with the run capability from your orchestration context (returned by `rundown run` JSON output), or `--claim-capability <claimCapability>` if you are completing delegated work.
 Code: ACTOR_CONTEXT_REQUIRED
 ```
 
@@ -1125,7 +1138,7 @@ Code: ACTOR_CONTEXT_REQUIRED
 ```json
 {
   "kind": "error",
-  "error": "This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` if you are completing delegated work.",
+  "error": "This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run-capability <run_capability>` with the run capability from your orchestration context (returned by `rundown run` JSON output), or `--claim-capability <claimCapability>` if you are completing delegated work.",
   "code": "ACTOR_CONTEXT_REQUIRED",
   "command": "pass"
 }
@@ -1189,7 +1202,7 @@ message names both lanes and never echoes the target run id.
 **Text:**
 
 ```text
-Error: rundown collect requires an actor that controls the target delegating run. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event) if you are the orchestrator, or `--claim-id <claimId>` if you are collecting within delegated work.
+Error: rundown collect requires an actor that controls the target delegating run. Pass `--run-capability <run_capability>` with the run capability from your orchestration context (returned by `rundown run` JSON output) if you are the orchestrator, or `--claim-capability <claimCapability>` if you are collecting within delegated work.
 Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```
 
@@ -1198,7 +1211,7 @@ Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```json
 {
   "kind": "error",
-  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event) if you are the orchestrator, or `--claim-id <claimId>` if you are collecting within delegated work.",
+  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--run-capability <run_capability>` with the run capability from your orchestration context (returned by `rundown run` JSON output) if you are the orchestrator, or `--claim-capability <claimCapability>` if you are collecting within delegated work.",
   "code": "COLLECT_REQUIRES_ORCHESTRATOR",
   "command": "collect"
 }

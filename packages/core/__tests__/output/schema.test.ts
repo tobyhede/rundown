@@ -37,6 +37,7 @@ function makeClaimResponse(): ClaimResponse {
     action: 'claimed',
     token: 'rdtk_abcdef0123456789abcdef',
     claim_id: 'rdclm_F3J3n3d_f8fo0a0b1B2c3Q',
+    claim_capability: 'rdcc_F3J3n3d_f8fo0a0b1B2c3Q_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     run_id: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     runbook: 'child.runbook.md',
     parent_run_id: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',

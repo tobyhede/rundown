@@ -153,7 +153,7 @@ Mark current step as passed (triggers PASS transition)
 Options:
   --step <stepId>       Target specific substep
   --index <number>      FOR loop iteration to target (requires --step)
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --run <runId>         Name the run you control (explicit orchestrator
                         targeting)
   --text                Output as human-readable text
@@ -170,7 +170,7 @@ Mark current step as failed (triggers FAIL transition)
 Options:
   --step <stepId>       Target specific substep
   --index <number>      FOR loop iteration to target (requires --step)
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --run <runId>         Name the run you control (explicit orchestrator
                         targeting)
   --text                Output as human-readable text
@@ -188,7 +188,7 @@ Arguments:
   message               Completion message
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --run <runId>         Name the run you control (explicit orchestrator
                         targeting)
   --text                Output as human-readable text
@@ -204,7 +204,7 @@ Jump to specific step (e.g., "3" or "3.1" for substep)
 
 Options:
   --index <number>      FOR loop iteration to target
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --run <runId>         Name the run you control (explicit orchestrator
                         targeting)
   --text                Output as human-readable text
@@ -219,7 +219,7 @@ Usage: rundown status [options]
 Show current runbook state
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -235,7 +235,7 @@ Arguments:
   message               Stop message
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --run <runId>         Name the run you control (explicit orchestrator
                         targeting)
   --text                Output as human-readable text
@@ -264,7 +264,7 @@ Usage: rundown stash [options]
 Pause runbook enforcement, preserve state
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -277,7 +277,7 @@ Usage: rundown pop [options]
 Resume enforcement from stashed runbook
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -551,7 +551,7 @@ Options:
   --step <stepId>       Target specific DELEGATE step scope (e.g., "1" or "1.2")
   --index <number>      FOR loop iteration to target (requires --step on a FOR
                         step)
-  --claim-id <claimId>  Target a claimed delegated child runbook
+  --claim-capability <claimCapability>  Target a claimed delegated child runbook
   --run <runId>         Name the run you control (explicit orchestrator
                         targeting)
   --text                Output as human-readable text

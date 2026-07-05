@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
+import { CLAIM_CAPABILITY_PATTERN, RUN_CAPABILITY_PATTERN } from '../runbook/capability.js';
 import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 import { PublicArtifactRecordSchema } from '../runbook/artifact-schema.js';
@@ -1198,6 +1199,12 @@ export const ExecutionSummarySchema = z
 export const RunCommandResponseSchema = ExecutionSummarySchema.extend({
   /** Response kind discriminant (overrides base execution_summary) */
   kind: z.literal('run').describe('Response type discriminant'),
+  /** Run capability returned once to the orchestrator */
+  runCapability: z
+    .string()
+    .regex(RUN_CAPABILITY_PATTERN)
+    .optional()
+    .describe('Run capability for explicit orchestrator mutations'),
 }).describe('Response from the run command');
 
 // ============================================================================
@@ -1432,6 +1439,11 @@ export const ClaimResponseSchema = z
     token: z.string().describe('Truncated delegation token'),
     /** Claim ID for explicit child targeting */
     claim_id: z.string().regex(CLAIM_ID_PATTERN).describe('Claim ID for explicit child targeting'),
+    /** Claim capability for explicit child mutations */
+    claim_capability: z
+      .string()
+      .regex(CLAIM_CAPABILITY_PATTERN)
+      .describe('Claim capability for explicit child mutations'),
     /** Child run ID */
     run_id: z.string().describe('Child run ID'),
     /** Child runbook path */
