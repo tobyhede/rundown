@@ -175,7 +175,7 @@ describe('handleDelegationDispatch', () => {
       expect.stringContaining('Delegated Rundown work was active'),
     );
     expect(stopResult.violation).toEqual(
-      expect.stringContaining('rundown pass --claim-id <claim_id>'),
+      expect.stringContaining('rundown pass --claim-capability <capability>'),
     );
 
     // Token kept (closure unprovable) — both the stopping agent's entry and its
@@ -314,26 +314,28 @@ describe('handleDelegationDispatch', () => {
     const result = await handleDelegationDispatch(input);
 
     expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
-    expect(result.context).toContain('Copy the `claim_id` from the claim output.');
+    expect(result.context).toContain(
+      'Copy the `claim_id` and `claim_capability` from the claim output.',
+    );
     expect(result.context).toContain('rundown status --claim-id <claim_id>');
-    expect(result.context).toContain('rundown pass --claim-id <claim_id>');
-    expect(result.context).toContain('rundown fail --claim-id <claim_id>');
+    expect(result.context).toContain('rundown pass --claim-capability <claim_capability>');
+    expect(result.context).toContain('rundown fail --claim-capability <claim_capability>');
     expect(result.context).toContain(['```', `rundown claim ${VALID_TOKEN}`, '```'].join('\n'));
     expect(result.context).toContain(
       [
         '```',
         'rundown status --claim-id <claim_id>',
-        'rundown pass --claim-id <claim_id>',
-        'rundown fail --claim-id <claim_id>',
-        'rundown stash --claim-id <claim_id>',
-        'rundown pop --claim-id <claim_id>',
-        'rundown stop --claim-id <claim_id>',
-        'rundown complete --claim-id <claim_id>',
+        'rundown pass --claim-capability <claim_capability>',
+        'rundown fail --claim-capability <claim_capability>',
+        'rundown stash --claim-capability <claim_capability>',
+        'rundown pop --claim-capability <claim_capability>',
+        'rundown stop --claim-capability <claim_capability>',
+        'rundown complete --claim-capability <claim_capability>',
         '```',
       ].join('\n'),
     );
     expect(result.context).toContain(
-      'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
+      'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-capability <claim_capability>` or `rundown fail --claim-capability <claim_capability>`.',
     );
   });
 
@@ -347,7 +349,7 @@ describe('handleDelegationDispatch', () => {
     const result = await handleDelegationDispatch(input);
 
     expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
-    expect(result.context).toContain('rundown pass --claim-id <claim_id>');
+    expect(result.context).toContain('rundown pass --claim-capability <claim_capability>');
   });
 
   it('returns context even when rundown status --json fails (best-effort)', async () => {
@@ -398,22 +400,22 @@ describe('handleDelegationDispatch', () => {
         `rundown claim ${VALID_TOKEN}`,
         '```',
         '',
-        'Copy the `claim_id` from the claim output. Use it for all later Rundown commands:',
+        'Copy the `claim_id` and `claim_capability` from the claim output. Use the capability for mutating commands:',
         '',
         '```',
         'rundown status --claim-id <claim_id>',
-        'rundown pass --claim-id <claim_id>',
-        'rundown fail --claim-id <claim_id>',
-        'rundown stash --claim-id <claim_id>',
-        'rundown pop --claim-id <claim_id>',
-        'rundown stop --claim-id <claim_id>',
-        'rundown complete --claim-id <claim_id>',
+        'rundown pass --claim-capability <claim_capability>',
+        'rundown fail --claim-capability <claim_capability>',
+        'rundown stash --claim-capability <claim_capability>',
+        'rundown pop --claim-capability <claim_capability>',
+        'rundown stop --claim-capability <claim_capability>',
+        'rundown complete --claim-capability <claim_capability>',
         '```',
         '',
         'Active runbook: deploy.md',
         'Current step: 3.1',
         '',
-        'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
+        'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-capability <claim_capability>` or `rundown fail --claim-capability <claim_capability>`.',
       ].join('\n'),
     );
   });
@@ -437,19 +439,19 @@ describe('handleDelegationDispatch', () => {
         `rundown claim ${VALID_TOKEN}`,
         '```',
         '',
-        'Copy the `claim_id` from the claim output. Use it for all later Rundown commands:',
+        'Copy the `claim_id` and `claim_capability` from the claim output. Use the capability for mutating commands:',
         '',
         '```',
         'rundown status --claim-id <claim_id>',
-        'rundown pass --claim-id <claim_id>',
-        'rundown fail --claim-id <claim_id>',
-        'rundown stash --claim-id <claim_id>',
-        'rundown pop --claim-id <claim_id>',
-        'rundown stop --claim-id <claim_id>',
-        'rundown complete --claim-id <claim_id>',
+        'rundown pass --claim-capability <claim_capability>',
+        'rundown fail --claim-capability <claim_capability>',
+        'rundown stash --claim-capability <claim_capability>',
+        'rundown pop --claim-capability <claim_capability>',
+        'rundown stop --claim-capability <claim_capability>',
+        'rundown complete --claim-capability <claim_capability>',
         '```',
         '',
-        'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
+        'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-capability <claim_capability>` or `rundown fail --claim-capability <claim_capability>`.',
       ].join('\n'),
     );
   });

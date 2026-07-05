@@ -29,7 +29,7 @@ first (ask the user if it is not already known). Load the execution protocol
 
    Capture the run id from `rundown run`: it is printed at start and echoed as
    `runbookId` on every event. This runbook delegates the implementer, so every
-   orchestrator command must carry `--run <rd_…>`.
+   orchestrator command must carry `--run-capability <run_capability>`.
 </important>
 
 Implement a written plan one task at a time, holding each task to its own tests and committing as you go. This skill is the **context** an execution runbook orchestrates: how to do each task well. The [`execute-plan`](../../runbooks/planning/execute-plan.runbook.md) runbook owns the *sequence* (implement → review → verify) and the *gates*; this skill owns the *craft* of a single task.

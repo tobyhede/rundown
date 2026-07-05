@@ -267,8 +267,8 @@ export function assertDefined<T>(
  * Extract the active run id from a `rundown status` invocation result.
  *
  * Post-R1 named-authority helper shared by the runbook integration suites:
- * mutating commands need `--run <rd_…>`, and the id is resolved from the
- * status payload's `state` path.
+ * legacy run-id-targeted tests resolve the id from the status payload's `state`
+ * path.
  *
  * @param result - Exit code and stdout of a `rundown status` invocation
  * @returns The active run id (`rd_` + 32 hex)

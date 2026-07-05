@@ -150,7 +150,7 @@ async function consumedDelegationStillRequiresClosure(
 type SubagentStopOutcome = 'none' | 'closed' | 'tampered' | 'requires-closure';
 
 const CLOSURE_VIOLATION =
-  'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly in your own lane: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, either claim and close it — `rundown claim <rdtk_…>` then `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` — or leave it unclaimed and report the token back so the orchestrator can `rundown delegate --retry <token> --run <rd_…>` from its own context. Cancel with `rundown abort <token>`.';
+  'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly in your own lane: if a claim capability was issued, use `rundown pass --claim-capability <capability>` or `rundown fail --claim-capability <capability>`; if the token was never claimed, either claim and close it with the returned claim capability, or report the token back so the orchestrator can `rundown delegate --retry <token> --run-capability <capability>` from its own context. Cancel with `rundown abort <token>`.';
 
 const TAMPERED_VIOLATION =
   'Subagent stopped with an active delegation, but its session record could not be verified (corrupt or tampered metadata). Failing closed: run `rundown status` to inspect delegation state and close any open delegation explicitly before stopping.';
@@ -177,11 +177,12 @@ const TAMPERED_VIOLATION =
  * - **Still requires closure** (or closure unprovable): keeps the entry and
  *   returns a `violation` requiring explicit closure. The message is read by
  *   the stopping subagent (the child), so it keeps that agent in its own lane:
- *   claimed work is recovered via `rundown pass --claim-id` or
- *   `rundown fail --claim-id`, and an unclaimed token is either claimed and
- *   closed the same way, or reported back so the orchestrator retries it from
- *   its own context with
- *   `rundown delegate --retry <token> --run <rd_…>` (or `rundown abort <token>`).
+ *   claimed work is recovered via `rundown pass --claim-capability` or
+ *   `rundown fail --claim-capability`, and an unclaimed token is either claimed
+ *   and closed with the returned claim capability, or reported back so the
+ *   orchestrator retries it from its own context with
+ *   `rundown delegate --retry <token> --run-capability <capability>` (or
+ *   `rundown abort <token>`).
  *   The child is never told to name the parent run — that is the orchestrator's
  *   lane, not the child's.
  * - **Tampered metadata**: fails CLOSED with a `violation` (the record cannot

@@ -43,8 +43,8 @@ describe('end-to-end-testing skill', () => {
 
     // Claimed children — including prompted ones — advance and report their
     // result with claim-id-targeted transitions, matching running-runbooks.
-    expect(skill).toContain('rundown pass --claim-id <claim_id>');
-    expect(skill).toContain('rundown fail --claim-id <claim_id>');
+    expect(skill).toContain('rundown pass --claim-capability <claim_capability>');
+    expect(skill).toContain('rundown fail --claim-capability <claim_capability>');
     // It must NOT claim that claim-id targeting is only for early-stopped
     // children — prompted claimed children need it to advance at all.
     expect(skill).not.toMatch(/only for a child you stop early/i);

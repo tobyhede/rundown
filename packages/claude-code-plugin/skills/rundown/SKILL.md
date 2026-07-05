@@ -74,7 +74,7 @@ contain the protocol itself.
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
    step with `rundown pass` / `rundown fail` and trust Rundown for transitions.
    On a delegation-exposed run (any runbook with a `- DELEGATE` step), these
-   become `rundown pass --run <rd_…>` / `rundown fail --run <rd_…>` — the bare
+   become `rundown pass --run-capability <run_capability>` / `rundown fail --run-capability <run_capability>` — the bare
    form is for standalone runs only and otherwise refuses with
    `ACTOR_CONTEXT_REQUIRED`.
 

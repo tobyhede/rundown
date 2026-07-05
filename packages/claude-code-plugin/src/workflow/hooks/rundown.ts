@@ -44,17 +44,17 @@ export interface RundownExecOptions {
  *
  * Uses execFileSync to avoid shell interpretation and prevent command injection.
  *
- * @param args - Command arguments as array (e.g., ['pass', '--claim-id', 'abc123'])
+ * @param args - Command arguments as array (e.g., ['pass', '--claim-capability', 'rdcc_...'])
  * @param cwd - Working directory for the command
  * @param execOptions - Optional execution settings such as environment overrides
  * @returns Command output as string
- * @throws {Error} If `args` is a bare (no `--claim-id` and no `--run`)
+ * @throws {Error} If `args` is a bare (no `--claim-capability` and no `--run-capability`)
  *   role-specific mutation — the subprocess trust boundary withholds it rather
  *   than let it silently inherit direct-CLI trust. The guarded set is the full
  *   withhold set defined by `subprocess-mutation-boundary.ts` (after alias
  *   canonicalization): `pass`, `fail`, `delegate`, `goto`, `complete`,
- *   `stop`, `collect`. Explicit targeting — `--claim-id` (claim evidence) or
- *   `--run` (named run authority) — exempts the call.
+ *   `stop`, `collect`. Explicit targeting — `--claim-capability` (claim authority)
+ *   or `--run-capability` (orchestrator authority) — exempts the call.
  */
 export function rundown(args: string[], cwd: string, execOptions: RundownExecOptions = {}): string {
   const delegateValidation = delegateClaimIdValidationError(args);
@@ -67,8 +67,8 @@ export function rundown(args: string[], cwd: string, execOptions: RundownExecOpt
   // it refuses ambient direct-CLI trust on every delegation-exposed run — so
   // this withhold only stops a bare mutation from silently consuming the
   // standalone-run convenience lane, and keeps the refusal front-end-rendered.
-  // Explicitly-targeted mutations — `--claim-id` (claim evidence) or `--run`
-  // (named run authority) — and read-only commands pass through. See
+  // Explicitly-targeted mutations — `--claim-capability` (claim authority) or
+  // `--run-capability` (orchestrator authority) — and read-only commands pass through. See
   // subprocess-mutation-boundary.ts.
   const withheld = bareRoleSpecificMutation(args);
   if (withheld !== undefined) {

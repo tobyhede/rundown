@@ -56,8 +56,8 @@ describe('delegated runbook claim guidance', () => {
 
     for (const claim of claimSections) {
       expect(claim).not.toBe('');
-      expect(claim).toContain('rundown pass --claim-id <claim_id>');
-      expect(claim).toContain('rundown fail --claim-id <claim_id>');
+      expect(claim).toContain('rundown pass --claim-capability <claim_capability>');
+      expect(claim).toContain('rundown fail --claim-capability <claim_capability>');
       expect(claim).not.toMatch(/rundown pass\s+(?:#|$)/m);
       expect(claim).not.toMatch(/rundown fail\s+(?:#|$)/m);
     }
@@ -71,8 +71,8 @@ describe('delegated runbook claim guidance', () => {
       expect(claim).toContain(`rundown ${command}`);
     }
     expect(claim).toContain('ACTOR_CONTEXT_REQUIRED');
-    expect(claim).toContain('--run <rd_…>');
-    expect(claim).toContain('--claim-id <claim_id>');
+    expect(claim).toContain('--run-capability <run_capability>');
+    expect(claim).toContain('--claim-capability <claim_capability>');
   });
 
   it('keeps delegation idempotency examples aligned with delegate output and retry forms', () => {
@@ -84,6 +84,6 @@ describe('delegated runbook claim guidance', () => {
     expect(delegate).not.toBe('');
     expect(delegate).toContain('action: "already-delegated"');
     expect(delegate).not.toContain('command: "already-delegated"');
-    expect(delegate).toContain('rundown delegate --retry --run <rd_…>');
+    expect(delegate).toContain('rundown delegate --retry --run-capability <run_capability>');
   });
 });

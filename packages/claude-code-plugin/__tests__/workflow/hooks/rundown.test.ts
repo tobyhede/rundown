@@ -37,13 +37,13 @@ describe('setExecSync', () => {
     const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
-    // Claim-evidence form: carries independent claim evidence, so it survives the
-    // subprocess trust boundary and is spawned normally.
-    rundown(['pass', '--claim-id', 'abc123'], '/project/path');
+    // Claim-capability form: carries independent claim authority, so it survives
+    // the subprocess trust boundary and is spawned normally.
+    rundown(['pass', '--claim-capability', 'rdcc_claim_abc123'], '/project/path');
 
     expect(mockExec).toHaveBeenCalledWith(
       'node',
-      [expect.stringContaining('cli'), 'pass', '--claim-id', 'abc123'],
+      [expect.stringContaining('cli'), 'pass', '--claim-capability', 'rdcc_claim_abc123'],
       expect.objectContaining({
         cwd: '/project/path',
         stdio: 'pipe',
@@ -112,11 +112,21 @@ describe('rundown', () => {
     const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
-    rundown(['fail', '--claim-id', 'abc-123', '--reason', 'Task incomplete'], '/test');
+    rundown(
+      ['fail', '--claim-capability', 'rdcc_claim_abc123', '--reason', 'Task incomplete'],
+      '/test',
+    );
 
     expect(mockExec).toHaveBeenCalledWith(
       'node',
-      [expect.any(String), 'fail', '--claim-id', 'abc-123', '--reason', 'Task incomplete'],
+      [
+        expect.any(String),
+        'fail',
+        '--claim-capability',
+        'rdcc_claim_abc123',
+        '--reason',
+        'Task incomplete',
+      ],
       expect.any(Object),
     );
   });
@@ -161,9 +171,9 @@ describe('rundown', () => {
     });
 
     it.each([
-      [['yes', '--claim-id', 'claim-1']],
-      [['no', '--claim-id=claim-1']],
-    ])('spawns the claim-evidence alias mutation %j', (args) => {
+      [['yes', '--claim-capability', 'rdcc_claim_1']],
+      [['no', '--claim-capability=rdcc_claim_1']],
+    ])('spawns the claim-capability alias mutation %j', (args) => {
       const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
 
@@ -176,10 +186,10 @@ describe('rundown', () => {
     });
 
     it.each([
-      [['pass', '--claim-id', 'claim-1']],
-      [['fail', '--claim-id=claim-1']],
-      [['collect', '--claim-id', 'claim-1']],
-    ])('spawns the claim-evidence mutation %j', (args) => {
+      [['pass', '--claim-capability', 'rdcc_claim_1']],
+      [['fail', '--claim-capability=rdcc_claim_1']],
+      [['collect', '--claim-capability', 'rdcc_claim_1']],
+    ])('spawns the claim-capability mutation %j', (args) => {
       const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
 
@@ -191,22 +201,38 @@ describe('rundown', () => {
       );
     });
 
+    it('allows subprocess mutations with capability flags', () => {
+      const mockExec = mockExecFileSync('{}\n');
+      setExecSync(mockExec);
+
+      rundown(
+        [
+          'pass',
+          '--run-capability',
+          'rdrc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
+        '/tmp/project',
+      );
+
+      expect(mockExec).toHaveBeenCalled();
+    });
+
     it('withholds delegate when a claim-looking token is an input-file value', () => {
       const mockExec = mockExecFileSync('should not run');
       setExecSync(mockExec);
 
       expect(() =>
-        rundown(['delegate', 'child.md', '--input-file', '--claim-id=foo'], '/test'),
-      ).toThrow(/does not accept --claim-id/);
+        rundown(['delegate', 'child.md', '--input-file', '--claim-capability=foo'], '/test'),
+      ).toThrow(/does not accept claim authority/);
       expect(mockExec).not.toHaveBeenCalled();
     });
 
-    it('rejects delegate --claim-id before spawning the CLI', () => {
+    it('rejects delegate --claim-capability before spawning the CLI', () => {
       const mockExec = mockExecFileSync('should not run');
       setExecSync(mockExec);
 
-      expect(() => rundown(['delegate', '--claim-id=foo'], '/test')).toThrow(
-        /does not accept --claim-id/,
+      expect(() => rundown(['delegate', '--claim-capability=foo'], '/test')).toThrow(
+        /does not accept claim authority/,
       );
       expect(mockExec).not.toHaveBeenCalled();
     });
