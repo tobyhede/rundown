@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { EventEmitter } from 'node:events';
 import { dirname } from 'node:path';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
@@ -664,6 +665,54 @@ describe('SeatbeltSandbox', () => {
           }),
         }),
       );
+    });
+
+    it('pipes sandboxed command stdout and stderr to stderr when commandOutput is stderr', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const sandbox = new SeatbeltSandbox();
+      const closeCallbacks: Array<() => void> = [];
+      const mockChild = {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            closeCallbacks.push(() => callback(0));
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+      const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+      try {
+        const promise = sandbox.execute('echo hi', {
+          ...mockOptions,
+          commandOutput: 'stderr',
+        });
+
+        mockChild.stdout.emit('data', 'sandbox-out');
+        mockChild.stderr.emit('data', 'sandbox-err');
+        for (const close of closeCallbacks) close();
+
+        await expect(promise).resolves.toMatchObject({ success: true });
+        expect(spawn).toHaveBeenCalledWith(
+          '/usr/bin/sandbox-exec',
+          expect.any(Array),
+          expect.objectContaining({ stdio: ['inherit', 'pipe', 'pipe'] }),
+        );
+        expect(stderrWrite).toHaveBeenCalledWith('sandbox-out');
+        expect(stderrWrite).toHaveBeenCalledWith('sandbox-err');
+      } finally {
+        stderrWrite.mockRestore();
+      }
     });
 
     it('writes explicit deny rules into the generated profile', async () => {

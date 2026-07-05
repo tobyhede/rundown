@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { LandlockSandbox } from '../../src/sandbox/linux.js';
+import { LandlockSandbox, type LandlockSandboxOptions } from '../../src/sandbox/linux.js';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-helper.mjs', import.meta.url));
@@ -187,4 +189,46 @@ describe('LandlockSandbox.execute applied path', () => {
     // Let any late pipe 'error' surface before the test ends.
     await new Promise((res) => setTimeout(res, 250));
   }, 10000);
+
+  it('uses fd 1 and fd 2 pipes for stderr command output while preserving fd 3 and fd 4 protocol pipes', async () => {
+    let capturedStdio: unknown;
+    const child = new EventEmitter() as EventEmitter & {
+      stdio: Array<unknown>;
+      unref: jest.Mock;
+    };
+    child.stdio = [
+      null,
+      Object.assign(new EventEmitter(), { destroy: jest.fn() }),
+      Object.assign(new EventEmitter(), { destroy: jest.fn() }),
+      Object.assign(new EventEmitter(), { write: jest.fn(), end: jest.fn(), destroy: jest.fn() }),
+      Object.assign(new EventEmitter(), { setEncoding: jest.fn(), destroy: jest.fn() }),
+    ];
+    child.unref = jest.fn();
+
+    const spawnMock = jest.fn((_command: string, _args: string[], options: SpawnOptions) => {
+      capturedStdio = options.stdio;
+      process.nextTick(() => {
+        (child.stdio[4] as EventEmitter).emit(
+          'data',
+          '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}\n',
+        );
+        child.emit('close', 0);
+      });
+      return child as unknown as ChildProcess;
+    });
+
+    const sandbox = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      spawn: spawnMock as unknown as LandlockSandboxOptions['spawn'],
+    });
+
+    const result = await sandbox.execute('printf linux-out', {
+      ...base,
+      commandOutput: 'stderr',
+    });
+
+    expect(result.success).toBe(true);
+    expect(capturedStdio).toEqual(['inherit', 'pipe', 'pipe', 'pipe', 'pipe']);
+  });
 });

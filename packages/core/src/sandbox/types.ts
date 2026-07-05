@@ -8,6 +8,8 @@
  * @module
  */
 
+import type { CommandOutputStreamPolicy } from '../runbook/command-stream-policy.js';
+
 /**
  * Network access posture for OS-sandboxed commands.
  */
@@ -50,6 +52,9 @@ export interface SandboxOptions {
 
   /** Network access posture for this sandboxed execution */
   network: SandboxNetworkPolicy;
+
+  /** Runtime-only routing for command stdout/stderr. */
+  commandOutput?: CommandOutputStreamPolicy;
 
   /** Whether to allow execution without sandbox if unavailable */
   allowUnsandboxed?: boolean;

@@ -13,6 +13,10 @@ import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { isError } from '../errors.js';
+import {
+  pipeCommandOutputToStderr,
+  stdioForCommandOutput,
+} from '../runbook/command-stream-policy.js';
 import { collectAncestorPaths } from './path-utils.js';
 import type {
   SandboxOptions,
@@ -446,9 +450,10 @@ export class SeatbeltSandbox implements SandboxImplementation {
 
       const child = spawn('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/sh', '-c', command], {
         cwd: options.cwd,
-        stdio: 'inherit',
+        stdio: stdioForCommandOutput(options.commandOutput),
         env: enhancedEnv,
       });
+      pipeCommandOutputToStderr(child, options.commandOutput);
 
       child.on('close', (code) => {
         // Exit code 1 with sandbox-exec can mean sandbox violation

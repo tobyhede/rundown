@@ -10,7 +10,7 @@
  * @module
  */
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import { existsSync } from 'node:fs';
@@ -68,6 +68,8 @@ export interface LandlockSandboxOptions {
   teardownGraceMs?: number;
   /** Max wait (ms) for confirmed reap before teardown is declared failed; default 5000. */
   teardownReapMs?: number;
+  /** Test seam: child process spawn implementation. */
+  readonly spawn?: typeof nodeSpawn;
 }
 
 /** The JSON spec written to the helper's fd 3. */
@@ -267,6 +269,7 @@ export class LandlockSandbox implements SandboxImplementation {
   private readonly extraStdioFd?: number;
   private readonly teardownGraceMs: number;
   private readonly teardownReapMs: number;
+  private readonly spawn: typeof nodeSpawn;
 
   /**
    * Construct a LandlockSandbox.
@@ -279,7 +282,7 @@ export class LandlockSandbox implements SandboxImplementation {
    *   `extraStdioFd` appends an extra inherited stdio fd (fd 5) to the
    *   helper spawn; `teardownGraceMs` / `teardownReapMs` override the
    *   SIGTERM→SIGKILL grace and the confirmed-reap window used by
-   *   `terminateGroup`.
+   *   `terminateGroup`; `spawn` overrides child process creation for tests.
    */
   constructor(opts: LandlockSandboxOptions = {}) {
     const distRoot = opts.distRoot ?? defaultDistRoot();
@@ -290,6 +293,7 @@ export class LandlockSandbox implements SandboxImplementation {
     this.extraStdioFd = opts.extraStdioFd;
     this.teardownGraceMs = opts.teardownGraceMs ?? 1000;
     this.teardownReapMs = opts.teardownReapMs ?? 5000;
+    this.spawn = opts.spawn ?? nodeSpawn;
   }
 
   /**
@@ -478,19 +482,21 @@ export class LandlockSandbox implements SandboxImplementation {
       };
       const spec = buildSpec(command, options);
 
-      // fds 0/1/2 inherited; fd 3 = spec-in; fd 4 = status-out; detached so the
-      // helper leads its own process group (see terminateGroup, Task 19).
+      // fd 0 is inherited; fds 1/2 are command output streams; fd 3 = spec-in;
+      // fd 4 = status-out; detached so the helper leads its own process group
+      // (see terminateGroup, Task 19).
+      const commandOutput = options.commandOutput === 'stderr' ? 'pipe' : 'inherit';
       const stdio: Array<'inherit' | 'pipe' | number> = [
         'inherit',
-        'inherit',
-        'inherit',
+        commandOutput,
+        commandOutput,
         'pipe',
         'pipe',
       ];
       if (this.extraStdioFd !== undefined) {
         stdio.push(this.extraStdioFd); // fd 5 for tests
       }
-      const child = spawn(this.helperPath!, [], {
+      const child = this.spawn(this.helperPath!, [], {
         cwd: options.cwd,
         env,
         stdio,
@@ -504,6 +510,17 @@ export class LandlockSandbox implements SandboxImplementation {
 
       const specPipe = child.stdio[3] as Writable;
       const statusPipe = child.stdio[4] as Readable;
+      const commandStdout = child.stdio[1] as Readable | null;
+      const commandStderr = child.stdio[2] as Readable | null;
+
+      if (options.commandOutput === 'stderr') {
+        commandStdout?.on('data', (chunk: Buffer | string) => {
+          process.stderr.write(chunk);
+        });
+        commandStderr?.on('data', (chunk: Buffer | string) => {
+          process.stderr.write(chunk);
+        });
+      }
 
       // A helper that dies (or is torn down by terminateGroup) with fd-3/fd-4
       // data in flight surfaces EPIPE/ECONNRESET on these streams. A stream
@@ -535,6 +552,8 @@ export class LandlockSandbox implements SandboxImplementation {
         // handle so a helper that outlives the decision (e.g. an unkillable
         // group whose reap was not confirmed) cannot keep the event loop
         // alive through leaked stdio or process handles.
+        commandStdout?.destroy();
+        commandStderr?.destroy();
         specPipe.destroy();
         statusPipe.destroy();
         child.unref();

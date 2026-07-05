@@ -271,6 +271,7 @@ export async function executeCommandWithPolicy(
         extraReadWritePaths: extractRundownSandboxWritePaths(rdInjected),
       });
       sandboxOptions.env = finalEnv;
+      sandboxOptions.commandOutput = streamOptions.commandOutput;
 
       const result = await executeWithSandbox(command, sandboxOptions);
       return {
