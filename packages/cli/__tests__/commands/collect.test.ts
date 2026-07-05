@@ -21,6 +21,7 @@ import { registerCollectCommand } from '../../src/commands/collect.js';
 import {
   createTestWorkspace,
   createRunbook,
+  runCli,
   runCliInProcess,
   getActiveState,
   withRunTarget,
@@ -996,6 +997,95 @@ describe('collect command', () => {
       ) as Record<string, unknown>;
       expect(collectedParent.step).toBe('2');
     }, 20_000);
+
+    it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
+      const parent = [
+        '# Parent',
+        '',
+        '## 1. Fan-out',
+        '',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Child',
+        '',
+        '- DELEGATE',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Emits bytes',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        '```bash',
+        "node -e \"process.stdout.write(Buffer.from('434f4d4d414e445f5354444f55540a', 'hex').toString()); process.stderr.write(Buffer.from('434f4d4d414e445f5354444552520a', 'hex').toString())\"",
+        '```',
+        '',
+      ].join('\n');
+
+      const child = ['# Child', '', '## 1. Done', '', '- PASS COMPLETE', '', 'Done.', ''].join(
+        '\n',
+      );
+
+      await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), parent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), child);
+
+      const start = runCli('run parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const started = parseConcatenatedJson(start.stdout).find(
+        (event): event is Record<string, unknown> =>
+          typeof event === 'object' && event !== null && event.type === 'runbook_started',
+      );
+      const runId = String(started?.runbookId);
+      expect(runId).toMatch(/^rd_/);
+
+      type FrontierEntry = { token: string };
+      type StepEnteredEvent = {
+        type?: string;
+        delegateFrontier?: FrontierEntry[];
+      };
+
+      function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+        for (const ev of events) {
+          if (Array.isArray(ev)) {
+            const nested = findFrontierInEvents(ev);
+            if (nested) return nested;
+          } else if (ev && typeof ev === 'object') {
+            const e = ev as StepEnteredEvent;
+            if (e.type === 'step_entered' && e.delegateFrontier) {
+              return e.delegateFrontier;
+            }
+          }
+        }
+        return undefined;
+      }
+
+      const token = String(findFrontierInEvents(parseConcatenatedJson(start.stdout))?.[0]?.token);
+      expect(token).toMatch(/^rdtk_/);
+
+      const claim = runCli(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)?.claim_id);
+      expect(claimId).toMatch(/^rdclm_/);
+
+      const passed = runCli(`pass --claim-id ${claimId}`, workspace);
+      expect(passed.exitCode).toBe(0);
+
+      const collected = runCli(`collect --run ${runId}`, workspace);
+      expect(collected.exitCode).toBe(0);
+      expect(collected.stdout).not.toContain('COMMAND_STDOUT');
+      expect(collected.stdout).not.toContain('COMMAND_STDERR');
+      expect(collected.stderr).toContain('COMMAND_STDOUT');
+      expect(collected.stderr).toContain('COMMAND_STDERR');
+
+      const objects = parseConcatenatedJson(collected.stdout);
+      expect(objects.at(-1)).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+      });
+    });
   });
 
   describe('error cases', () => {
