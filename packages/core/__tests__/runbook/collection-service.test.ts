@@ -925,6 +925,35 @@ describe('RunbookCollectionService', () => {
     });
   });
 
+  it('does not report delegated fail for policy-denied terminal children', async () => {
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('stopped', 'fail', {
+      parentLinkage: delegationLinkage,
+      lastAction: {
+        type: 'POLICY_DENIED',
+        origin: 'direct',
+        message: 'blocked by policy',
+      },
+    });
+
+    const recorded = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(recorded).toMatchObject({
+      kind: 'collection_applied',
+      reportedTerminalOutcome: false,
+    });
+    const expectedKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1.1');
+    await expect(
+      lifecycleService.getResolvedCompletion(ancestorRunId, expectedKey),
+    ).resolves.toBeNull();
+  });
+
   it('reports reportedTerminalOutcome:false for a terminal ROOT run (no parentLinkage)', async () => {
     const { controlled } = await seedTerminalControlled('completed', 'pass');
 

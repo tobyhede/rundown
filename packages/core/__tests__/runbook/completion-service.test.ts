@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   assertDelegationTokenHash,
   lifecycleToDelegationOutcome,
+  projectDelegationTerminalOutcome,
   RunbookActorService,
   RunbookCompletionService,
   RunbookStateManager,
@@ -109,6 +110,80 @@ describe('RunbookCompletionService', () => {
     ['running', undefined],
   ] as const)('maps lifecycle %s to delegation outcome %s', (lifecycle, expectedOutcome) => {
     expect(lifecycleToDelegationOutcome(lifecycle)).toBe(expectedOutcome);
+  });
+
+  describe('projectDelegationTerminalOutcome', () => {
+    it('projects completed children as delegated pass', () => {
+      expect(projectDelegationTerminalOutcome(state({ lifecycle: 'completed' }))).toEqual({
+        kind: 'outcome',
+        result: 'pass',
+      });
+    });
+
+    it('projects ordinary stopped children as delegated fail', () => {
+      expect(
+        projectDelegationTerminalOutcome(
+          state({
+            lifecycle: 'stopped',
+            lastAction: { type: 'STOP', origin: 'direct' },
+          }),
+        ),
+      ).toEqual({ kind: 'outcome', result: 'fail' });
+    });
+
+    it('does not project POLICY_DENIED as delegated fail', () => {
+      expect(
+        projectDelegationTerminalOutcome(
+          state({
+            lifecycle: 'stopped',
+            lastAction: {
+              type: 'POLICY_DENIED',
+              origin: 'direct',
+              message: 'blocked by policy',
+            },
+          }),
+        ),
+      ).toEqual({
+        kind: 'command_infrastructure',
+        reason: 'policy_denied',
+        message: 'blocked by policy',
+      });
+    });
+
+    it('does not project COMMAND_EXECUTION_FAILED as delegated fail', () => {
+      expect(
+        projectDelegationTerminalOutcome(
+          state({
+            lifecycle: 'stopped',
+            lastAction: {
+              type: 'COMMAND_EXECUTION_FAILED',
+              origin: 'direct',
+              message: 'Timeout of 30000 ms exceeded',
+            },
+          }),
+        ),
+      ).toEqual({
+        kind: 'command_infrastructure',
+        reason: 'command_execution_failed',
+        message: 'Timeout of 30000 ms exceeded',
+      });
+    });
+
+    it('lets explicit operator results override infrastructure projection', () => {
+      expect(
+        projectDelegationTerminalOutcome(
+          state({
+            lifecycle: 'stopped',
+            lastAction: {
+              type: 'POLICY_DENIED',
+              origin: 'direct',
+              message: 'blocked by policy',
+            },
+          }),
+          'fail',
+        ),
+      ).toEqual({ kind: 'outcome', result: 'fail' });
+    });
   });
 
   it('records non-active manual completions with sentinel entry and exact/sentinel duplicate detection', async () => {
@@ -1413,6 +1488,75 @@ describe('RunbookCompletionService', () => {
         expect.objectContaining({
           substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'fail' })],
         }),
+      );
+    });
+
+    it('does not record delegated fail for an inferred policy-denied terminal child', async () => {
+      const parent = makeParentWithDelegation();
+      await manager.save(parent);
+      const child = makeChildWithDelegationLinkage();
+
+      const result = await service.recordChildCompletion({
+        childState: {
+          ...child,
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'POLICY_DENIED',
+            origin: 'direct',
+            message: 'blocked by policy',
+          },
+        },
+      });
+
+      expect(result).toBe('blocked');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toBeNull();
+    });
+
+    it('does not record delegated fail for an inferred command execution failure child', async () => {
+      const parent = makeParentWithDelegation();
+      await manager.save(parent);
+      const child = makeChildWithDelegationLinkage();
+
+      const result = await service.recordChildCompletion({
+        childState: {
+          ...child,
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'COMMAND_EXECUTION_FAILED',
+            origin: 'direct',
+            message: 'Timeout of 30000 ms exceeded',
+          },
+        },
+      });
+
+      expect(result).toBe('blocked');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toBeNull();
+    });
+
+    it('still records explicit fail for policy-denied children when a caller forces fail', async () => {
+      const parent = makeParentWithDelegation();
+      await manager.save(parent);
+      const child = makeChildWithDelegationLinkage();
+
+      const result = await service.recordChildCompletion({
+        childState: {
+          ...child,
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'POLICY_DENIED',
+            origin: 'direct',
+            message: 'blocked by policy',
+          },
+        },
+        result: 'fail',
+      });
+
+      expect(result).toBe('recorded');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
+        expect.objectContaining({ result: 'fail', agentId: 'delegation' }),
       );
     });
 
