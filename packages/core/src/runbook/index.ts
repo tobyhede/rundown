@@ -137,6 +137,7 @@ export {
   RunbookCompletionService,
   brandCurrentCursorResolvedCompletionForTest,
   lifecycleToDelegationOutcome,
+  projectDelegationTerminalOutcome,
   // Deprecated alias kept on the public surface for callers still on generic
   // result terminology; the re-export itself must not trip no-deprecated.
   // eslint-disable-next-line @typescript-eslint/no-deprecated
@@ -144,6 +145,7 @@ export {
   type AppliedResolvedCompletion,
   type CompletionTargetMismatch,
   type CurrentCursorResolvedCompletion,
+  type DelegationTerminalProjection,
   type DrainResolvedCompletionsArgs,
   type DrainResolvedCompletionsResult,
   type RecordChildCompletionArgs,
@@ -163,6 +165,7 @@ export {
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
   type FindDelegationByToken,
+  type ForceAbortLinkedChildCleanupResult,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
   type LifecycleNavigationOutcome,

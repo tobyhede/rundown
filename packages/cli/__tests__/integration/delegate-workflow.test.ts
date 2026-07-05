@@ -1521,10 +1521,9 @@ describe('DELEGATE re-entry and retry', () => {
     await workspace.cleanup();
     workspace = await createTestWorkspace();
 
-    // State 3: PASSED but still linked. Claim ss1 + pass. The propagated
-    // result is present, but childRunId remains linked until collection/abort
-    // clears the ownership path, so retry must refuse rather than discard the
-    // recorded result.
+    // State 3: PASSED but still linked. Claim ss1 + pass. The child is terminal,
+    // so retry supersedes the stale outcome and mints a fresh token without
+    // deleting the child diagnostic state.
     {
       const { parentRunId, token1 } = await setupRetryParent();
       let r = await runCliInProcess(`claim ${token1}`, workspace);
@@ -1550,10 +1549,10 @@ describe('DELEGATE re-entry and retry', () => {
         await withRunTarget(['delegate', '--retry', token1], workspace),
         workspace,
       );
-      expect(retry.exitCode).not.toBe(0);
-      const out = parseCliJsonObject(retry.stdout || retry.stderr);
-      expect(out).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-823' }));
-      expect(JSON.stringify(out)).toContain(String(childRunId));
+      expect(retry.exitCode).toBe(0);
+      const out = parseCliJsonObject(retry.stdout);
+      expect(out).toEqual(expect.objectContaining({ kind: 'delegate', action: 'retried' }));
+      expect(String(out.token)).toMatch(/^rdtk_/);
 
       const postState = await readRunbookState(workspace, parentRunId);
       const postSubsteps = postState?.substepStates as Array<Record<string, unknown>> | undefined;
@@ -1561,8 +1560,8 @@ describe('DELEGATE re-entry and retry', () => {
         string,
         unknown
       >;
-      expect(postDel.tokenHash).toBe(priorHash);
-      expect(postDel.childRunId).toBe(childRunId);
+      expect(postDel.tokenHash).not.toBe(priorHash);
+      expect(postDel.childRunId).toBeNull();
     }
   }, 60_000);
 

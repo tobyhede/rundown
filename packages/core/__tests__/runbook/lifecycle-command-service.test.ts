@@ -144,6 +144,9 @@ describe('RunbookLifecycleCommandService', () => {
       lifecycleService,
       completionService,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
       loadSteps: (state) => {
         loadStepsArgs.push(state);
         return loadStepsImpl(state);
@@ -224,6 +227,9 @@ describe('RunbookLifecycleCommandService', () => {
       lifecycleService,
       completionService,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
       loadSteps: () => steps,
       // Resolve by name so a positional naming a *different* runbook produces a
       // distinct ref (drives the RD-822 mismatch path).
@@ -831,6 +837,177 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
     });
 
+    it('retries a linked terminal child without allowing the stale child to re-report', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const keyForSubstep = (substepId: string) =>
+        buildCompletionKey(activeFrame(buildFrameKey('1'), 1), substepId);
+      const childRunId = assertRunId('rd_33333333333333333333333333333333');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.token === first.token
+            ? {
+                ...entry,
+                status: 'done',
+                result: 'fail',
+                delegation: { ...entry.delegation, token: undefined, childRunId },
+              }
+            : entry,
+        ),
+      }));
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'completed',
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: state.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(first.tokenHash),
+          },
+        }),
+      );
+      const parentWithLinkedChild = await mgr.load(state.id);
+      if (!parentWithLinkedChild) throw new Error('expected persisted parent');
+      await mgr.save({
+        ...parentWithLinkedChild,
+        resolvedCompletions: {
+          [keyForSubstep('1')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+          [keyForSubstep('2')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+        },
+      });
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(retried.kind).toBe('retried');
+      expect(releaseSpy).toHaveBeenCalledWith(childRunId);
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((s) => s.id === '1');
+      expect(entry?.delegation?.childRunId).toBeNull();
+      expect(entry?.delegation?.tokenHash).not.toBe(first.tokenHash);
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
+      ).resolves.toBeNull();
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('2')),
+      ).resolves.not.toBeNull();
+
+      const terminalChild = await mgr.load(childRunId);
+      if (!terminalChild) throw new Error('expected terminal child to remain for diagnostics');
+      await expect(
+        deps.completionService.recordChildCompletion({ childState: terminalChild }),
+      ).resolves.toBe('not-applicable');
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
+      ).resolves.toBeNull();
+    });
+
+    it('continues to refuse retry over a running linked child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const childRunId = assertRunId('rd_44444444444444444444444444444444');
+      deps.delegationLock = {
+        acquire: async () => {
+          await mgr.updateWithState(state.id, (current) => ({
+            substepStates: (current.substepStates ?? []).map((entry) =>
+              entry.delegation?.token === first.token
+                ? {
+                    ...entry,
+                    delegation: { ...entry.delegation, token: undefined, childRunId },
+                  }
+                : entry,
+            ),
+          }));
+          await mgr.save(baseState({ id: childRunId, lifecycle: 'running' }));
+        },
+        release: async () => {},
+      };
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-823');
+    });
+
+    it('continues to refuse retry when the linked child state is missing', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const childRunId = assertRunId('rd_55555555555555555555555555555555');
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+      deps.delegationLock = {
+        acquire: async () => {
+          await mgr.updateWithState(state.id, (current) => ({
+            substepStates: (current.substepStates ?? []).map((entry) =>
+              entry.delegation?.token === first.token
+                ? {
+                    ...entry,
+                    delegation: { ...entry.delegation, token: undefined, childRunId },
+                  }
+                : entry,
+            ),
+          }));
+        },
+        release: async () => {},
+      };
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-823');
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((substep) => substep.id === '1');
+      expect(entry?.delegation?.childRunId).toBe(childRunId);
+      expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+      expect(releaseSpy).not.toHaveBeenCalledWith(childRunId);
+    });
+
     it('preserves the FOR iteration in the active retry label', async () => {
       const { seam: localSeam } = await startSeamOnActiveForIterationSubstep();
       const first = await localSeam.issueDelegation({
@@ -1294,6 +1471,101 @@ describe('RunbookLifecycleCommandService', () => {
       const after = await mgr.load(state.id);
       expect(after?.resolvedCompletions?.[key]).toBeUndefined();
       expect(Object.keys(after?.resolvedCompletions ?? {})).toHaveLength(0);
+    });
+  });
+
+  describe('cleanupForceAbortedLinkedChild', () => {
+    it('force-abort cleanup records explicit fail for running linked child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0a0000000000000000000000000000');
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: linkageFor(state.id, '1'),
+        }),
+      );
+      const deleteSpy = jest.spyOn(deps, 'deleteRun');
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey: buildFrameKey('1'),
+        substepId: '1',
+      });
+
+      expect(result).toEqual({ kind: 'active_child_failed', childRunId });
+      expect(deleteSpy).toHaveBeenCalledWith(childRunId);
+    });
+
+    it('force-abort cleanup supersedes terminal linked child outcome without deleting diagnostics', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0b0000000000000000000000000000');
+      const frameKey = buildFrameKey('1');
+      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'stopped',
+          parentLinkage: linkageFor(state.id, '1'),
+        }),
+      );
+      const persisted = await mgr.load(state.id);
+      if (!persisted) throw new Error('expected persisted state');
+      await mgr.save({
+        ...persisted,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+          }),
+        },
+      });
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey,
+        substepId: '1',
+      });
+
+      expect(result).toEqual({ kind: 'terminal_child_cleaned', childRunId });
+      await expect(mgr.load(childRunId)).resolves.not.toBeNull();
+      await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
+    });
+
+    it('force-abort cleanup supersedes stale outcome for missing linked child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0c0000000000000000000000000000');
+      const frameKey = buildFrameKey('1');
+      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      const persisted = await mgr.load(state.id);
+      if (!persisted) throw new Error('expected persisted state');
+      await mgr.save({
+        ...persisted,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+          }),
+        },
+      });
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey,
+        substepId: '1',
+      });
+
+      expect(result).toEqual({ kind: 'missing_child_cleaned', childRunId });
+      await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
     });
   });
 
@@ -2266,6 +2538,9 @@ describe('RunbookLifecycleCommandService', () => {
         lifecycleService,
         completionService,
         loadRun: async (id) => (await manager.load(id)) ?? undefined,
+        deleteRun: async (id) => {
+          await manager.delete(id);
+        },
         loadSteps: () => steps,
         resolveChildRunbook: async () => undefined,
         persistIssuedSubstep: async () => {},

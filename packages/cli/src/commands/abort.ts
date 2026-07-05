@@ -1,9 +1,5 @@
 import type { Command } from 'commander';
 import {
-  RunbookStateManager,
-  SessionService,
-  ExecutionLifecycleService,
-  RunbookCompletionService,
   DelegationScanService,
   DelegationLock,
   abortDelegation,
@@ -11,17 +7,12 @@ import {
   isDelegationToken,
   truncateDelegationToken,
   Errors,
-  activeFrame,
-  buildCompletionKey,
-  deriveActiveFrame,
-  exactFrame,
-  inactiveFrame,
   type RunId,
   type RunbookState,
-  type FrameKey,
+  type ForceAbortLinkedChildCleanupResult,
 } from '@rundown-org/core';
-import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { getCwd } from '../helpers/context.js';
+import { buildNonDelegatingLifecycleSeam } from '../helpers/lifecycle-seam-factory.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
@@ -34,15 +25,13 @@ import { OutputEmitter } from '../services/output-emitter.js';
  *  2. Scan state for matching token hash
  *  3. Acquire delegation lock
  *  4. Re-load parent state under lock
- *  5. Check if already resolved
- *  6. Call `abortDelegation()` pure function
- *  7. Handle early-exit results (already_cancelled, needs_force)
- *  8. Persist updated parent state
- *  9. If force + childRunId: stop child run and record fail completion
- * 10. Release lock
- * 11. Report-only (Plan 5): the fail outcome recorded in step 9 already leaves
- *     the delegating run collection pending — no drain/apply/cascade here
- * 12. Output result
+ *  5. Call `abortDelegation()` pure function
+ *  6. Handle early-exit results (already_cancelled, needs_force)
+ *  7. Persist updated parent state
+ *  8. If force + childRunId: clean up through the lifecycle command seam
+ *  9. Release lock
+ * 10. Report-only: no drain/apply/cascade here
+ * 11. Output result
  *
  * @module commands/abort
  */
@@ -67,7 +56,7 @@ export function registerAbortCommand(program: Command): void {
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'abort' });
           const cwd = getCwd();
-          const manager = new RunbookStateManager(cwd);
+          const { manager, seam: lifecycleCommandService } = buildNonDelegatingLifecycleSeam(cwd);
           const hint = truncateDelegationToken(token);
 
           // 1. Validate token format
@@ -98,43 +87,7 @@ export function registerAbortCommand(program: Command): void {
           let freshParent: RunbookState | null = null;
           let childRunId: RunId | null = null;
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
-
-          /**
-           * Check whether a resolved completion exists for a substep in a given frame.
-           *
-           * Checks both the exact entry key and the sentinel key so completions
-           * recorded against non-active frames (which always use SENTINEL_ENTRY)
-           * are found correctly.
-           *
-           * @param lifecycleService - Lifecycle service for completion lookup
-           * @param runbookId - Parent runbook ID
-           * @param state - Current parent runbook state
-           * @param frameKey - FOR-frame key to check
-           * @param substepId - Substep identifier to check
-           * @returns True if a resolved completion exists under either key
-           */
-          async function hasResolvedCompletion(
-            lifecycleService: ExecutionLifecycleService,
-            runbookId: string,
-            state: RunbookState,
-            frameKey: FrameKey,
-            substepId: string,
-          ): Promise<boolean> {
-            const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-            const isActiveFrame = activeFrameKey === frameKey;
-            const entry = isActiveFrame
-              ? (state.activeEntry ?? 1)
-              : (state.frameEntryCounts?.[frameKey] ?? 1);
-            const exactFrameTarget = isActiveFrame
-              ? activeFrame(frameKey, entry)
-              : exactFrame(frameKey, entry);
-            const exactKey = buildCompletionKey(exactFrameTarget, substepId);
-            const sentinelKey = buildCompletionKey(inactiveFrame(frameKey), substepId);
-            return (
-              !!(await lifecycleService.getResolvedCompletion(runbookId, exactKey)) ||
-              !!(await lifecycleService.getResolvedCompletion(runbookId, sentinelKey))
-            );
-          }
+          let forceCleanupResult: ForceAbortLinkedChildCleanupResult = { kind: 'none' };
 
           {
             // 4. Re-load parent state under lock
@@ -156,23 +109,7 @@ export function registerAbortCommand(program: Command): void {
 
             childRunbookPath = freshDelegation.childRunbookPath;
 
-            // 5. Check if already resolved (has resolved completion) when force + claimed
-            if (options.force && freshDelegation.childRunId) {
-              const lifecycleService = new ExecutionLifecycleService(manager);
-              if (
-                await hasResolvedCompletion(
-                  lifecycleService,
-                  freshParent.id,
-                  freshParent,
-                  scanFrameKey,
-                  targetSubstepId,
-                )
-              ) {
-                throw Errors.delegationAlreadyResolved(targetSubstepId);
-              }
-            }
-
-            // 6. Call abortDelegation() pure function (frame-scoped)
+            // 5. Call abortDelegation() pure function (frame-scoped)
             abortResult = abortDelegation({
               parentState: freshParent,
               substepId: targetSubstepId,
@@ -180,7 +117,7 @@ export function registerAbortCommand(program: Command): void {
               frameKey: scanFrameKey,
             });
 
-            // 7. Handle all four variants exhaustively
+            // 6. Handle all four variants exhaustively
             switch (abortResult.status) {
               case 'not_found':
                 // Rethrow so withErrorHandling surfaces the RD-801 envelope —
@@ -212,85 +149,36 @@ export function registerAbortCommand(program: Command): void {
               }
             }
 
-            // 8. Persist updated parent state
+            // 7. Persist updated parent state
             await manager.update(freshParent.id, {
               substepStates: abortResult.updatedSubstepStates,
             });
 
             childRunId = freshDelegation.childRunId ?? null;
 
-            // 9. If force + childRunId: stop child run and record fail completion
+            // 8. If force + childRunId: clean up the linked child through the
+            // core lifecycle seam while this command still holds DelegationLock.
             if (options.force && childRunId) {
-              // Capture child linkage BEFORE deleting child state — we need it
-              // to drive `recordChildCompletionUnlocked` along the child path.
-              const childState = await manager.load(childRunId);
-
-              // Stop child run: delete state, pop session
-              if (childState) {
-                await manager.delete(childRunId);
-                const sessionService = new SessionService(manager);
-                await sessionService.releaseRunbook(childRunId);
-              }
-
-              const lifecycleService = new ExecutionLifecycleService(manager);
-              const completionService = new RunbookCompletionService(
-                manager,
-                lifecycleService,
-                createCliRunbookActorService(manager),
-              );
-
-              // Plan Task 11: when a linked child state exists, route through
-              // the child-recording path so `finalVars`, parentLinkage handling,
-              // and SubstepState `{ status: 'done', result }` propagation all
-              // happen via the same core code as normal child completion. The
-              // unlocked variant is required because `abort.ts` already holds
-              // the parent DelegationLock — calling the locking
-              // `recordChildCompletion` here would deadlock.
-              if (childState?.parentLinkage) {
-                // `ignoreCancellation: true` is required here: step 8 above
-                // persisted `cancelledAt` on the parent substep *as* this
-                // abort's propagation event. Without the override,
-                // `recordChildCompletionUnlocked` would short-circuit to
-                // `'cancelled'` and the parent would never receive FAIL.
-                await completionService.recordChildCompletionUnlocked({
-                  childState,
-                  result: 'fail',
-                  ignoreCancellation: true,
-                });
-              } else {
-                // No linked child state — fall back to the parent-substep
-                // recording helper.
-                const activeFrameKey =
-                  freshParent.activeFrameKey ?? deriveActiveFrame(freshParent).frameKey;
-                const isActiveFrame = activeFrameKey === scanFrameKey;
-                await completionService.recordManualCompletion({
-                  runbookId: freshParent.id,
-                  currentState: freshParent,
-                  targetStep: freshParent.step,
-                  targetSubstep: targetSubstepId,
-                  targetFrame: isActiveFrame
-                    ? activeFrame(scanFrameKey, freshParent.activeEntry ?? 1)
-                    : inactiveFrame(scanFrameKey),
-                  result: 'fail',
-                  agentId: 'delegation',
-                });
-              }
+              forceCleanupResult = await lifecycleCommandService.cleanupForceAbortedLinkedChild({
+                parentState: freshParent,
+                childRunId,
+                frameKey: scanFrameKey,
+                substepId: targetSubstepId,
+              });
             }
           }
 
-          // 10. Release the lock before the output work below.
+          // 9. Release the lock before the output work below.
           //     (The `await using` guard above re-releases idempotently if an
           //     early throw skips this.)
           await _lockGuard.release();
 
-          // 11. Report-only (Plan 5): the FAIL outcome was already recorded onto
-          //     the delegating run inside the lock (step 9, via
-          //     `recordChildCompletionUnlocked` / `recordManualCompletion`). That
-          //     recorded row leaves the delegating run collection pending — its
-          //     orchestrator must run `rd collect`. We do NOT drain, apply, or
-          //     cascade here; force-abort reports and stops.
+          // 10. Report-only: cleanup already happened inside the lock. Active
+          //     children record explicit FAIL; terminal/missing children have
+          //     stale outcome rows superseded. We do NOT drain, apply, or
+          //     cascade here.
 
-          // 12. Output result
+          // 11. Output result
           if (!options.text) {
             output.json({
               kind: 'abort',
@@ -305,8 +193,15 @@ export function registerAbortCommand(program: Command): void {
             });
           } else {
             if (options.force && childRunId) {
-              output.message(`CANCELLED  ${hint} (in-flight, child run stopped)`, 'warning');
-              output.message(`FAILED     step ${targetSubstepId} (delegation cancelled)`, 'error');
+              if (forceCleanupResult.kind === 'active_child_failed') {
+                output.message(`CANCELLED  ${hint} (in-flight, child run stopped)`, 'warning');
+                output.message(
+                  `FAILED     step ${targetSubstepId} (delegation cancelled)`,
+                  'error',
+                );
+              } else {
+                output.message(`CANCELLED  ${hint} (linked child cleaned up)`, 'warning');
+              }
             } else {
               output.message(
                 `CANCELLED  ${hint} (pending delegation to ${childRunbookPath})`,

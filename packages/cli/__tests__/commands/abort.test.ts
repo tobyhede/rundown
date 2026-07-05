@@ -536,6 +536,55 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
     });
 
+    it('renders cleanup-only text when force-aborting an already reported linked child', async () => {
+      const token = await setupDelegation();
+
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      expect(typeof claimOutput?.claim_id).toBe('string');
+
+      const failed = await runCliInProcess(
+        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        workspace,
+      );
+      expect(failed.exitCode).toBe(1);
+
+      const result = await runCliInProcess(`abort ${token} --force --text`, workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('CANCELLED');
+      expect(result.stdout).not.toContain('FAILED     step 1');
+    });
+
+    it('preserves JSON envelope when force-aborting an already reported linked child', async () => {
+      const token = await setupDelegation();
+
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      expect(typeof claimOutput?.claim_id).toBe('string');
+      expect(typeof claimOutput?.run_id).toBe('string');
+      const childRunId = String(claimOutput!.run_id);
+
+      const failed = await runCliInProcess(
+        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        workspace,
+      );
+      expect(failed.exitCode).toBe(1);
+
+      const result = await runCliInProcess(`abort ${token} --force`, workspace);
+      expect(result.exitCode).toBe(0);
+      const output = findActionOutput(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({
+          action: 'abort',
+          status: 'cancelled',
+          force: true,
+          childRunId,
+        }),
+      );
+    });
+
     it('abort preserves parent runbook state', async () => {
       const token = await setupDelegation();
 

@@ -19,6 +19,7 @@ import {
   type Frame,
   type FrameKey,
 } from './targeting.js';
+import { deriveStoppedReason, extractInternalFailureMessage } from './transition-kernel.js';
 import type {
   DelegationOutcome,
   ResolvedCompletion,
@@ -87,6 +88,59 @@ export function lifecycleToDelegationOutcome(
   if (lifecycle === 'completed') return 'pass';
   if (lifecycle === 'stopped') return 'fail';
   return undefined;
+}
+
+/** Projected terminal state for a delegation-linked child run. */
+export type DelegationTerminalProjection =
+  | { readonly kind: 'outcome'; readonly result: DelegationOutcome }
+  | {
+      readonly kind: 'command_infrastructure';
+      readonly reason: 'policy_denied' | 'command_execution_failed';
+      readonly message: string;
+    }
+  | { readonly kind: 'not_terminal' };
+
+/**
+ * Project a child run terminal state into its delegated parent outcome.
+ *
+ * Explicit operator results preserve the authored RESULT semantics. Inferred
+ * reporting distinguishes command infrastructure stops from authored delegated
+ * `fail` so recovery paths can leave the parent unadvanced.
+ *
+ * @param childState - Child run state being reported.
+ * @param explicitResult - Optional explicit operator result to report.
+ * @returns Projection describing the reportable delegated outcome, a blocked
+ *   command-infrastructure terminal, or a non-terminal state.
+ */
+export function projectDelegationTerminalOutcome(
+  childState: RunbookState,
+  explicitResult?: DelegationOutcome,
+): DelegationTerminalProjection {
+  if (explicitResult !== undefined) {
+    return { kind: 'outcome', result: explicitResult };
+  }
+  if (childState.lifecycle === 'completed') {
+    return { kind: 'outcome', result: 'pass' };
+  }
+  if (childState.lifecycle !== 'stopped') {
+    return { kind: 'not_terminal' };
+  }
+
+  const stoppedReason = deriveStoppedReason(childState.lastAction);
+  if (stoppedReason === 'policy_denied' || stoppedReason === 'command_execution_failed') {
+    const message =
+      extractInternalFailureMessage(childState.lastAction) ??
+      (childState.lastAction && 'message' in childState.lastAction
+        ? childState.lastAction.message
+        : stoppedReason);
+    return {
+      kind: 'command_infrastructure',
+      reason: stoppedReason,
+      message,
+    };
+  }
+
+  return { kind: 'outcome', result: 'fail' };
 }
 
 /**
@@ -531,12 +585,14 @@ export class RunbookCompletionService {
    * - `'duplicate'` — an equivalent outcome row already existed; no write.
    * - `'cancelled'` — the parent substep was ordinarily cancelled, so no fail
    *   outcome is written (preserving the cancellation split).
+   * - `'blocked'` — the child stopped for command infrastructure reasons that
+   *   must remain recoverable instead of becoming delegated fail.
    * - `'not-applicable'` — the child carries no parent linkage (or no terminal
    *   result), so there is nothing to report.
    */
   async recordChildCompletion(
     args: RecordChildCompletionArgs,
-  ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled'> {
+  ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked'> {
     const linkage = args.childState.parentLinkage;
     if (!linkage) return 'not-applicable';
     assertCompleteParentLinkage(args.childState);
@@ -561,11 +617,13 @@ export class RunbookCompletionService {
    */
   async recordChildCompletionUnlocked(
     args: RecordChildCompletionArgs,
-  ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled'> {
+  ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked'> {
     if (!args.childState.parentLinkage) return 'not-applicable';
     const linkage = assertCompleteParentLinkage(args.childState);
-    const result = args.result ?? lifecycleToDelegationOutcome(args.childState.lifecycle);
-    if (!result) return 'not-applicable';
+    const projection = projectDelegationTerminalOutcome(args.childState, args.result);
+    if (projection.kind === 'not_terminal') return 'not-applicable';
+    if (projection.kind === 'command_infrastructure') return 'blocked';
+    const result = projection.result;
 
     const parentState = await this.manager.load(linkage.parentRunId);
     if (!parentState) return 'not-applicable';
@@ -578,6 +636,14 @@ export class RunbookCompletionService {
       linkage.parentStepId,
       frameKey,
     );
+    const currentTokenHash = substepState?.delegation?.tokenHash;
+    if (
+      linkage.kind === 'delegation' &&
+      currentTokenHash !== undefined &&
+      currentTokenHash !== linkage.tokenHash
+    ) {
+      return 'not-applicable';
+    }
     if (
       linkage.kind === 'delegation' &&
       substepState?.delegation?.cancelledAt &&
@@ -601,6 +667,38 @@ export class RunbookCompletionService {
       completedAt: args.completedAt,
     });
     return recorded.status;
+  }
+
+  /**
+   * Consume stale delegated outcome rows for a substep.
+   *
+   * Caller must already hold the parent run's DelegationLock. This method is
+   * intentionally unlocked because retry and force-abort cleanup already
+   * execute inside that lock and a second acquisition would deadlock.
+   *
+   * @param args - Parent run id, frame, and substep whose delegated rows are stale.
+   * @param args.runbookId - Parent run id containing stale delegated outcome rows.
+   * @param args.frameKey - Parent frame key containing the target substep.
+   * @param args.substepId - Parent substep id whose delegated rows are stale.
+   * @returns Number of rows consumed.
+   */
+  async supersedeDelegationOutcomeUnlocked(args: {
+    readonly runbookId: RunId;
+    readonly frameKey: FrameKey;
+    readonly substepId: string;
+  }): Promise<number> {
+    const rows = await this.lifecycleService.listResolvedCompletionsForFrameObservation(
+      args.runbookId,
+      args.frameKey,
+    );
+    let removed = 0;
+    for (const { key, completion } of rows) {
+      if (completion.targetSubstep === args.substepId && completion.agentId === 'delegation') {
+        const consumed = await this.lifecycleService.consumeResolvedCompletion(args.runbookId, key);
+        if (consumed) removed += 1;
+      }
+    }
+    return removed;
   }
 
   /**

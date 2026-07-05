@@ -25,12 +25,23 @@ import {
   RunbookStateManager,
   ExecutionLifecycleService,
   RunbookCompletionService,
+  projectDelegationTerminalOutcome,
   type RunbookState,
   type ParentLinkage,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import type { TransitionOrchestrationPolicy } from './transition-orchestrator.js';
+
+/**
+ * Result returned after attempting to propagate a terminal child run to its parent.
+ */
+export type TerminalPropagationResult =
+  | 'reported'
+  | 'handled'
+  | 'stopped'
+  | 'blocked'
+  | 'not-applicable';
 
 /**
  * Extract the discriminated parent linkage from a child state.
@@ -69,19 +80,33 @@ export function extractParentLinkage(state: RunbookState): ParentLinkage | undef
  */
 export async function reportTerminalToDelegatingRun(
   childState: RunbookState,
-  result: 'pass' | 'fail',
+  result: 'pass' | 'fail' | undefined,
   cwd: string,
   output: OutputEmitter,
-): Promise<'reported' | 'not-applicable'> {
+): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (linkage?.kind !== 'delegation') return 'not-applicable';
+
+  const projection = projectDelegationTerminalOutcome(childState, result);
+  if (projection.kind === 'not_terminal') return 'not-applicable';
+  if (projection.kind === 'command_infrastructure') {
+    output.flush();
+    return 'blocked';
+  }
 
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
 
-  const recorded = await completionService.recordChildCompletion({ childState, result });
+  const recorded = await completionService.recordChildCompletion({
+    childState,
+    result: projection.result,
+  });
+  if (recorded === 'blocked') {
+    output.flush();
+    return 'blocked';
+  }
   // 'not-applicable' means the child had no linkage to report against (the
   // early guard above already handled the common case; core re-checks). Every
   // other outcome — 'recorded', 'duplicate', and 'cancelled' — means there is
@@ -127,10 +152,10 @@ export async function reportTerminalToDelegatingRun(
  */
 export async function advanceParentForInlineChild(
   childState: RunbookState,
-  result: 'pass' | 'fail',
+  result: 'pass' | 'fail' | undefined,
   cwd: string,
   output: OutputEmitter,
-): Promise<'handled' | 'stopped' | 'not-applicable'> {
+): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   // This is the INLINE flow-back path only. Delegation linkage shares the same
   // base fields (parentRunId/parentFrameKey/parentEntry), so a delegation-linked
@@ -138,6 +163,13 @@ export async function advanceParentForInlineChild(
   // report-then-collect contract that leaves a delegating parent collection
   // pending until `rd collect`. Narrow to inline and refuse anything else.
   if (linkage?.kind !== 'inline') return 'not-applicable';
+
+  const projection = projectDelegationTerminalOutcome(childState, result);
+  if (projection.kind === 'not_terminal') return 'not-applicable';
+  if (projection.kind === 'command_infrastructure') {
+    output.flush();
+    return 'blocked';
+  }
 
   const { SessionService, exactFrame } = await import('@rundown-org/core');
   const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
@@ -158,13 +190,20 @@ export async function advanceParentForInlineChild(
     lifecycleService,
     parentActorService,
   );
-  const recorded = await completionService.recordChildCompletion({ childState, result });
+  const recorded = await completionService.recordChildCompletion({
+    childState,
+    result: projection.result,
+  });
   if (recorded === 'not-applicable') return 'not-applicable';
   if (recorded === 'cancelled') return 'handled';
+  if (recorded === 'blocked') {
+    output.flush();
+    return 'blocked';
+  }
 
   // Drain resolved completions on the parent after core-owned recording.
   const transitionConfig =
-    result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
+    projection.result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
 
   // Inline advance: never release during drain. Session release is handled
   // explicitly on the terminal branches below and by runExecutionLoop.
@@ -199,17 +238,20 @@ export async function advanceParentForInlineChild(
   if (drained.status === 'stopped') {
     await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
-    if (freshParent) await propagateChildTerminal(freshParent, 'fail', cwd, output);
+    const propagated = freshParent
+      ? await propagateChildTerminal(freshParent, undefined, cwd, output)
+      : 'not-applicable';
     output.flush();
-    return 'stopped';
+    return propagated === 'blocked' ? 'blocked' : 'stopped';
   }
   if (drained.status === 'done') {
     await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     const propagated = freshParent
-      ? await propagateChildTerminal(freshParent, 'pass', cwd, output)
+      ? await propagateChildTerminal(freshParent, undefined, cwd, output)
       : 'not-applicable';
     output.flush();
+    if (propagated === 'blocked') return 'blocked';
     if (propagated === 'stopped') return 'stopped';
     return 'handled';
   }
@@ -240,14 +282,17 @@ export async function advanceParentForInlineChild(
 
     if (loopResult === 'stopped') {
       const terminalParent = await manager.load(parentRunId);
-      if (terminalParent) await propagateChildTerminal(terminalParent, 'fail', cwd, output);
-      return 'stopped';
+      const propagated = terminalParent
+        ? await propagateChildTerminal(terminalParent, undefined, cwd, output)
+        : 'not-applicable';
+      return propagated === 'blocked' ? 'blocked' : 'stopped';
     }
     if (loopResult === 'done') {
       const terminalParent = await manager.load(parentRunId);
       const propagated = terminalParent
-        ? await propagateChildTerminal(terminalParent, 'pass', cwd, output)
+        ? await propagateChildTerminal(terminalParent, undefined, cwd, output)
         : 'not-applicable';
+      if (propagated === 'blocked') return 'blocked';
       if (propagated === 'stopped') return 'stopped';
     }
     return 'handled';
@@ -289,10 +334,10 @@ export async function advanceParentForInlineChild(
  */
 export async function propagateChildTerminal(
   childState: RunbookState,
-  result: 'pass' | 'fail',
+  result: 'pass' | 'fail' | undefined,
   cwd: string,
   output: OutputEmitter,
-): Promise<'reported' | 'handled' | 'stopped' | 'not-applicable'> {
+): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (!linkage) return 'not-applicable';
   return linkage.kind === 'inline'

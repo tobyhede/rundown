@@ -552,14 +552,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     linkage &&
     (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
   ) {
-    const result = terminal.lifecycle === 'completed' ? 'pass' : 'fail';
-    const propagation = await propagateChildTerminal(terminal, result, cwd, output);
+    const propagation = await propagateChildTerminal(terminal, undefined, cwd, output);
     // Inline propagation may itself drive the parent terminal (STOP) — its
     // outcome decides the exit code for inline, ORed with a stopped loop.
     // Delegation propagation is report-only (no parent advancement) but can
     // still surface a STOP exit.
     if (linkage.kind === 'inline') {
-      exitWithError = propagation === 'stopped' || loopStopped;
+      exitWithError = propagation === 'stopped' || propagation === 'blocked' || loopStopped;
     } else if (propagation === 'stopped') {
       exitWithError = true;
     }

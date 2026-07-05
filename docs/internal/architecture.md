@@ -205,6 +205,21 @@ The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
 consumes (see [§ CLI ↔ Core Event Boundary](#cli--core-event-boundary)).
 
+### Delegated Command Infrastructure Terminals
+
+Command execution is a machine-owned Category C side effect. The command actor
+can produce authored runbook outcomes (`pass` and `fail`) or command
+infrastructure terminal reasons such as `POLICY_DENIED` and
+`COMMAND_EXECUTION_FAILED`. Delegation propagation projects terminal children
+through `projectDelegationTerminalOutcome`; it must not infer delegated `fail`
+from `lifecycle: stopped` alone.
+
+Policy denial and command execution failure leave the linked child terminal for
+operator recovery. A retry over that terminal linked child supersedes stale
+delegation outcomes and removes the stale claim record without deleting the
+child state file. `abort --force` can also cancel the resolved linked delegation
+without recording a fresh delegated fail.
+
 On `COMMAND_RESULT` the leaf transitions to its relative child
 (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input`
 carries `{ channels, result }` read from the entering event. The actor reads

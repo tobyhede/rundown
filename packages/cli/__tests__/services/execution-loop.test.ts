@@ -1394,6 +1394,53 @@ describe('runExecutionLoop', () => {
     ).toHaveLength(0);
   });
 
+  it('emits command_execution_failed for stopped command infrastructure state without transition events', async () => {
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        lifecycle: 'stopped',
+        lastAction: {
+          type: 'COMMAND_EXECUTION_FAILED',
+          origin: 'direct',
+          message: 'Timeout of 30000 ms exceeded',
+        },
+        snapshot: {
+          status: 'active',
+          value: { 'step::1': 'idle' },
+          context: {
+            lastAction: {
+              type: 'COMMAND_EXECUTION_FAILED',
+              origin: 'direct',
+              message: 'Timeout of 30000 ms exceeded',
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.objectContaining({
+        reason: 'command_execution_failed',
+        message: 'Timeout of 30000 ms exceeded',
+      }),
+    });
+    expect(
+      (mockEmitter.emit as jest.Mock).mock.calls.filter(
+        (c) => (c[0] as { type?: string } | undefined)?.type === 'STEP_TRANSITIONED',
+      ),
+    ).toHaveLength(0);
+  });
+
   it('emits RUNBOOK_STOPPED when lifecycle is stopped and snapshot has no lastAction', async () => {
     mockManager.load.mockResolvedValue(
       makeLoopState('1', {

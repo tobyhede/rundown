@@ -62,6 +62,9 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
     lifecycleService,
     completionService,
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
+    deleteRun: async (id) => {
+      await manager.delete(id);
+    },
     loadSteps: (state) => getRunbookFromState(state, cwd),
     resolveChildRunbook: refuseIssuance,
     persistIssuedSubstep: refuseIssuance,

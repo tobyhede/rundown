@@ -52,6 +52,7 @@ import {
   isRunbookComplete,
   expandLoopVariables,
   expandLoopVariablesForCommand,
+  deriveTerminalDrainObservationEvent,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps, type OutputDeclaration } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -373,12 +374,7 @@ async function propagateInlineChildTerminalResult(args: {
   // inline). The child's own loopResult governs the result here unless advancing
   // the parent reaches a STOP terminal, which surfaces as 'stopped'.
   const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
-  const propagated = await propagateChildTerminal(
-    childState,
-    loopResult === 'done' ? 'pass' : 'fail',
-    cwd,
-    output,
-  );
+  const propagated = await propagateChildTerminal(childState, undefined, cwd, output);
   return propagated === 'stopped' ? 'stopped' : loopResult;
 }
 
@@ -1011,10 +1007,10 @@ export async function runExecutionLoop(
   if (currentState.lifecycle === 'stopped') {
     const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
     const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
+    const currentStepForProjection = findStepOrThrow(steps, currentState.step);
 
     if (snapIsTerminal) {
       // Machine-driven stop: delegate to core projection
-      const currentStepForProjection = findStepOrThrow(steps, currentState.step);
       const observation = deriveTransitionObservation({
         steps,
         currentStep: currentStepForProjection,
@@ -1045,23 +1041,18 @@ export async function runExecutionLoop(
       // CLI-owned stop: XState machine was never transitioned to STOPPED.
       // The persisted snapshot is non-terminal (e.g. policy denial or
       // delegation-resolution failure wrote lifecycle:'stopped' without
-      // driving the machine to its STOPPED state). Emit RUNBOOK_STOPPED
-      // directly from the persisted step position.
-      const position = buildStepPosition(
-        currentState.step,
-        countNumberedSteps(steps),
-        currentState.substep,
-        currentState.forStack,
-      );
-      const message = extractLastMessage(currentState.snapshot);
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: {
-          position,
-          reason: 'fail_transition',
-          message,
-        },
+      // driving the machine to its STOPPED state). Core still owns the
+      // terminal observation projection; the CLI only emits it.
+      const event = deriveTerminalDrainObservationEvent({
+        steps,
+        currentStep: currentStepForProjection,
+        previousState: currentState,
+        updatedState: currentState,
+        snapshot: currentState.snapshot,
+        status: 'stopped',
+        result: 'fail',
       });
+      emitter.emit(event);
     }
 
     await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);

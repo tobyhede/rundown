@@ -225,8 +225,7 @@ export function registerClaimCommand(program: Command): void {
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
               if (childState && extractParentLinkage(childState)) {
-                const propResult = childState.lifecycle === 'completed' ? 'pass' : 'fail';
-                await propagateChildTerminal(childState, propResult, cwd, output);
+                await propagateChildTerminal(childState, undefined, cwd, output);
               }
             }
 

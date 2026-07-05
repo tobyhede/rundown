@@ -258,15 +258,13 @@ export function registerRunCommand(program: Command): void {
                 const isTerminal =
                   childState.lifecycle === 'completed' || childState.lifecycle === 'stopped';
                 if (isTerminal) {
-                  const propResult: 'pass' | 'fail' =
-                    childState.lifecycle === 'completed' ? 'pass' : 'fail';
                   const propOutcome = await propagateChildTerminal(
                     childState,
-                    propResult,
+                    undefined,
                     cwd,
                     output,
                   );
-                  if (propOutcome === 'stopped') {
+                  if (propOutcome === 'stopped' || propOutcome === 'blocked') {
                     output.flush();
                     process.exit(1);
                   }

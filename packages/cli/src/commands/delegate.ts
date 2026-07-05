@@ -508,6 +508,9 @@ function buildDelegateSeam(
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
+    deleteRun: async (id) => {
+      await manager.delete(id);
+    },
     loadSteps: (s) => getRunbookFromState(s, cwd),
     resolveChildRunbook: async (name) => {
       const resolved = await resolveRunbookFile(cwd, name);

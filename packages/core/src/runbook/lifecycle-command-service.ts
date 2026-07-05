@@ -88,6 +88,8 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * test doubles stay trivial.
    */
   readonly loadRun: (runId: RunId) => Promise<RunbookState | undefined>;
+  /** Delete a persisted run state by id. Used only for active-child force abort cleanup. */
+  readonly deleteRun: (runId: RunId) => Promise<void>;
   /**
    * Derive the parsed steps for a resolved run from its in-memory state.
    *
@@ -321,6 +323,13 @@ export type DelegationIssuanceOutcome =
     }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError };
+
+/** Result of cleaning up a force-aborted linked child delegation. */
+export type ForceAbortLinkedChildCleanupResult =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'active_child_failed'; readonly childRunId: RunId }
+  | { readonly kind: 'terminal_child_cleaned'; readonly childRunId: RunId }
+  | { readonly kind: 'missing_child_cleaned'; readonly childRunId: RunId };
 
 /**
  * Terminal side-effect policy applied when a transition reaches a terminal state.
@@ -1107,11 +1116,21 @@ export class RunbookLifecycleCommandService {
     // `no-active-runbook` / refusal). Mirrors the fresh path's lazy seam.
     const overrides = await input.resolveOverrides?.();
 
+    const targetSubstep = freshState.substepStates?.find(
+      (entry) => entry.id === substepId && entry.frameKey === frameKey,
+    );
+    const linkedChildRunId = targetSubstep?.delegation?.childRunId ?? null;
+    const linkedChild = linkedChildRunId ? await this.#deps.loadRun(linkedChildRunId) : undefined;
+    const linkedChildTerminal =
+      linkedChild?.lifecycle === 'completed' || linkedChild?.lifecycle === 'stopped';
+    const allowLinkedChildRun = linkedChildTerminal;
+
     const result = retryDelegation(
       {
         state: freshState,
         substepId,
         frameKey,
+        allowLinkedChildRun,
         ...(overrides ? { overrides } : {}),
       },
       steps,
@@ -1121,6 +1140,9 @@ export class RunbookLifecycleCommandService {
     if (result.status !== 'retried') return { kind: 'error', error: result.error };
 
     await this.#supersedePendingOutcome(targetState.id, frameKey, substepId);
+    if (linkedChildRunId && allowLinkedChildRun) {
+      await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
+    }
     await this.#persistIssuedSubstep(
       freshState.id,
       result.updatedSubstepStates,
@@ -1135,6 +1157,56 @@ export class RunbookLifecycleCommandService {
       token: result.token,
       tokenHash: result.tokenHash,
       parentRunId: freshState.id,
+    };
+  }
+
+  /**
+   * Clean up a force-aborted linked child while the caller holds DelegationLock.
+   *
+   * Active children are explicitly failed and deleted. Terminal or missing
+   * linked children have any stale delegated outcome rows superseded without
+   * deleting terminal diagnostic state.
+   *
+   * @param args - Parent, child, frame, and substep cleanup target.
+   * @param args.parentState - Parent state whose linked delegation is being cleaned up.
+   * @param args.childRunId - Linked child run id, or null when no child was recorded.
+   * @param args.frameKey - Parent frame key containing the delegated substep.
+   * @param args.substepId - Parent substep id being force-aborted.
+   * @returns Cleanup branch that ran.
+   */
+  async cleanupForceAbortedLinkedChild(args: {
+    readonly parentState: RunbookState;
+    readonly childRunId: RunId | null;
+    readonly frameKey: FrameKey;
+    readonly substepId: string;
+  }): Promise<ForceAbortLinkedChildCleanupResult> {
+    if (!args.childRunId) return { kind: 'none' };
+
+    const childState = await this.#deps.loadRun(args.childRunId);
+    const childIsActive = childState?.lifecycle === 'running';
+    const childIsTerminal =
+      childState?.lifecycle === 'completed' || childState?.lifecycle === 'stopped';
+
+    if (childIsActive) {
+      await this.#deps.deleteRun(args.childRunId);
+      await this.#deps.sessionService.releaseRunbook(args.childRunId);
+      await this.#deps.completionService.recordChildCompletionUnlocked({
+        childState,
+        result: 'fail',
+        ignoreCancellation: true,
+      });
+      return { kind: 'active_child_failed', childRunId: args.childRunId };
+    }
+
+    await this.#deps.sessionService.releaseRunbook(args.childRunId);
+    await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
+      runbookId: args.parentState.id,
+      frameKey: args.frameKey,
+      substepId: args.substepId,
+    });
+    return {
+      kind: childIsTerminal ? 'terminal_child_cleaned' : 'missing_child_cleaned',
+      childRunId: args.childRunId,
     };
   }
 
@@ -2381,15 +2453,11 @@ export class RunbookLifecycleCommandService {
     frameKey: FrameKey,
     substepId: string,
   ): Promise<void> {
-    const rows = await this.#deps.lifecycleService.listResolvedCompletionsForFrameObservation(
-      runId,
+    await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
+      runbookId: runId,
       frameKey,
-    );
-    for (const { key, completion } of rows) {
-      if (completion.targetSubstep === substepId && completion.agentId === 'delegation') {
-        await this.#deps.lifecycleService.consumeResolvedCompletion(runId, key);
-      }
-    }
+      substepId,
+    });
   }
 
   // Acquire the per-parent-run DelegationLock, wrapping the held lock as a

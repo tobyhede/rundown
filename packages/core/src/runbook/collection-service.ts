@@ -5,7 +5,7 @@ import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
-import { lifecycleToDelegationOutcome } from './completion-service.js';
+import { projectDelegationTerminalOutcome } from './completion-service.js';
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
@@ -551,14 +551,10 @@ async function reportTerminalOutcomeToDelegatingRun(
   // synchronously elsewhere and must not record a delegation outcome; a
   // root run has no linkage. Both are filtered by this guard.
   if (terminalState.parentLinkage?.kind !== 'delegation') return false;
-  // Reuse the canonical lifecycle→outcome mapping instead of hand-rolling
-  // `lifecycle === 'completed' ? 'pass' : 'fail'`. It returns `undefined` for
-  // any non-terminal lifecycle, which also serves as the terminal guard.
-  const result = lifecycleToDelegationOutcome(terminalState.lifecycle);
-  if (!result) return false;
+  const projection = projectDelegationTerminalOutcome(terminalState);
+  if (projection.kind !== 'outcome') return false;
   const recorded = await input.completionService.recordChildCompletion({
     childState: terminalState,
-    result,
   });
   return recorded === 'recorded';
 }

@@ -158,15 +158,14 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 const isTerminal =
                   freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
                 if (isTerminal) {
-                  const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
                   const propagation = await propagateChildTerminal(
                     freshState,
-                    propResult,
+                    def.name,
                     cwd,
                     output,
                   );
                   if (linkage.kind === 'inline') {
-                    shouldExitWithError = propagation === 'stopped';
+                    shouldExitWithError = propagation === 'stopped' || propagation === 'blocked';
                   } else if (propagation === 'stopped') {
                     shouldExitWithError = true;
                   }
