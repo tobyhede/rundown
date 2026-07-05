@@ -129,6 +129,27 @@ function resolveCanonicalPath(value: string): string {
   }
 }
 
+function resolveCanonicalPathForGrant(value: string): string {
+  const absolute = path.resolve(value);
+  try {
+    return fs.realpathSync(absolute);
+  } catch {
+    const parent = path.dirname(absolute);
+    if (parent === absolute) {
+      return absolute;
+    }
+    return path.join(resolveCanonicalPathForGrant(parent), path.basename(absolute));
+  }
+}
+
+function normalizeSandboxPathList(paths: readonly string[]): string[] {
+  const normalized = new Set<string>();
+  for (const candidate of paths) {
+    normalized.add(resolveCanonicalPathForGrant(candidate));
+  }
+  return [...normalized];
+}
+
 function normalizeExtraReadWritePath(candidate: string, repoRoot: string, cwd: string): string {
   const absoluteCandidate = path.isAbsolute(candidate)
     ? candidate
@@ -327,8 +348,12 @@ export function policyToSandboxOptions(
   const writeRules = evaluator.getSandboxRules('write');
 
   // Resolve read-only paths (from read.allow minus write.allow)
-  const readAllowPaths = resolvePathPatterns(readRules.allow, repoRoot, tmpDir);
-  const writeAllowPaths = resolvePathPatterns(writeRules.allow, repoRoot, tmpDir);
+  const readAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(readRules.allow, repoRoot, tmpDir),
+  );
+  const writeAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(writeRules.allow, repoRoot, tmpDir),
+  );
   const extraReadWritePaths = normalizeExtraReadWritePaths(
     options.extraReadWritePaths,
     repoRoot,
@@ -349,10 +374,12 @@ export function policyToSandboxOptions(
     repoRoot,
     options.cwd,
   );
-  const runtimeGrantPaths = resolvePathPatterns(
-    [...readRules.runtimeGrantAllow, ...writeRules.runtimeGrantAllow],
-    repoRoot,
-    tmpDir,
+  const runtimeGrantPaths = normalizeSandboxPathList(
+    resolvePathPatterns(
+      [...readRules.runtimeGrantAllow, ...writeRules.runtimeGrantAllow],
+      repoRoot,
+      tmpDir,
+    ),
   );
   const effectiveDenyPatterns = filterDenyPatternsCoveredByRuntimeGrants(
     denyPatterns,
@@ -366,7 +393,7 @@ export function policyToSandboxOptions(
     readOnlyPaths,
     readWritePaths,
     denyPatterns: [...new Set(effectiveDenyPatterns)],
-    denyPaths: [...new Set(effectiveDenyPaths)],
+    denyPaths: normalizeSandboxPathList(effectiveDenyPaths),
     env: {},
     allowUnsandboxed: options.allowUnsandboxed,
   };
@@ -388,8 +415,12 @@ export function policyConfigToSandboxOptions(
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
 
-  const readAllowPaths = resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir);
-  const writeAllowPaths = resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir);
+  const readAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir),
+  );
+  const writeAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir),
+  );
   const extraReadWritePaths = normalizeExtraReadWritePaths(
     options.extraReadWritePaths,
     repoRoot,
@@ -417,7 +448,7 @@ export function policyConfigToSandboxOptions(
     readOnlyPaths,
     readWritePaths,
     denyPatterns: [...new Set(denyPatterns)],
-    denyPaths: [...new Set(denyPaths)],
+    denyPaths: normalizeSandboxPathList(denyPaths),
     env: {},
     allowUnsandboxed: options.allowUnsandboxed,
   };

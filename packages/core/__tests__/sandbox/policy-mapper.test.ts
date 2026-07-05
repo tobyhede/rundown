@@ -1,7 +1,8 @@
 import { describe, it, expect, jest } from '@jest/globals';
-import { join, dirname } from 'node:path';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import type { Stats } from 'node:fs';
+import { join, dirname, basename, resolve } from 'node:path';
+import { mkdtemp, rm, writeFile, mkdir, realpath, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { realpathSync, type Stats } from 'node:fs';
 import {
   policyToSandboxOptions,
   policyConfigToSandboxOptions,
@@ -12,6 +13,19 @@ import {
   DEFAULT_POLICY_LINUX,
   type PolicyConfig,
 } from '../../src/policy/schema.js';
+
+function canonicalPathForTest(value: string): string {
+  const absolute = resolve(value);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    const parent = dirname(absolute);
+    if (parent === absolute) {
+      return absolute;
+    }
+    return join(canonicalPathForTest(parent), basename(absolute));
+  }
+}
 
 describe('policyToSandboxOptions', () => {
   it('returns minimal options for default policy', () => {
@@ -203,7 +217,7 @@ describe('policyToSandboxOptions', () => {
       tmpDir: '/var/tmp',
     });
 
-    expect(options.readWritePaths).toContain('/var/tmp/cache');
+    expect(options.readWritePaths).toContain(canonicalPathForTest('/var/tmp/cache'));
   });
 
   it('passes through allowUnsandboxed option', () => {
@@ -464,6 +478,131 @@ describe('policyToSandboxOptions', () => {
     expect(options.denyPatterns).not.toContain('/repo/dist/secret.txt');
   });
 
+  it('realpath-normalizes read grants that pass through a symlink', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const dir = join(repoRoot, 'schema-dir');
+      await mkdir(dir);
+      const alias = join(aliasRoot, 'schema-link');
+      await symlink(dir, alias);
+      const canonicalDir = await realpath(dir);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [join(alias, '**')], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalDir);
+      expect(options.readOnlyPaths).not.toContain(alias);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('realpath-normalizes future write grants through the nearest existing symlink ancestor', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const dist = join(repoRoot, 'dist');
+      await mkdir(dist);
+      const alias = join(aliasRoot, 'dist-link');
+      await symlink(dist, alias);
+      const futurePath = join(alias, 'new-file.txt');
+      const canonicalRepo = await realpath(repoRoot);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [futurePath], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readWritePaths).toContain(join(canonicalRepo, 'dist', 'new-file.txt'));
+      expect(options.readWritePaths).not.toContain(futurePath);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes the macOS tmpdir alias from /var/folders to /private/var/folders when present', async () => {
+    const tmp = tmpdir();
+    if (process.platform !== 'darwin' || !tmp.startsWith('/var/folders/')) {
+      return;
+    }
+    const canonicalTmp = await realpath(tmp);
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: ['{tmp}/rundown-sandbox-test/**'], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      tmpDir: tmp,
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+      tmpDir: tmp,
+    });
+
+    expect(options.readWritePaths).toContain(join(canonicalTmp, 'rundown-sandbox-test'));
+    expect(options.readWritePaths).not.toContain(join(tmp, 'rundown-sandbox-test'));
+  });
+
+  it('applies the same canonicalization to policyConfigToSandboxOptions', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const dir = join(repoRoot, 'raw-policy-read');
+      await mkdir(dir);
+      const alias = join(aliasRoot, 'raw-policy-link');
+      await symlink(dir, alias);
+      const canonicalDir = await realpath(dir);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [join(alias, '**')], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+
+      const options = policyConfigToSandboxOptions(policy, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalDir);
+      expect(options.readOnlyPaths).not.toContain(alias);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects out-of-root extra read-write paths in policyToSandboxOptions', async () => {
     const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
     const outsidePath = join(dirname(repoRoot), 'outside.txt');
@@ -657,7 +796,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home/user');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user'));
   });
 
   it('extracts base path from glob with *.ext', () => {
@@ -680,7 +819,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home/user');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user'));
   });
 
   it('returns path as-is when no glob characters', () => {
@@ -703,7 +842,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home/user/specific-file.txt');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user/specific-file.txt'));
   });
 
   it('handles glob in middle of path', () => {
@@ -726,6 +865,6 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home'));
   });
 });
