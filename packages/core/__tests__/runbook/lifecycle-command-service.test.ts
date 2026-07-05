@@ -144,6 +144,9 @@ describe('RunbookLifecycleCommandService', () => {
       lifecycleService,
       completionService,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
       loadSteps: (state) => {
         loadStepsArgs.push(state);
         return loadStepsImpl(state);
@@ -224,6 +227,9 @@ describe('RunbookLifecycleCommandService', () => {
       lifecycleService,
       completionService,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
       loadSteps: () => steps,
       // Resolve by name so a positional naming a *different* runbook produces a
       // distinct ref (drives the RD-822 mismatch path).
@@ -1414,6 +1420,101 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  describe('cleanupForceAbortedLinkedChild', () => {
+    it('force-abort cleanup records explicit fail for running linked child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0a0000000000000000000000000000');
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: linkageFor(state.id, '1'),
+        }),
+      );
+      const deleteSpy = jest.spyOn(deps, 'deleteRun');
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey: buildFrameKey('1'),
+        substepId: '1',
+      });
+
+      expect(result).toEqual({ kind: 'active_child_failed', childRunId });
+      expect(deleteSpy).toHaveBeenCalledWith(childRunId);
+    });
+
+    it('force-abort cleanup supersedes terminal linked child outcome without deleting diagnostics', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0b0000000000000000000000000000');
+      const frameKey = buildFrameKey('1');
+      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'stopped',
+          parentLinkage: linkageFor(state.id, '1'),
+        }),
+      );
+      const persisted = await mgr.load(state.id);
+      if (!persisted) throw new Error('expected persisted state');
+      await mgr.save({
+        ...persisted,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+          }),
+        },
+      });
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey,
+        substepId: '1',
+      });
+
+      expect(result).toEqual({ kind: 'terminal_child_cleaned', childRunId });
+      await expect(mgr.load(childRunId)).resolves.not.toBeNull();
+      await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
+    });
+
+    it('force-abort cleanup supersedes stale outcome for missing linked child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0c0000000000000000000000000000');
+      const frameKey = buildFrameKey('1');
+      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      const persisted = await mgr.load(state.id);
+      if (!persisted) throw new Error('expected persisted state');
+      await mgr.save({
+        ...persisted,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+          }),
+        },
+      });
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey,
+        substepId: '1',
+      });
+
+      expect(result).toEqual({ kind: 'missing_child_cleaned', childRunId });
+      await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
+    });
+  });
+
   describe('runTransition refusals', () => {
     const steps: ResolvedStep[] = [
       { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
@@ -2383,6 +2484,9 @@ describe('RunbookLifecycleCommandService', () => {
         lifecycleService,
         completionService,
         loadRun: async (id) => (await manager.load(id)) ?? undefined,
+        deleteRun: async (id) => {
+          await manager.delete(id);
+        },
         loadSteps: () => steps,
         resolveChildRunbook: async () => undefined,
         persistIssuedSubstep: async () => {},

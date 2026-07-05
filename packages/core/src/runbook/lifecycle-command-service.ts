@@ -88,6 +88,8 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * test doubles stay trivial.
    */
   readonly loadRun: (runId: RunId) => Promise<RunbookState | undefined>;
+  /** Delete a persisted run state by id. Used only for active-child force abort cleanup. */
+  readonly deleteRun: (runId: RunId) => Promise<void>;
   /**
    * Derive the parsed steps for a resolved run from its in-memory state.
    *
@@ -321,6 +323,13 @@ export type DelegationIssuanceOutcome =
     }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError };
+
+/** Result of cleaning up a force-aborted linked child delegation. */
+export type ForceAbortLinkedChildCleanupResult =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'active_child_failed'; readonly childRunId: RunId }
+  | { readonly kind: 'terminal_child_cleaned'; readonly childRunId: RunId }
+  | { readonly kind: 'missing_child_cleaned'; readonly childRunId: RunId };
 
 /**
  * Terminal side-effect policy applied when a transition reaches a terminal state.
@@ -1149,6 +1158,59 @@ export class RunbookLifecycleCommandService {
       tokenHash: result.tokenHash,
       parentRunId: freshState.id,
     };
+  }
+
+  /**
+   * Clean up a force-aborted linked child while the caller holds DelegationLock.
+   *
+   * Active children are explicitly failed and deleted. Terminal or missing
+   * linked children have any stale delegated outcome rows superseded without
+   * deleting terminal diagnostic state.
+   *
+   * @param args - Parent, child, frame, and substep cleanup target.
+   * @returns Cleanup branch that ran.
+   */
+  async cleanupForceAbortedLinkedChild(args: {
+    readonly parentState: RunbookState;
+    readonly childRunId: RunId | null;
+    readonly frameKey: FrameKey;
+    readonly substepId: string;
+  }): Promise<ForceAbortLinkedChildCleanupResult> {
+    if (!args.childRunId) return { kind: 'none' };
+
+    const childState = await this.#deps.loadRun(args.childRunId);
+    const childIsActive = childState?.lifecycle === 'running';
+    const childIsTerminal =
+      childState?.lifecycle === 'completed' || childState?.lifecycle === 'stopped';
+
+    if (childIsActive) {
+      await this.#deps.deleteRun(args.childRunId);
+      await this.#deps.sessionService.releaseRunbook(args.childRunId);
+      await this.#deps.completionService.recordChildCompletionUnlocked({
+        childState,
+        result: 'fail',
+        ignoreCancellation: true,
+      });
+      return { kind: 'active_child_failed', childRunId: args.childRunId };
+    }
+
+    if (childIsTerminal) {
+      await this.#deps.sessionService.releaseRunbook(args.childRunId);
+      await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
+        runbookId: args.parentState.id,
+        frameKey: args.frameKey,
+        substepId: args.substepId,
+      });
+      return { kind: 'terminal_child_cleaned', childRunId: args.childRunId };
+    }
+
+    await this.#deps.sessionService.releaseRunbook(args.childRunId);
+    await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
+      runbookId: args.parentState.id,
+      frameKey: args.frameKey,
+      substepId: args.substepId,
+    });
+    return { kind: 'missing_child_cleaned', childRunId: args.childRunId };
   }
 
   /**

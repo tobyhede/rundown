@@ -165,6 +165,7 @@ export {
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
   type FindDelegationByToken,
+  type ForceAbortLinkedChildCleanupResult,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
   type LifecycleNavigationOutcome,

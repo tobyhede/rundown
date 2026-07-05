@@ -188,6 +188,35 @@ describe('Delegation abort integration', () => {
     expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
   });
 
+  it('force-aborts a resolved failed linked child without RD-812', async () => {
+    const token = await setupDelegation();
+    const parentId = (await getActiveState(workspace))!.id;
+
+    const claim = runCli(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimPayload = parseConcatenatedJson(claim.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && 'claim_id' in value,
+    );
+    expect(claimPayload).toBeDefined();
+    const claimId = String(claimPayload.claim_id);
+
+    const failed = runCli(`fail --claim-id ${claimId}`, workspace);
+    expect(failed.exitCode).toBe(1);
+
+    const result = runCli(`abort ${token} --force`, workspace);
+    expect(result.exitCode).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain('RD-812');
+
+    const parent = await readRunbookState(workspace, parentId);
+    const rows = Object.values(parent!.resolvedCompletions ?? {}).filter(
+      (row) => row.agentId === 'delegation',
+    );
+    expect(rows).toHaveLength(0);
+    const entry = parent!.substepStates?.find((state) => state.id === '1');
+    expect(entry?.delegation?.cancelledAt).not.toBeNull();
+  });
+
   it('force abort inside a FOR iteration leaves that iteration frame collection pending', async () => {
     await writeChildRunbook();
     // A FOR step that fans out a single delegated substep per iteration. The
