@@ -1,6 +1,11 @@
 // packages/cli/src/helpers/caller-evidence.ts
 
-import type { CallerEvidence, RunId } from '@rundown-org/core';
+import {
+  parseRunCapability,
+  type CallerEvidence,
+  type RunCapability,
+  type RunId,
+} from '@rundown-org/core';
 
 /**
  * Claim evidence reconstructed CLI-side from a resolved `--claim-id` record.
@@ -16,6 +21,8 @@ export interface LifecycleEvidenceInput {
   readonly claim?: ResolvedClaimEvidence;
   /** Caller-named run authority from a validated `--run` flag. */
   readonly runId?: RunId;
+  /** Verified run capability from a validated `--run-capability` flag. */
+  readonly runCapability?: RunCapability;
 }
 
 /**
@@ -27,9 +34,10 @@ export interface LifecycleEvidenceInput {
  * 1. **Claim** — a `--claim-id` invocation carries claim evidence (`claimId`,
  *    `tokenHash`, `controlledRunId`) reconstructed from the resolved claim
  *    record, which core maps to a claim controller over the controlled run.
- * 2. **Run controller** — a `--run <rd_…>` invocation names the run the caller
- *    claims authority over; core maps it to a trusted controller of exactly
- *    that named run (`deriveEffectiveRole` refuses an id/target mismatch).
+ * 2. **Run capability** — a `--run-capability <rdrc_…>` invocation names the
+ *    verified authority credential; core maps it to a trusted controller of
+ *    exactly that embedded run (`deriveEffectiveRole` refuses an id/target
+ *    mismatch).
  * 3. **Direct CLI** — a bare invocation maps to `{ kind: 'direct_cli' }`; core
  *    decides whether that grants anything for the resolved target.
  *
@@ -46,8 +54,11 @@ export function readLifecycleCallerEvidence(input: LifecycleEvidenceInput = {}):
   if (input.claim) {
     return { kind: 'claim', ...input.claim };
   }
+  if (input.runCapability !== undefined) {
+    return { kind: 'run_capability', runId: parseRunCapability(input.runCapability).runId };
+  }
   if (input.runId !== undefined) {
-    return { kind: 'run_controller', runId: input.runId };
+    return { kind: 'run_identifier', runId: input.runId };
   }
   return { kind: 'direct_cli' };
 }

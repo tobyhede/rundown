@@ -10,8 +10,10 @@ import {
 } from '../../src/runbook/command-target-resolver.js';
 import {
   generateClaimCapability,
+  generateRunCapability,
   hashCapabilitySecret,
   parseClaimCapability,
+  parseRunCapability,
   type ClaimCapability,
   type CapabilityHash,
 } from '../../src/runbook/capability.js';
@@ -22,7 +24,7 @@ import {
   type ClaimRecord,
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
-import { assertRunId } from '../../src/runbook/run-id.js';
+import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import {
@@ -85,6 +87,7 @@ function fakeReader(options: {
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
   readonly failOnOpenClaimRead?: boolean;
+  readonly expectedOpenClaimsParentId?: RunId;
   readonly runById?: Readonly<Record<string, RunbookState | null>>;
 }): CommandTargetReader {
   return {
@@ -95,6 +98,15 @@ function fakeReader(options: {
       return options.active ?? null;
     },
     async resolveRunningStackMember(runId) {
+      const state = options.runById?.[runId] ?? null;
+      if (!state) return { kind: 'not_on_stack' };
+      if (state.lifecycle !== 'running') {
+        return { kind: 'not_running', lifecycle: state.lifecycle };
+      }
+      return { kind: 'running', state };
+    },
+    async resolveRunningStackMemberByCapability(runCapability) {
+      const { runId } = parseRunCapability(runCapability);
       const state = options.runById?.[runId] ?? null;
       if (!state) return { kind: 'not_on_stack' };
       if (state.lifecycle !== 'running') {
@@ -122,7 +134,7 @@ function fakeReader(options: {
       if (options.failOnOpenClaimRead) {
         throw new Error('open delegated children should not be inspected');
       }
-      expect(parentRunId).toBe(parent.id);
+      expect(parentRunId).toBe(options.expectedOpenClaimsParentId ?? parent.id);
       return options.openClaims ?? [];
     },
   };
@@ -504,39 +516,9 @@ describe('resolveTransitionTarget', () => {
 });
 
 describe('resolveTransitionTarget --run targeting', () => {
-  it('resolves --run to the named running stack member', async () => {
+  it('refuses --run because a printed run id is not authority', async () => {
     const resolution = await resolveTransitionTarget(
       fakeReader({ runById: { [parent.id]: parent }, openClaims: [], failOnDefaultRead: true }),
-      {
-        command: 'pass',
-        runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
-      },
-    );
-    expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
-  });
-
-  it('refuses a --run id that is not part of this session stack', async () => {
-    const foreign = assertRunId(`rd_${'f'.repeat(32)}`);
-    const resolution = await resolveTransitionTarget(
-      fakeReader({ runById: {}, failOnDefaultRead: true }),
-      {
-        command: 'pass',
-        runId: foreign,
-        actorContext: trustedRunControllerContext(foreign),
-      },
-    );
-    expect(resolution).toEqual({
-      kind: 'unknown_run',
-      runId: foreign,
-      message: `Run ${foreign} is not part of this session's active stack.`,
-    });
-  });
-
-  it('refuses a --run id whose run is terminal, mentioning its lifecycle', async () => {
-    const terminalParent = { ...parent, lifecycle: 'completed' } as RunbookState;
-    const resolution = await resolveTransitionTarget(
-      fakeReader({ runById: { [parent.id]: terminalParent }, failOnDefaultRead: true }),
       {
         command: 'pass',
         runId: parent.id,
@@ -546,51 +528,102 @@ describe('resolveTransitionTarget --run targeting', () => {
     expect(resolution).toEqual({
       kind: 'unknown_run',
       runId: parent.id,
-      message: `Run ${parent.id} is completed.`,
+      message:
+        'Run id is not an authority credential. Use --run-capability with the capability returned by rundown run.',
     });
   });
 
-  it('still applies the open-children guard to a bare-shaped run-targeted advance', async () => {
-    // --run names authority; it does not skip the collection guards. A trusted
-    // controller of the target advancing bare-shaped over open claims refuses.
+  it('resolves --run-capability to the named running stack member', async () => {
+    const canonicalRunId = assertRunId(`rd_${'1'.repeat(32)}`);
+    const canonicalParent = { ...parent, id: canonicalRunId };
+    const runCapability = generateRunCapability(canonicalRunId);
     const resolution = await resolveTransitionTarget(
       fakeReader({
-        runById: { [parent.id]: parent },
-        openClaims: [claim],
+        runById: { [canonicalRunId]: canonicalParent },
+        openClaims: [],
         failOnDefaultRead: true,
+        expectedOpenClaimsParentId: canonicalRunId,
       }),
       {
         command: 'pass',
-        runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        runCapability,
+        actorContext: trustedRunControllerContext(canonicalRunId),
+      },
+    );
+    expect(resolution).toEqual({ kind: 'run', runId: canonicalRunId, state: canonicalParent });
+  });
+
+  it('refuses a --run-capability whose run is terminal, mentioning its lifecycle', async () => {
+    const canonicalRunId = assertRunId(`rd_${'2'.repeat(32)}`);
+    const terminalParent = {
+      ...parent,
+      id: canonicalRunId,
+      lifecycle: 'completed',
+    } as RunbookState;
+    const runCapability = generateRunCapability(canonicalRunId);
+    const resolution = await resolveTransitionTarget(
+      fakeReader({ runById: { [canonicalRunId]: terminalParent }, failOnDefaultRead: true }),
+      {
+        command: 'pass',
+        runCapability,
+        actorContext: trustedRunControllerContext(canonicalRunId),
+      },
+    );
+    expect(resolution).toEqual({
+      kind: 'unknown_run',
+      runId: canonicalRunId,
+      message: `Run ${canonicalRunId} is completed.`,
+    });
+  });
+
+  it('still applies the open-children guard to a bare-shaped run-capability-targeted advance', async () => {
+    // --run-capability names authority; it does not skip the collection guards. A trusted
+    // controller of the target advancing bare-shaped over open claims refuses.
+    const canonicalRunId = assertRunId(`rd_${'3'.repeat(32)}`);
+    const canonicalParent = { ...parent, id: canonicalRunId };
+    const runCapability = generateRunCapability(canonicalRunId);
+    const resolution = await resolveTransitionTarget(
+      fakeReader({
+        runById: { [canonicalRunId]: canonicalParent },
+        openClaims: [claim],
+        failOnDefaultRead: true,
+        expectedOpenClaimsParentId: canonicalRunId,
+      }),
+      {
+        command: 'pass',
+        runCapability,
+        actorContext: trustedRunControllerContext(canonicalRunId),
       },
     );
     expect(resolution).toEqual({
       kind: 'open_delegated_children',
-      parentRunId: parent.id,
+      parentRunId: canonicalRunId,
       claims: [claim],
     });
   });
 
-  it('keeps the targeted exemption for a run-targeted transition carrying an explicit step target', async () => {
+  it('keeps the targeted exemption for a run-capability-targeted transition carrying an explicit step target', async () => {
     // Decision 3: `targeted` derives from the presence of an explicit step
     // target, never from selector kind alone — pass --run <id> --step <n> is
     // the sanctioned operator recovery and skips the collection guards.
+    const canonicalRunId = assertRunId(`rd_${'4'.repeat(32)}`);
+    const canonicalParent = { ...parent, id: canonicalRunId };
+    const runCapability = generateRunCapability(canonicalRunId);
     const resolution = await resolveTransitionTarget(
       fakeReader({
-        runById: { [parent.id]: parent },
+        runById: { [canonicalRunId]: canonicalParent },
         openClaims: [claim],
         failOnDefaultRead: true,
         failOnOpenClaimRead: true,
       }),
       {
         command: 'pass',
-        runId: parent.id,
+        runCapability,
         targeted: true,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: trustedRunControllerContext(canonicalRunId),
       },
     );
-    expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
+    expect(resolution).toEqual({ kind: 'run', runId: canonicalRunId, state: canonicalParent });
   });
 });
 

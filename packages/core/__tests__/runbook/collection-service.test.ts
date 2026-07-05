@@ -9,6 +9,7 @@ import {
   RunbookCompletionService,
   RunbookStateManager,
   InvalidRunbookStateError,
+  assertCapabilityHash,
   assertClaimId,
   assertDelegationTokenHash,
   assertRunId,
@@ -69,10 +70,10 @@ describe('RunbookCollectionService', () => {
   // Post-R1, collection targets author DELEGATE and therefore classify
   // `delegating`, so bare direct-CLI evidence no longer mints orchestrator
   // trust — the orchestrator names its run explicitly (`--run` =>
-  // run_controller evidence). The behavioural suites below exercise the
+  // run_capability evidence). The behavioural suites below exercise the
   // collection operation as that named orchestrator; the refusal twin pinning
   // direct_cli on these fixtures lives in the policy-gate describe.
-  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'run_controller', runId };
+  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'run_capability', runId };
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
   // Default runbook: step 1 delegates two substeps (PASS CONTINUE so a full
@@ -120,7 +121,9 @@ describe('RunbookCollectionService', () => {
         { id: '2', frameKey: buildFrameKey('1'), status: 'done' },
       ],
       resolvedCompletions: {},
-      schemaVersion: 1,
+      schemaVersion: 2,
+      orchestratorCapabilityHash: assertCapabilityHash(`sha256:${'1'.repeat(64)}`),
+      orchestratorCapabilityIssuedAt: '2026-06-17T00:00:00.000Z',
       frontmatterOutputs: [],
       ...overrides,
     };
@@ -170,7 +173,7 @@ describe('RunbookCollectionService', () => {
     // The collection target authors DELEGATE substeps, so it classifies
     // `delegating`; bare direct_cli evidence maps to the unknown context and
     // the orchestrator gate refuses before inspecting any outcome state. The
-    // orchestrator lane is `run_controller` (--run); the child lane is claim.
+    // orchestrator lane is `run_capability` (--run); the child lane is claim.
     await manager.save(state());
 
     await expect(
@@ -961,7 +964,7 @@ describe('RunbookCollectionService', () => {
       targetState: controlled,
       steps: oneSubstepSteps,
       // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
+      callerEvidence: { kind: 'run_capability', runId: controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -988,7 +991,7 @@ describe('RunbookCollectionService', () => {
       targetState: controlled,
       steps: oneSubstepSteps,
       // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
+      callerEvidence: { kind: 'run_capability', runId: controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 

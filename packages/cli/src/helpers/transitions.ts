@@ -27,6 +27,7 @@ import {
   type ClaimId,
   type ClaimCapability,
   type RunId,
+  type RunCapability,
   type LifecycleTransitionOutcome,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
@@ -204,6 +205,7 @@ export async function buildTransitionContext(
     readonly claimId?: ClaimId;
     readonly claimCapability?: ClaimCapability;
     readonly runId?: RunId;
+    readonly runCapability?: RunCapability;
   } = {},
 ): Promise<BaseBuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
@@ -220,6 +222,7 @@ export async function buildTransitionContext(
   const active = await resolveCommandTarget(sessionService, {
     ...(options.claimCapability !== undefined ? { claimCapability: options.claimCapability } : {}),
     ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+    ...(options.runCapability !== undefined ? { runCapability: options.runCapability } : {}),
     ...(options.runId !== undefined ? { runId: options.runId } : {}),
   });
   switch (active.kind) {
@@ -344,6 +347,8 @@ export interface SeamTransitionOptions {
   readonly claimId?: ClaimId;
   /** Explicit claim capability target (`--claim-capability`). Mutually exclusive with `runId`. */
   readonly claimCapability?: ClaimCapability;
+  /** Explicit run capability target (`--run-capability`). Mutually exclusive with claim authority. */
+  readonly runCapability?: RunCapability;
   /**
    * Explicit run target and named authority (`--run`). Mutually exclusive with
    * `claimId` (enforced upstream by `parseRunOption`).
@@ -608,13 +613,17 @@ export async function runSeamTransition(
       ? { kind: 'claim-capability', claimCapability: options.claimCapability }
       : options.claimId
         ? { kind: 'claim', claimId: options.claimId }
-        : options.runId !== undefined
-          ? { kind: 'run', runId: options.runId }
-          : { kind: 'explicit-step', step: options.step };
+        : options.runCapability !== undefined
+          ? { kind: 'run-capability', runCapability: options.runCapability }
+          : options.runId !== undefined
+            ? { kind: 'run', runId: options.runId }
+            : { kind: 'explicit-step', step: options.step };
   } else if (options.claimCapability) {
     targetSelector = { kind: 'claim-capability', claimCapability: options.claimCapability };
   } else if (options.claimId) {
     targetSelector = { kind: 'claim', claimId: options.claimId };
+  } else if (options.runCapability !== undefined) {
+    targetSelector = { kind: 'run-capability', runCapability: options.runCapability };
   } else if (options.runId !== undefined) {
     targetSelector = { kind: 'run', runId: options.runId };
   } else {
@@ -624,7 +633,7 @@ export async function runSeamTransition(
   const outcome = await seam.runTransition({
     command: config.commandName,
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.runCapability !== undefined ? { runCapability: options.runCapability } : {},
     ),
     targetSelector,
     terminalPolicy: config.policy,

@@ -6,6 +6,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseClaimCapabilityOption } from '../helpers/claim-capability-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseRunCapabilityOption } from '../helpers/run-capability-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
 
@@ -28,12 +29,19 @@ export function registerStopCommand(program: Command): void {
     .argument('[message]', 'Stop message')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
+    .option('--run-capability <capability>', 'Prove orchestrator authority over a run')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
     .action(
       async (
         message: string | undefined,
-        options: { claimId?: string; claimCapability?: string; run?: string; text?: boolean },
+        options: {
+          claimId?: string;
+          claimCapability?: string;
+          runCapability?: string;
+          run?: string;
+          text?: boolean;
+        },
       ) => {
         await withErrorHandling(
           async () => {
@@ -55,11 +63,18 @@ export function registerStopCommand(program: Command): void {
               output,
             );
             if (!claimCapabilityTarget.ok) return;
+            const runCapabilityTarget = parseRunCapabilityOption(
+              options.runCapability,
+              claimCapabilityTarget.claimCapability,
+              output,
+            );
+            if (!runCapabilityTarget.ok) return;
             const runTarget = parseRunOption(
               options.run,
               claimTarget.claimId,
               output,
               claimCapabilityTarget.claimCapability,
+              runCapabilityTarget.runCapability,
             );
             if (!runTarget.ok) return;
 
@@ -68,6 +83,9 @@ export function registerStopCommand(program: Command): void {
                 ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
                 ...(claimCapabilityTarget.claimCapability
                   ? { claimCapability: claimCapabilityTarget.claimCapability }
+                  : {}),
+                ...(runCapabilityTarget.runCapability
+                  ? { runCapability: runCapabilityTarget.runCapability }
                   : {}),
                 ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
                 ...(message !== undefined ? { message } : {}),
@@ -78,6 +96,9 @@ export function registerStopCommand(program: Command): void {
                 ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
                 ...(claimCapabilityTarget.claimCapability
                   ? { claimCapability: claimCapabilityTarget.claimCapability }
+                  : {}),
+                ...(runCapabilityTarget.runCapability
+                  ? { runCapability: runCapabilityTarget.runCapability }
                   : {}),
                 ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
               });

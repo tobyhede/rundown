@@ -17,9 +17,11 @@ import {
   generateClaimCapability,
   hashCapabilitySecret,
   parseClaimCapability,
+  parseRunCapability,
   verifyCapabilitySecret,
   type ClaimCapability,
   type CapabilityHash,
+  type RunCapability,
 } from './capability.js';
 import {
   createClaimRecord,
@@ -319,6 +321,26 @@ export class SessionService {
     if (!state) return { kind: 'not_on_stack' };
     if (state.lifecycle !== 'running') return { kind: 'not_running', lifecycle: state.lifecycle };
     return { kind: 'running', state };
+  }
+
+  /**
+   * Resolve a run capability to a running session-stack member.
+   *
+   * @param capability - Run capability presented by the caller
+   * @returns `running` only when the embedded run id is active and the secret
+   * matches the persisted run capability hash
+   */
+  async resolveRunningStackMemberByCapability(
+    capability: RunCapability,
+  ): Promise<RunningStackMemberResolution> {
+    const parsed = parseRunCapability(capability);
+    const resolved = await this.resolveRunningStackMember(parsed.runId);
+    if (resolved.kind !== 'running') return resolved;
+    const expected = resolved.state.orchestratorCapabilityHash;
+    if (expected === undefined || !verifyCapabilitySecret(parsed.secret, expected)) {
+      return { kind: 'not_on_stack' };
+    }
+    return resolved;
   }
 
   /**

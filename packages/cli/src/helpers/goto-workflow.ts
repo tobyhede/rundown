@@ -22,6 +22,7 @@ import {
   type ClaimId,
   type ClaimCapability,
   type RunId,
+  type RunCapability,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
@@ -130,6 +131,7 @@ export async function buildGotoContext(
     readonly claimId?: ClaimId;
     readonly claimCapability?: ClaimCapability;
     readonly runId?: RunId;
+    readonly runCapability?: RunCapability;
   } = {},
 ): Promise<BuildGotoContextResult> {
   const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
@@ -137,16 +139,18 @@ export async function buildGotoContext(
   const outcome = await seam.resolveRunNavigation({
     command: 'goto',
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.runCapability !== undefined ? { runCapability: options.runCapability } : {},
     ),
     targetSelector:
       options.claimCapability !== undefined
         ? { kind: 'claim-capability', claimCapability: options.claimCapability }
         : options.claimId !== undefined
           ? { kind: 'claim', claimId: options.claimId }
-          : options.runId !== undefined
-            ? { kind: 'run', runId: options.runId }
-            : { kind: 'default' },
+          : options.runCapability !== undefined
+            ? { kind: 'run-capability', runCapability: options.runCapability }
+            : options.runId !== undefined
+              ? { kind: 'run', runId: options.runId }
+              : { kind: 'default' },
   });
   if (outcome.kind !== 'allowed') {
     return outcome;

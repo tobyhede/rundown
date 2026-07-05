@@ -83,11 +83,11 @@ export function claimControllerContext(input: {
  * actor context and never a bare source label. Source tagging is not a trust
  * mechanism: `plugin` and `mcp` evidence — including any agent id, session id,
  * or tool name they carry — never grants run-controller trust on its own. The
- * only trust-granting variants are `run_controller` (caller-named run
- * authority from an explicit `--run`), `claim` (reconstructable
+ * only trust-granting variants are `run_capability` (verified run capability
+ * authority), `claim` (reconstructable
  * claim-controller evidence), and `direct_cli` — the STANDALONE-run
  * convenience lane only: on any delegation-exposed target the only
- * trust-granting evidence is `run_controller` or `claim` ("everyone names
+ * trust-granting evidence is `run_capability` or `claim` ("everyone names
  * their authority").
  *
  * Extend this envelope only when a frontend can supply real trusted controller
@@ -100,12 +100,15 @@ export type CallerEvidence =
       readonly kind: 'direct_cli';
     }
   | {
-      /**
-       * Caller-named run authority from an explicit `--run <rd_…>` target;
-       * trust-granting over the NAMED run only.
-       */
-      readonly kind: 'run_controller';
-      /** Run the caller names as both its authority and its target. */
+      /** Nonsecret run id from a read-oriented `--run <rd_…>` selector. */
+      readonly kind: 'run_identifier';
+      /** Run the caller names as a target identifier only. */
+      readonly runId: RunId;
+    }
+  | {
+      /** Verified run capability authority. */
+      readonly kind: 'run_capability';
+      /** Run id embedded in the verified capability. */
       readonly runId: RunId;
     }
   | {
@@ -165,10 +168,10 @@ export interface EvidenceTarget {
  * trusted run controller for `target.runId` iff the target's exposure is
  * `standalone`; on any delegation-exposed target it yields
  * {@link UNKNOWN_ACTOR_CONTEXT} — the structural fix for #460 ("everyone
- * names their authority"). `run_controller` evidence yields a trusted run
- * controller for the evidence's own named `runId` (not the target —
- * `deriveEffectiveRole` refuses a mismatch with the resolved target, so a
- * wrong `--run` needs no special case here); `claim` evidence yields a claim
+ * names their authority"). `run_identifier` evidence is nonsecret and never
+ * grants trust. `run_capability` evidence yields a trusted run controller for
+ * the evidence's own embedded `runId` (not the target — `deriveEffectiveRole`
+ * refuses a mismatch with the resolved target); `claim` evidence yields a claim
  * controller anchored on the evidence's own `controlledRunId`; every other
  * variant — including `plugin` and `mcp` regardless of the metadata they
  * carry — yields {@link UNKNOWN_ACTOR_CONTEXT}.
@@ -188,10 +191,12 @@ export function actorContextFromEvidence(
       return target.exposure === 'standalone'
         ? trustedRunControllerContext(target.runId)
         : UNKNOWN_ACTOR_CONTEXT;
-    case 'run_controller':
-      // Caller-named authority. deriveEffectiveRole refuses a mismatch with
+    case 'run_capability':
+      // Caller-named verified authority. deriveEffectiveRole refuses a mismatch with
       // the resolved target, so no target comparison happens here.
       return trustedRunControllerContext(evidence.runId);
+    case 'run_identifier':
+      return UNKNOWN_ACTOR_CONTEXT;
     case 'claim':
       return claimControllerContext({
         claimId: evidence.claimId,

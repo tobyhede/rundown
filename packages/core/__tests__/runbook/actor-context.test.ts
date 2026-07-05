@@ -67,10 +67,18 @@ describe('actorContextFromEvidence — the evidence × exposure truth table', ()
 
   it.each(
     EXPOSURES,
-  )('maps run_controller evidence to a trusted controller of the NAMED run for %s exposure', (exposure) => {
+  )('maps run_capability evidence to a trusted controller of the NAMED run for %s exposure', (exposure) => {
     expect(
-      actorContextFromEvidence({ kind: 'run_controller', runId: runIdA }, target(runIdB, exposure)),
+      actorContextFromEvidence({ kind: 'run_capability', runId: runIdA }, target(runIdB, exposure)),
     ).toEqual(trustedRunControllerContext(runIdA));
+  });
+
+  it.each(
+    EXPOSURES,
+  )('maps run_identifier evidence to the unknown singleton for %s exposure', (exposure) => {
+    expect(
+      actorContextFromEvidence({ kind: 'run_identifier', runId: runIdA }, target(runIdB, exposure)),
+    ).toBe(UNKNOWN_ACTOR_CONTEXT);
   });
 
   it.each(
@@ -109,17 +117,17 @@ describe('actorContextFromEvidence — the evidence × exposure truth table', ()
     );
   });
 
-  it('derives orchestrator_for_target when run_controller evidence names the target run', () => {
+  it('derives orchestrator_for_target when run_capability evidence names the target run', () => {
     const context = actorContextFromEvidence(
-      { kind: 'run_controller', runId: runIdA },
+      { kind: 'run_capability', runId: runIdA },
       target(runIdA, 'delegating'),
     );
     expect(deriveEffectiveRole(context, baseState(runIdA))).toBe('orchestrator_for_target');
   });
 
-  it('derives unknown_for_target when run_controller evidence names a different run (wrong --run is refused downstream)', () => {
+  it('derives unknown_for_target when run_capability evidence names a different run (wrong --run is refused downstream)', () => {
     const context = actorContextFromEvidence(
-      { kind: 'run_controller', runId: runIdB },
+      { kind: 'run_capability', runId: runIdB },
       target(runIdA, 'delegating'),
     );
     expect(deriveEffectiveRole(context, baseState(runIdA))).toBe('unknown_for_target');
@@ -142,7 +150,8 @@ const exposureArb: fc.Arbitrary<DelegationExposure> = fc.constantFrom(
 
 const callerEvidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
   fc.constant({ kind: 'direct_cli' } as const),
-  fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
+  fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_identifier' as const, runId })),
+  fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_capability' as const, runId })),
   fc.record({
     kind: fc.constant('plugin' as const),
     agentId: fc.option(fc.string(), { nil: undefined }),
@@ -186,7 +195,7 @@ describe('actorContextFromEvidence properties', () => {
     );
   });
 
-  it('role composition: orchestrator_for_target iff (run_controller or claim naming the target) or (direct_cli on a standalone target)', () => {
+  it('role composition: orchestrator_for_target iff (run_capability or claim naming the target) or (direct_cli on a standalone target)', () => {
     fc.assert(
       fc.property(
         callerEvidenceArb,
@@ -199,7 +208,7 @@ describe('actorContextFromEvidence properties', () => {
           );
           const expectOrchestrator =
             (evidence.kind === 'direct_cli' && exposure === 'standalone') ||
-            (evidence.kind === 'run_controller' && evidence.runId === targetRunId) ||
+            (evidence.kind === 'run_capability' && evidence.runId === targetRunId) ||
             (evidence.kind === 'claim' && evidence.controlledRunId === targetRunId);
           expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
         },

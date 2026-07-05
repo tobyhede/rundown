@@ -13,6 +13,7 @@ import { extractParentLinkage, propagateChildTerminal } from './delegation-compl
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseClaimCapabilityOption } from './claim-capability-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
+import { parseRunCapabilityOption } from './run-capability-option.js';
 import { parseRunOption } from './run-option.js';
 
 /**
@@ -60,6 +61,10 @@ const VALUE_TAKING_OPTION_PRESENTATION: Record<
     value: 'capability',
     description: 'Prove authority over a claimed delegated child',
   },
+  '--run-capability': {
+    value: 'capability',
+    description: 'Prove orchestrator authority over a run',
+  },
   '--run': {
     value: 'runId',
     description: 'Name the run you control (explicit orchestrator targeting)',
@@ -103,6 +108,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
         index?: string;
         claimId?: string;
         claimCapability?: string;
+        runCapability?: string;
         run?: string;
         text?: boolean;
       }) => {
@@ -134,11 +140,18 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               output,
             );
             if (!claimCapabilityTarget.ok) return;
+            const runCapabilityTarget = parseRunCapabilityOption(
+              options.runCapability,
+              claimCapabilityTarget.claimCapability,
+              output,
+            );
+            if (!runCapabilityTarget.ok) return;
             const runTarget = parseRunOption(
               options.run,
               claimTarget.claimId ?? undefined,
               output,
               claimCapabilityTarget.claimCapability,
+              runCapabilityTarget.runCapability,
             );
             if (!runTarget.ok) return;
 
@@ -154,6 +167,9 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(claimCapabilityTarget.claimCapability !== undefined
                 ? { claimCapability: claimCapabilityTarget.claimCapability }
+                : {}),
+              ...(runCapabilityTarget.runCapability !== undefined
+                ? { runCapability: runCapabilityTarget.runCapability }
                 : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
               ...(options.step !== undefined ? { step: options.step } : {}),

@@ -40,6 +40,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // structural mocking — every static import from @rundown-org/core resolves
   // through the factory rather than leaking the real module.
   assertClaimId: jest.fn((s: string) => s),
+  parseRunCapability: jest.fn((capability: string) => ({
+    runId: `rd_${capability.split('_')[1]}`,
+    secret: capability.split('_')[2],
+  })),
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
   ...mockErrorHelpers,
 }));

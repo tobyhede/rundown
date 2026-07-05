@@ -1,5 +1,5 @@
 import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
-import type { ClaimCapability } from './capability.js';
+import { parseRunCapability, type ClaimCapability, type RunCapability } from './capability.js';
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import { resolveCommandIntent, type CommandTargetSelector } from './command-policy.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
@@ -151,6 +151,8 @@ export interface ResolveCommandTargetOptions {
    * never sees both.
    */
   readonly runId?: RunId;
+  /** Capability proving authority over an active orchestrator run. */
+  readonly runCapability?: RunCapability;
   /**
    * When true, a stashed claimed child resolves as `claim` (read-only
    * inspection paths set this); when false (default) it resolves as
@@ -173,6 +175,8 @@ export interface ResolveTransitionTargetOptions {
    * never sees both.
    */
   readonly runId?: RunId;
+  /** Capability proving authority over an active orchestrator run. */
+  readonly runCapability?: RunCapability;
   /**
    * True when the caller supplied an explicit `--step` target. The
    * open-delegated-children refusal guards only *bare* pass/fail (an accidental
@@ -186,6 +190,8 @@ export interface ResolveTransitionTargetOptions {
 
 const CLAIM_CAPABILITY_REQUIRED_MESSAGE =
   'Claim id is not an authority credential. Use --claim-capability with the capability returned by rundown claim.';
+const RUN_CAPABILITY_REQUIRED_MESSAGE =
+  'Run id is not an authority credential. Use --run-capability with the capability returned by rundown run.';
 
 /**
  * Read-side dependency required to resolve command targets.
@@ -215,6 +221,16 @@ export interface CommandTargetReader {
    * @returns Typed outcome splitting "not on stack" from "not running"
    */
   resolveRunningStackMember(runId: RunId): Promise<RunningStackMemberResolution>;
+
+  /**
+   * Resolve an explicit run capability to a running session-stack member.
+   *
+   * @param capability - Run capability supplied by the caller
+   * @returns Typed outcome splitting "not on stack" from "not running"
+   */
+  resolveRunningStackMemberByCapability(
+    capability: RunCapability,
+  ): Promise<RunningStackMemberResolution>;
 
   /**
    * Resolve an explicit claim id to its child runbook state or failure status.
@@ -426,6 +442,21 @@ async function resolveRunTarget(
   return { kind: 'run', runId, state: member.state };
 }
 
+async function resolveRunCapabilityTarget(
+  targetReader: CommandTargetReader,
+  runCapability: RunCapability,
+): Promise<
+  | { readonly kind: 'run'; readonly runId: RunId; readonly state: RunbookState }
+  | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
+> {
+  const runId = parseRunCapability(runCapability).runId;
+  const member = await targetReader.resolveRunningStackMemberByCapability(runCapability);
+  if (member.kind !== 'running') {
+    return unknownRunRefusal(runId, member);
+  }
+  return { kind: 'run', runId, state: member.state };
+}
+
 /**
  * Resolve the runbook a targeting command should act on.
  *
@@ -453,6 +484,9 @@ export async function resolveCommandTarget(
   }
   if (options.runId !== undefined) {
     return resolveRunTarget(targetReader, options.runId);
+  }
+  if (options.runCapability !== undefined) {
+    return resolveRunCapabilityTarget(targetReader, options.runCapability);
   }
   const state = await targetReader.getActive();
   return state ? { kind: 'default', state } : { kind: 'none' };
@@ -519,19 +553,24 @@ export async function resolveTransitionTarget(
     };
   }
 
-  if (options.runId !== undefined) {
-    const run = await resolveRunTarget(targetReader, options.runId);
+  if (options.runCapability !== undefined) {
+    const run = await resolveRunCapabilityTarget(targetReader, options.runCapability);
     if (run.kind === 'unknown_run') {
       return run;
     }
-    // A run-shaped target flows through the SAME policy block as the default
-    // path — `--run` names authority, it does not bypass the collection guards.
     const refusal = await evaluateTransitionPolicy(targetReader, options, run.state, {
-      kind: 'run',
-      runId: run.runId,
+      kind: 'run-capability',
+      runCapability: options.runCapability,
     });
     if (refusal) return refusal;
     return run;
+  }
+  if (options.runId !== undefined) {
+    return {
+      kind: 'unknown_run',
+      runId: options.runId,
+      message: RUN_CAPABILITY_REQUIRED_MESSAGE,
+    };
   }
 
   const active = await targetReader.getActive();

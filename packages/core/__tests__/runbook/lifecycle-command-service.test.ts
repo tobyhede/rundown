@@ -360,7 +360,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
 
       expect(outcome.kind).toBe('delegated');
@@ -384,7 +384,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const fresh = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       expect(fresh.kind).toBe('delegated');
       if (fresh.kind !== 'delegated') throw new Error('expected delegated');
@@ -394,7 +394,7 @@ describe('RunbookLifecycleCommandService', () => {
       // Echo of the same delegation must surface the identical ref.
       const echo = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       expect(echo.kind).toBe('already-delegated');
       if (echo.kind !== 'already-delegated') throw new Error('expected echo');
@@ -408,7 +408,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam, deps } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected first delegated');
 
@@ -417,7 +417,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const second = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       expect(second.kind).toBe('already-delegated');
       if (second.kind !== 'already-delegated') throw new Error('expected echo');
@@ -428,7 +428,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep(); // authored child is "child.md"
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         requestedRunbook: 'different.md',
       });
       expect(outcome.kind).toBe('error');
@@ -442,7 +442,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
 
       expect(outcome.kind).toBe('refused');
@@ -464,7 +464,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         requestedRunbook: 'child.md', // matches the authored child (no RD-822)
       });
 
@@ -480,7 +480,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnMultiStepRunbook();
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         explicitStep: '2.2',
       });
       expect(outcome.kind).toBe('delegated');
@@ -494,7 +494,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         resolveExtraVars,
       });
 
@@ -506,14 +506,14 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected first delegated');
 
       const resolveExtraVars = jest.fn(async () => undefined);
       const second = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         resolveExtraVars,
       });
 
@@ -551,7 +551,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         explicitStep: '1.1',
         explicitIteration: 2,
       });
@@ -571,13 +571,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const fresh = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (fresh.kind !== 'delegated') throw new Error('expected delegated');
 
       const echo = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         requestedRunbook: 'child.md',
       });
       expect(echo.kind).toBe('already-delegated');
@@ -590,13 +590,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const fresh = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (fresh.kind !== 'delegated') throw new Error('expected delegated');
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         requestedRunbook: 'other.md',
       });
       expect(outcome.kind).toBe('error');
@@ -608,7 +608,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
       const fresh = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (fresh.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -624,7 +624,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         explicitStep: '1.1',
       });
       expect(outcome.kind).toBe('error');
@@ -663,7 +663,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const outcome = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         expect(outcome.kind).toBe('delegated');
         expect(calls).toEqual(['acquire', 'loadRun', 'persist', 'release']);
@@ -699,7 +699,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const outcome = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         expect(outcome.kind).toBe('already-delegated');
         if (outcome.kind !== 'already-delegated') throw new Error('expected echo');
@@ -721,7 +721,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const outcome = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         expect(outcome.kind).toBe('error');
         if (outcome.kind !== 'error') throw new Error('expected error');
@@ -737,7 +737,7 @@ describe('RunbookLifecycleCommandService', () => {
         const issue = (): ReturnType<typeof localSeam.issueDelegation> =>
           localSeam.issueDelegation({
             mode: 'fresh',
-            callerEvidence: { kind: 'run_controller', runId },
+            callerEvidence: { kind: 'run_capability', runId },
             explicitStep: '1.1',
           });
         const [a, b] = await Promise.all([issue(), issue()]);
@@ -791,7 +791,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       expect(outcome.kind).toBe('delegated');
 
@@ -808,13 +808,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'step', step: first.stepId },
       });
       expect(retried.kind).toBe('retried');
@@ -826,12 +826,12 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnActiveDelegateSubstep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'active' },
       });
       expect(retried.kind).toBe('retried');
@@ -1012,13 +1012,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnActiveForIterationSubstep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'active' },
       });
       expect(retried.kind).toBe('retried');
@@ -1054,7 +1054,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         explicitStep: '1.1',
         explicitIteration: 2,
       });
@@ -1062,7 +1062,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'step', step: '1.1', iteration: 2 },
       });
       expect(retried.kind).toBe('retried');
@@ -1075,7 +1075,7 @@ describe('RunbookLifecycleCommandService', () => {
         const { seam: localSeam, deps } = await startSeamOnDelegateStep();
         const first = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1101,7 +1101,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const retried = await localSeam.issueDelegation({
           mode: 'retry',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
           locator: { kind: 'step', step: first.stepId },
         });
         expect(retried.kind).toBe('retried');
@@ -1116,7 +1116,7 @@ describe('RunbookLifecycleCommandService', () => {
         const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
         const first = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1141,7 +1141,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const outcome = await localSeam.issueDelegation({
           mode: 'retry',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
           locator: { kind: 'step', step: first.stepId },
         });
         expect(outcome.kind).toBe('error');
@@ -1160,7 +1160,7 @@ describe('RunbookLifecycleCommandService', () => {
         const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
         const first = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1177,7 +1177,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const outcome = await localSeam.issueDelegation({
           mode: 'retry',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
           locator: { kind: 'step', step: first.stepId },
         });
         expect(outcome.kind).toBe('error');
@@ -1199,19 +1199,19 @@ describe('RunbookLifecycleCommandService', () => {
         const { seam: localSeam, manager: m, state } = await startSeamOnDelegateStep();
         const setup = await localSeam.issueDelegation({
           mode: 'fresh',
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
         });
         if (setup.kind !== 'delegated') throw new Error('expected delegated');
 
         const [freshOutcome, retryOutcome] = await Promise.all([
           localSeam.issueDelegation({
             mode: 'fresh',
-            callerEvidence: { kind: 'run_controller', runId },
+            callerEvidence: { kind: 'run_capability', runId },
             explicitStep: '1.1',
           }),
           localSeam.issueDelegation({
             mode: 'retry',
-            callerEvidence: { kind: 'run_controller', runId },
+            callerEvidence: { kind: 'run_capability', runId },
             locator: { kind: 'step', step: '1.1' },
           }),
         ]);
@@ -1238,12 +1238,12 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'token', token: first.token },
       });
       expect(retried.kind).toBe('retried');
@@ -1253,13 +1253,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetRunId: first.parentRunId,
         locator: { kind: 'token', token: first.token },
       });
@@ -1274,14 +1274,14 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
       const otherRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId: otherRunId },
+        callerEvidence: { kind: 'run_capability', runId: otherRunId },
         targetRunId: otherRunId,
         locator: { kind: 'token', token: first.token },
       });
@@ -1307,7 +1307,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam, deps } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1327,7 +1327,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeamStale.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'token', token: first.token },
       });
 
@@ -1362,7 +1362,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         explicitStep: '1.1',
         explicitIteration: 2,
       });
@@ -1370,7 +1370,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'token', token: first.token },
       });
       expect(retried.kind).toBe('retried');
@@ -1382,7 +1382,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'token', token: 'rdtk_unknown00000000000000000000000000' },
       });
       expect(outcome.kind).toBe('token-not-found');
@@ -1396,7 +1396,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam, state: issuingRun } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1414,7 +1414,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'token', token: first.token },
       });
 
@@ -1430,7 +1430,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamOnActiveDelegateSubstep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1463,7 +1463,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         locator: { kind: 'active' },
       });
       expect(retried.kind).toBe('retried');
@@ -1621,7 +1621,7 @@ describe('RunbookLifecycleCommandService', () => {
         command: 'pass',
         // The pending-outcome run classifies `delegating`; the guard's subject
         // needs named authority. The direct-CLI twin below pins the role gate.
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -1732,7 +1732,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTransition({
         command: 'pass',
-        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        callerEvidence: { kind: 'run_capability', runId: namedRunId },
         targetSelector: { kind: 'run', runId: namedRunId },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -1752,7 +1752,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTransition({
         command: 'pass',
-        callerEvidence: { kind: 'run_controller', runId: foreignRunId },
+        callerEvidence: { kind: 'run_capability', runId: foreignRunId },
         targetSelector: { kind: 'run', runId: foreignRunId },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -1779,7 +1779,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTransition({
         command: 'pass',
-        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        callerEvidence: { kind: 'run_capability', runId: namedRunId },
         targetSelector: { kind: 'run', runId: namedRunId },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -1823,7 +1823,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTransition({
         command: 'pass',
-        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        callerEvidence: { kind: 'run_capability', runId: namedRunId },
         targetSelector: { kind: 'run', runId: namedRunId },
         terminalPolicy: RELEASE_POLICY,
         explicitTarget: { stepId: '1.1' },
@@ -1842,7 +1842,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        callerEvidence: { kind: 'run_capability', runId: namedRunId },
         targetRunId: namedRunId,
       });
 
@@ -1860,7 +1860,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: { kind: 'run_controller', runId: foreignRunId },
+        callerEvidence: { kind: 'run_capability', runId: foreignRunId },
         targetRunId: foreignRunId,
       });
 
@@ -1878,7 +1878,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTerminal({
         command: 'complete',
-        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        callerEvidence: { kind: 'run_capability', runId: namedRunId },
         targetSelector: { kind: 'run', runId: namedRunId },
       });
 
@@ -1916,7 +1916,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTerminal({
         command: 'complete',
-        callerEvidence: { kind: 'run_controller', runId: childId },
+        callerEvidence: { kind: 'run_capability', runId: childId },
         targetSelector: { kind: 'run', runId: childId },
       });
 
@@ -1933,7 +1933,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTerminal({
         command: 'complete',
-        callerEvidence: { kind: 'run_controller', runId: foreignRunId },
+        callerEvidence: { kind: 'run_capability', runId: foreignRunId },
         targetSelector: { kind: 'run', runId: foreignRunId },
       });
 
@@ -1990,7 +1990,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.resolveRunNavigation({
         command: 'goto',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetSelector: { kind: 'run', runId },
       });
 
@@ -2005,7 +2005,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.resolveRunNavigation({
         command: 'goto',
-        callerEvidence: { kind: 'run_controller', runId: foreign },
+        callerEvidence: { kind: 'run_capability', runId: foreign },
         targetSelector: { kind: 'run', runId: foreign },
       });
 
@@ -3005,7 +3005,7 @@ describe('RunbookLifecycleCommandService', () => {
         command: 'pass',
         // The parent carries an inline substep record (clause f), so the
         // reactivation subject needs named authority post-flip.
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -3055,7 +3055,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       await seam.runTransition({
         command: 'pass',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -3074,7 +3074,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       await seam.runTransition({
         command: 'pass',
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetSelector: { kind: 'explicit-step', step: '1.1' },
         terminalPolicy: RELEASE_POLICY,
         explicitTarget: { stepId: '1.1' },
@@ -3096,10 +3096,10 @@ describe('RunbookLifecycleCommandService', () => {
 
       await seam.runTransition({
         command: 'pass',
-        // run_controller evidence maps directly (no classification read), so
+        // run_capability evidence maps directly (no classification read), so
         // the drive-side single-resolution property stays observable; the
         // direct_cli lane adds one classification read by design.
-        callerEvidence: { kind: 'run_controller', runId },
+        callerEvidence: { kind: 'run_capability', runId },
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,
       });
@@ -3360,13 +3360,13 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('bare stop refuses when the resolved root is collection pending (item 8)', async () => {
         // The pending-outcome root classifies `delegating`, so the guard's
-        // subject needs named authority (run_controller); the bare direct-CLI
+        // subject needs named authority (run_capability); the bare direct-CLI
         // twin below pins the role-gate refusal.
         const root = collectionPendingState(ROOT);
         installResolvedPlan(root, [root]);
         const out = await seam.runTerminal({
           command: 'stop',
-          callerEvidence: { kind: 'run_controller', runId: ROOT },
+          callerEvidence: { kind: 'run_capability', runId: ROOT },
           targetSelector: { kind: 'default' },
         });
         expect(out.kind).toBe('delegation_collection_pending');

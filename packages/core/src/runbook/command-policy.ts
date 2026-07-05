@@ -1,5 +1,5 @@
 import type { ActorContext, EffectiveRole } from './actor-context.js';
-import type { ClaimCapability } from './capability.js';
+import type { ClaimCapability, RunCapability } from './capability.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
@@ -86,8 +86,14 @@ export type CommandTargetSelector =
   | {
       /** Explicit run-id target selector from `--run <rd_…>`. */
       readonly kind: 'run';
-      /** Run id supplied by the caller as both target and named authority. */
+      /** Run id supplied by the caller as a target identifier. */
       readonly runId: RunId;
+    }
+  | {
+      /** Explicit run-capability target selector from `--run-capability <rdrc_…>`. */
+      readonly kind: 'run-capability';
+      /** Run capability supplied by the caller as authority. */
+      readonly runCapability: RunCapability;
     };
 
 /** Input to the core command-policy decision point. */

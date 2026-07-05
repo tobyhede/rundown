@@ -1,6 +1,12 @@
 // packages/cli/src/helpers/run-option.ts
 
-import { isRunId, type ClaimCapability, type ClaimId, type RunId } from '@rundown-org/core';
+import {
+  isRunId,
+  type ClaimCapability,
+  type ClaimId,
+  type RunCapability,
+  type RunId,
+} from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -24,11 +30,12 @@ export function parseRunOption(
   claimId: ClaimId | undefined,
   output: OutputEmitter,
   claimCapability?: ClaimCapability,
+  runCapability?: RunCapability,
 ): { readonly ok: true; readonly runId?: RunId } | { readonly ok: false } {
   if (raw === undefined) return { ok: true };
-  if (claimId !== undefined || claimCapability !== undefined) {
+  if (claimId !== undefined || claimCapability !== undefined || runCapability !== undefined) {
     output.error(
-      '--run cannot be combined with delegated claim authority: name the run you control with --run, or the claim you hold with --claim-capability.',
+      '--run cannot be combined with authority credentials: use --run-capability or --claim-capability for mutations.',
       'INVALID_SYNTAX',
     );
     output.flush();

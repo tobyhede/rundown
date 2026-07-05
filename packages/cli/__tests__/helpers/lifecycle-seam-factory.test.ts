@@ -112,9 +112,9 @@ describe('buildNonDelegatingLifecycleSeam', () => {
       await expect(
         seam.issueDelegation({
           mode: 'fresh',
-          // Named orchestrator authority (post-R1, direct_cli is refused on a
+          // Verified orchestrator authority (post-R1, direct_cli is refused on a
           // delegating run before the resolver stub is ever reached).
-          callerEvidence: { kind: 'run_controller', runId: state!.id },
+          callerEvidence: { kind: 'run_capability', runId: state!.id },
           explicitStep: '1.1',
         }),
       ).rejects.toThrow(REFUSAL);

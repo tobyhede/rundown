@@ -15,6 +15,7 @@ import {
   isError,
   logger,
   parseClaimCapability,
+  parseRunCapability,
   type ClaimId,
   type ClaimCapability,
   type CommandTargetSelector,
@@ -23,6 +24,7 @@ import {
   type RunbookEventV1,
   type RunbookRef,
   type RunId,
+  type RunCapability,
   type TerminalCommandName,
 } from '@rundown-org/core';
 import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
@@ -96,6 +98,8 @@ export interface SeamTerminalOptions {
    * `claimId` (enforced upstream by `parseRunOption`).
    */
   readonly runId?: RunId;
+  /** Explicit run capability target (`--run-capability`). Mutually exclusive with claim authority. */
+  readonly runCapability?: RunCapability;
   /** Optional terminal message forwarded to the machine. */
   readonly message?: string;
 }
@@ -237,14 +241,16 @@ export async function runSeamTerminal(
     ? { kind: 'claim-capability', claimCapability: options.claimCapability }
     : options.claimId
       ? { kind: 'claim', claimId: options.claimId }
-      : options.runId !== undefined
-        ? { kind: 'run', runId: options.runId }
-        : { kind: 'default' };
+      : options.runCapability !== undefined
+        ? { kind: 'run-capability', runCapability: options.runCapability }
+        : options.runId !== undefined
+          ? { kind: 'run', runId: options.runId }
+          : { kind: 'default' };
 
   const outcome = await seam.runTerminal({
     command,
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.runCapability !== undefined ? { runCapability: options.runCapability } : {},
     ),
     targetSelector,
     ...(options.message !== undefined ? { message: options.message } : {}),
@@ -287,6 +293,8 @@ export interface TerminalRecoveryTarget {
   readonly claimCapability?: ClaimCapability;
   /** Explicit run id when the command named its target (`--run`). */
   readonly runId?: RunId;
+  /** Explicit run capability when the command named its target (`--run-capability`). */
+  readonly runCapability?: RunCapability;
 }
 
 /**
@@ -346,13 +354,16 @@ export async function handleTerminalRecovery(
   // and popping it would exit 0 without terminating the named run. Surface
   // the failure against the named run instead (echoing only the id the caller
   // themselves supplied).
-  if (target.runId !== undefined) {
+  const recoveryRunId =
+    target.runId ??
+    (target.runCapability ? parseRunCapability(target.runCapability).runId : undefined);
+  if (recoveryRunId !== undefined) {
     if (
       error instanceof InvalidRunbookStateError ||
       (isError(error) && isRecoverableActiveStackError(error))
     ) {
       output.error(
-        `Run ${target.runId} has unusable persisted state; cannot ${command} it.`,
+        `Run ${recoveryRunId} has unusable persisted state; cannot ${command} it.`,
         'RUN_TARGET_UNAVAILABLE',
       );
       output.flush();

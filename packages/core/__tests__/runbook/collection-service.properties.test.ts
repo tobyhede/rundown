@@ -118,7 +118,7 @@ describe('RunbookCollectionService properties', () => {
           steps,
           // Post-R1 the delegating fixture refuses bare direct-CLI evidence;
           // the orchestrator names its run explicitly.
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 
@@ -148,7 +148,7 @@ describe('RunbookCollectionService properties', () => {
           steps,
           // Post-R1 the delegating fixture refuses bare direct-CLI evidence;
           // the orchestrator names its run explicitly.
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'run_capability', runId },
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 

@@ -23,6 +23,7 @@ import { buildTransitionContext, type TransitionContext } from '../helpers/trans
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimCapabilityOption } from '../helpers/claim-capability-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseRunCapabilityOption } from '../helpers/run-capability-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
@@ -52,6 +53,7 @@ export function registerCollectCommand(program: Command): void {
     .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
+    .option('--run-capability <capability>', 'Prove orchestrator authority over a run')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
     .action(
@@ -60,6 +62,7 @@ export function registerCollectCommand(program: Command): void {
         index?: string;
         claimId?: string;
         claimCapability?: string;
+        runCapability?: string;
         run?: string;
         text?: boolean;
       }) => {
@@ -84,17 +87,27 @@ export function registerCollectCommand(program: Command): void {
               output,
             );
             if (!claimCapabilityTarget.ok) return;
+            const runCapabilityTarget = parseRunCapabilityOption(
+              options.runCapability,
+              claimCapabilityTarget.claimCapability,
+              output,
+            );
+            if (!runCapabilityTarget.ok) return;
             const runTarget = parseRunOption(
               options.run,
               claimTarget.claimId,
               output,
               claimCapabilityTarget.claimCapability,
+              runCapabilityTarget.runCapability,
             );
             if (!runTarget.ok) return;
             const contextResult = await buildTransitionContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(claimCapabilityTarget.claimCapability !== undefined
                 ? { claimCapability: claimCapabilityTarget.claimCapability }
+                : {}),
+              ...(runCapabilityTarget.runCapability !== undefined
+                ? { runCapability: runCapabilityTarget.runCapability }
                 : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
@@ -128,6 +141,9 @@ export function registerCollectCommand(program: Command): void {
               index: options.index,
               text: options.text,
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              ...(runCapabilityTarget.runCapability !== undefined
+                ? { runCapability: runCapabilityTarget.runCapability }
+                : {}),
             });
 
             if (shouldExitWithError) {
@@ -150,6 +166,8 @@ interface CollectOptions {
   text?: boolean;
   /** Validated `--run` run id supplying run-controller caller evidence. */
   runId?: RunId;
+  /** Validated `--run-capability` supplying run-controller caller evidence. */
+  runCapability?: import('@rundown-org/core').RunCapability;
 }
 
 /**
@@ -480,9 +498,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
             controlledRunId: ctx.claim.childRunId,
           },
         }
-      : options.runId !== undefined
-        ? { runId: options.runId }
-        : {},
+      : options.runCapability !== undefined
+        ? { runCapability: options.runCapability }
+        : options.runId !== undefined
+          ? { runId: options.runId }
+          : {},
   );
 
   const collectionService = new RunbookCollectionService({

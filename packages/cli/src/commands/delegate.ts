@@ -34,9 +34,16 @@ import {
 } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
+import { parseRunCapabilityOption } from '../helpers/run-capability-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
-import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
+import type {
+  CallerEvidence,
+  RunCapability,
+  RunId,
+  TemplateVarValue,
+  RetryLocator,
+} from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -48,6 +55,7 @@ interface DelegateActionOptions {
   step?: string;
   index?: string;
   run?: string;
+  runCapability?: string;
   retry?: boolean;
   input: string[];
   inputJson?: string[];
@@ -66,13 +74,20 @@ interface DelegateActionOptions {
  * @param runId - Validated `--run` id, or `undefined` for a bare invocation.
  * @returns Spreadable `callerEvidence` (+ `targetRunId` when named) fields.
  */
-function runTargetedSeamFields(runId: RunId | undefined): {
+function runTargetedSeamFields(
+  runId: RunId | undefined,
+  runCapability: RunCapability | undefined,
+): {
   readonly callerEvidence: CallerEvidence;
   readonly targetRunId?: RunId;
+  readonly targetRunCapability?: RunCapability;
 } {
   return {
-    callerEvidence: readLifecycleCallerEvidence(runId !== undefined ? { runId } : {}),
+    callerEvidence: readLifecycleCallerEvidence(
+      runCapability !== undefined ? { runCapability } : {},
+    ),
     ...(runId !== undefined ? { targetRunId: runId } : {}),
+    ...(runCapability !== undefined ? { targetRunCapability: runCapability } : {}),
   };
 }
 
@@ -117,6 +132,7 @@ export function registerDelegateCommand(program: Command): void {
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--retry', 'Retry an existing delegation: cancel and re-issue with a fresh token')
+    .option('--run-capability <capability>', 'Prove orchestrator authority over a run')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .addOption(
       new Option(
@@ -184,7 +200,19 @@ export function registerDelegateCommand(program: Command): void {
 
           // Delegate has no claim lane (validated above), so mutual exclusion
           // is against `undefined`; this validates --run format only.
-          const runTarget = parseRunOption(options.run, undefined, output);
+          const runCapabilityTarget = parseRunCapabilityOption(
+            options.runCapability,
+            undefined,
+            output,
+          );
+          if (!runCapabilityTarget.ok) return;
+          const runTarget = parseRunOption(
+            options.run,
+            undefined,
+            output,
+            undefined,
+            runCapabilityTarget.runCapability,
+          );
           if (!runTarget.ok) return;
 
           const manager = new RunbookStateManager(cwd);
@@ -225,7 +253,7 @@ export function registerDelegateCommand(program: Command): void {
 
             const outcome = await seam.issueDelegation({
               mode: 'retry',
-              ...runTargetedSeamFields(runTarget.runId),
+              ...runTargetedSeamFields(runTarget.runId, runCapabilityTarget.runCapability),
               locator,
               // Lazily parse --input* overrides (Category-A flag handling stays in
               // the CLI), deferred by the seam to AFTER the retry target is located
@@ -353,7 +381,7 @@ export function registerDelegateCommand(program: Command): void {
 
           const outcome = await seam.issueDelegation({
             mode: 'fresh',
-            ...runTargetedSeamFields(runTarget.runId),
+            ...runTargetedSeamFields(runTarget.runId, runCapabilityTarget.runCapability),
             ...(options.step ? { explicitStep: options.step } : {}),
             ...(explicitIteration !== undefined ? { explicitIteration } : {}),
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),

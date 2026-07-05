@@ -278,10 +278,10 @@ describe('resolveCommandIntent properties', () => {
     );
   });
 
-  it('evidence role composition: orchestrator_for_target iff (run_controller or claim naming the target) or (direct_cli on a standalone target)', () => {
+  it('evidence role composition: orchestrator_for_target iff (run_capability or claim naming the target) or (direct_cli on a standalone target)', () => {
     const evidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
       fc.constant({ kind: 'direct_cli' } as const),
-      fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
+      fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_capability' as const, runId })),
       fc.constantFrom(runIdA, runIdB).map((controlledRunId) => ({
         kind: 'claim' as const,
         claimId,
@@ -308,7 +308,7 @@ describe('resolveCommandIntent properties', () => {
           );
           const expectOrchestrator =
             (evidence.kind === 'direct_cli' && exposure === 'standalone') ||
-            (evidence.kind === 'run_controller' && evidence.runId === targetId) ||
+            (evidence.kind === 'run_capability' && evidence.runId === targetId) ||
             (evidence.kind === 'claim' && evidence.controlledRunId === targetId);
           expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
         },

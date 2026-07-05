@@ -9,7 +9,7 @@ import {
 } from './actor-context.js';
 import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { ClaimCapability } from './capability.js';
+import { parseRunCapability, type ClaimCapability, type RunCapability } from './capability.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -221,6 +221,8 @@ export type DelegationIssuanceInput =
        * foreign id returns the `unknown_run` outcome.
        */
       readonly targetRunId?: RunId;
+      /** Explicit run capability from `--run-capability`. */
+      readonly targetRunCapability?: RunCapability;
       /** Explicit step id from `--step`; `undefined` => bare inference. */
       readonly explicitStep?: string;
       /** Explicit FOR iteration from `--index`. */
@@ -254,6 +256,8 @@ export type DelegationIssuanceInput =
        * run differs from this id — named authority is never silently discarded.
        */
       readonly targetRunId?: RunId;
+      /** Explicit run capability from `--run-capability`. */
+      readonly targetRunCapability?: RunCapability;
       /** How the retry locates its target delegation. */
       readonly locator: RetryLocator;
       /**
@@ -799,7 +803,10 @@ export class RunbookLifecycleCommandService {
     // Target identification only — the anchor run's id (the `--run`-named
     // session-stack member, or the active default). Every state-dependent
     // decision below runs against the locked re-read, not this snapshot.
-    const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+    const anchored = await this.#resolveIssuanceAnchor(
+      input.targetRunId,
+      input.targetRunCapability,
+    );
     if (anchored.kind !== 'ok') {
       return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
     }
@@ -1002,11 +1009,16 @@ export class RunbookLifecycleCommandService {
       // token's owner is refused, never silently discarded. The message echoes
       // only the caller-supplied id — never the token's actual owning run
       // (accident barrier).
-      if (input.targetRunId !== undefined && scan.parentState.id !== input.targetRunId) {
+      const targetRunId =
+        input.targetRunId ??
+        (input.targetRunCapability
+          ? parseRunCapability(input.targetRunCapability).runId
+          : undefined);
+      if (targetRunId !== undefined && scan.parentState.id !== targetRunId) {
         return {
           kind: 'run_target_mismatch',
-          runId: input.targetRunId,
-          message: `Run ${input.targetRunId} does not own the supplied delegation token.`,
+          runId: targetRunId,
+          message: `Run ${targetRunId} does not own the supplied delegation token.`,
         };
       }
       targetState = scan.parentState;
@@ -1027,7 +1039,10 @@ export class RunbookLifecycleCommandService {
       }
       stepLabel = snapshot.at;
     } else if (locator.kind === 'step') {
-      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+      const anchored = await this.#resolveIssuanceAnchor(
+        input.targetRunId,
+        input.targetRunCapability,
+      );
       if (anchored.kind !== 'ok') {
         return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
       }
@@ -1056,7 +1071,10 @@ export class RunbookLifecycleCommandService {
           ? deriveExecutionAt(stepName, parsed?.substep, locator.iteration)
           : locator.step;
     } else {
-      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+      const anchored = await this.#resolveIssuanceAnchor(
+        input.targetRunId,
+        input.targetRunCapability,
+      );
       if (anchored.kind === 'unknown_run') return anchored;
       if (anchored.kind === 'none') return { kind: 'no-active-runbook' };
       const active = anchored.state;
@@ -1244,6 +1262,10 @@ export class RunbookLifecycleCommandService {
         ? input.targetSelector.claimCapability
         : undefined;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
+    const runCapability =
+      input.targetSelector.kind === 'run-capability'
+        ? input.targetSelector.runCapability
+        : undefined;
 
     const actorContext = await this.#resolveActorContext(input.callerEvidence, claimId);
 
@@ -1252,6 +1274,7 @@ export class RunbookLifecycleCommandService {
       ...(claimId ? { claimId } : {}),
       ...(claimCapability ? { claimCapability } : {}),
       ...(runId ? { runId } : {}),
+      ...(runCapability ? { runCapability } : {}),
       targeted,
       actorContext,
     });
@@ -1308,7 +1331,14 @@ export class RunbookLifecycleCommandService {
       case 'default':
         return this.#driveTerminalBare(input);
       case 'run':
-        return this.#driveTerminalRun(input, input.targetSelector.runId);
+        return {
+          kind: 'unknown_run',
+          runId: input.targetSelector.runId,
+          message:
+            'Run id is not an authority credential. Use --run-capability with the capability returned by rundown run.',
+        };
+      case 'run-capability':
+        return this.#driveTerminalRunCapability(input, input.targetSelector.runCapability);
       case 'explicit-step':
         throw new Error('complete/stop do not support --step targeting');
       default: {
@@ -1431,6 +1461,19 @@ export class RunbookLifecycleCommandService {
     runId: RunId,
   ): Promise<LifecycleTerminalOutcome> {
     const member = await this.#deps.sessionService.resolveRunningStackMember(runId);
+    if (member.kind !== 'running') {
+      return unknownRunRefusal(runId, member);
+    }
+    return this.#driveTerminalBare(input, member.state);
+  }
+
+  async #driveTerminalRunCapability(
+    input: LifecycleTerminalInput,
+    runCapability: RunCapability,
+  ): Promise<LifecycleTerminalOutcome> {
+    const runId = parseRunCapability(runCapability).runId;
+    const member =
+      await this.#deps.sessionService.resolveRunningStackMemberByCapability(runCapability);
     if (member.kind !== 'running') {
       return unknownRunRefusal(runId, member);
     }
@@ -1673,14 +1716,14 @@ export class RunbookLifecycleCommandService {
     //
     // A contiguous-inline chain is one orchestrator's composition by
     // construction (inline children run in the same agent session as their
-    // composer), so `run_controller` evidence naming ANY member of the walked
+    // composer), so `run_capability` evidence naming ANY member of the walked
     // chain names that composition: it is evaluated as controller of the
-    // walked-to root. This is explicit, derived authority — the chain was
+    // walked-to root. This is explicit, verified authority — the chain was
     // reached by climbing inline linkage from the named run — never ambient.
     const rootSteps = await this.#deps.loadSteps(plan.targetState);
     const evidence = input.callerEvidence;
     const actorContext =
-      evidence.kind === 'run_controller' &&
+      evidence.kind === 'run_capability' &&
       plan.forceOrder.some((member) => member.id === evidence.runId)
         ? trustedRunControllerContext(plan.targetState.id)
         : actorContextFromEvidence(
@@ -1830,17 +1873,28 @@ export class RunbookLifecycleCommandService {
   // run (`none` when absent).
   async #resolveIssuanceAnchor(
     targetRunId: RunId | undefined,
+    targetRunCapability?: RunCapability,
   ): Promise<
     | { readonly kind: 'ok'; readonly state: RunbookState }
     | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
     | { readonly kind: 'none' }
   > {
-    if (targetRunId !== undefined) {
-      const member = await this.#deps.sessionService.resolveRunningStackMember(targetRunId);
+    if (targetRunCapability !== undefined) {
+      const runId = parseRunCapability(targetRunCapability).runId;
+      const member =
+        await this.#deps.sessionService.resolveRunningStackMemberByCapability(targetRunCapability);
       if (member.kind !== 'running') {
-        return unknownRunRefusal(targetRunId, member);
+        return unknownRunRefusal(runId, member);
       }
       return { kind: 'ok', state: member.state };
+    }
+    if (targetRunId !== undefined) {
+      return {
+        kind: 'unknown_run',
+        runId: targetRunId,
+        message:
+          'Run id is not an authority credential. Use --run-capability with the capability returned by rundown run.',
+      };
     }
     const active = await this.#deps.sessionService.getActive();
     return active ? { kind: 'ok', state: active } : { kind: 'none' };
@@ -1871,10 +1925,10 @@ export class RunbookLifecycleCommandService {
         exposure: 'delegating',
       });
     }
-    if (evidence.kind === 'run_controller') {
+    if (evidence.kind === 'run_capability') {
       return actorContextFromEvidence(evidence, {
         runId: evidence.runId,
-        // Fail-closed placeholder: the run_controller arm never reads exposure.
+        // Fail-closed placeholder: the run_capability arm never reads exposure.
         exposure: 'delegating',
       });
     }

@@ -39,6 +39,16 @@ describe('H3 runbook-list substep delegation integration', () => {
     return tokenMatch![1];
   }
 
+  function extractRunCapability(stdout: string): string {
+    const started = stdout
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type?: string; runCapability?: string })
+      .find((event) => event.type === 'runbook_started');
+    expect(started?.runCapability).toEqual(expect.stringMatching(/^rdrc_/));
+    return started!.runCapability!;
+  }
+
   /** Simple auto-completing child runbook. */
   async function writeChildRunbook(name = 'child.runbook.md'): Promise<void> {
     await writeFile(
@@ -372,9 +382,10 @@ Done.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const runCapability = extractRunCapability(result.stdout);
 
     result = runCli(
-      `delegate explicit-child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      `delegate explicit-child.runbook.md --step 1.1 --run-capability ${runCapability}`,
       workspace,
     );
     expect(result.exitCode).not.toBe(0);
@@ -400,9 +411,10 @@ Do some manual work here.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const runCapability = extractRunCapability(result.stdout);
 
     result = runCli(
-      `delegate explicit-child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      `delegate explicit-child.runbook.md --step 1.1 --run-capability ${runCapability}`,
       workspace,
     );
     expect(result.exitCode).not.toBe(0);
@@ -417,6 +429,7 @@ Do some manual work here.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const runCapability = extractRunCapability(result.stdout);
     const [autoToken] = extractTokens(result.stdout);
     expect(autoToken).toBeDefined();
 
@@ -424,7 +437,7 @@ Do some manual work here.
     expect(result.exitCode).toBe(0);
 
     result = runCli(
-      `delegate child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      `delegate child.runbook.md --step 1.1 --run-capability ${runCapability}`,
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -455,9 +468,10 @@ Do some manual work here.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const runCapability = extractRunCapability(result.stdout);
 
-    // Step 1.1 is prose — pass it directly (run+step named authority post-R1)
-    result = runCli(`pass --step 1.1 --run ${(await getActiveState(workspace))!.id}`, workspace);
+    // Step 1.1 is prose — pass it directly (run-capability+step named authority post-R1)
+    result = runCli(`pass --step 1.1 --run-capability ${runCapability}`, workspace);
     expect(result.exitCode).toBe(0);
 
     const [token] = extractTokens(result.stdout);
