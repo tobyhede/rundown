@@ -999,15 +999,6 @@ describe('collect command', () => {
     }, 20_000);
 
     it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
-      await writeFile(
-        join(workspace.cwd, 'noisy-command.mjs'),
-        [
-          "process.stdout.write(Buffer.from('434f4d4d414e445f5354444f55540a', 'hex').toString());",
-          "process.stderr.write(Buffer.from('434f4d4d414e445f5354444552520a', 'hex').toString());",
-          '',
-        ].join('\n'),
-      );
-
       const parent = [
         '# Parent',
         '',
@@ -1028,7 +1019,8 @@ describe('collect command', () => {
         '- FAIL STOP',
         '',
         '```bash',
-        'node noisy-command.mjs',
+        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\117\\125\\124\\012'",
+        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
         '```',
         '',
       ].join('\n');
@@ -1083,7 +1075,7 @@ describe('collect command', () => {
       const passed = runCli(`pass --claim-id ${claimId}`, workspace);
       expect(passed.exitCode).toBe(0);
 
-      const collected = runCli(`collect --run ${runId}`, workspace);
+      const collected = runCli(`collect --run ${runId} --allow-run printf --no-sandbox`, workspace);
       expect(collected.exitCode).toBe(0);
       expect(collected.stdout).not.toContain('COMMAND_STDOUT');
       expect(collected.stdout).not.toContain('COMMAND_STDERR');

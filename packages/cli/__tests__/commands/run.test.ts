@@ -85,15 +85,6 @@ describe('start command', () => {
 
   describe('file mode', () => {
     it('keeps JSON stdout parseable when a command writes stdout and stderr', async () => {
-      await writeFile(
-        join(workspace.cwd, 'noisy-command.mjs'),
-        [
-          "process.stdout.write(Buffer.from('52554e5f5354444f55540a', 'hex').toString());",
-          "process.stderr.write(Buffer.from('52554e5f5354444552520a', 'hex').toString());",
-          '',
-        ].join('\n'),
-      );
-
       const runbook = [
         '# Noisy Run',
         '',
@@ -103,14 +94,15 @@ describe('start command', () => {
         '- FAIL STOP',
         '',
         '```bash',
-        'node noisy-command.mjs',
+        "printf '\\122\\125\\116\\137\\123\\124\\104\\117\\125\\124\\012'",
+        "printf '\\122\\125\\116\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
         '```',
         '',
       ].join('\n');
 
       await writeFile(join(workspace.runbooksDir(), 'noisy.runbook.md'), runbook);
 
-      const result = runCli('run noisy.runbook.md', workspace);
+      const result = runCli('run --allow-run printf --no-sandbox noisy.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toContain('RUN_STDOUT');
       expect(result.stdout).not.toContain('RUN_STDERR');
