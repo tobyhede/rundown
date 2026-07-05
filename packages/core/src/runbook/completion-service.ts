@@ -662,6 +662,35 @@ export class RunbookCompletionService {
   }
 
   /**
+   * Consume stale delegated outcome rows for a substep.
+   *
+   * Caller must already hold the parent run's DelegationLock. This method is
+   * intentionally unlocked because retry and force-abort cleanup already
+   * execute inside that lock and a second acquisition would deadlock.
+   *
+   * @param args - Parent run id, frame, and substep whose delegated rows are stale.
+   * @returns Number of rows consumed.
+   */
+  async supersedeDelegationOutcomeUnlocked(args: {
+    readonly runbookId: RunId;
+    readonly frameKey: FrameKey;
+    readonly substepId: string;
+  }): Promise<number> {
+    const rows = await this.lifecycleService.listResolvedCompletionsForFrameObservation(
+      args.runbookId,
+      args.frameKey,
+    );
+    let removed = 0;
+    for (const { key, completion } of rows) {
+      if (completion.targetSubstep === args.substepId && completion.agentId === 'delegation') {
+        const consumed = await this.lifecycleService.consumeResolvedCompletion(args.runbookId, key);
+        if (consumed) removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  /**
    * Drain active-frame resolved completions into the runbook state machine.
    *
    * Acquires the run {@link CompletionLock} for the duration of the drain

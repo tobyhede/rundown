@@ -2381,15 +2381,11 @@ export class RunbookLifecycleCommandService {
     frameKey: FrameKey,
     substepId: string,
   ): Promise<void> {
-    const rows = await this.#deps.lifecycleService.listResolvedCompletionsForFrameObservation(
-      runId,
+    await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
+      runbookId: runId,
       frameKey,
-    );
-    for (const { key, completion } of rows) {
-      if (completion.targetSubstep === substepId && completion.agentId === 'delegation') {
-        await this.#deps.lifecycleService.consumeResolvedCompletion(runId, key);
-      }
-    }
+      substepId,
+    });
   }
 
   // Acquire the per-parent-run DelegationLock, wrapping the held lock as a

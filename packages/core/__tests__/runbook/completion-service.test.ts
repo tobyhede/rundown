@@ -1560,6 +1560,42 @@ describe('RunbookCompletionService', () => {
       );
     });
 
+    it('supersedes a pending delegation outcome for one substep without touching siblings', async () => {
+      const current = state();
+      const frameKey = buildFrameKey('1');
+      const key1 = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      const key2 = buildCompletionKey(activeFrame(frameKey, 1), '2');
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [key1]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+          }),
+          [key2]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(frameKey, 1),
+          }),
+        },
+      });
+
+      const removed = await service.supersedeDelegationOutcomeUnlocked({
+        runbookId,
+        frameKey,
+        substepId: '1',
+      });
+
+      expect(removed).toBe(1);
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key2)).resolves.not.toBeNull();
+    });
+
     it('inline child completion records agentId as inline', async () => {
       // Parent has substep but no delegation — inline child has linkage kind: 'inline'.
       const parent = state({
