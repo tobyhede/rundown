@@ -527,7 +527,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         cwd,
         !!advanced.prompted,
         emitter,
-        { terminalReleaseMode: 'release-runbook', output },
+        {
+          terminalReleaseMode: 'release-runbook',
+          output,
+          commandStreamOptions: {
+            commandOutput: options.text ? 'inherit' : 'stderr',
+          },
+        },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a
       // terminal state INSIDE the loop and still owe its parent a propagation
