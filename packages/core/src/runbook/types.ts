@@ -2,6 +2,7 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
+import type { CapabilityHash } from './capability.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
@@ -1046,7 +1047,13 @@ export interface RunbookState {
   /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
   readonly lifecycle?: Lifecycle;
 
-  /** Persisted state schema version. Current v1 state writes numeric `1`. */
+  /** Hash proof for the orchestrator capability minted when this run started. */
+  readonly orchestratorCapabilityHash?: CapabilityHash;
+
+  /** ISO timestamp when the orchestrator capability was minted. */
+  readonly orchestratorCapabilityIssuedAt?: string;
+
+  /** Persisted state schema version. Current v2 state writes numeric `2`. */
   readonly schemaVersion?: number;
 }
 

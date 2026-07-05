@@ -2,10 +2,10 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { assertClaimId, type ClaimId } from './claim-id.js';
 import { assertRunId, type RunId } from './run-id.js';
 
-declare const runCapabilityBrand: unique symbol;
-declare const claimCapabilityBrand: unique symbol;
-declare const capabilitySecretBrand: unique symbol;
-declare const capabilityHashBrand: unique symbol;
+export declare const runCapabilityBrand: unique symbol;
+export declare const claimCapabilityBrand: unique symbol;
+export declare const capabilitySecretBrand: unique symbol;
+export declare const capabilityHashBrand: unique symbol;
 
 /** Opaque authority credential for orchestrator control of a run. */
 export type RunCapability = string & { readonly [runCapabilityBrand]: true };

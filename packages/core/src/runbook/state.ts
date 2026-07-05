@@ -18,6 +18,12 @@ import type {
   ResolvedCompletion,
 } from './types.js';
 import {
+  generateRunCapability,
+  hashCapabilitySecret,
+  parseRunCapability,
+  type RunCapability,
+} from './capability.js';
+import {
   applyOp,
   type FrameEntryCountsOp,
   type ResolvedCompletionsOp,
@@ -51,7 +57,7 @@ import {
 import { heldLock } from './file-lock.js';
 
 /** Current persisted state schema version for the v1 release. */
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -239,6 +245,20 @@ interface CreateOptions {
 }
 
 /**
+ * Result of creating and persisting a runbook state.
+ *
+ * The object is structurally compatible with {@link RunbookState} for existing
+ * state-oriented consumers, while also exposing the minted run capability for
+ * callers that need to return it to the orchestrator.
+ */
+export type RunbookStateCreationResult = RunbookState & {
+  /** Persisted run state created for this runbook. */
+  readonly state: RunbookState;
+  /** Opaque capability returned once to the run orchestrator. */
+  readonly runCapability: RunCapability;
+};
+
+/**
  * Construction options for {@link RunbookStateManager}.
  */
 export interface RunbookStateManagerOptions {
@@ -346,15 +366,17 @@ export class RunbookStateManager {
    * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
    * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
-   * @returns The newly created RunbookState
+   * @returns The newly created state and non-persisted run capability
    */
   async create(
     runbookRef: RunbookRef,
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
-  ): Promise<RunbookState> {
+  ): Promise<RunbookStateCreationResult> {
     const id = options.runId ?? generateRunId();
     const now = new Date().toISOString();
+    const runCapability = generateRunCapability(id);
+    const parsedRunCapability = parseRunCapability(runCapability);
 
     const initialStep = runbook.steps[0];
 
@@ -382,11 +404,16 @@ export class RunbookStateManager {
           : brandInitialTemplateVars(options.templateVars),
       frontmatterOutputs: options.frontmatterOutputs ?? [],
       lifecycle: 'running',
+      orchestratorCapabilityHash: hashCapabilitySecret(parsedRunCapability.secret),
+      orchestratorCapabilityIssuedAt: now,
       schemaVersion: CURRENT_SCHEMA_VERSION,
     };
 
     await this.save(state);
-    return state;
+    return Object.defineProperties(state, {
+      state: { value: state, enumerable: false },
+      runCapability: { value: runCapability, enumerable: false },
+    }) as RunbookStateCreationResult;
   }
 
   /**
@@ -439,7 +466,7 @@ export class RunbookStateManager {
       (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
     ) {
       throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 1.`,
+        `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 2.`,
       );
     }
 

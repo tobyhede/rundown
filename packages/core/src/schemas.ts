@@ -6,6 +6,11 @@ import {
   type delegationTokenHashBrand,
   type DelegationTokenHash,
 } from './runbook/delegation-token.js';
+import {
+  CAPABILITY_HASH_PATTERN,
+  type CapabilityHash,
+  type capabilityHashBrand,
+} from './runbook/capability.js';
 import { CLAIM_ID_PATTERN, type ClaimId, type ClaimRecord } from './runbook/claim-id.js';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
@@ -46,6 +51,16 @@ export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, string> =
 // Keeps the unique-symbol token-hash brand nameable in declaration emit for
 // exported schemas inferred from DelegationTokenHashSchema. This is type-only.
 type _DelegationTokenHashBrandForDeclarationEmit = typeof delegationTokenHashBrand;
+
+/** Zod schema that parses strings and brands them as {@link CapabilityHash}. */
+export const CapabilityHashSchema: z.ZodType<CapabilityHash, string> = z
+  .string()
+  .regex(CAPABILITY_HASH_PATTERN)
+  .transform((value) => value as CapabilityHash);
+
+// Keeps the unique-symbol capability-hash brand nameable in declaration emit for
+// exported schemas inferred from CapabilityHashSchema. This is type-only.
+type _CapabilityHashBrandForDeclarationEmit = typeof capabilityHashBrand;
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -737,6 +752,8 @@ const RunbookStateObjectSchema = z
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
     finalVars: z.record(z.string(), VariableValueSchema).optional(),
+    orchestratorCapabilityHash: CapabilityHashSchema,
+    orchestratorCapabilityIssuedAt: z.string().min(1),
     // Optional by design: state.create() always writes these fields, but
     // state.load() must parse invalid files (which lack them) far enough to
     // reach the schemaVersion check and throw InvalidRunbookStateError.
