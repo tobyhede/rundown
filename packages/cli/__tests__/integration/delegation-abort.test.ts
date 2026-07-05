@@ -198,7 +198,9 @@ describe('Delegation abort integration', () => {
       (value): value is Record<string, unknown> =>
         typeof value === 'object' && value !== null && 'claim_id' in value,
     );
-    expect(claimPayload).toBeDefined();
+    if (claimPayload === undefined) {
+      throw new Error('expected claim payload');
+    }
     const claimId = String(claimPayload.claim_id);
 
     const failed = runCli(`fail --claim-id ${claimId}`, workspace);

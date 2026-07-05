@@ -20,6 +20,7 @@ import type {
   SessionService as SessionServiceType,
   ExecutionLifecycleService as ExecutionLifecycleServiceType,
   DelegationLock as DelegationLockType,
+  DelegationTerminalProjection,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
@@ -43,11 +44,12 @@ function upsertSubstepStateForTest(
 }
 
 const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>();
-const mockProjectDelegationTerminalOutcome = jest.fn(
-  (_childState: RunbookState, explicitResult?: 'pass' | 'fail') =>
-    explicitResult === undefined
-      ? { kind: 'not_terminal' as const }
-      : { kind: 'outcome' as const, result: explicitResult },
+const mockProjectDelegationTerminalOutcome = jest.fn<
+  (childState: RunbookState, explicitResult?: 'pass' | 'fail') => DelegationTerminalProjection
+>((_childState: RunbookState, explicitResult?: 'pass' | 'fail') =>
+  explicitResult === undefined
+    ? { kind: 'not_terminal' as const }
+    : { kind: 'outcome' as const, result: explicitResult },
 );
 
 // Mock @rundown-org/core. The report-only helper (Plan 5) constructs only

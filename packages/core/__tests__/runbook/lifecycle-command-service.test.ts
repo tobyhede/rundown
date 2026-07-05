@@ -871,7 +871,7 @@ describe('RunbookLifecycleCommandService', () => {
             parentStep: '1',
             parentFrameKey: buildFrameKey('1'),
             parentEntry: 1,
-            tokenHash: first.tokenHash,
+            tokenHash: assertDelegationTokenHash(first.tokenHash),
           },
         }),
       );
