@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { checkSandboxAvailability } from '@rundown-org/core';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  parseJsonEvents,
+  runCliInProcess,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 
 const availability = await checkSandboxAvailability();
 const required = process.env.RUNDOWN_REQUIRE_SANDBOX === '1';
@@ -53,6 +58,42 @@ if (!availability.available) {
       );
     }
 
+    async function writePolicyWithFileGrants(args: {
+      readAllow?: string[];
+      writeAllow?: string[];
+    }): Promise<void> {
+      await writeFile(
+        join(workspace.cwd, '.rundownrc.json'),
+        JSON.stringify({
+          version: 1,
+          default: {
+            mode: 'deny',
+            run: { allow: ['node'], deny: [] },
+            read: { allow: args.readAllow ?? [], deny: [] },
+            write: { allow: args.writeAllow ?? [], deny: [] },
+            env: { allow: ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'], deny: [] },
+          },
+          overrides: [],
+          grants: [],
+        }),
+      );
+    }
+
+    function expectSandboxedCommandCompleted(stdout: string, success: boolean): void {
+      const event = parseJsonEvents(stdout).find((candidate) => {
+        return candidate.type === 'command_completed';
+      });
+      expect(event).toBeDefined();
+      expect(event).toEqual(
+        expect.objectContaining({
+          type: 'command_completed',
+          sandboxed: true,
+          success,
+          policyDenied: false,
+        }),
+      );
+    }
+
     it('lets --allow-read reach a sandboxed command step', async () => {
       await writeDenyByDefaultPolicy();
       const inputPath = join(workspace.cwd, 'schema-secret.json');
@@ -89,6 +130,7 @@ if (!availability.available) {
       );
 
       expect(result.exitCode).toBe(0);
+      expectSandboxedCommandCompleted(result.stdout, true);
 
       await writeFile(
         join(workspace.cwd, 'read-denied.runbook.md'),
@@ -113,6 +155,7 @@ if (!availability.available) {
       );
 
       expect(denied.exitCode).not.toBe(0);
+      expectSandboxedCommandCompleted(denied.stdout, false);
     });
 
     it('lets --allow-write reach a sandboxed command step', async () => {
@@ -150,6 +193,7 @@ if (!availability.available) {
       );
 
       expect(result.exitCode).toBe(0);
+      expectSandboxedCommandCompleted(result.stdout, true);
       expect(await readFile(outputPath, 'utf8')).toBe('ok');
 
       const deniedPath = join(outputDir, 'denied.txt');
@@ -174,6 +218,44 @@ if (!availability.available) {
       );
 
       expect(denied.exitCode).not.toBe(0);
+      expectSandboxedCommandCompleted(denied.stdout, false);
+    });
+
+    it('lets policy-file read and write grants reach sandboxed command steps', async () => {
+      const inputPath = join(workspace.cwd, 'policy-schema.json');
+      const outputDir = join(workspace.cwd, 'policy-dist');
+      const outputPath = join(outputDir, 'out.txt');
+      await mkdir(outputDir);
+      await writeFile(inputPath, '{"ok":true}');
+      await writePolicyWithFileGrants({
+        readAllow: [inputPath],
+        writeAllow: [`${outputDir}/**`],
+      });
+      await writeFile(
+        join(workspace.cwd, 'policy-grants.runbook.md'),
+        [
+          '# Policy grants',
+          '',
+          '## 1. Read and write',
+          '- PASS COMPLETE',
+          '',
+          '```bash',
+          `node -e 'const fs=require("fs"); JSON.parse(fs.readFileSync(${JSON.stringify(
+            inputPath,
+          )}, "utf8")); fs.writeFileSync(${JSON.stringify(outputPath)}, "ok")'`,
+          '```',
+          '',
+        ].join('\n'),
+      );
+
+      const result = await runCliInProcess(
+        ['run', 'policy-grants.runbook.md', '--yes', '--sandbox', '--allow-run', 'node'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expectSandboxedCommandCompleted(result.stdout, true);
+      expect(await readFile(outputPath, 'utf8')).toBe('ok');
     });
   });
 }
