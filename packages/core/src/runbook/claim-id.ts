@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type { CapabilityHash } from './capability.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
@@ -39,6 +40,16 @@ export interface ClaimRecord {
   readonly claimedAt: string;
   /** ISO timestamp when this claim was last refreshed. */
   readonly updatedAt: string;
+  /** Hash proof for the claim capability returned once to the claimant. */
+  readonly claimCapabilityHash?: CapabilityHash;
+  /** Hash proof identifying the current lease owner; equal to claimCapabilityHash for v2. */
+  readonly leaseOwnerHash?: CapabilityHash;
+  /** ISO timestamp when the current lease was acquired. */
+  readonly leaseAcquiredAt?: string;
+  /** ISO timestamp of the most recent holder heartbeat. */
+  readonly leaseHeartbeatAt?: string;
+  /** ISO timestamp after which the parent may treat the claim as idle or abandoned. */
+  readonly leaseExpiresAt?: string;
 }
 
 /**
@@ -139,6 +150,8 @@ export function createClaimRecord(
   childRunId: RunId,
   linkage: DelegationLinkage,
   now: string,
+  claimCapabilityHash?: CapabilityHash,
+  leaseExpiresAt?: string,
 ): ClaimRecord {
   return {
     kind: 'claim-record',
@@ -152,5 +165,14 @@ export function createClaimRecord(
     parentEntry: linkage.parentEntry,
     claimedAt: now,
     updatedAt: now,
+    ...(claimCapabilityHash === undefined
+      ? {}
+      : {
+          claimCapabilityHash,
+          leaseOwnerHash: claimCapabilityHash,
+          leaseAcquiredAt: now,
+          leaseHeartbeatAt: now,
+          leaseExpiresAt: leaseExpiresAt ?? now,
+        }),
   };
 }

@@ -557,11 +557,17 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z.object({
   parentEntry: z.number().int().positive(),
   claimedAt: z.string().min(1),
   updatedAt: z.string().min(1),
+  claimCapabilityHash: CapabilityHashSchema,
+  leaseOwnerHash: CapabilityHashSchema,
+  leaseAcquiredAt: z.string().min(1),
+  leaseHeartbeatAt: z.string().min(1),
+  leaseExpiresAt: z.string().min(1),
 });
 
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z
   .object({
+    schemaVersion: z.literal(2),
     defaultStack: z.array(RunIdSchema).default([]),
     stashedRunbookId: RunIdSchema.optional(),
     claims: z.record(z.string(), ClaimRecordSchema).default({}),

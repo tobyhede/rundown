@@ -192,6 +192,8 @@ export function generateRunId(): RunId {
  * A single shared stash slot allows temporarily parking a runbook.
  */
 export interface SessionData {
+  /** Persisted session schema version. */
+  readonly schemaVersion: 2;
   /** Active runbook stack for default targeting. */
   defaultStack: RunId[];
   /** ID of a temporarily stashed runbook, if any. */
@@ -790,7 +792,7 @@ export class RunbookStateManager {
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         await this.warnIfLegacyStateExists();
-        return { defaultStack: [], claims: {} };
+        return { schemaVersion: 2, defaultStack: [], claims: {} };
       }
       throw err;
     }
@@ -800,6 +802,12 @@ export class RunbookStateManager {
     if ('ownedRunbooks' in raw || 'stashedRunbookOwnership' in raw || 'stacks' in raw) {
       throw new Error(
         'Legacy session ownership format detected. Finish or prune active runbooks and restart.',
+      );
+    }
+
+    if (raw.schemaVersion !== 2) {
+      throw new Error(
+        'Session file uses an incompatible schema version. Finish or prune active runbooks and restart.',
       );
     }
 

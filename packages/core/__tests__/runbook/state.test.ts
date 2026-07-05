@@ -1023,13 +1023,14 @@ describe('RunbookStateManager', () => {
       async () => {
         const rundownDir = join(testDir, '.rundown');
         const sessionPath = join(rundownDir, 'session.json');
-        await manager.saveSession({ defaultStack: [], claims: {} });
+        await manager.saveSession({ schemaVersion: 2, defaultStack: [], claims: {} });
         const originalContent = await readFile(sessionPath, 'utf8');
 
         await chmod(rundownDir, 0o500);
         try {
           await expect(
             manager.saveSession({
+              schemaVersion: 2,
               defaultStack: [assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')],
               claims: {},
             }),

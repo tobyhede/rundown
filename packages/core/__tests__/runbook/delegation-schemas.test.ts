@@ -14,6 +14,18 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 const PARENT_RUN_ID = `rd_${'1'.repeat(32)}`;
 const CHILD_RUN_ID = `rd_${'2'.repeat(32)}`;
+const CLAIM_PROOF_FIELDS = {
+  claimCapabilityHash: `sha256:${'c'.repeat(64)}`,
+  leaseOwnerHash: `sha256:${'c'.repeat(64)}`,
+  leaseAcquiredAt: '2026-07-05T00:00:00.000Z',
+  leaseHeartbeatAt: '2026-07-05T00:00:00.000Z',
+  leaseExpiresAt: '2026-07-05T00:05:00.000Z',
+};
+const RUN_PROOF_FIELDS = {
+  orchestratorCapabilityHash: `sha256:${'a'.repeat(64)}`,
+  orchestratorCapabilityIssuedAt: '2026-07-05T00:00:00.000Z',
+  schemaVersion: 2,
+};
 
 describe('AncestorSnapshotSchema', () => {
   it('accepts valid ancestor snapshot', () => {
@@ -345,6 +357,7 @@ describe('ClaimRecordSchema', () => {
     parentEntry: 1,
     claimedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:01.000Z',
+    ...CLAIM_PROOF_FIELDS,
   };
 
   it('accepts a complete claim record', () => {
@@ -356,11 +369,23 @@ describe('ClaimRecordSchema', () => {
       false,
     );
   });
+
+  it('rejects claim records without a claim capability hash', () => {
+    const record = { ...validClaim };
+    delete (record as Record<string, unknown>).claimCapabilityHash;
+
+    const result = ClaimRecordSchema.safeParse(record);
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('SessionDataSchema claims registry', () => {
   it('loads sessions without claims using an empty claims registry', () => {
-    const result = SessionDataSchema.safeParse({ defaultStack: [PARENT_RUN_ID] });
+    const result = SessionDataSchema.safeParse({
+      schemaVersion: 2,
+      defaultStack: [PARENT_RUN_ID],
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.claims).toEqual({});
@@ -369,6 +394,7 @@ describe('SessionDataSchema claims registry', () => {
 
   it('rejects claim records whose map key differs from claimId', () => {
     const result = SessionDataSchema.safeParse({
+      schemaVersion: 2,
       defaultStack: [PARENT_RUN_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {
@@ -383,6 +409,7 @@ describe('SessionDataSchema claims registry', () => {
           parentEntry: 1,
           claimedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
+          ...CLAIM_PROOF_FIELDS,
         },
       },
     });
@@ -401,9 +428,11 @@ describe('SessionDataSchema claims registry', () => {
       parentEntry: 1,
       claimedAt: '2026-05-01T00:00:00.000Z',
       updatedAt: '2026-05-01T00:00:01.000Z',
+      ...CLAIM_PROOF_FIELDS,
     };
 
     const result = SessionDataSchema.safeParse({
+      schemaVersion: 2,
       defaultStack: [PARENT_RUN_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {
@@ -818,6 +847,7 @@ function createMinimalRunbookState(overrides: Record<string, unknown> = {}) {
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
+    ...RUN_PROOF_FIELDS,
     ...overrides,
   };
 }
