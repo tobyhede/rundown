@@ -27,11 +27,13 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { assertCapabilityHash } from '../../src/runbook/capability.js';
 
 const RUN_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 const GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
 const GREAT_GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 const ANCESTOR_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
+const ORCHESTRATOR_CAPABILITY_HASH = assertCapabilityHash(`sha256:${'1'.repeat(64)}`);
 
 function ancestorRunId(index: number): RunId {
   return brandRunIdForTest(`rd_${index.toString(16).padStart(32, '0')}`);
@@ -50,6 +52,8 @@ function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-04-22T10:00:00.000Z',
     updatedAt: '2026-04-22T10:00:00.000Z',
+    orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+    orchestratorCapabilityIssuedAt: '2026-04-22T10:00:00.000Z',
     ...overrides,
   };
 }
@@ -644,7 +648,7 @@ describe('buildContextSnapshot', () => {
         templateVars: brandInitialTemplateVarsForTest({}),
         variables: brandStoredOutputsForTest({ PlanPath: ARTIFACT_RECORD }),
       }),
-      schemaVersion: 1,
+      schemaVersion: 2,
     }) as unknown as RunbookState;
 
     const snap = buildContextSnapshot(parsed);

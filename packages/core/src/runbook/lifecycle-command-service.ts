@@ -1381,7 +1381,11 @@ export class RunbookLifecycleCommandService {
 
     const resolution = await resolveCommandTarget(this.#deps.sessionService, {
       ...(selector.kind === 'claim' ? { claimId: selector.claimId } : {}),
+      ...(selector.kind === 'claim-capability'
+        ? { claimCapability: selector.claimCapability }
+        : {}),
       ...(selector.kind === 'run' ? { runId: selector.runId } : {}),
+      ...(selector.kind === 'run-capability' ? { runCapability: selector.runCapability } : {}),
     });
 
     switch (resolution.kind) {

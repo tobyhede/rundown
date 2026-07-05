@@ -24,19 +24,24 @@ import {
   SessionLock,
   SessionService,
   activeFrame,
+  assertCapabilityHash,
   assertClaimId,
   assertRunId,
   brandCurrentCursorResolvedCompletionForTest,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  generateRunCapability,
+  hashCapabilitySecret,
   inactiveFrame,
+  parseRunCapability,
   replaceSubstepStateEntry,
   type CallerEvidence,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
   type ResolveChildRunbook,
   type RunbookLifecycleCommandServiceDependencies,
+  type RunId,
   type RunbookState,
   type SubstepState,
 } from '../../src/runbook/index.js';
@@ -65,6 +70,14 @@ const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
 };
 
 const DIRECT_CLI: CallerEvidence = { kind: 'direct_cli' };
+const ORCHESTRATOR_CAPABILITY_HASH = assertCapabilityHash(`sha256:${'1'.repeat(64)}`);
+const runCapabilityHashes = new Map<RunId, typeof ORCHESTRATOR_CAPABILITY_HASH>();
+
+function runCapabilityFor(runId: RunId) {
+  const capability = generateRunCapability(runId);
+  runCapabilityHashes.set(runId, hashCapabilitySecret(parseRunCapability(capability).secret));
+  return capability;
+}
 
 function tx(pass: 'CONTINUE' | 'COMPLETE' | 'STOP', fail: 'CONTINUE' | 'COMPLETE' | 'STOP') {
   return {
@@ -166,8 +179,9 @@ describe('RunbookLifecycleCommandService', () => {
   });
 
   function baseState(overrides: Partial<RunbookState> = {}): RunbookState {
+    const stateId = overrides.id ?? runId;
     return {
-      id: runId,
+      id: stateId,
       runbook: { source: 'project', path: 'lifecycle-test.md' },
       runbookPath: 'lifecycle-test.md',
       step: '1',
@@ -183,7 +197,9 @@ describe('RunbookLifecycleCommandService', () => {
       startedAt: '2026-06-28T00:00:00.000Z',
       updatedAt: '2026-06-28T00:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: 2,
+      orchestratorCapabilityHash: runCapabilityHashes.get(stateId) ?? ORCHESTRATOR_CAPABILITY_HASH,
+      orchestratorCapabilityIssuedAt: '2026-06-28T00:00:00.000Z',
       frontmatterOutputs: [],
       ...overrides,
     };
@@ -1719,6 +1735,9 @@ describe('RunbookLifecycleCommandService', () => {
     const namedRunId = assertRunId('rd_77777777777777777777777777777777');
     const topRunId = assertRunId('rd_88888888888888888888888888888888');
     const foreignRunId = assertRunId('rd_99999999999999999999999999999999');
+    const namedRunCapability = runCapabilityFor(namedRunId);
+    runCapabilityFor(topRunId);
+    const foreignRunCapability = runCapabilityFor(foreignRunId);
 
     const twoSteps: ResolvedStep[] = [
       { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
@@ -1733,7 +1752,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: { kind: 'run_capability', runId: namedRunId },
-        targetSelector: { kind: 'run', runId: namedRunId },
+        targetSelector: { kind: 'run-capability', runCapability: namedRunCapability },
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -1753,7 +1772,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: { kind: 'run_capability', runId: foreignRunId },
-        targetSelector: { kind: 'run', runId: foreignRunId },
+        targetSelector: { kind: 'run-capability', runCapability: foreignRunCapability },
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -1780,7 +1799,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: { kind: 'run_capability', runId: namedRunId },
-        targetSelector: { kind: 'run', runId: namedRunId },
+        targetSelector: { kind: 'run-capability', runCapability: namedRunCapability },
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -1824,7 +1843,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: { kind: 'run_capability', runId: namedRunId },
-        targetSelector: { kind: 'run', runId: namedRunId },
+        targetSelector: { kind: 'run-capability', runCapability: namedRunCapability },
         terminalPolicy: RELEASE_POLICY,
         explicitTarget: { stepId: '1.1' },
       });
@@ -1843,7 +1862,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: { kind: 'run_capability', runId: namedRunId },
-        targetRunId: namedRunId,
+        targetRunCapability: namedRunCapability,
       });
 
       expect(outcome.kind).toBe('delegated');
@@ -1861,7 +1880,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: { kind: 'run_capability', runId: foreignRunId },
-        targetRunId: foreignRunId,
+        targetRunCapability: foreignRunCapability,
       });
 
       expect(outcome).toEqual({
@@ -1879,7 +1898,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTerminal({
         command: 'complete',
         callerEvidence: { kind: 'run_capability', runId: namedRunId },
-        targetSelector: { kind: 'run', runId: namedRunId },
+        targetSelector: { kind: 'run-capability', runCapability: namedRunCapability },
       });
 
       expect(outcome.kind).toBe('applied_bare');
@@ -1898,6 +1917,7 @@ describe('RunbookLifecycleCommandService', () => {
       loadStepsImpl = () => twoSteps;
       const rootId = assertRunId('rd_cccccccccccccccccccccccccccccccc');
       const childId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+      const childRunCapability = runCapabilityFor(childId);
       await activate(baseState({ id: rootId }));
       await activate(
         baseState({
@@ -1917,7 +1937,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTerminal({
         command: 'complete',
         callerEvidence: { kind: 'run_capability', runId: childId },
-        targetSelector: { kind: 'run', runId: childId },
+        targetSelector: { kind: 'run-capability', runCapability: childRunCapability },
       });
 
       expect(outcome.kind).toBe('applied_bare');
@@ -1934,7 +1954,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.runTerminal({
         command: 'complete',
         callerEvidence: { kind: 'run_capability', runId: foreignRunId },
-        targetSelector: { kind: 'run', runId: foreignRunId },
+        targetSelector: { kind: 'run-capability', runCapability: foreignRunCapability },
       });
 
       expect(outcome).toEqual({
@@ -1986,12 +2006,13 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('allows run-named navigation over the same delegation-exposed run', async () => {
       loadStepsImpl = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+      const runCapability = runCapabilityFor(runId);
       await activate(baseState());
 
       const outcome = await seam.resolveRunNavigation({
         command: 'goto',
         callerEvidence: { kind: 'run_capability', runId },
-        targetSelector: { kind: 'run', runId },
+        targetSelector: { kind: 'run-capability', runCapability },
       });
 
       expect(outcome.kind).toBe('allowed');
@@ -2002,11 +2023,12 @@ describe('RunbookLifecycleCommandService', () => {
     it('refuses an unknown --run id with the shared unknown_run refusal', async () => {
       await activate(baseState());
       const foreign = assertRunId('rd_99999999999999999999999999999999');
+      const foreignRunCapability = runCapabilityFor(foreign);
 
       const outcome = await seam.resolveRunNavigation({
         command: 'goto',
         callerEvidence: { kind: 'run_capability', runId: foreign },
-        targetSelector: { kind: 'run', runId: foreign },
+        targetSelector: { kind: 'run-capability', runCapability: foreignRunCapability },
       });
 
       expect(outcome).toEqual({
@@ -2034,7 +2056,10 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await seam.resolveRunNavigation({
         command: 'goto',
         callerEvidence: DIRECT_CLI,
-        targetSelector: { kind: 'claim', claimId: claimed.claim.claimId },
+        targetSelector: {
+          kind: 'claim-capability',
+          claimCapability: claimed.claimCapability,
+        },
       });
 
       expect(outcome.kind).toBe('allowed');
@@ -3140,7 +3165,10 @@ describe('RunbookLifecycleCommandService', () => {
           tokenHash: claimed.claim.tokenHash,
           controlledRunId: claimChildRunId,
         },
-        targetSelector: { kind: 'claim', claimId: claimed.claim.claimId },
+        targetSelector: {
+          kind: 'claim-capability',
+          claimCapability: claimed.claimCapability,
+        },
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -3184,7 +3212,7 @@ describe('RunbookLifecycleCommandService', () => {
         if (childLifecycle !== 'running') {
           await manager.save(baseState({ ...childBase, lifecycle: childLifecycle }));
         }
-        return claimed.claim.claimId;
+        return { claimId: claimed.claim.claimId, claimCapability: claimed.claimCapability };
       }
 
       it('forwards a stale_claim for a non-existent claim without dispatching', async () => {
@@ -3203,12 +3231,12 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('claim complete on a completed child confirms and retains the tombstone', async () => {
-        const claimId = await setupClaim('completed');
+        const { claimCapability } = await setupClaim('completed');
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: DIRECT_CLI,
-          targetSelector: { kind: 'claim', claimId },
+          targetSelector: { kind: 'claim-capability', claimCapability },
         });
         expect(out.kind).toBe('terminal_claim_confirmed');
         // Idempotent path STILL releases with retain (item 4, second site).
@@ -3216,13 +3244,13 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {
-        const claimId = await setupClaim('stopped');
+        const { claimCapability } = await setupClaim('stopped');
         const sendSpy = jest.spyOn(actorService, 'sendAndSync');
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: DIRECT_CLI,
-          targetSelector: { kind: 'claim', claimId },
+          targetSelector: { kind: 'claim-capability', claimCapability },
         });
         expect(out.kind).toBe('terminal_claim_conflict');
         expect(sendSpy).not.toHaveBeenCalled();
@@ -3230,7 +3258,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('claim stop on a running child forces FAIL, records before release, derives outcome', async () => {
-        const claimId = await setupClaim('running');
+        const { claimCapability } = await setupClaim('running');
         loadStepsImpl = () => [
           {
             kind: 'base',
@@ -3260,7 +3288,7 @@ describe('RunbookLifecycleCommandService', () => {
         const out = await seam.runTerminal({
           command: 'stop',
           callerEvidence: DIRECT_CLI,
-          targetSelector: { kind: 'claim', claimId },
+          targetSelector: { kind: 'claim-capability', claimCapability },
         });
         expect(out).toMatchObject({ kind: 'applied_claim', status: 'stopped' });
         // Record BEFORE release (decision #4).
@@ -3273,7 +3301,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('claim complete on a running child dispatches FORCE_COMPLETE and forwards the message', async () => {
-        const claimId = await setupClaim('running');
+        const { claimCapability } = await setupClaim('running');
         loadStepsImpl = () => [
           {
             kind: 'base',
@@ -3296,7 +3324,7 @@ describe('RunbookLifecycleCommandService', () => {
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: DIRECT_CLI,
-          targetSelector: { kind: 'claim', claimId },
+          targetSelector: { kind: 'claim-capability', claimCapability },
           message: 'wrap up',
         });
 
