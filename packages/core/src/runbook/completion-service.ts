@@ -638,6 +638,12 @@ export class RunbookCompletionService {
     );
     if (
       linkage.kind === 'delegation' &&
+      substepState?.delegation?.tokenHash !== linkage.tokenHash
+    ) {
+      return 'not-applicable';
+    }
+    if (
+      linkage.kind === 'delegation' &&
       substepState?.delegation?.cancelledAt &&
       !args.ignoreCancellation
     ) {

@@ -837,7 +837,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
     });
 
-    it('retries a linked terminal child without orphaning an active child', async () => {
+    it('retries a linked terminal child without allowing the stale child to re-report', async () => {
       const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
@@ -863,13 +863,8 @@ describe('RunbookLifecycleCommandService', () => {
       await mgr.save(
         baseState({
           id: childRunId,
-          lifecycle: 'stopped',
+          lifecycle: 'completed',
           parentLinkage: linkageFor(state.id, '1'),
-          lastAction: {
-            type: 'POLICY_DENIED',
-            origin: 'direct',
-            message: 'blocked by policy',
-          },
         }),
       );
       const parentWithLinkedChild = await mgr.load(state.id);
@@ -915,6 +910,15 @@ describe('RunbookLifecycleCommandService', () => {
       await expect(
         deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('2')),
       ).resolves.not.toBeNull();
+
+      const terminalChild = await mgr.load(childRunId);
+      if (!terminalChild) throw new Error('expected terminal child to remain for diagnostics');
+      await expect(
+        deps.completionService.recordChildCompletion({ childState: terminalChild }),
+      ).resolves.toBe('not-applicable');
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
+      ).resolves.toBeNull();
     });
 
     it('continues to refuse retry over a running linked child', async () => {
