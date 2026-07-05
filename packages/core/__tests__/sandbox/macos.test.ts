@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { dirname } from 'node:path';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
 // Mock child_process
@@ -269,9 +270,26 @@ describe('SeatbeltSandbox', () => {
       );
       expect(writeFileSync).toHaveBeenCalledWith(
         expect.any(String),
+        expect.stringContaining('(literal "/usr/bin")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
         expect.stringContaining('(allow file-read-metadata'),
         expect.any(Object),
       );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining(`(literal "${dirname(dirname(dirname(process.execPath)))}")`),
+        expect.any(Object),
+      );
+      if (process.env.HOME) {
+        expect(writeFileSync).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.stringContaining(`(subpath "${process.env.HOME}/.cache/node/corepack")`),
+          expect.any(Object),
+        );
+      }
     });
 
     it('handles non-zero exit code', async () => {

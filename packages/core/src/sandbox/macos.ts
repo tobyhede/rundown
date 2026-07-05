@@ -63,6 +63,20 @@ function getNodeExecutionPaths(): string[] {
   return paths;
 }
 
+function getPackageManagerExecutionPaths(): string[] {
+  const paths: string[] = [];
+  const home = process.env.HOME;
+  if (home) {
+    paths.push(join(home, '.cache', 'node', 'corepack'));
+  }
+  return paths;
+}
+
+function getPathLookupDirectories(env: Partial<Record<string, string>>): string[] {
+  const pathValue = env.PATH ?? env.Path ?? process.env.PATH ?? process.env.Path ?? '';
+  return pathValue.split(':').filter((entry) => entry.length > 0);
+}
+
 /**
  * Cached script directory path (computed once)
  */
@@ -106,6 +120,19 @@ function getScriptDirectory(): string | null {
   return null;
 }
 
+function collectAncestorPaths(paths: readonly string[]): string[] {
+  const ancestors = new Set<string>();
+  for (const candidate of paths) {
+    let current = dirname(candidate);
+    while (current !== dirname(current)) {
+      ancestors.add(current);
+      current = dirname(current);
+    }
+  }
+  ancestors.delete('/');
+  return [...ancestors].sort((a, b) => a.length - b.length);
+}
+
 /**
  * Generate a Seatbelt profile for the given sandbox options.
  *
@@ -144,12 +171,8 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     ])
     .join('\n');
 
-  const metadataReadRules = (options.metadataReadPaths ?? [])
-    .map((p) => `  (literal "${escapePath(p)}")`)
-    .join('\n');
-
   // Get Node.js execution paths dynamically
-  const executionPaths = getNodeExecutionPaths();
+  const executionPaths = [...getNodeExecutionPaths(), ...getPackageManagerExecutionPaths()];
 
   // Add the script directory if available (for symlinked CLI)
   const scriptDir = getScriptDirectory();
@@ -160,6 +183,16 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   const nodePathRules = executionPaths
     .filter((p) => p) // Remove empty strings
     .map((p) => `  (subpath "${escapePath(p)}")`)
+    .join('\n');
+
+  const pathLookupDirs = getPathLookupDirectories(options.env);
+  const metadataReadPaths = [
+    ...(options.metadataReadPaths ?? []),
+    ...pathLookupDirs,
+    ...collectAncestorPaths([...executionPaths, ...pathLookupDirs]),
+  ];
+  const metadataReadRules = [...new Set(metadataReadPaths)]
+    .map((p) => `  (literal "${escapePath(p)}")`)
     .join('\n');
 
   // Note: Seatbelt doesn't have a direct "deny subpath" after allowing parent.
@@ -173,8 +206,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 (deny default)
 
 ;; Allow process execution
-(allow process-exec)
-(allow process-fork)
+(allow process*)
 
 ;; Allow basic system operations
 (allow sysctl-read)
