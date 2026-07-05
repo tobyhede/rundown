@@ -1570,23 +1570,30 @@ After this test, close the file's top-level `describe` block.
 
 In `packages/cli/__tests__/services/execution-loop.test.ts`, add a test that
 drives a delegation-linked child with a `COMMAND_EXECUTION_FAILED` last action
-through `propagateChildTerminal(childState, undefined, cwd, output)` or through
-the execution-loop branch that calls that helper. Do not assert against
-`mockCompletionService.recordChildCompletion`; that fixture does not currently
-expose the method and a shallow mock would not prove persisted behavior.
+through the existing `propagateChildTerminal(childState, undefined, cwd, output)`
+path, or through the execution-loop branch that calls that helper. The child must
+carry delegation parent linkage, and the parent must be positioned at the linked
+substep. Do not assert against `mockCompletionService.recordChildCompletion`;
+that fixture does not currently expose the method and a shallow mock would not
+prove persisted behavior.
 
 The important assertions:
 
 ```typescript
-expect(result).toBe('stopped');
+expect(result).toBe('blocked');
 expect(mockEmitter.emit).toHaveBeenCalledWith({
-  type: 'RUNBOOK_STOPPED',
+  type: 'RUNBOOK_BLOCKED',
   payload: expect.objectContaining({
     reason: 'command_execution_failed',
     message: 'Timeout of 30000 ms exceeded',
   }),
 });
 expect(await lifecycleService.getResolvedCompletion(parentRunId, expectedCompletionKey)).toBeNull();
+const parent = await manager.load(parentRunId);
+expect(parent?.step).toBe(parentStepBeforePropagation);
+expect(parent?.substepStates?.find((state) => state.id === linkedSubstepId)?.status).toBe(
+  'running',
+);
 ```
 
 Use the existing execution-loop fixture helpers in that file instead of creating
@@ -1594,7 +1601,9 @@ a second manager abstraction. If the fixture does not expose
 `expectedCompletionKey`, compute it with the same `activeFrame` /
 `buildCompletionKey` helpers used by the delegation-completion tests. The
 assertion must prove no parent resolved-completion row was written, not merely
-that the CLI avoided one explicit mock call shape.
+that the CLI avoided one explicit mock call shape. Preserve the pre-propagation
+parent cursor in `parentStepBeforePropagation` and assert it after propagation so
+the test proves blocked command infrastructure does not advance the parent.
 
 - [ ] **Step 6: Add command-execution-failure integration coverage**
 
