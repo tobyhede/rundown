@@ -27,6 +27,11 @@ export const PolicyModeSchema = z.enum(['prompted', 'execute', 'deny']);
 /** Inferred type from {@link PolicyModeSchema}: `'prompted' | 'execute' | 'deny'`. */
 export type PolicyMode = z.infer<typeof PolicyModeSchema>;
 
+/** Network sandbox posture for OS-sandboxed commands. */
+export const NetworkPolicySchema = z.enum(['deny', 'allow']);
+/** Inferred type from {@link NetworkPolicySchema}: `'deny' | 'allow'`. */
+export type NetworkPolicy = z.infer<typeof NetworkPolicySchema>;
+
 /**
  * Permission rules for a specific capability type.
  */
@@ -53,6 +58,8 @@ export const DefaultPolicySchema = z.object({
   write: PermissionRulesSchema.default({ allow: [], deny: [] }),
   /** Environment variable access rules */
   env: PermissionRulesSchema.default({ allow: [], deny: [] }),
+  /** Network access posture for sandboxed commands */
+  network: NetworkPolicySchema.default('deny'),
 });
 /** Inferred type from {@link DefaultPolicySchema}: mode and per-capability permission rules. */
 export type DefaultPolicy = z.infer<typeof DefaultPolicySchema>;
@@ -73,6 +80,8 @@ export const PolicyOverrideSchema = z.object({
   write: PermissionRulesSchema.optional(),
   /** Override env rules */
   env: PermissionRulesSchema.optional(),
+  /** Override network access posture */
+  network: NetworkPolicySchema.optional(),
 });
 /** Inferred type from {@link PolicyOverrideSchema}: runbook-specific policy overrides. */
 export type PolicyOverride = z.infer<typeof PolicyOverrideSchema>;
@@ -108,6 +117,7 @@ export const PolicyConfigSchema = z.object({
     read: { allow: [], deny: [] },
     write: { allow: [], deny: [] },
     env: { allow: [], deny: [] },
+    network: 'deny',
   }),
   /** Runbook-specific policy overrides */
   overrides: z.array(PolicyOverrideSchema).default([]),
@@ -294,6 +304,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
         'NPM_TOKEN',
       ],
     },
+    network: 'deny',
   },
   overrides: [],
   grants: [],

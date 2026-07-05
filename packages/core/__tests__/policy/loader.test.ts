@@ -384,17 +384,15 @@ describe('Policy Loader - error paths', () => {
   });
 
   describe('invalid config', () => {
-    it('should use defaults on invalid config when useDefaults is true', async () => {
+    it('should throw on invalid discovered config even when useDefaults is true', async () => {
       fs.writeFileSync(
         path.join(tempDir, '.rundownrc.yaml'),
         'version: 1\ndefault:\n  mode: invalid-mode',
       );
 
-      const result = await loadPolicy({ cwd: tempDir, useDefaults: true });
-
-      expect(result.isDefault).toBe(true);
-      expect(result.warnings).toBeDefined();
-      expect(result.warnings?.length).toBeGreaterThan(0);
+      await expect(loadPolicy({ cwd: tempDir, useDefaults: true })).rejects.toThrow(
+        'Invalid policy configuration',
+      );
     });
 
     it('should throw on invalid config when useDefaults is false', async () => {
@@ -406,16 +404,23 @@ describe('Policy Loader - error paths', () => {
       await expect(loadPolicy({ cwd: tempDir, useDefaults: false })).rejects.toThrow();
     });
 
-    it('should use defaults on invalid config (sync)', () => {
+    it('should throw on invalid discovered config (sync)', () => {
       fs.writeFileSync(
         path.join(tempDir, '.rundownrc.yaml'),
         'version: 1\ndefault:\n  mode: invalid-mode',
       );
 
-      const result = loadPolicySync({ cwd: tempDir, useDefaults: true });
+      expect(() => loadPolicySync({ cwd: tempDir, useDefaults: true })).toThrow(
+        'Invalid policy configuration',
+      );
+    });
 
-      expect(result.isDefault).toBe(true);
-      expect(result.warnings).toBeDefined();
+    it('should throw on malformed discovered config instead of using defaults', async () => {
+      fs.writeFileSync(path.join(tempDir, '.rundownrc.yaml'), 'version: 1\ndefault:\n  mode: [');
+
+      await expect(loadPolicy({ cwd: tempDir, useDefaults: true })).rejects.toThrow(
+        'Error loading policy config',
+      );
     });
   });
 
@@ -599,6 +604,22 @@ describe('Policy Loader - merge', () => {
     const result = mergePolicies(policy1, policy2);
 
     expect(result.default.mode).toBe('execute');
+  });
+
+  it('should use later policy network posture', () => {
+    const policy1: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: { ...DEFAULT_POLICY.default, mode: 'deny', network: 'allow' },
+    };
+    const policy2: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: { ...DEFAULT_POLICY.default, mode: 'execute', network: 'deny' },
+    };
+
+    const result = mergePolicies(policy1, policy2);
+
+    expect(result.default.mode).toBe('execute');
+    expect(result.default.network).toBe('deny');
   });
 
   it('should concatenate overrides', () => {

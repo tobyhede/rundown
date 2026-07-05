@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod abi;
+mod network;
 mod probe;
 mod ruleset;
 mod spec;
@@ -77,9 +78,9 @@ fn run() -> i32 {
 fn compute() -> Result<(Status, spec::Spec), Status> {
     let mut reader = sys::spec_reader().map_err(|e| Status::Error { message: e })?;
     let mut buf = String::new();
-    reader
-        .read_to_string(&mut buf)
-        .map_err(|e| Status::Error { message: format!("read fd3: {e}") })?;
+    reader.read_to_string(&mut buf).map_err(|e| Status::Error {
+        message: format!("read fd3: {e}"),
+    })?;
     let spec = spec::parse_spec(&buf).map_err(|e| Status::Error { message: e })?;
 
     let negotiated = sys::read_abi_version().map_err(|e| Status::Error { message: e })?;
@@ -91,9 +92,17 @@ fn compute() -> Result<(Status, spec::Spec), Status> {
             missing: missing.to_string(),
         }),
         Decision::Apply { downgraded } => {
-            ruleset::apply_ruleset(negotiated, &spec)
+            ruleset::apply_ruleset(negotiated, &spec).map_err(|e| Status::Error { message: e })?;
+            let network = network::apply_network_policy(spec.network)
                 .map_err(|e| Status::Error { message: e })?;
-            Ok((Status::Applied { abi: negotiated, downgraded }, spec))
+            Ok((
+                Status::Applied {
+                    abi: negotiated,
+                    downgraded,
+                    network,
+                },
+                spec,
+            ))
         }
     }
 }

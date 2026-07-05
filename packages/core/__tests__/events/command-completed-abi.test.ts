@@ -13,6 +13,8 @@ describe('commandCompletedEffect ABI propagation', () => {
       sandboxed: true,
       landlockAbi: 3,
       enforcementDowngraded: false,
+      networkPolicy: 'deny',
+      networkSandboxed: true,
       channels: [],
       position: { current: '1', total: 1 },
     });
@@ -20,6 +22,8 @@ describe('commandCompletedEffect ABI propagation', () => {
     if (effect.event.type === 'COMMAND_COMPLETED') {
       expect(effect.event.payload.landlockAbi).toBe(3);
       expect(effect.event.payload.enforcementDowngraded).toBe(false);
+      expect(effect.event.payload.networkPolicy).toBe('deny');
+      expect(effect.event.payload.networkSandboxed).toBe(true);
     }
   });
 });

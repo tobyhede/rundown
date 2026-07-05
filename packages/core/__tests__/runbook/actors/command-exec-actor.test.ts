@@ -85,6 +85,8 @@ describe('commandExecActor', () => {
         sandboxed: true,
         landlockAbi: 3,
         enforcementDowngraded: false,
+        networkPolicy: 'deny',
+        networkSandboxed: true,
       }),
     };
 
@@ -106,6 +108,8 @@ describe('commandExecActor', () => {
       sandboxed: true,
       landlockAbi: 3,
       enforcementDowngraded: false,
+      networkPolicy: 'deny',
+      networkSandboxed: true,
     });
   });
 

@@ -77,6 +77,7 @@ export interface LandlockSpec {
   ro: string[];
   rox: string[];
   rw: string[];
+  network: 'deny' | 'allow';
 }
 
 /**
@@ -113,6 +114,7 @@ export function buildSpec(command: string, options: SandboxOptions): LandlockSpe
     rox: existing(SYSTEM_EXEC_PATHS),
     ro: existing([...options.readOnlyPaths, ...SYSTEM_READ_PATHS]),
     rw: existing([...options.readWritePaths, ...DEVICE_RW_PATHS]),
+    network: options.network,
   };
 }
 
@@ -193,12 +195,16 @@ const DEFAULT_STATUS_TIMEOUT_MS = 5000;
 
 /** Parsed fd-4 status. */
 type HelperStatus =
-  | { status: 'applied'; abi: number; downgraded: boolean }
+  | { status: 'applied'; abi: number; downgraded: boolean; network: 'deny' | 'allow' }
   | { status: 'denied'; abi: number; missing: string }
   | { status: 'error'; message: string };
 
-function isFiniteNumber(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
+function isPositiveInteger(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1;
+}
+
+function isNetworkPolicy(v: unknown): v is 'deny' | 'allow' {
+  return v === 'deny' || v === 'allow';
 }
 
 /**
@@ -221,11 +227,13 @@ export function parseStatus(line: string): HelperStatus | null {
   const o = v as Record<string, unknown>;
   switch (o.status) {
     case 'applied':
-      return isFiniteNumber(o.abi) && o.abi >= 1 && typeof o.downgraded === 'boolean'
-        ? { status: 'applied', abi: o.abi, downgraded: o.downgraded }
+      return isPositiveInteger(o.abi) &&
+        typeof o.downgraded === 'boolean' &&
+        isNetworkPolicy(o.network)
+        ? { status: 'applied', abi: o.abi, downgraded: o.downgraded, network: o.network }
         : null;
     case 'denied':
-      return isFiniteNumber(o.abi) && typeof o.missing === 'string'
+      return isPositiveInteger(o.abi) && typeof o.missing === 'string'
         ? { status: 'denied', abi: o.abi, missing: o.missing }
         : null;
     case 'error':
@@ -422,6 +430,8 @@ export class LandlockSandbox implements SandboxImplementation {
         denialReason:
           'Linux sandbox backend cannot safely enforce deny-path policy. ' +
           'Execution was blocked to avoid weakening policy. Disable sandbox only for trusted runs.',
+        networkPolicy: options.network,
+        networkSandboxed: false,
       };
     }
 
@@ -433,6 +443,8 @@ export class LandlockSandbox implements SandboxImplementation {
         sandboxed: false,
         policyDenied: true,
         denialReason: availability.reason,
+        networkPolicy: options.network,
+        networkSandboxed: false,
       };
     }
 
@@ -537,13 +549,13 @@ export class LandlockSandbox implements SandboxImplementation {
         if (status?.status === 'applied') {
           // Command is (or will be) running; its exit code arrives on 'close'.
           appliedStatus = status;
-          if (childClosed) settle(this.resolveStatus(status, childCode));
+          if (childClosed) settle(this.resolveStatus(status, childCode, options.network));
         } else if (status?.status === 'denied') {
-          settle(this.resolveStatus(status, 126));
+          settle(this.resolveStatus(status, 126, options.network));
         } else {
           // error / missing / malformed / oversized / timed-out → protocol
           // violation (Task 19 adds process-group teardown to handleViolation).
-          this.handleViolation(child, status, settle);
+          this.handleViolation(child, status, options.network, settle);
         }
       };
 
@@ -570,13 +582,15 @@ export class LandlockSandbox implements SandboxImplementation {
       });
 
       child.on('error', (err) => {
-        settle(this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`));
+        settle(
+          this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`, options.network),
+        );
       });
 
       child.on('close', (code) => {
         childClosed = true;
         childCode = code ?? 1;
-        if (appliedStatus) settle(this.resolveStatus(appliedStatus, childCode));
+        if (appliedStatus) settle(this.resolveStatus(appliedStatus, childCode, options.network));
       });
 
       specPipe.write(`${JSON.stringify(spec)}\n`);
@@ -590,10 +604,21 @@ export class LandlockSandbox implements SandboxImplementation {
    * @param status - The validated fd-4 status (`applied` or `denied`).
    * @param exitCode - The command's real exit code, used only for `applied`
    *   (ignored for `denied`, where the fixed exit code 126 is used instead).
+   * @param requestedNetwork - Network posture sent to the helper in the fd-3 spec.
    * @returns The corresponding execution result.
    */
-  private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
+  private resolveStatus(
+    status: HelperStatus,
+    exitCode: number,
+    requestedNetwork: 'deny' | 'allow',
+  ): SandboxExecutionResult {
     if (status.status === 'applied') {
+      if (requestedNetwork === 'deny' && status.network !== 'deny') {
+        return this.failClosed(
+          `network policy mismatch: requested deny but helper reported ${status.network}`,
+          requestedNetwork,
+        );
+      }
       return {
         success: exitCode === 0,
         exitCode,
@@ -601,6 +626,8 @@ export class LandlockSandbox implements SandboxImplementation {
         policyDenied: false,
         landlockAbi: status.abi,
         enforcementDowngraded: status.downgraded,
+        networkPolicy: status.network,
+        networkSandboxed: status.network === 'deny',
       };
     }
     // denied — the negotiated ABI fell below the required floor under strict.
@@ -611,6 +638,8 @@ export class LandlockSandbox implements SandboxImplementation {
         sandboxed: false,
         policyDenied: true,
         landlockAbi: status.abi,
+        networkPolicy: requestedNetwork,
+        networkSandboxed: false,
         denialReason:
           `Landlock ABI ${String(status.abi)} (kernel <6.2) cannot enforce ${status.missing}; ` +
           'read-only grants would be bypassable. Refusing under strict mode. ' +
@@ -618,7 +647,7 @@ export class LandlockSandbox implements SandboxImplementation {
       };
     }
     // unreachable if only called with 'applied' or 'denied'; but this helps TS narrowing
-    return this.failClosed('unknown status variant');
+    return this.failClosed('unknown status variant', requestedNetwork);
   }
 
   /**
@@ -631,11 +660,13 @@ export class LandlockSandbox implements SandboxImplementation {
    * @param child - The helper's child process handle, used to target teardown.
    * @param status - The offending status (an `error` variant, or `null` for a
    *   missing/malformed/oversized/timed-out status line).
+   * @param requestedNetwork - Network posture sent to the helper in the fd-3 spec.
    * @param settle - Callback that resolves the outer `execute()` promise.
    */
   private handleViolation(
     child: ChildProcess,
     status: HelperStatus | null,
+    requestedNetwork: 'deny' | 'allow',
     settle: (r: SandboxExecutionResult) => void,
   ): void {
     const detail = status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
@@ -646,7 +677,7 @@ export class LandlockSandbox implements SandboxImplementation {
       const reason = reaped
         ? base
         : `${base} (process-group teardown did NOT confirm reap within timeout — possible leaked processes)`;
-      settle(this.failClosed(reason));
+      settle(this.failClosed(reason, requestedNetwork));
     });
   }
 
@@ -712,12 +743,15 @@ export class LandlockSandbox implements SandboxImplementation {
     });
   }
 
-  private failClosed(reason: string): SandboxExecutionResult {
+  private failClosed(reason: string, requestedNetwork?: 'deny' | 'allow'): SandboxExecutionResult {
     return {
       success: false,
       exitCode: 126,
       sandboxed: false,
       policyDenied: true,
+      ...(requestedNetwork === undefined
+        ? {}
+        : { networkPolicy: requestedNetwork, networkSandboxed: false }),
       denialReason: reason,
     };
   }

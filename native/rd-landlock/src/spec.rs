@@ -1,6 +1,20 @@
 //! JSON spec read from fd 3: grant categories, strict flag, and the command.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// Network access posture requested by core.
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkPolicy {
+    /// Install the seccomp network-denial filter before exec.
+    Deny,
+    /// Do not install the network filter.
+    Allow,
+}
+
+fn default_network() -> NetworkPolicy {
+    NetworkPolicy::Deny
+}
 
 /// Ruleset inputs delivered to the helper over fd 3.
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -19,6 +33,9 @@ pub struct Spec {
     /// Read-write grants (full write set).
     #[serde(default)]
     pub rw: Vec<String>,
+    /// Network posture. Defaults closed for older/malformed callers.
+    #[serde(default = "default_network")]
+    pub network: NetworkPolicy,
 }
 
 fn default_strict() -> bool {
@@ -47,6 +64,7 @@ mod tests {
         assert_eq!(spec.ro, vec!["/etc".to_string()]);
         assert_eq!(spec.rox, vec!["/usr".to_string()]);
         assert_eq!(spec.rw, vec!["/tmp".to_string()]);
+        assert_eq!(spec.network, NetworkPolicy::Deny);
     }
 
     #[test]
@@ -54,6 +72,24 @@ mod tests {
         let spec = parse_spec(r#"{"command":"true"}"#).expect("parse");
         assert!(spec.strict);
         assert!(spec.ro.is_empty() && spec.rox.is_empty() && spec.rw.is_empty());
+    }
+
+    #[test]
+    fn network_defaults_to_deny() {
+        let spec = parse_spec(r#"{"command":"true"}"#).expect("parse");
+        assert_eq!(spec.network, NetworkPolicy::Deny);
+    }
+
+    #[test]
+    fn parses_network_allow() {
+        let spec = parse_spec(r#"{"command":"true","network":"allow"}"#).expect("parse");
+        assert_eq!(spec.network, NetworkPolicy::Allow);
+    }
+
+    #[test]
+    fn rejects_invalid_network_value() {
+        let err = parse_spec(r#"{"command":"true","network":"maybe"}"#).unwrap_err();
+        assert!(err.contains("invalid spec JSON"), "error: {err}");
     }
 
     #[test]
@@ -81,7 +117,7 @@ mod proptests {
                     // Reachable at all only if serde fully populated `Spec` —
                     // touch every field so a future required-field regression
                     // (a field serde could leave partially defaulted) is caught.
-                    let _ = (spec.command, spec.strict, spec.ro, spec.rox, spec.rw);
+                    let _ = (spec.command, spec.strict, spec.ro, spec.rox, spec.rw, spec.network);
                 }
                 Err(e) => prop_assert!(!e.is_empty()),
             }

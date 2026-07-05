@@ -20,6 +20,7 @@ const teardownBase: SandboxOptions = {
   denyPaths: [],
   denyPatterns: [],
   env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+  network: 'deny',
   allowUnsandboxed: true,
 };
 
@@ -63,6 +64,7 @@ describe('LandlockSandbox process-group teardown', () => {
       denyPaths: [],
       denyPatterns: [],
       env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+      network: 'deny',
       allowUnsandboxed: true, // proves teardown happens even with strict:false
     };
 

@@ -30,6 +30,48 @@ describe('Policy Schema', () => {
       expect(result.default.mode).toBe('execute');
     });
 
+    it('defaults omitted network policy to deny', () => {
+      const result = parsePolicy({ version: 1 });
+
+      expect(result.default.network).toBe('deny');
+    });
+
+    it('parses explicit default network allow', () => {
+      const result = parsePolicy({
+        version: 1,
+        default: {
+          network: 'allow',
+        },
+      });
+
+      expect(result.default.network).toBe('allow');
+    });
+
+    it('parses runbook network override', () => {
+      const result = parsePolicy({
+        version: 1,
+        overrides: [
+          {
+            runbook: 'deploy/*.runbook.md',
+            network: 'allow',
+          },
+        ],
+      });
+
+      expect(result.overrides[0].network).toBe('allow');
+    });
+
+    it('rejects invalid network policy values', () => {
+      expect(() =>
+        parsePolicy({
+          version: 1,
+          default: {
+            network: 'prompt',
+          },
+        }),
+      ).toThrow();
+    });
+
     it('should parse config with run allow list', () => {
       const config = {
         version: 1,
@@ -147,6 +189,10 @@ describe('Policy Schema', () => {
       expect(DEFAULT_POLICY.default.mode).toBe('prompted');
     });
 
+    it('denies network by default', () => {
+      expect(DEFAULT_POLICY.default.network).toBe('deny');
+    });
+
     it('should include common safe commands in allow list', () => {
       const allowedCommands = DEFAULT_POLICY.default.run.allow;
       expect(allowedCommands).toContain('git');
@@ -230,6 +276,14 @@ describe('Policy Schema', () => {
       expect(DEFAULT_POLICY_LINUX.default.mode).toBe(DEFAULT_POLICY.default.mode);
       expect(DEFAULT_POLICY_LINUX.overrides).toEqual(DEFAULT_POLICY.overrides);
       expect(DEFAULT_POLICY_LINUX.grants).toEqual(DEFAULT_POLICY.grants);
+    });
+
+    it('preserves the canonical network default', () => {
+      expect(DEFAULT_POLICY_LINUX.default.network).toBe(DEFAULT_POLICY.default.network);
+    });
+
+    it('preserves the canonical policy mode on Linux', () => {
+      expect(DEFAULT_POLICY_LINUX.default.mode).toBe(DEFAULT_POLICY.default.mode);
     });
 
     it('does not share mutable nested references with DEFAULT_POLICY', () => {

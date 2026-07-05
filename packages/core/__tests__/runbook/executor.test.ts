@@ -194,7 +194,12 @@ describe('executeCommandWithPolicy', () => {
     // This test simulates sandbox being unavailable
     const evaluator = new PolicyEvaluator({
       ...DEFAULT_POLICY,
-      default: { ...DEFAULT_POLICY.default, mode: 'execute', run: { allow: ['*'], deny: [] } },
+      default: {
+        ...DEFAULT_POLICY.default,
+        mode: 'execute',
+        network: 'allow',
+        run: { allow: ['*'], deny: [] },
+      },
     });
 
     // Mock isSandboxAvailable to return false
@@ -238,7 +243,12 @@ describe('executeCommandWithPolicy', () => {
   it('falls back to unsandboxed execution with warning when sandbox unavailable and not strict', async () => {
     const evaluator = new PolicyEvaluator({
       ...DEFAULT_POLICY,
-      default: { ...DEFAULT_POLICY.default, mode: 'execute', run: { allow: ['*'], deny: [] } },
+      default: {
+        ...DEFAULT_POLICY.default,
+        mode: 'execute',
+        network: 'allow',
+        run: { allow: ['*'], deny: [] },
+      },
     });
 
     const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {

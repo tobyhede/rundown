@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 if (args.includes('--probe')) {
-  process.stdout.write((process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}') + '\n');
+  process.stdout.write(`${process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}'}\n`);
   process.exit(Number(process.env.FAKE_PROBE_EXIT ?? '0'));
 }
 
@@ -32,9 +32,11 @@ if (process.env.FAKE_ECHO_SPEC_FD5 === '1') {
 }
 
 if (process.env.FAKE_NO_STATUS !== '1') {
-  const line = process.env.FAKE_STATUS_LINE ?? '{"status":"applied","abi":3,"downgraded":false}';
+  const line =
+    process.env.FAKE_STATUS_LINE ??
+    '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}';
   try {
-    writeFileSync(4, line + '\n');
+    writeFileSync(4, `${line}\n`);
   } catch {
     /* fd 4 not wired */
   }

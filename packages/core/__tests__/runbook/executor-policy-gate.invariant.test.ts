@@ -96,7 +96,10 @@ const { spawn } = await import('node:child_process');
  * @param decision - The decision `checkCommand` should return
  * @returns An object shaped as a PolicyEvaluator with a spied `checkCommand`
  */
-function fakeEvaluator(decision: PolicyDecision): {
+function fakeEvaluator(
+  decision: PolicyDecision,
+  networkPolicy: 'deny' | 'allow' = 'deny',
+): {
   evaluator: PolicyEvaluator;
   checkCommand: jest.Mock<(command: string) => PolicyDecision>;
 } {
@@ -106,6 +109,7 @@ function fakeEvaluator(decision: PolicyDecision): {
     filterEnvironment: (env: Record<string, string>) => env,
     getRepoRoot: () => process.cwd(),
     getTmpDir: () => '/tmp',
+    getEffectiveNetworkPolicy: () => networkPolicy,
   } as unknown as PolicyEvaluator;
   return { evaluator, checkCommand };
 }
@@ -195,6 +199,64 @@ describe('executor policy gate — seam invariant (single gate before spawn)', (
     expect(executeWithSandboxMock).not.toHaveBeenCalled();
   });
 
+  it('sandbox unavailable + sandboxStrict:false + network deny ⇒ policy denied and spawn NOT called', async () => {
+    isSandboxAvailableMock.mockResolvedValue(false);
+    const { evaluator } = fakeEvaluator(ALLOW, 'deny');
+
+    const result = await executeCommandWithPolicy('node -e "0"', process.cwd(), {
+      evaluator,
+      sandbox: true,
+      sandboxStrict: false,
+    });
+
+    expect(result.policyDenied).toBe(true);
+    expect(result.exitCode).toBe(POLICY_DENIED_EXIT_CODE);
+    expect(result.denialReason).toContain('network');
+    expect(result.denialReason).toContain('--no-sandbox');
+    expect(result.sandboxed).toBe(false);
+    expect(result.networkPolicy).toBe('deny');
+    expect(result.networkSandboxed).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(executeWithSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('sandbox unavailable + sandboxStrict:false + network allow ⇒ documented best-effort unsandboxed path', async () => {
+    isSandboxAvailableMock.mockResolvedValue(false);
+    const { evaluator } = fakeEvaluator(ALLOW, 'allow');
+
+    const result = await executeCommandWithPolicy('node -e "0"', process.cwd(), {
+      evaluator,
+      sandbox: true,
+      sandboxStrict: false,
+    });
+
+    expect(result.policyDenied).toBeFalsy();
+    expect(result.sandboxed).toBe(false);
+    expect(result.networkPolicy).toBe('allow');
+    expect(result.networkSandboxed).toBe(false);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(executeWithSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('sandbox:false remains the explicit trusted unsandboxed path even when network policy is deny', async () => {
+    isSandboxAvailableMock.mockResolvedValue(false);
+    const { evaluator } = fakeEvaluator(ALLOW, 'deny');
+
+    const result = await executeCommandWithPolicy('node -e "0"', process.cwd(), {
+      evaluator,
+      sandbox: false,
+      sandboxStrict: false,
+    });
+
+    expect(result.policyDenied).toBeFalsy();
+    expect(result.sandboxed).toBe(false);
+    expect(result.networkPolicy).toBe('deny');
+    expect(result.networkSandboxed).toBe(false);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(isSandboxAvailableMock).not.toHaveBeenCalled();
+    expect(executeWithSandboxMock).not.toHaveBeenCalled();
+  });
+
   // Invariant property 4 — Absence of an evaluator is the ONLY un-gated path.
   it('no evaluator ⇒ the explicit documented trust path: reaches spawn WITHOUT any policy check', async () => {
     // No `checkCommand` spy can exist here — the whole point is that the gate is
@@ -207,6 +269,8 @@ describe('executor policy gate — seam invariant (single gate before spawn)', (
     });
 
     expect(result.policyDenied).toBeFalsy();
+    expect(result.networkPolicy).toBeUndefined();
+    expect(result.networkSandboxed).toBe(false);
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(spawnedCommand(spawnMock.mock.calls[0])).toBe(command);
     // The trust path short-circuits before the sandbox layer entirely.

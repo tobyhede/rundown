@@ -14,6 +14,10 @@ fn quoted(path: &std::path::Path) -> String {
     shell_single_quote(&path.to_string_lossy())
 }
 
+fn python_available_command(script: &str) -> String {
+    format!("python3 -c {}", shell_single_quote(script))
+}
+
 #[test]
 #[ignore = "requires a real Landlock >= v3 kernel"]
 fn denied_read_is_blocked_and_status_applied() {
@@ -28,7 +32,10 @@ fn denied_read_is_blocked_and_status_applied() {
     })
     .to_string();
     let (status, code) = run_spec(&spec);
-    assert!(status.contains("\"status\":\"applied\""), "status: {status}");
+    assert!(
+        status.contains("\"status\":\"applied\""),
+        "status: {status}"
+    );
     assert_ne!(code, 0, "ungranted read must fail");
 }
 
@@ -49,7 +56,10 @@ fn truncate_blocked_on_readonly_grant() {
     })
     .to_string();
     let (status, code) = run_spec(&spec);
-    assert!(status.contains("\"status\":\"applied\""), "status: {status}");
+    assert!(
+        status.contains("\"status\":\"applied\""),
+        "status: {status}"
+    );
     assert_ne!(code, 0, "truncate on a read-only grant must be blocked");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "important");
 }
@@ -80,8 +90,14 @@ fn full_write_set_works_on_readwrite_grant() {
     })
     .to_string();
     let (status, code) = run_spec(&spec);
-    assert!(status.contains("\"status\":\"applied\""), "status: {status}");
-    assert_eq!(code, 0, "full write set must succeed on rw grants: {status}");
+    assert!(
+        status.contains("\"status\":\"applied\""),
+        "status: {status}"
+    );
+    assert_eq!(
+        code, 0,
+        "full write set must succeed on rw grants: {status}"
+    );
     assert!(rw2.join("moved.txt").exists());
 }
 
@@ -111,4 +127,76 @@ fn enforcement_works_unprivileged() {
 fn unsafe_getuid() -> u32 {
     // SAFETY (test only): getuid is always safe and never fails.
     unsafe { libc::getuid() }
+}
+
+#[test]
+#[ignore = "requires a real Landlock >= v3 kernel and seccomp filter support"]
+fn network_deny_blocks_tcp_socket_creation() {
+    let spec = serde_json::json!({
+        "command": python_available_command(
+            "import errno, socket, sys\ntry:\n    socket.socket(socket.AF_INET, socket.SOCK_STREAM)\nexcept PermissionError as e:\n    sys.exit(13 if e.errno == errno.EACCES else 42)\nelse:\n    sys.exit(0)"
+        ),
+        "strict": true,
+        "network": "deny",
+        "rox": SYSTEM_ROX,
+        "ro": ["/etc"],
+    })
+    .to_string();
+
+    let (status, code) = run_spec(&spec);
+    assert!(
+        status.contains("\"status\":\"applied\""),
+        "status: {status}"
+    );
+    assert!(status.contains("\"network\":\"deny\""), "status: {status}");
+    assert_eq!(
+        code, 13,
+        "AF_INET socket creation must fail with EACCES, not a missing python or unrelated error"
+    );
+}
+
+#[test]
+#[ignore = "requires a real Landlock >= v3 kernel and seccomp filter support"]
+fn network_deny_allows_af_unix_socket_creation() {
+    let spec = serde_json::json!({
+        "command": python_available_command(
+            "import socket; s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.close()"
+        ),
+        "strict": true,
+        "network": "deny",
+        "rox": SYSTEM_ROX,
+        "ro": ["/etc"],
+    })
+    .to_string();
+
+    let (status, code) = run_spec(&spec);
+    assert!(
+        status.contains("\"status\":\"applied\""),
+        "status: {status}"
+    );
+    assert!(status.contains("\"network\":\"deny\""), "status: {status}");
+    assert_eq!(code, 0, "AF_UNIX socket creation must remain available");
+}
+
+#[test]
+#[ignore = "requires a real Landlock >= v3 kernel and seccomp filter support"]
+fn network_allow_does_not_block_tcp_socket_creation() {
+    let spec = serde_json::json!({
+        "command": python_available_command(
+            "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.close()"
+        ),
+        "strict": true,
+        "network": "allow",
+        "rox": SYSTEM_ROX,
+        "ro": ["/etc"],
+    })
+    .to_string();
+
+    let (status, code) = run_spec(&spec);
+    assert!(
+        status.contains("\"status\":\"applied\""),
+        "status: {status}"
+    );
+    assert!(status.contains("\"network\":\"allow\""), "status: {status}");
+    assert_eq!(code, 0, "network allow must not install the socket filter");
 }

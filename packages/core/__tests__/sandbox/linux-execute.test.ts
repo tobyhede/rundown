@@ -23,6 +23,7 @@ const base: SandboxOptions = {
   // node was installed (mise, nvm, CI tool-cache, etc. — not necessarily
   // /usr/bin or /bin).
   env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+  network: 'deny',
   allowUnsandboxed: false,
 };
 
@@ -44,7 +45,7 @@ describe('LandlockSandbox.execute applied path', () => {
       ...base,
       env: {
         ...base.env,
-        FAKE_STATUS_LINE: '{"status":"applied","abi":3,"downgraded":false}',
+        FAKE_STATUS_LINE: '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}',
         FAKE_EXIT: '0',
       },
     });
@@ -53,6 +54,8 @@ describe('LandlockSandbox.execute applied path', () => {
     expect(r.success).toBe(true);
     expect(r.landlockAbi).toBe(3);
     expect(r.enforcementDowngraded).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(true);
     expect(r.policyDenied).toBe(false);
   });
 
@@ -65,13 +68,15 @@ describe('LandlockSandbox.execute applied path', () => {
       ...base,
       env: {
         ...base.env,
-        FAKE_STATUS_LINE: '{"status":"applied","abi":1,"downgraded":true}',
+        FAKE_STATUS_LINE: '{"status":"applied","abi":1,"downgraded":true,"network":"deny"}',
         FAKE_EXIT: '0',
       },
     });
     expect(r.enforcementDowngraded).toBe(true);
     expect(r.sandboxed).toBe(true);
     expect(r.landlockAbi).toBe(1);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(true);
     expect(r.policyDenied).toBe(false);
   });
 
@@ -84,13 +89,15 @@ describe('LandlockSandbox.execute applied path', () => {
       ...base,
       env: {
         ...base.env,
-        FAKE_STATUS_LINE: '{"status":"applied","abi":3,"downgraded":false}',
+        FAKE_STATUS_LINE: '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}',
         FAKE_EXIT: '125',
       },
     });
     expect(r.sandboxed).toBe(true);
     expect(r.exitCode).toBe(125);
     expect(r.success).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(true);
     expect(r.policyDenied).toBe(false);
   });
 

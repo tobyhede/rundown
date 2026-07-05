@@ -27,6 +27,7 @@ describe('policyToSandboxOptions', () => {
     expect(options.denyPatterns).toBeDefined();
     expect(options.denyPaths).toBeDefined();
     expect(options.env).toEqual({});
+    expect(options.network).toBe('deny');
   });
 
   it('uses provided repoRoot and tmpDir', () => {
@@ -154,6 +155,38 @@ describe('policyToSandboxOptions', () => {
     const options = policyToSandboxOptions(evaluator, { cwd: '/test' });
     expect(options.denyPatterns).toEqual([]);
     expect(options.denyPaths).toEqual([]);
+  });
+
+  it('maps default effective network policy to sandbox options', () => {
+    const evaluator = new PolicyEvaluator(DEFAULT_POLICY_LINUX);
+    const options = policyToSandboxOptions(evaluator, { cwd: '/test' });
+
+    expect(options.network).toBe('deny');
+  });
+
+  it('maps runbook network allow override to sandbox options', () => {
+    const policy: PolicyConfig = {
+      version: 1,
+      default: DEFAULT_POLICY_LINUX.default,
+      overrides: [
+        {
+          runbook: 'deploy/*.runbook.md',
+          network: 'allow',
+        },
+      ],
+      grants: [],
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      runbookPath: 'deploy/prod.runbook.md',
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.network).toBe('allow');
   });
 
   it('resolves {repo} placeholder', () => {
@@ -541,6 +574,27 @@ describe('policyConfigToSandboxOptions', () => {
     expect(options.readOnlyPaths).toBeDefined();
     expect(options.readWritePaths).toBeDefined();
     expect(options.denyPaths).toBeDefined();
+  });
+
+  it('maps raw policy default network posture', () => {
+    const options = policyConfigToSandboxOptions(
+      {
+        version: 1,
+        default: {
+          mode: DEFAULT_POLICY_LINUX.default.mode,
+          run: DEFAULT_POLICY_LINUX.default.run,
+          read: DEFAULT_POLICY_LINUX.default.read,
+          write: DEFAULT_POLICY_LINUX.default.write,
+          env: DEFAULT_POLICY_LINUX.default.env,
+          network: 'allow',
+        },
+        overrides: [],
+        grants: [],
+      },
+      { cwd: '/repo' },
+    );
+
+    expect(options.network).toBe('allow');
   });
 });
 

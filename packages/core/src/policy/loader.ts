@@ -140,8 +140,6 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
     trustJsPolicy = false,
   } = options;
 
-  const warnings: string[] = [];
-
   // If explicit config path provided, load it directly
   if (configPath) {
     return loadPolicyFromFile(configPath, { trustJsPolicy });
@@ -158,60 +156,36 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
     stopDir,
   });
 
+  let result: LilconfigResult;
   try {
-    const result: LilconfigResult = await explorer.search(cwd);
-
-    if (result?.config !== undefined) {
-      // Extract policy field if from package.json
-
-      const config: unknown = result.filepath.endsWith('package.json')
-        ? ((result.config as { rundown?: unknown }).rundown ?? result.config)
-        : result.config;
-
-      // Validate the configuration
-      const parseResult = safeParsePolicyConfig(config);
-
-      if (parseResult.success && parseResult.data) {
-        return {
-          policy: parseResult.data,
-          filepath: result.filepath,
-          isDefault: false,
-        };
-      }
-
-      // Validation failed - warn and use defaults
-      warnings.push(`Invalid policy config at ${result.filepath}:`);
-      if (parseResult.errors) {
-        warnings.push(...parseResult.errors.map((e) => `  - ${e}`));
-      }
-
-      if (useDefaults) {
-        warnings.push('Using built-in defaults instead.');
-        return {
-          policy: getDefaultPolicy(),
-          filepath: result.filepath,
-          isDefault: true,
-          warnings,
-        };
-      }
-
-      throw new Error(
-        `Invalid policy configuration: ${parseResult.errors?.join(', ') ?? 'unknown error'}`,
-      );
-    }
+    result = await explorer.search(cwd);
   } catch (error) {
-    // If search failed but we have defaults, use them
-    if (useDefaults) {
-      const errorMsg = getErrorMessage(error);
-      warnings.push(`Error loading policy config: ${errorMsg}`);
-      warnings.push('Using built-in defaults instead.');
+    throw new Error(`Error loading policy config: ${getErrorMessage(error)}`);
+  }
+
+  if (result?.config !== undefined) {
+    // Extract policy field if from package.json
+
+    const config: unknown = result.filepath.endsWith('package.json')
+      ? ((result.config as { rundown?: unknown }).rundown ?? result.config)
+      : result.config;
+
+    // Validate the configuration
+    const parseResult = safeParsePolicyConfig(config);
+
+    if (parseResult.success && parseResult.data) {
       return {
-        policy: getDefaultPolicy(),
-        isDefault: true,
-        warnings,
+        policy: parseResult.data,
+        filepath: result.filepath,
+        isDefault: false,
       };
     }
-    throw error;
+
+    throw new Error(
+      `Invalid policy configuration at ${result.filepath}: ${
+        parseResult.errors?.join(', ') ?? 'unknown error'
+      }`,
+    );
   }
 
   // No config found - use defaults if allowed
@@ -302,8 +276,6 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
     trustJsPolicy = false,
   } = options;
 
-  const warnings: string[] = [];
-
   // If explicit config path provided, load it directly
   if (configPath) {
     return loadPolicyFromFileSync(configPath, { trustJsPolicy });
@@ -325,55 +297,33 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
     stopDir,
   });
 
+  let result: ReturnType<typeof explorer.search>;
   try {
-    const result = explorer.search(cwd);
-
-    if (result?.config !== undefined) {
-      const config: unknown = result.filepath.endsWith('package.json')
-        ? ((result.config as { rundown?: unknown }).rundown ?? result.config)
-        : result.config;
-
-      const parseResult = safeParsePolicyConfig(config);
-
-      if (parseResult.success && parseResult.data) {
-        return {
-          policy: parseResult.data,
-          filepath: result.filepath,
-          isDefault: false,
-        };
-      }
-
-      warnings.push(`Invalid policy config at ${result.filepath}:`);
-      if (parseResult.errors) {
-        warnings.push(...parseResult.errors.map((e) => `  - ${e}`));
-      }
-
-      if (useDefaults) {
-        warnings.push('Using built-in defaults instead.');
-        return {
-          policy: getDefaultPolicy(),
-          filepath: result.filepath,
-          isDefault: true,
-          warnings,
-        };
-      }
-
-      throw new Error(
-        `Invalid policy configuration: ${parseResult.errors?.join(', ') ?? 'unknown error'}`,
-      );
-    }
+    result = explorer.search(cwd);
   } catch (error) {
-    if (useDefaults) {
-      const errorMsg = getErrorMessage(error);
-      warnings.push(`Error loading policy config: ${errorMsg}`);
-      warnings.push('Using built-in defaults instead.');
+    throw new Error(`Error loading policy config: ${getErrorMessage(error)}`);
+  }
+
+  if (result?.config !== undefined) {
+    const config: unknown = result.filepath.endsWith('package.json')
+      ? ((result.config as { rundown?: unknown }).rundown ?? result.config)
+      : result.config;
+
+    const parseResult = safeParsePolicyConfig(config);
+
+    if (parseResult.success && parseResult.data) {
       return {
-        policy: getDefaultPolicy(),
-        isDefault: true,
-        warnings,
+        policy: parseResult.data,
+        filepath: result.filepath,
+        isDefault: false,
       };
     }
-    throw error;
+
+    throw new Error(
+      `Invalid policy configuration at ${result.filepath}: ${
+        parseResult.errors?.join(', ') ?? 'unknown error'
+      }`,
+    );
   }
 
   if (useDefaults) {
@@ -471,6 +421,7 @@ export function mergePolicies(...policies: PolicyConfig[]): PolicyConfig {
       version: policy.version,
       default: {
         mode: policy.default.mode,
+        network: policy.default.network,
         run: {
           allow: [...merged.default.run.allow, ...policy.default.run.allow],
           deny: [...merged.default.run.deny, ...policy.default.run.deny],

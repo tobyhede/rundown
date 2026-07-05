@@ -27,6 +27,7 @@ describe('Sandbox Index', () => {
     denyPaths: ['/test/deny'],
     denyPatterns: [],
     env: {},
+    network: 'deny',
     allowUnsandboxed: false,
   };
 

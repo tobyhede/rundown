@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import { ensureStateDirs } from '../paths.js';
 import type { PolicyEvaluator, PolicyPrompter, PolicyDecision } from '../policy/index.js';
+import type { NetworkPolicy } from '../policy/schema.js';
 import { executeWithSandbox, isSandboxAvailable } from '../sandbox/index.js';
 import { policyToSandboxOptions } from '../sandbox/policy-mapper.js';
 
@@ -25,6 +26,10 @@ export interface ExecutionResult {
   landlockAbi?: number;
   /** True if Landlock enforcement ran below the required ABI floor. */
   enforcementDowngraded?: boolean;
+  /** Effective network posture requested for sandboxed execution. */
+  networkPolicy?: NetworkPolicy;
+  /** True when network denial was installed by the Linux helper. */
+  networkSandboxed?: boolean;
 }
 
 /**
@@ -187,7 +192,8 @@ export async function executeCommandWithPolicy(
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
-    return executeCommand(command, cwd, rdInjected);
+    const result = await executeCommand(command, cwd, rdInjected);
+    return { ...result, networkSandboxed: false };
   }
 
   // Check command policy
@@ -226,6 +232,7 @@ export async function executeCommandWithPolicy(
   // Inject rundown-specific vars (RD_WORK_PATH, RD_RUN_ID, etc.) after policy filtering
   // These are rundown-wins: they cannot be blocked by user-supplied environment variables
   const finalEnv = { ...filteredEnv, ...rdInjected };
+  const networkPolicy = evaluator.getEffectiveNetworkPolicy();
 
   // Execute with sandbox if enabled
   if (sandbox) {
@@ -257,6 +264,8 @@ export async function executeCommandWithPolicy(
         sandboxed: result.sandboxed,
         landlockAbi: result.landlockAbi,
         enforcementDowngraded: result.enforcementDowngraded,
+        networkPolicy: result.networkPolicy,
+        networkSandboxed: result.networkSandboxed,
       };
     }
 
@@ -272,6 +281,22 @@ export async function executeCommandWithPolicy(
           'Re-run with --no-sandbox to execute without OS-level enforcement (trusted runbooks only).',
         policyDenied: true,
         sandboxed: false,
+        networkPolicy,
+        networkSandboxed: false,
+      };
+    }
+
+    if (networkPolicy === 'deny') {
+      return {
+        success: false,
+        exitCode: POLICY_DENIED_EXIT_CODE,
+        denialReason:
+          'Sandbox unavailable: network policy is deny and cannot be enforced without the OS sandbox. ' +
+          'Re-run with --no-sandbox for a trusted unsandboxed run, or set network: allow for this runbook.',
+        policyDenied: true,
+        sandboxed: false,
+        networkPolicy,
+        networkSandboxed: false,
       };
     }
 
@@ -284,6 +309,8 @@ export async function executeCommandWithPolicy(
   return {
     ...result,
     sandboxed: false,
+    networkPolicy,
+    networkSandboxed: false,
   };
 }
 
