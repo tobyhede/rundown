@@ -528,6 +528,85 @@ describe('policyToSandboxOptions', () => {
     expect(options.denyPatterns).not.toContain('/repo/dist/secret.txt');
   });
 
+  it('filters alias-spelled deny paths covered by canonical runtime grants', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const secrets = join(repoRoot, 'secrets');
+      await mkdir(secrets);
+      const target = join(secrets, '.env');
+      await writeFile(target, 'token');
+      const alias = join(aliasRoot, 'secrets-link');
+      await symlink(secrets, alias);
+      const aliasTarget = join(alias, '.env');
+      const canonicalTarget = await realpath(target);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [aliasTarget] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        cliGrants: { read: [canonicalTarget] },
+      });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalTarget);
+      expect(options.denyPaths).not.toContain(canonicalTarget);
+      expect(options.denyPaths).not.toContain(aliasTarget);
+      expect(options.denyPatterns).not.toContain(aliasTarget);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('filters alias-spelled deny glob patterns covered by canonical runtime grants', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const secrets = join(repoRoot, 'secrets');
+      await mkdir(secrets);
+      const target = join(secrets, '.env');
+      await writeFile(target, 'token');
+      const alias = join(aliasRoot, 'secrets-link');
+      await symlink(secrets, alias);
+      const denyPattern = join(alias, '**');
+      const canonicalSecrets = await realpath(secrets);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [denyPattern] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        cliGrants: { read: [canonicalSecrets] },
+      });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalSecrets);
+      expect(options.denyPaths).not.toContain(canonicalSecrets);
+      expect(options.denyPatterns).not.toContain(denyPattern);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
   it('realpath-normalizes read grants that pass through a symlink', async () => {
     const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
     const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));

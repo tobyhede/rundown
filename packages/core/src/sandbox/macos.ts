@@ -63,7 +63,7 @@ function getNodeExecutionPaths(): string[] {
   return paths;
 }
 
-function getPackageManagerExecutionPaths(env: Partial<Record<string, string>>): string[] {
+function getPackageManagerMetadataPaths(env: Partial<Record<string, string>>): string[] {
   const paths: string[] = [];
   const home = env.HOME ?? process.env.HOME;
   if (home) {
@@ -172,10 +172,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     .join('\n');
 
   // Get Node.js execution paths dynamically
-  const executionPaths = [
-    ...getNodeExecutionPaths(),
-    ...getPackageManagerExecutionPaths(options.env),
-  ];
+  const executionPaths = getNodeExecutionPaths();
 
   // Add the script directory if available (for symlinked CLI)
   const scriptDir = getScriptDirectory();
@@ -189,7 +186,12 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     .join('\n');
 
   const pathLookupDirs = getPathLookupDirectories(options.env);
-  const metadataPathCandidates = [...(options.metadataReadPaths ?? []), ...pathLookupDirs];
+  const packageManagerMetadataPaths = getPackageManagerMetadataPaths(options.env);
+  const metadataPathCandidates = [
+    ...(options.metadataReadPaths ?? []),
+    ...pathLookupDirs,
+    ...packageManagerMetadataPaths,
+  ];
   const metadataReadPaths = [
     ...metadataPathCandidates,
     ...collectAncestorPaths([...executionPaths, ...metadataPathCandidates]),

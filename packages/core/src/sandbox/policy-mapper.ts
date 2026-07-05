@@ -234,11 +234,30 @@ function filterDenyPatternsCoveredByRuntimeGrants(
   runtimeGrantPaths: readonly string[],
 ): string[] {
   return denyPatterns.filter((denyPattern) => {
-    if (hasGlob(denyPattern)) {
+    const comparisonPath = canonicalComparisonPathForDenyPattern(denyPattern);
+    if (comparisonPath === undefined) {
       return true;
     }
-    return !runtimeGrantPaths.some((grantPath) => isWithinRoot(denyPattern, grantPath));
+    return !runtimeGrantPaths.some((grantPath) => isWithinRoot(comparisonPath, grantPath));
   });
+}
+
+function canonicalComparisonPathForDenyPattern(denyPattern: string): string | undefined {
+  if (!hasGlob(denyPattern)) {
+    return resolveCanonicalPathForGrant(denyPattern);
+  }
+
+  const basePath = extractBasePath(denyPattern);
+  if (
+    basePath === '.' ||
+    basePath === path.sep ||
+    basePath.includes('*') ||
+    basePath.includes('?')
+  ) {
+    return undefined;
+  }
+
+  return resolveCanonicalPathForGrant(basePath);
 }
 
 function selectExpansionRoots(roots: string[], repoRoot: string, cwd: string): string[] {
@@ -394,11 +413,15 @@ export function policyToSandboxOptions(
       tmpDir,
     ),
   );
+  const canonicalDenyPaths = normalizeSandboxPathList(denyPaths);
   const effectiveDenyPatterns = filterDenyPatternsCoveredByRuntimeGrants(
     denyPatterns,
     runtimeGrantPaths,
   );
-  const effectiveDenyPaths = filterDenyPathsCoveredByRuntimeGrants(denyPaths, runtimeGrantPaths);
+  const effectiveDenyPaths = filterDenyPathsCoveredByRuntimeGrants(
+    canonicalDenyPaths,
+    runtimeGrantPaths,
+  );
   const metadataReadPaths = collectAncestorPaths([
     repoRoot,
     options.cwd,
@@ -414,7 +437,7 @@ export function policyToSandboxOptions(
     readWritePaths,
     metadataReadPaths,
     denyPatterns: [...new Set(effectiveDenyPatterns)],
-    denyPaths: normalizeSandboxPathList(effectiveDenyPaths),
+    denyPaths: effectiveDenyPaths,
     env: {},
     allowUnsandboxed: options.allowUnsandboxed,
   };

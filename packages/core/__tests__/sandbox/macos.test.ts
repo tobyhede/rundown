@@ -295,12 +295,17 @@ describe('SeatbeltSandbox', () => {
       );
       expect(writeFileSync).toHaveBeenCalledWith(
         expect.any(String),
+        expect.stringContaining('(literal "/Users/test/.cache/node/corepack")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).not.toHaveBeenCalledWith(
+        expect.any(String),
         expect.stringContaining('(subpath "/Users/test/.cache/node/corepack")'),
         expect.any(Object),
       );
     });
 
-    it('uses the sandbox command HOME for package manager execution paths', async () => {
+    it('uses the sandbox command HOME for package manager metadata paths', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
       (writeFileSync as jest.Mock).mockImplementation(() => {
@@ -329,6 +334,11 @@ describe('SeatbeltSandbox', () => {
       });
 
       expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/tmp/rundown-home/.cache/node/corepack")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).not.toHaveBeenCalledWith(
         expect.any(String),
         expect.stringContaining('(subpath "/tmp/rundown-home/.cache/node/corepack")'),
         expect.any(Object),
