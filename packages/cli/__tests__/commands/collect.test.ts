@@ -999,6 +999,15 @@ describe('collect command', () => {
     }, 20_000);
 
     it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
+      await writeFile(
+        join(workspace.cwd, 'noisy-command.mjs'),
+        [
+          "process.stdout.write(Buffer.from('434f4d4d414e445f5354444f55540a', 'hex').toString());",
+          "process.stderr.write(Buffer.from('434f4d4d414e445f5354444552520a', 'hex').toString());",
+          '',
+        ].join('\n'),
+      );
+
       const parent = [
         '# Parent',
         '',
@@ -1019,7 +1028,7 @@ describe('collect command', () => {
         '- FAIL STOP',
         '',
         '```bash',
-        "node -e \"process.stdout.write(Buffer.from('434f4d4d414e445f5354444f55540a', 'hex').toString()); process.stderr.write(Buffer.from('434f4d4d414e445f5354444552520a', 'hex').toString())\"",
+        'node noisy-command.mjs',
         '```',
         '',
       ].join('\n');

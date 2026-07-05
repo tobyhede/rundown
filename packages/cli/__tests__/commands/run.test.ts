@@ -85,6 +85,15 @@ describe('start command', () => {
 
   describe('file mode', () => {
     it('keeps JSON stdout parseable when a command writes stdout and stderr', async () => {
+      await writeFile(
+        join(workspace.cwd, 'noisy-command.mjs'),
+        [
+          "process.stdout.write(Buffer.from('52554e5f5354444f55540a', 'hex').toString());",
+          "process.stderr.write(Buffer.from('52554e5f5354444552520a', 'hex').toString());",
+          '',
+        ].join('\n'),
+      );
+
       const runbook = [
         '# Noisy Run',
         '',
@@ -94,7 +103,7 @@ describe('start command', () => {
         '- FAIL STOP',
         '',
         '```bash',
-        "node -e \"process.stdout.write(Buffer.from('52554e5f5354444f55540a', 'hex').toString()); process.stderr.write(Buffer.from('52554e5f5354444552520a', 'hex').toString())\"",
+        'node noisy-command.mjs',
         '```',
         '',
       ].join('\n');
