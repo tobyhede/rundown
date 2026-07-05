@@ -132,10 +132,15 @@ describe('compiled machine command execution', () => {
 
     const snapshot = actor.getPersistedSnapshot() as unknown as {
       value: unknown;
-      context: { lifecycle: string; lastAction?: { type: string; message?: string } };
+      context: {
+        lifecycle: string;
+        lastAction?: { type: string; message?: string };
+        lastResult?: string;
+      };
     };
     expect(snapshot.value).toBe('STOPPED');
     expect(snapshot.context.lifecycle).toBe('stopped');
+    expect(snapshot.context.lastResult).toBeUndefined();
     expect(snapshot.context.lastAction).toEqual({
       type: 'POLICY_DENIED',
       message: 'blocked by test policy',
@@ -174,10 +179,15 @@ describe('compiled machine command execution', () => {
 
     const snapshot = actor.getPersistedSnapshot() as unknown as {
       value: unknown;
-      context: { lifecycle: string; lastAction?: { type: string; message?: string } };
+      context: {
+        lifecycle: string;
+        lastAction?: { type: string; message?: string };
+        lastResult?: string;
+      };
     };
     expect(snapshot.value).toBe('STOPPED');
     expect(snapshot.context.lifecycle).toBe('stopped');
+    expect(snapshot.context.lastResult).toBeUndefined();
     expect(snapshot.context.lastAction).toEqual({
       type: 'COMMAND_EXECUTION_FAILED',
       message: 'spawn subsystem unavailable',

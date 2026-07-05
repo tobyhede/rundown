@@ -5,6 +5,9 @@ import {
   buildStepPosition,
   type ActionType,
   extractLastMessage,
+  extractLastAction,
+  deriveStoppedReason,
+  extractInternalFailureMessage,
   extractRetryDisplayCount,
   extractRetryMax,
   formatActionForDisplay,
@@ -1048,12 +1051,15 @@ export async function runExecutionLoop(
         currentState.substep,
         currentState.forStack,
       );
-      const message = extractLastMessage(currentState.snapshot);
+      const lastAction = extractLastAction(currentState.snapshot);
+      const reason = deriveStoppedReason(lastAction);
+      const message =
+        extractInternalFailureMessage(lastAction) ?? extractLastMessage(currentState.snapshot);
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
         payload: {
           position,
-          reason: 'fail_transition',
+          reason,
           message,
         },
       });
