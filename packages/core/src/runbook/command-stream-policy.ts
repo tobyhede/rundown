@@ -34,10 +34,20 @@ export function pipeCommandOutputToStderr(
   policy: CommandOutputStreamPolicy | undefined,
 ): void {
   if (policy !== 'stderr') return;
-  child.stdout?.on('data', (chunk: Buffer | string) => {
-    process.stderr.write(chunk);
+  forwardCommandStreamToStderr(child.stdout);
+  forwardCommandStreamToStderr(child.stderr);
+}
+
+function forwardCommandStreamToStderr(stream: ChildProcess['stdout']): void {
+  if (!stream) return;
+  stream.on('error', () => {
+    /* Stream errors are already reflected in command lifecycle events. */
   });
-  child.stderr?.on('data', (chunk: Buffer | string) => {
+  if (typeof stream.pipe === 'function') {
+    stream.pipe(process.stderr, { end: false });
+    return;
+  }
+  stream.on('data', (chunk: Buffer | string) => {
     process.stderr.write(chunk);
   });
 }

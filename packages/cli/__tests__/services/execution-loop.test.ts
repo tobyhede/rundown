@@ -57,8 +57,11 @@ const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
 const completionDrainResolvedCompletionsFn =
   mockFn<(args: Record<string, unknown>) => Promise<Record<string, unknown>>>();
+const recordChildCompletionFn =
+  mockFn<(args: Record<string, unknown>) => Promise<'recorded' | 'blocked'>>();
 const mockCompletionService = {
   drainResolvedCompletions: completionDrainResolvedCompletionsFn,
+  recordChildCompletion: recordChildCompletionFn,
 };
 
 const mockLifecycleService = {
@@ -343,6 +346,8 @@ describe('runExecutionLoop', () => {
       unresolved: 0,
       applied: [],
     }));
+    mockCompletionService.recordChildCompletion.mockReset();
+    mockCompletionService.recordChildCompletion.mockResolvedValue('recorded');
 
     mockActorService.sendAndSync.mockReset();
     mockActorService.getContextSnapshot.mockReset();
@@ -2198,6 +2203,124 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
+  });
+
+  it('propagates blocked inline child terminal instead of treating child completion as success', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentLinkage = {
+      kind: 'inline',
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    const parentState = makeLoopState('1', {
+      lifecycle: 'running',
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: {
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: inlineLaunch.contextSnapshot,
+            childRunId,
+            createdAt: '2026-05-30T00:00:00.000Z',
+            startedAt: '2026-05-30T00:00:01.000Z',
+          },
+        },
+      ],
+      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+    });
+    const existingChild = {
+      ...makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'completed',
+        parentLinkage,
+      }),
+      runbookSrc: '## 1. Child\nDone',
+    };
+
+    mockManager.load
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(existingChild)
+      .mockResolvedValue(existingChild);
+    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+    mockActorService.sendAndSync.mockResolvedValueOnce({ state: parentState, snapshot: {} });
+    mockCompletionService.recordChildCompletion.mockResolvedValueOnce('blocked');
+    const output = {
+      executionEvent: jest.fn(),
+      flush: jest.fn(),
+    };
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      mockManager.cwd,
+      false,
+      asEmitter(mockEmitter),
+      { output: output as never },
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockCompletionService.recordChildCompletion).toHaveBeenCalledWith({
+      childState: existingChild,
+      result: 'pass',
+    });
+    expect(output.flush).toHaveBeenCalled();
   });
 
   it('does not consume existing inline child intent when session activation fails', async () => {

@@ -708,7 +708,8 @@ cases:
         throw new Error(result.stdout + result.stderr);
       }
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('schema=root-schema');
+      expect(result.stdout).not.toContain('schema=root-schema');
+      expect(result.stderr).toContain('schema=root-schema');
     }, 30000);
 
     it('reports missing static relative ARTIFACTS fixtures before execution', async () => {
@@ -776,7 +777,8 @@ cases:
         throw new Error(result.stdout + result.stderr);
       }
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('schema=nested-schema');
+      expect(result.stdout).not.toContain('schema=nested-schema');
+      expect(result.stderr).toContain('schema=nested-schema');
       expect(result.stdout).not.toContain('schema=root-schema');
     }, 30000);
 

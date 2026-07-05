@@ -19,7 +19,7 @@ const required = process.env.RUNDOWN_REQUIRE_SEATBELT === '1';
 
 type SandboxOptionsWithNetwork = SandboxOptions & { network: 'deny' | 'allow' };
 
-function metadataAncestorsFor(path: string): string[] {
+function metadataPathAndAncestorsFor(path: string): string[] {
   const ancestors: string[] = [];
   let current = path;
   while (current !== dirname(current)) {
@@ -29,8 +29,8 @@ function metadataAncestorsFor(path: string): string[] {
   return ancestors.filter((ancestor) => ancestor !== '/');
 }
 
-function uniqueMetadataAncestorsFor(paths: readonly string[]): string[] {
-  return [...new Set(paths.flatMap((path) => metadataAncestorsFor(path)))];
+function uniqueMetadataPathsAndAncestorsFor(paths: readonly string[]): string[] {
+  return [...new Set(paths.flatMap((path) => metadataPathAndAncestorsFor(path)))];
 }
 
 if (!availability.available) {
@@ -73,7 +73,7 @@ if (!availability.available) {
         repoRoot: repoCwd,
         readOnlyPaths: [repoCwd, grantedReadDir],
         readWritePaths: [grantedWriteDir],
-        metadataReadPaths: uniqueMetadataAncestorsFor([repoCwd, root]),
+        metadataReadPaths: uniqueMetadataPathsAndAncestorsFor([repoCwd, root]),
         denyPaths: [],
         denyPatterns: [],
         env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
@@ -142,7 +142,7 @@ if (!availability.available) {
           repoRoot: repoCwd,
           readOnlyPaths: [repoCwd],
           readWritePaths: [],
-          metadataReadPaths: metadataAncestorsFor(repoCwd),
+          metadataReadPaths: metadataPathAndAncestorsFor(repoCwd),
           denyPaths: [],
           denyPatterns: [],
           env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },

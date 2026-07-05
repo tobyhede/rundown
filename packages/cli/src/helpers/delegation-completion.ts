@@ -28,6 +28,7 @@ import {
   projectDelegationTerminalOutcome,
   type RunbookState,
   type ParentLinkage,
+  type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -145,6 +146,8 @@ export async function reportTerminalToDelegatingRun(
  * @param result - Terminal result of the child ('pass' or 'fail')
  * @param cwd - Current working directory
  * @param output - Output emitter for CLI output
+ * @param commandStreamOptions - Runtime-only routing for command subprocess
+ * stdout/stderr while inline propagation continues the parent
  * @returns 'handled' when the parent was advanced (or is waiting on siblings),
  *          'stopped' when advancing the parent reached a STOP terminal,
  *          'not-applicable' when the child has no parent linkage
@@ -155,6 +158,7 @@ export async function advanceParentForInlineChild(
   result: 'pass' | 'fail' | undefined,
   cwd: string,
   output: OutputEmitter,
+  commandStreamOptions?: CommandExecutionStreamOptions,
 ): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   // This is the INLINE flow-back path only. Delegation linkage shares the same
@@ -239,7 +243,7 @@ export async function advanceParentForInlineChild(
     await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     const propagated = freshParent
-      ? await propagateChildTerminal(freshParent, undefined, cwd, output)
+      ? await propagateChildTerminal(freshParent, undefined, cwd, output, commandStreamOptions)
       : 'not-applicable';
     output.flush();
     return propagated === 'blocked' ? 'blocked' : 'stopped';
@@ -248,7 +252,7 @@ export async function advanceParentForInlineChild(
     await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     const propagated = freshParent
-      ? await propagateChildTerminal(freshParent, undefined, cwd, output)
+      ? await propagateChildTerminal(freshParent, undefined, cwd, output, commandStreamOptions)
       : 'not-applicable';
     output.flush();
     if (propagated === 'blocked') return 'blocked';
@@ -276,21 +280,21 @@ export async function advanceParentForInlineChild(
       cwd,
       !!loopState.prompted,
       emitter,
-      { terminalReleaseMode: 'release-runbook', output },
+      { terminalReleaseMode: 'release-runbook', output, commandStreamOptions },
     );
     output.flush();
 
     if (loopResult === 'stopped') {
       const terminalParent = await manager.load(parentRunId);
       const propagated = terminalParent
-        ? await propagateChildTerminal(terminalParent, undefined, cwd, output)
+        ? await propagateChildTerminal(terminalParent, undefined, cwd, output, commandStreamOptions)
         : 'not-applicable';
       return propagated === 'blocked' ? 'blocked' : 'stopped';
     }
     if (loopResult === 'done') {
       const terminalParent = await manager.load(parentRunId);
       const propagated = terminalParent
-        ? await propagateChildTerminal(terminalParent, undefined, cwd, output)
+        ? await propagateChildTerminal(terminalParent, undefined, cwd, output, commandStreamOptions)
         : 'not-applicable';
       if (propagated === 'blocked') return 'blocked';
       if (propagated === 'stopped') return 'stopped';
@@ -327,6 +331,8 @@ export async function advanceParentForInlineChild(
  * @param result - Terminal result of the child ('pass' or 'fail')
  * @param cwd - Current working directory
  * @param output - Output emitter for CLI output
+ * @param commandStreamOptions - Runtime-only routing for command subprocess
+ * stdout/stderr while inline propagation continues the parent
  * @returns 'not-applicable' when the child has no parent linkage; for inline,
  *          'handled' or 'stopped' (advancing the parent reached a STOP terminal);
  *          for delegation, 'reported' (the delegating run is collection pending)
@@ -337,10 +343,11 @@ export async function propagateChildTerminal(
   result: 'pass' | 'fail' | undefined,
   cwd: string,
   output: OutputEmitter,
+  commandStreamOptions?: CommandExecutionStreamOptions,
 ): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (!linkage) return 'not-applicable';
   return linkage.kind === 'inline'
-    ? advanceParentForInlineChild(childState, result, cwd, output)
+    ? advanceParentForInlineChild(childState, result, cwd, output, commandStreamOptions)
     : reportTerminalToDelegatingRun(childState, result, cwd, output);
 }

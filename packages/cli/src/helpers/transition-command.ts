@@ -8,6 +8,7 @@ import {
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
@@ -125,11 +126,13 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // work: cursor parsing, output rendering, and the execution loop. The
             // seam renders refusals/applied events itself (inside runSeamTransition);
             // here we own the post-transition parent-propagation/exit-code contract.
+            const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
             const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
               ...(options.step !== undefined ? { step: options.step } : {}),
               ...(options.index !== undefined ? { index: options.index } : {}),
+              commandStreamOptions,
             });
 
             // Exit-code contract: when this runbook is a delegated child whose
@@ -163,6 +166,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                     def.name,
                     cwd,
                     output,
+                    commandStreamOptions,
                   );
                   if (linkage.kind === 'inline') {
                     shouldExitWithError = propagation === 'stopped' || propagation === 'blocked';

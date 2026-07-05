@@ -13,12 +13,14 @@ import {
   type Frame,
   type FrameKey,
   type RunId,
+  type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
@@ -64,6 +66,7 @@ export function registerCollectCommand(program: Command): void {
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'collect' });
             const cwd = getCwd();
+            const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
@@ -72,6 +75,7 @@ export function registerCollectCommand(program: Command): void {
             const contextResult = await buildTransitionContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              commandStreamOptions,
             });
             switch (contextResult.kind) {
               case 'ready':
@@ -102,6 +106,7 @@ export function registerCollectCommand(program: Command): void {
               step: options.step,
               index: options.index,
               text: options.text,
+              commandStreamOptions,
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
 
@@ -123,6 +128,8 @@ interface CollectOptions {
   index?: string;
   /** True when `--text` is set (human-readable); false/undefined for JSON. */
   text?: boolean;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  commandStreamOptions?: CommandExecutionStreamOptions;
   /** Validated `--run` run id supplying run-controller caller evidence. */
   runId?: RunId;
 }
@@ -438,6 +445,7 @@ function renderCollectOutcome(
  */
 async function runCollect(ctx: TransitionContext, options: CollectOptions): Promise<boolean> {
   const { output, manager, actorService, lifecycleService, state, steps, cwd } = ctx;
+  const { commandStreamOptions } = options;
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
@@ -530,9 +538,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         {
           terminalReleaseMode: 'release-runbook',
           output,
-          commandStreamOptions: {
-            commandOutput: options.text ? 'inherit' : 'stderr',
-          },
+          commandStreamOptions,
         },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a
@@ -558,7 +564,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     linkage &&
     (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
   ) {
-    const propagation = await propagateChildTerminal(terminal, undefined, cwd, output);
+    const propagation = await propagateChildTerminal(
+      terminal,
+      undefined,
+      cwd,
+      output,
+      commandStreamOptions,
+    );
     // Inline propagation may itself drive the parent terminal (STOP) — its
     // outcome decides the exit code for inline, ORed with a stopped loop.
     // Delegation propagation is report-only (no parent advancement) but can

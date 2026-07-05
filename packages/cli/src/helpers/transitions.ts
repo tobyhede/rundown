@@ -26,6 +26,7 @@ import {
   type RunbookState,
   type ClaimId,
   type RunId,
+  type CommandExecutionStreamOptions,
   type LifecycleTransitionOutcome,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
@@ -145,6 +146,8 @@ export interface TransitionContext {
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
   terminalReleaseMode: ExecutionTerminalReleaseMode;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  commandStreamOptions?: CommandExecutionStreamOptions;
   /**
    * When true, the decisive parent-advance write is run through
    * {@link SessionService.runGuardedParentAdvance} so the open-delegated-children
@@ -193,13 +196,19 @@ export type BaseBuildTransitionContextResult =
  * @param options.claimId - Claim id to resolve instead of the default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
  *   stack; mutually exclusive with `claimId` (enforced upstream)
+ * @param options.commandStreamOptions - Runtime-only routing for command
+ * subprocess stdout/stderr while transition follow-on execution continues
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
+  options: {
+    readonly claimId?: ClaimId;
+    readonly runId?: RunId;
+    readonly commandStreamOptions?: CommandExecutionStreamOptions;
+  } = {},
 ): Promise<BaseBuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
@@ -260,6 +269,7 @@ export async function buildTransitionContext(
       steps,
       cwd,
       terminalReleaseMode,
+      commandStreamOptions: options.commandStreamOptions,
       // Base-path callers (collect) are exempt from the bare-pass/fail
       // open-delegated-children guard by construction.
       guardOpenChildren: false,
@@ -345,6 +355,8 @@ export interface SeamTransitionOptions {
   readonly step?: string;
   /** Raw `--index` value (requires `--step`). */
   readonly index?: string;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
 /**
@@ -493,6 +505,7 @@ async function renderApplied(
   config: TransitionConfig,
   manager: RunbookStateManager,
   outcome: Extract<LifecycleTransitionOutcome, { kind: 'applied' }>,
+  commandStreamOptions?: CommandExecutionStreamOptions,
 ): Promise<{ readonly status: 'continue' | 'stopped'; readonly runId: RunId }> {
   if (outcome.duplicate) {
     output.status(config.commandName, `Completion already recorded for ${outcome.duplicate.at}`, {
@@ -535,7 +548,11 @@ async function renderApplied(
         cwd,
         outcome.loop.prompted,
         emitter,
-        { terminalReleaseMode: outcome.terminalReleaseMode, output },
+        {
+          terminalReleaseMode: outcome.terminalReleaseMode,
+          output,
+          commandStreamOptions,
+        },
       );
       if (loopResult === 'stopped') status = 'stopped';
     }
@@ -626,7 +643,14 @@ export async function runSeamTransition(
     return { manager, exitError };
   }
 
-  const applied = await renderApplied(output, cwd, config, manager, outcome);
+  const applied = await renderApplied(
+    output,
+    cwd,
+    config,
+    manager,
+    outcome,
+    options.commandStreamOptions,
+  );
   output.flush();
   return { manager, applied, exitError: applied.status === 'stopped' };
 }

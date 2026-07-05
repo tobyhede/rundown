@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { pipeCommandOutputToStderr } from '../../src/runbook/command-stream-policy.js';
 import { LandlockSandbox, type LandlockSandboxOptions } from '../../src/sandbox/linux.js';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
@@ -192,6 +193,7 @@ describe('LandlockSandbox.execute applied path', () => {
 
   it('uses fd 1 and fd 2 pipes for stderr command output while preserving fd 3 and fd 4 protocol pipes', async () => {
     let capturedStdio: unknown;
+    const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const child = new EventEmitter() as EventEmitter & {
       stdio: Array<unknown>;
       unref: jest.Mock;
@@ -208,6 +210,8 @@ describe('LandlockSandbox.execute applied path', () => {
     const spawnMock = jest.fn((_command: string, _args: string[], options: SpawnOptions) => {
       capturedStdio = options.stdio;
       process.nextTick(() => {
+        (child.stdio[1] as EventEmitter).emit('data', 'linux-out');
+        (child.stdio[2] as EventEmitter).emit('data', 'linux-err');
         (child.stdio[4] as EventEmitter).emit(
           'data',
           '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}\n',
@@ -217,18 +221,67 @@ describe('LandlockSandbox.execute applied path', () => {
       return child as unknown as ChildProcess;
     });
 
-    const sandbox = new LandlockSandbox({
-      helperPath: FAKE,
-      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
-      spawn: spawnMock as unknown as LandlockSandboxOptions['spawn'],
+    try {
+      const sandbox = new LandlockSandbox({
+        helperPath: FAKE,
+        probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+        spawn: spawnMock as unknown as LandlockSandboxOptions['spawn'],
+      });
+
+      const result = await sandbox.execute('printf linux-out', {
+        ...base,
+        commandOutput: 'stderr',
+      });
+
+      expect(result.success).toBe(true);
+      expect(capturedStdio).toEqual(['inherit', 'pipe', 'pipe', 'pipe', 'pipe']);
+      const stderrChunks = stderrWrite.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(stderrChunks).toContain('linux-out');
+      expect(stderrChunks).toContain('linux-err');
+    } finally {
+      stderrWrite.mockRestore();
+    }
+  });
+});
+
+describe('pipeCommandOutputToStderr', () => {
+  const createCommandStream = () =>
+    Object.assign(new EventEmitter(), {
+      pipe: jest.fn(),
     });
 
-    const result = await sandbox.execute('printf linux-out', {
-      ...base,
-      commandOutput: 'stderr',
-    });
+  it('uses pipe forwarding to process.stderr when stderr routing is enabled', () => {
+    const stdout = createCommandStream();
+    const stderr = createCommandStream();
+    const child = { stdout, stderr } as unknown as ChildProcess;
 
-    expect(result.success).toBe(true);
-    expect(capturedStdio).toEqual(['inherit', 'pipe', 'pipe', 'pipe', 'pipe']);
+    pipeCommandOutputToStderr(child, 'stderr');
+
+    expect(stdout.pipe).toHaveBeenCalledWith(process.stderr, { end: false });
+    expect(stderr.pipe).toHaveBeenCalledWith(process.stderr, { end: false });
+  });
+
+  it('does not attach stream forwarding when stderr routing is disabled', () => {
+    const stdout = createCommandStream();
+    const stderr = createCommandStream();
+    const child = { stdout, stderr } as unknown as ChildProcess;
+
+    pipeCommandOutputToStderr(child, undefined);
+
+    expect(stdout.pipe).not.toHaveBeenCalled();
+    expect(stderr.pipe).not.toHaveBeenCalled();
+    expect(stdout.listenerCount('error')).toBe(0);
+    expect(stderr.listenerCount('error')).toBe(0);
+  });
+
+  it('handles command stream errors when stderr routing is enabled', () => {
+    const stdout = createCommandStream();
+    const stderr = createCommandStream();
+    const child = { stdout, stderr } as unknown as ChildProcess;
+
+    pipeCommandOutputToStderr(child, 'stderr');
+
+    expect(() => stdout.emit('error', new Error('stdout reset'))).not.toThrow();
+    expect(() => stderr.emit('error', new Error('stderr reset'))).not.toThrow();
   });
 });

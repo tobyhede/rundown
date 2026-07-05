@@ -119,6 +119,38 @@ describe('PolicyEvaluator', () => {
       });
     });
 
+    it('should expose runtime grants separately from persisted sandbox grants', () => {
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: ['/configured/read/**'], deny: ['/denied/read/**'] },
+        },
+        grants: [
+          {
+            type: 'read',
+            pattern: '/persisted/read/**',
+            scope: 'session',
+            grantedAt: new Date().toISOString(),
+          },
+        ],
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        cliGrants: {
+          read: ['/cli/read/**'],
+        },
+      });
+
+      evaluator.addSessionGrant('read', '/session/read/**');
+
+      expect(evaluator.getSandboxRules('read')).toEqual({
+        allow: ['/configured/read/**', '/persisted/read/**', '/cli/read/**', '/session/read/**'],
+        deny: ['/denied/read/**'],
+        runtimeGrantAllow: ['/cli/read/**', '/session/read/**'],
+      });
+    });
+
     it('should respect CLI grants', () => {
       const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
         repoRoot,

@@ -78,6 +78,18 @@ export type { ExecutionVarValue, StepVariables, TemplateVariables } from './exec
 export { buildStepVariables };
 
 /**
+ * Select command subprocess stream routing for a CLI output mode.
+ *
+ * @param text - Whether the surrounding command is rendering human-readable text
+ * @returns Runtime-only command stream options for execution services
+ */
+export function commandStreamOptionsForOutputMode(
+  text: boolean | undefined,
+): CommandExecutionStreamOptions {
+  return { commandOutput: text ? 'inherit' : 'stderr' };
+}
+
+/**
  * Find a step by name, throwing if not found.
  *
  * Replaces silent `steps[0]` fallbacks that mask state corruption.
@@ -367,8 +379,9 @@ async function propagateInlineChildTerminalResult(args: {
   readonly loopResult: 'done' | 'stopped' | 'waiting';
   readonly cwd: string;
   readonly output: OutputEmitter;
+  readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }): Promise<'done' | 'stopped' | 'waiting'> {
-  const { manager, childRunId, loopResult, cwd, output } = args;
+  const { manager, childRunId, loopResult, cwd, output, commandStreamOptions } = args;
   if (loopResult !== 'done' && loopResult !== 'stopped') return loopResult;
 
   const childState = await manager.load(childRunId);
@@ -378,10 +391,17 @@ async function propagateInlineChildTerminalResult(args: {
   // same orchestrator that ran the child advances the parent here. Drain and
   // advance the parent immediately (there is no separate `rd collect` for
   // inline). The child's own loopResult governs the result here unless advancing
-  // the parent reaches a STOP terminal, which surfaces as 'stopped'.
+  // the parent reaches a STOP or blocked terminal, both of which surface to the
+  // execution loop as 'stopped'.
   const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
-  const propagated = await propagateChildTerminal(childState, undefined, cwd, output);
-  return propagated === 'stopped' ? 'stopped' : loopResult;
+  const propagated = await propagateChildTerminal(
+    childState,
+    undefined,
+    cwd,
+    output,
+    commandStreamOptions,
+  );
+  return propagated === 'stopped' || propagated === 'blocked' ? 'stopped' : loopResult;
 }
 
 async function consumeInlineLaunchIntent(args: {
@@ -565,6 +585,7 @@ async function launchInlineChildFromIntent({
         loopResult,
         cwd,
         output,
+        commandStreamOptions,
       });
     }
 
@@ -682,6 +703,7 @@ async function launchInlineChildFromIntent({
         loopResult: launchResult.loopResult,
         cwd,
         output,
+        commandStreamOptions,
       });
     }
 

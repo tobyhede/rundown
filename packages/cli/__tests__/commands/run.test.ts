@@ -9,7 +9,9 @@ import {
 import {
   createTestWorkspace,
   createRunbook,
+  runCli,
   runCliInProcess,
+  parseConcatenatedJson,
   readSession,
   getActiveState,
   readRunbookState,
@@ -82,6 +84,34 @@ describe('start command', () => {
   });
 
   describe('file mode', () => {
+    it('keeps JSON stdout parseable when a command writes stdout and stderr', async () => {
+      const runbook = [
+        '# Noisy Run',
+        '',
+        '## 1. Emits bytes',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        '```bash',
+        "node -e \"process.stdout.write(Buffer.from('52554e5f5354444f55540a', 'hex').toString()); process.stderr.write(Buffer.from('52554e5f5354444552520a', 'hex').toString())\"",
+        '```',
+        '',
+      ].join('\n');
+
+      await writeFile(join(workspace.runbooksDir(), 'noisy.runbook.md'), runbook);
+
+      const result = runCli('run noisy.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain('RUN_STDOUT');
+      expect(result.stdout).not.toContain('RUN_STDERR');
+      expect(result.stderr).toContain('RUN_STDOUT');
+      expect(result.stderr).toContain('RUN_STDERR');
+
+      const objects = parseConcatenatedJson(result.stdout);
+      expect(objects.at(-1)).toMatchObject({ type: 'runbook_completed' });
+    });
+
     it('creates runbook state from valid runbook file', async () => {
       const result = await runCliInProcess(
         'run --prompted runbooks/simple.runbook.md --text',
