@@ -849,6 +849,13 @@ echo hello
         const event = startedEvent;
         expect(event).toHaveProperty('prompted');
         expect(event).toHaveProperty('statePath');
+        expect(event).toMatchObject({
+          runbookId: expect.stringMatching(/^rd_[a-f0-9]{32}$/),
+          runCapability: expect.stringMatching(/^rdrc_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/),
+        });
+        expect(
+          fs.readFileSync(path.join(workspace.cwd, '.rundown', 'session.json'), 'utf-8'),
+        ).not.toContain(String(event.runCapability));
       }
 
       // Should have runbook_completed event for successful run

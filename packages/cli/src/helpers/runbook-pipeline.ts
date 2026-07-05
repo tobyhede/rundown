@@ -25,6 +25,7 @@ import {
   type ParentLinkage,
   type ClaimId,
   type ClaimCapability,
+  type RunCapability,
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
@@ -173,7 +174,12 @@ export interface RunbookStartFailure {
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: RunId }
+  | {
+      ok: true;
+      loopResult: 'done' | 'stopped' | 'waiting';
+      stateId: RunId;
+      runCapability: RunCapability;
+    }
   | RunbookStartFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
@@ -270,6 +276,7 @@ function emitRunbookStarted(
   emitter: ExecutionEventEmitter,
   runbookState: RunbookState,
   prompted: boolean,
+  runCapability: RunCapability,
 ): void {
   emitter.emit({
     type: 'RUNBOOK_STARTED',
@@ -277,6 +284,7 @@ function emitRunbookStarted(
       title: runbookState.title,
       description: runbookState.description,
       prompted,
+      runCapability,
       statePath: `${RUNS_DIR}/${runbookState.id}.json`,
     },
   });
@@ -909,6 +917,7 @@ async function launchRunbook(
     stateId: RunId;
     runbookSteps: ResolvedStep[];
     emitter: ExecutionEventEmitter;
+    runCapability: RunCapability;
   };
   let sessionActivated = false;
   let afterCreateAttempted = false;
@@ -935,7 +944,7 @@ async function launchRunbook(
     }
   };
   try {
-    const state = await manager.create(prepared.runbookRef, runbook, {
+    const created = await manager.create(prepared.runbookRef, runbook, {
       runId: prepared.runId,
       runbookPath,
       prompted: options.prompted,
@@ -948,6 +957,8 @@ async function launchRunbook(
       },
       frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
+    const state = created.state;
+    const runCapability = created.runCapability;
     stateId = state.id;
 
     if (options.afterCreate) {
@@ -985,9 +996,9 @@ async function launchRunbook(
     const emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
-    emitRunbookStarted(emitter, initializedState, options.prompted);
+    emitRunbookStarted(emitter, initializedState, options.prompted, runCapability);
 
-    launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
+    launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter, runCapability };
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
@@ -1001,7 +1012,7 @@ async function launchRunbook(
     };
   }
 
-  const { stateId: launchedStateId, runbookSteps, emitter } = launch;
+  const { stateId: launchedStateId, runbookSteps, emitter, runCapability } = launch;
 
   if (options.afterStarted) {
     try {
@@ -1032,7 +1043,7 @@ async function launchRunbook(
     },
   );
 
-  return { ok: true, loopResult, stateId: launchedStateId };
+  return { ok: true, loopResult, stateId: launchedStateId, runCapability };
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { StepPosition } from '../cli/types.js';
+import type { RunCapability } from '../runbook/capability.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
 import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
@@ -37,6 +38,8 @@ export interface RunbookStartedPayload {
   readonly title?: string;
   readonly description?: string;
   readonly prompted: boolean;
+  /** One-time plaintext authority credential for orchestrator control of this run. */
+  readonly runCapability?: RunCapability;
   /** State file path for metadata display (e.g., ".rundown/runs/wf-xxx.json") */
   readonly statePath: string;
 }
