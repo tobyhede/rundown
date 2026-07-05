@@ -864,7 +864,15 @@ describe('RunbookLifecycleCommandService', () => {
         baseState({
           id: childRunId,
           lifecycle: 'completed',
-          parentLinkage: linkageFor(state.id, '1'),
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: state.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: first.tokenHash,
+          },
         }),
       );
       const parentWithLinkedChild = await mgr.load(state.id);

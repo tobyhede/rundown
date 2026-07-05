@@ -636,9 +636,11 @@ export class RunbookCompletionService {
       linkage.parentStepId,
       frameKey,
     );
+    const currentTokenHash = substepState?.delegation?.tokenHash;
     if (
       linkage.kind === 'delegation' &&
-      substepState?.delegation?.tokenHash !== linkage.tokenHash
+      currentTokenHash !== undefined &&
+      currentTokenHash !== linkage.tokenHash
     ) {
       return 'not-applicable';
     }
