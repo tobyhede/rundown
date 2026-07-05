@@ -22,8 +22,6 @@ const { handleDelegationDispatch, DelegationTokenRecordingError } = await import
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-const CLOSURE_VIOLATION =
-  'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, retry with `rundown delegate --retry` or cancel with `rundown abort <token>`.';
 
 describe('handleDelegationDispatch', () => {
   beforeEach(() => {
@@ -173,7 +171,12 @@ describe('handleDelegationDispatch', () => {
     });
 
     const stopResult = await handleSubagentStop(stopInput);
-    expect(stopResult.violation).toBe(CLOSURE_VIOLATION);
+    expect(stopResult.violation).toEqual(
+      expect.stringContaining('Delegated Rundown work was active'),
+    );
+    expect(stopResult.violation).toEqual(
+      expect.stringContaining('rundown pass --claim-id <claim_id>'),
+    );
 
     // Token kept (closure unprovable) — both the stopping agent's entry and its
     // sibling survive. Final-state assertion is agnostic to set vs update.

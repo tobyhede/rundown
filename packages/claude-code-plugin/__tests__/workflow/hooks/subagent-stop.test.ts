@@ -66,11 +66,8 @@ const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagen
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = realHashDelegationToken(VALID_TOKEN);
 
-const CLAIM_VIOLATION =
+const CLOSURE_VIOLATION =
   'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly in your own lane: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, either claim and close it — `rundown claim <rdtk_…>` then `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` — or leave it unclaimed and report the token back so the orchestrator can `rundown delegate --retry <token> --run <rd_…>` from its own context. Cancel with `rundown abort <token>`.';
-// Mirrors the production TAMPERED_VIOLATION string in subagent-stop.ts.
-// Unverifiable/tampered records now FAIL CLOSED (a violation), replacing the
-// former advisory UNKNOWN_CONTEXT (#470 defect 2).
 const TAMPERED_VIOLATION =
   'Subagent stopped with an active delegation, but its session record could not be verified (corrupt or tampered metadata). Failing closed: run `rundown status` to inspect delegation state and close any open delegation explicitly before stopping.';
 
@@ -119,7 +116,7 @@ describe('handleSubagentStop', () => {
     const input = createLegacySubagentStopInput();
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     // Verify-before-consume: nothing may be persisted until closure is proven.
     expect(mockSet).not.toHaveBeenCalled();
     expect(await session.get('metadata')).toEqual({
@@ -149,7 +146,7 @@ describe('handleSubagentStop', () => {
     const input = createLegacySubagentStopInput();
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     // Token kept (closure required) — the raw token is left untouched.
     expect(await session.get('metadata')).toEqual({
       delegation_active_token: VALID_TOKEN,
@@ -188,7 +185,7 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     // Closure required, so agent-1's entry is NOT consumed; both entries remain.
     const meta = await session.get('metadata');
     expect(Object.keys(meta.delegation_active_tokens as object).sort()).toEqual([
@@ -428,7 +425,7 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     // Closure unproven (token hash not found in state) → token kept, block re-issues.
     expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: {
@@ -472,7 +469,7 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
   });
 
   it('re-fired SubagentStop still blocks while closure is required (idempotent enforcement) (#470)', async () => {
@@ -495,13 +492,13 @@ describe('handleSubagentStop', () => {
     const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
 
     const first = await handleSubagentStop(input);
-    expect(first).toEqual({ violation: CLAIM_VIOLATION });
+    expect(first).toEqual({ violation: CLOSURE_VIOLATION });
 
     // Re-fire (Claude Code re-invokes SubagentStop with stop_hook_active after a
     // blocked stop). Before the fix the token was already consumed and the
     // second call returned {} — no block, the closure guarantee was gone.
     const second = await handleSubagentStop(input);
-    expect(second).toEqual({ violation: CLAIM_VIOLATION });
+    expect(second).toEqual({ violation: CLOSURE_VIOLATION });
 
     const meta = await session.get('metadata');
     expect(meta.delegation_active_tokens).toMatchObject({
@@ -541,7 +538,7 @@ describe('handleSubagentStop', () => {
 
     const result = await handleSubagentStop(createLegacySubagentStopInput());
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     expect(await session.get('metadata')).toEqual({
       delegation_active_token: VALID_TOKEN_HASH,
     });
@@ -622,7 +619,7 @@ describe('handleSubagentStop', () => {
     const input = createLegacySubagentStopInput();
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     // Legacy global token located and closure required → kept; the map keyed
     // "undefined" is left untouched (never consulted for legacy payloads).
     expect(await session.get('metadata')).toEqual({
@@ -651,7 +648,7 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     // Falls back to the legacy global token, which is kept while closure is
     // required; the non-map value is left untouched.
     expect(await session.get('metadata')).toEqual({
@@ -799,7 +796,7 @@ describe('handleSubagentStop', () => {
 
     // Reaches the closure check (no session_id conflict); closure required by
     // default, so the token is kept.
-    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(result).toEqual({ violation: CLOSURE_VIOLATION });
     expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: {
         'agent-1': {
