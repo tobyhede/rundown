@@ -1,11 +1,13 @@
 ---
 name: running-runbooks
-description: Use when stepping through a Rundown runbook that is already active or has just been started, when receiving delegation instructions with a claim token, or when rd/rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
+description: Use when stepping through a Rundown runbook that is already active or has just been started, when receiving delegation instructions with a claim token, or when rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
 ---
 
 # Running Runbooks
 
 Rundown executes markdown runbooks step-by-step. The CLI controls progress — you follow the output and respond.
+
+Capture the run id when you start the runbook: `rundown run` prints it at start and every subsequent event carries it as `runbookId`. You need it for every mutating command you issue as the orchestrator of a delegation-exposed run (`--run <rd_…>`). A claimed child never needs it — a child names its own lane with `--claim-id <claim_id>`.
 
 ## When to Use
 
@@ -29,19 +31,31 @@ rundown run <file> --input k=v          # Start with input
 rundown run <file> --input-json k=json  # Start with JSON input
 rundown run <file> --input-file <path>  # Load inputs from YAML
 
-rundown pass                    # Mark step passed (aliases: yes, ok)
-rundown fail                    # Mark step failed (alias: no)
+rundown pass                    # Mark step passed (aliases: yes, ok) — standalone run only
+rundown fail                    # Mark step failed (alias: no) — standalone run only
 
 rundown status                  # Show current state (JSON by default)
 rundown stop                    # Stop the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
 rundown complete                # Complete the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
 ```
 
+The bare `rundown pass` / `rundown fail` / `rundown stop` / `rundown complete`
+forms above apply to a **standalone run** (one with no delegation activity). On a
+**delegation-exposed run** the bare form is refused with `ACTOR_CONTEXT_REQUIRED`;
+name your lane instead — orchestrators pass `--run <rd_…>`, delegated children pass
+`--claim-id <claim_id>`:
+
+```bash
+rundown pass --run <rd_…>        # Orchestrator advances the run it controls
+rundown pass --claim-id <claim_id>   # Delegated child reports its result
+```
+
 Inside inline-composed runbooks, use `rundown pass` or `rundown fail` to finish the
-current inline unit and let the parent continue. Use bare `rundown complete` or
-bare `rundown stop` only when the intended outcome is to force the composed workflow
-terminal. Delegated children still use `--claim-id` and report to the parent;
-the parent advances on `rundown collect`.
+current inline unit and let the parent continue (on a delegation-exposed
+composition, `--run <rd_…>` naming any member of the contiguous inline chain).
+Use `rundown complete` or `rundown stop` only when the intended outcome is to
+force the composed workflow terminal. Delegated children still use `--claim-id`
+and report to the parent; the parent advances on `rundown collect --run <rd_…>`.
 
 ## How Steps Work
 
@@ -128,12 +142,12 @@ rundown claim <token> --input-json key=json
 rundown claim <token> --input-file <path>
 ```
 
-Plain `rundown pass` and `rundown fail` target the default active runbook, not claimed delegated children.
+On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED` — it does not silently target anything. Orchestrators pass `--run <rd_…>`; children pass `--claim-id <claim_id>`. Only a standalone run (no delegation activity) accepts the bare form.
 
 <important>
 **A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
 
-- Pass `--claim-id <claim_id>` on **every** `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown delegate` / `rundown status` as a claimed child — bare commands target the shared default-active runbook (the *parent's* pipeline), so a bare command silently drives work that is not yours.
+- Pass `--claim-id <claim_id>` on **every** mutating `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown goto` / `rundown collect` / `rundown complete` / `rundown stop` / `rundown delegate` as a claimed child — on a delegation-exposed run the bare form is refused with `ACTOR_CONTEXT_REQUIRED` (it does not silently drive the parent), and the remediation names both lanes without ever echoing the run id. Read-only commands like `rundown status` stay bare.
 - The "Complete ALL steps — do not abandon a runbook" rule applies to **your claimed runbook only**, not to the parent that auto-advanced behind it.
 - After `rundown pass --claim-id` / `rundown fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rundown` commands.
 </important>
@@ -178,6 +192,7 @@ the JSON instead.
 | Skipping steps | Follow every step — runbook controls flow |
 | Bare `rundown pass` with substeps active | Use `rundown pass --step 2.1` |
 | Bare `rundown pass`/`rundown fail` in a claimed child | Use `rundown pass --claim-id <claim_id>` to report to the parent |
+| Bare mutating command on a delegation-exposed run | Refused with `ACTOR_CONTEXT_REQUIRED`; name your lane — `--run <rd_…>` (orchestrator) or `--claim-id <claim_id>` (child) |
 | Claimed child keeps going after reporting | Stop after `rundown pass --claim-id`; the parent's next steps belong to the orchestrator, not you |
 | Abandoning without `rundown stop` | Complete all steps or explicitly stop |
 

@@ -130,6 +130,7 @@ describe('rundown', () => {
       ['pass'],
       ['fail'],
       ['delegate'],
+      ['goto'],
       ['collect'],
     ])('withholds a bare %s mutation instead of spawning the CLI', (command) => {
       const mockExec = mockExecFileSync('should not run');

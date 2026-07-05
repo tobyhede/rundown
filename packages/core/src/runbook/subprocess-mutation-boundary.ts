@@ -32,6 +32,7 @@ export type RoleSpecificMutationCommand =
   | 'pass'
   | 'fail'
   | 'delegate'
+  | 'goto'
   | 'complete'
   | 'stop'
   | 'collect';
@@ -40,6 +41,7 @@ const ROLE_SPECIFIC_MUTATION_COMMANDS: ReadonlySet<RoleSpecificMutationCommand> 
   'pass',
   'fail',
   'delegate',
+  'goto',
   'complete',
   'stop',
   'collect',
@@ -63,6 +65,7 @@ const MUTATION_COMMAND_ALIASES: Readonly<Record<RoleSpecificMutationCommand, rea
   pass: ['yes', 'ok'],
   fail: ['no'],
   delegate: [],
+  goto: [],
   // No aliases (decision #5): `done` is the `[message]` positional, not an alias.
   complete: [],
   stop: [],

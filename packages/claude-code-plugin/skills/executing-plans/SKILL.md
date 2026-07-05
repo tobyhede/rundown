@@ -16,12 +16,20 @@ first (ask the user if it is not already known). Load the execution protocol
 2. `Skill(skill: "rundown:delegating-runbooks")` — this runbook delegates
 3. Then start it:
    - **Delegated pipeline** (`write-plan → execute-plan`): `PlanPath` is
-     inherited automatically — no `--input` needed.
-   - **Standalone**: pass the plan's artifact URI —
-     `rundown run rundown:execute-plan --input PlanPath=<rd://… plan URI>`. Discover
-     the alias with `rundown artifact ls`, then read the `uri` field of
+     inherited automatically — no explicit supply needed.
+   - **Standalone**: pass the plan's artifact URI through the dedicated artifact
+     channel —
+     `rundown run rundown:execute-plan --artifacts PlanPath=<rd://… plan URI>`
+     (e.g. `--artifacts PlanPath=rd://artifacts/<ctx>/<run>/plan.json`).
+     `PlanPath` is declared `REQUIRED` and consumed as an `ARTIFACTS` input by
+     the runbook, so it must arrive as an `rd://` URI, not a filesystem path.
+     Discover the alias with `rundown artifact ls`, then read the `uri` field of
      `rundown artifact uri PlanPath` (JSON is the default; agents do not add
      `--text`).
+
+   Capture the run id from `rundown run`: it is printed at start and echoed as
+   `runbookId` on every event. This runbook delegates the implementer, so every
+   orchestrator command must carry `--run <rd_…>`.
 </important>
 
 Implement a written plan one task at a time, holding each task to its own tests and committing as you go. This skill is the **context** an execution runbook orchestrates: how to do each task well. The [`execute-plan`](../../runbooks/planning/execute-plan.runbook.md) runbook owns the *sequence* (implement → review → verify) and the *gates*; this skill owns the *craft* of a single task.

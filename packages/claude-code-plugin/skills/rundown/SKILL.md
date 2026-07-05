@@ -57,6 +57,11 @@ contain the protocol itself.
    rundown run <name>
    ```
 
+   Capture the run id when you start the runbook: `rundown run` prints it at
+   start and every subsequent event carries it as `runbookId`. You need it for
+   every mutating command you issue as the orchestrator of a delegation-exposed
+   run.
+
    Pass inputs if the runbook requires them:
 
    ```bash
@@ -68,6 +73,10 @@ contain the protocol itself.
 4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
    step with `rundown pass` / `rundown fail` and trust Rundown for transitions.
+   On a delegation-exposed run (any runbook with a `- DELEGATE` step), these
+   become `rundown pass --run <rd_…>` / `rundown fail --run <rd_…>` — the bare
+   form is for standalone runs only and otherwise refuses with
+   `ACTOR_CONTEXT_REQUIRED`.
 
 ## Reference
 

@@ -9,10 +9,30 @@ Rundown delegation dispatches substeps to child agents. The parent delegates, a 
 
 To walk the child runbook inline instead of dispatching a subagent, omit `- DELEGATE` — see the inline-linkage pattern in [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks).
 
+## Choreography
+
+Capture the run id when you start the runbook: `rundown run` prints it at start and every subsequent event carries it as `runbookId`. You need it for every mutating command you issue as the orchestrator. A delegation-exposed run refuses bare mutating commands, so each lane names its own authority:
+
+```bash
+# Orchestrator lane — driving a delegation-exposed run
+rundown run rundown:planning        # capture the run id (printed at start; runbookId on every event)
+rundown delegate --step 1.1 --run <rd_…>
+rundown collect --run <rd_…>
+rundown pass --run <rd_…>
+
+# Child lane — completing delegated work
+rundown claim <rdtk_…>              # capture claim_id from the output
+rundown pass --claim-id <claim_id>
+
+# Read-only commands stay bare
+rundown status
+rundown ls
+```
+
 ## When to Use
 
 - Orchestrating multi-agent work where substeps are dispatched to separate child agents
-- A runbook step carries `- DELEGATE` and a token (`rdtk_...`) must be issued and dispatched
+- A runbook step carries `- DELEGATE`; entering it auto-issues a token (`rdtk_...`) that must be dispatched
 - Managing the parent side of delegation: issuing, monitoring, aborting, or aggregating delegated substeps
 - Fanning out independent substeps (or FOR-loop iterations) to run concurrently across agents
 
@@ -26,25 +46,30 @@ To walk the child runbook inline instead of dispatching a subagent, omit `- DELE
 ## Quick Reference
 
 ```bash
-rundown delegate                                  # Infer substep and runbook from state
-rundown delegate --step 2.1                       # Delegate specific substep
-rundown delegate <runbook> --step 2.1             # Explicit runbook and substep
-rundown delegate --step 2.1 --input k=v           # With input
-rundown delegate --step 2.1 --input-json k=json   # With JSON input
-rundown delegate --step 2.1 --input-file <path>   # Inputs from YAML
+# Orchestrator commands name the run you control with --run <rd_…>
+rundown delegate --step 2.1 --run <rd_…>              # Delegate specific substep
+rundown delegate <runbook> --step 2.1 --run <rd_…>   # Explicit runbook and substep
+rundown delegate --step 2.1 --input k=v --run <rd_…> # With input
+rundown delegate --step 2.1 --input-json k=json --run <rd_…>  # With JSON input
+rundown delegate --step 2.1 --input-file <path> --run <rd_…>  # Inputs from YAML
+rundown collect --run <rd_…>               # Aggregate delegated results
+rundown pass --run <rd_…>                  # Advance the run you orchestrate
 
 rundown abort <token>                      # Cancel unclaimed delegation
 rundown abort <token> --force              # Cancel claimed delegation
 
 rundown status                             # Monitor delegation state (JSON by default)
+rundown ls                                 # List runbooks (read-only, stays bare)
 ```
+
+On a standalone run with no delegation activity, bare `rundown delegate` / `rundown pass` still work; the `--run <rd_…>` form is required once the run is delegation-exposed. Read-only commands (`rundown status`, `rundown ls`) stay bare everywhere.
 
 ## Delegation Flow
 
-```
+```text
 Parent                          Child
   |                               |
-  |  rundown delegate --step 2.1       |
+  |  rundown delegate --step 2.1 --run <rd_…>
   |  --> token issued             |
   |                               |
   |  Dispatch agent with token    |
@@ -54,8 +79,8 @@ Parent                          Child
   |                               |
   |                               |  ... does work ...
   |                               |
-  |                               |  rundown pass (or rundown fail)
-  |  ←-------------------------   |
+  |                               |  rundown pass --claim-id <claim_id>
+  |  ←-------------------------   |  (or rundown fail --claim-id <claim_id>)
   |  Result propagates to step    |
   |                               |
 ```
@@ -65,30 +90,30 @@ Parent                          Child
 ### 1. Delegate a substep
 
 ```bash
-# Infer everything from current state
-rundown delegate
-
 # Explicit substep
-rundown delegate --step 2.1
+rundown delegate --step 2.1 --run <rd_…>
 
 # Explicit runbook + substep
-rundown delegate my-runbook --step 2.1
+rundown delegate my-runbook --step 2.1 --run <rd_…>
 
 # With inputs
-rundown delegate --step 2.1 --input environment=staging
-rundown delegate --step 2.1 --input-json config='{"debug":true}'
+rundown delegate --step 2.1 --input environment=staging --run <rd_…>
+rundown delegate --step 2.1 --input-json config='{"debug":true}' --run <rd_…>
 ```
 
-The `delegate` command issues a token (`rdtk_...`) and queues the substep for external execution.
+**Delegate is an idempotent confirm / re-issue — not the minting step.** Entering
+a delegating step auto-issues its frontier tokens, so `rundown delegate --step X
+--run <rd_…>` on an already-entered step returns `action: "already-delegated"`,
+echoing the existing token (`rdtk_...`) rather than minting a new one. Use it to
+read the token, and `--retry` to re-issue after a failed dispatch (#522).
 
-`rundown delegate` is **idempotent** in every form — bare, `--step S`, and the
-positional `rundown delegate <runbook>` alike: when the target substep already
-carries an in-flight (auto-issued, unclaimed) delegation, it echoes the
-existing token (`action: "already-delegated"`) instead of erroring. Re-issuing
-a fresh token requires `--retry`. Naming a **different** runbook than the
-in-flight one is a conflict (RD-804). Targeting a delegation already
-**claimed** by a live child is refused (RD-811) — recover with
-`rundown abort <token> --force` or `rundown delegate --retry`.
+This idempotency holds in every form — `--step S` and the positional
+`rundown delegate <runbook>` alike: when the target substep already carries an
+in-flight (auto-issued, unclaimed) delegation, it echoes the existing token
+instead of erroring. Naming a **different** runbook than the in-flight one is a
+conflict (RD-804). Targeting a delegation already **claimed** by a live child is
+refused (RD-811) — recover with `rundown abort <token> --force` or
+`rundown delegate --retry --run <rd_…>`.
 
 **Constraints:**
 - `--step` must target the active step frontier
@@ -135,14 +160,20 @@ rundown fail --claim-id <claim_id>     # Report failure
 
 When the child calls `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome. **The child's job ends there** — once its claim is reported, it must stop and return control to the orchestrator. The orchestrator (you, the parent side) drives every subsequent step, including any stage the parent auto-advances into.
 
-Always target the child with `--claim-id`. Core Rundown refuses a bare `rundown pass`/`rundown fail` against the parent while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`. Note the guard only protects against bare commands *while a claim is open* — after a child closes its claim, bare commands fall through to the parent's default-active runbook with no guard, so a child that keeps running can silently drive the parent pipeline. A claimed child must therefore stop the moment it reports its result.
+On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED`. Exposure is sticky: claim closure and prune never flip a run back to standalone, so the bare form never "falls through" to the parent. The remediation names both lanes — `--run <rd_…>` for the orchestrator, `--claim-id <claim_id>` for a child — and deliberately never echoes the target run id. Target the child with `--claim-id` and the orchestrator with `--run`; a claimed child must still stop the moment it reports its result.
+
+`OPEN_DELEGATED_CHILDREN` is a separate, still-current guard: a `--run`-targeted parent advance is refused while a claimed child is open. If you see it, wait for the child to report (or `rundown abort <token> --force`) before advancing the parent with `--run <rd_…>`.
+
+### Inline composition and derived authority
+
+When a delegation-exposed step links child runbooks **inline** (no `- DELEGATE`), a bare `rundown pass` on an inline unit is refused too. `--run <rd_…>` naming any member of a contiguous inline composition chain carries controller authority over the chain's walked-to root, so one `--run` targeting the chain advances the inline unit you are on. A delegation boundary severs the chain: claimed children are never `--run`-reachable (they are not members of the default stack — reach them only with their `--claim-id`). Run ids are not secrets; they are freely available from `rundown run` output and every event's `runbookId` (names are not capabilities), so `--run` names authority you already hold — it does not grant it.
 
 ## FOR Loop Delegation
 
 Without `--index`, delegation targets the active iteration. Use `--index` to target a specific iteration:
 
 ```bash
-rundown delegate --step 2.1 --index 3
+rundown delegate --step 2.1 --index 3 --run <rd_…>
 ```
 
 Each iteration maintains independent delegation state, so iterations can be delegated to different agents for parallel processing.
@@ -168,8 +199,8 @@ Each child gets its own `RunId`. `ContextId` stays stable across the delegation 
 Explicit inputs override inherited values:
 
 ```bash
-rundown delegate --step 2.1 --input environment=staging
-rundown delegate --step 2.1 --input-json config='{"debug":true}'
+rundown delegate --step 2.1 --input environment=staging --run <rd_…>
+rundown delegate --step 2.1 --input-json config='{"debug":true}' --run <rd_…>
 ```
 
 ## Context Passing (OUTPUTS)
@@ -231,9 +262,9 @@ See [Template Variables](../../../../CLAUDE.md#template-variables) and [Context 
 **Parallel fan-out:** Delegate multiple substeps simultaneously — all children work concurrently, parent aggregates results via ALL/ANY:
 
 ```bash
-rundown delegate --step 2.1
-rundown delegate --step 2.2
-rundown delegate --step 2.3
+rundown delegate --step 2.1 --run <rd_…>
+rundown delegate --step 2.2 --run <rd_…>
+rundown delegate --step 2.3 --run <rd_…>
 ```
 
 **Nested:** A child can itself delegate, creating a delegation tree. ContextId flows through the tree for correlation.
