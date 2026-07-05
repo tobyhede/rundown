@@ -1,5 +1,11 @@
 export type * from './types.js';
 export {
+  pipeCommandOutputToStderr,
+  stdioForCommandOutput,
+  type CommandExecutionStreamOptions,
+  type CommandOutputStreamPolicy,
+} from './command-stream-policy.js';
+export {
   createJsonArrayStream,
   isJsonObject,
   isJsonArray,

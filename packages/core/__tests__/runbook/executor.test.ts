@@ -74,6 +74,48 @@ describe('executeCommand', () => {
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
   });
+
+  it('routes command stdout and stderr to process stderr when commandOutput is stderr', async () => {
+    const stdoutWrite = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      const result = await executeCommand(
+        "node -e \"process.stdout.write('out-from-command'); process.stderr.write('err-from-command')\"",
+        process.cwd(),
+        undefined,
+        { commandOutput: 'stderr' },
+      );
+
+      expect(result.success).toBe(true);
+      expect(stdoutWrite).not.toHaveBeenCalledWith(expect.stringContaining('out-from-command'));
+      const stderrChunks = stderrWrite.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(stderrChunks).toContain('out-from-command');
+      expect(stderrChunks).toContain('err-from-command');
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
+  });
+
+  it('keeps inherited command stdio as the default stream policy', async () => {
+    const stdoutWrite = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      const result = await executeCommand(
+        'node -e "process.stdout.write(\'default-out\')"',
+        process.cwd(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(stdoutWrite).not.toHaveBeenCalledWith(expect.stringContaining('default-out'));
+      expect(stderrWrite).not.toHaveBeenCalledWith(expect.stringContaining('default-out'));
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
+  });
 });
 
 describe('executeCommandWithPolicy', () => {
