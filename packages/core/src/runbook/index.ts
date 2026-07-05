@@ -52,6 +52,7 @@ export {
   type RunId,
 } from './run-id.js';
 export * from './claim-id.js';
+export * from './capability.js';
 export * from './last-action.js';
 export * from './transition-kernel.js';
 export {
