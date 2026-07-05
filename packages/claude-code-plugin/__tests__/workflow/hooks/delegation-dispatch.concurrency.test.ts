@@ -23,6 +23,7 @@ const { handleDelegationDispatch } = await import(
 const { Session } = await import('../../../src/session.js');
 
 const TOKEN_A = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+// cspell:disable-next-line
 const TOKEN_B = 'rdtk_BBCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 function dispatchInput(cwd: string, agentId: string, token: string): HookInput {
@@ -55,7 +56,7 @@ describe('concurrent delegation-token recording (#470 defect 1)', () => {
     const meta = await new Session(cwd).get('metadata');
     const map = meta.delegation_active_tokens as DelegationActiveTokensMetadata;
     expect(Object.keys(map).sort()).toEqual(['agent-1', 'agent-2']);
-    expect(map['agent-1']!.tokenHash).toBe(hashDelegationToken(TOKEN_A));
-    expect(map['agent-2']!.tokenHash).toBe(hashDelegationToken(TOKEN_B));
+    expect(map['agent-1'].tokenHash).toBe(hashDelegationToken(TOKEN_A));
+    expect(map['agent-2'].tokenHash).toBe(hashDelegationToken(TOKEN_B));
   });
 });

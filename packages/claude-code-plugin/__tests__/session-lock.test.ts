@@ -52,7 +52,7 @@ describe('PluginSessionLock', () => {
     const root = await realpath(cwd);
     const lockDir = join(root, '.claude', 'session', 'locks');
     await mkdir(lockDir, { recursive: true });
-    // Spawnless dead-pid simulation: PID 1 is init/launchd — kill(1, 0) from an
+    // Dead-pid simulation without spawning: PID 1 is init/launchd — kill(1, 0) from an
     // unprivileged test process raises EPERM, which isProcessAlive treats as
     // alive; instead use a PID from the far end of the space that cannot be a
     // live process on either platform runner. If this proves flaky, spawn and
@@ -98,7 +98,7 @@ describe('PluginSessionLock', () => {
     await Promise.all([worker('a'), worker('b')]);
     expect(events).toHaveLength(4);
     // Every enter is immediately followed by the SAME worker's exit.
-    expect(events[1]).toBe(events[0]!.replace(':enter', ':exit'));
-    expect(events[3]).toBe(events[2]!.replace(':enter', ':exit'));
+    expect(events[1]).toBe(events[0].replace(':enter', ':exit'));
+    expect(events[3]).toBe(events[2].replace(':enter', ':exit'));
   });
 });

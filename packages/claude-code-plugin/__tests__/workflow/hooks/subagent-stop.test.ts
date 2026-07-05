@@ -190,7 +190,7 @@ describe('handleSubagentStop', () => {
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
     // Closure required, so agent-1's entry is NOT consumed; both entries remain.
-    const meta = (await session.get('metadata')) as Record<string, unknown>;
+    const meta = await session.get('metadata');
     expect(Object.keys(meta.delegation_active_tokens as object).sort()).toEqual([
       'agent-1',
       'agent-2',
@@ -503,7 +503,7 @@ describe('handleSubagentStop', () => {
     const second = await handleSubagentStop(input);
     expect(second).toEqual({ violation: CLAIM_VIOLATION });
 
-    const meta = (await session.get('metadata')) as Record<string, unknown>;
+    const meta = await session.get('metadata');
     expect(meta.delegation_active_tokens).toMatchObject({
       'agent-1': { tokenHash: VALID_TOKEN_HASH },
     });

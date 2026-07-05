@@ -100,7 +100,7 @@ describe('handleDelegationDispatch', () => {
 
     // Final-state assertion (recording now runs through session.update, so the
     // committed metadata is observable via get rather than a set call shape).
-    const written = (await session.get('metadata')) as Record<string, unknown>;
+    const written = await session.get('metadata');
     expect(written).toEqual({
       existing_key: 'value',
       delegation_active_tokens: {
@@ -145,7 +145,7 @@ describe('handleDelegationDispatch', () => {
     await handleDelegationDispatch(dispatchInput);
 
     // Final-state assertion after recording (session.update path).
-    const written = (await session.get('metadata')) as Record<string, unknown>;
+    const written = await session.get('metadata');
     expect(written.delegation_active_tokens).toMatchObject({
       'agent-123': {
         kind: 'delegation-active-token',
