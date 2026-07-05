@@ -17,6 +17,8 @@ const sandbox = new SeatbeltSandbox();
 const availability = await sandbox.getAvailability();
 const required = process.env.RUNDOWN_REQUIRE_SEATBELT === '1';
 
+type SandboxOptionsWithNetwork = SandboxOptions & { network: 'deny' | 'allow' };
+
 function metadataAncestorsFor(path: string): string[] {
   const ancestors: string[] = [];
   let current = path;
@@ -65,8 +67,8 @@ if (!availability.available) {
       rmSync(root, { recursive: true, force: true });
     });
 
-    const run = (command: string, options: Partial<SandboxOptions> = {}) =>
-      sandbox.execute(command, {
+    const run = (command: string, options: Partial<SandboxOptionsWithNetwork> = {}) => {
+      const sandboxOptions = {
         cwd: repoCwd,
         repoRoot: repoCwd,
         readOnlyPaths: [repoCwd, grantedReadDir],
@@ -77,7 +79,11 @@ if (!availability.available) {
         env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
         allowUnsandboxed: false,
         ...options,
-      } satisfies SandboxOptions);
+        network: options.network ?? 'deny',
+      } as SandboxOptions;
+
+      return sandbox.execute(command, sandboxOptions);
+    };
 
     it(
       'allows a real read syscall inside a granted read-only path',
@@ -141,7 +147,8 @@ if (!availability.available) {
             denyPatterns: [],
             env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
             allowUnsandboxed: false,
-          } satisfies SandboxOptions,
+            network: 'deny',
+          } as SandboxOptions,
         );
 
         expect(result.sandboxed).toBe(true);
