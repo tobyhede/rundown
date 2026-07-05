@@ -381,7 +381,8 @@ rules, Rundown MUST fail closed instead of silently weakening policy.
 On Linux, sandboxed commands run with filesystem restrictions from the bundled
 `rd-landlock` helper and network access denied by default. The network sandbox
 uses seccomp to allow only local Unix-domain IPC and netlink metadata socket
-families before the command is executed.
+families before the command is executed. It also denies io_uring entry points so
+commands cannot create sockets through `IORING_OP_SOCKET`.
 
 Policy files can opt a trusted runbook into network access:
 
@@ -402,7 +403,8 @@ also preserves `AF_NETLINK` for local kernel metadata operations such as
 interface enumeration. Every other socket family is denied with `EACCES` under
 `network: deny`. Classic seccomp cannot inspect `sockaddr` pointer contents
 passed to `connect(2)` or `bind(2)`, so Rundown filters socket-family creation
-instead of claiming host, port, or protocol-level network rules.
+instead of claiming host, port, or protocol-level network rules. On x86_64, the
+filter also rejects x32 syscall-number variants before the default allow path.
 
 `--no-sandbox` disables both filesystem and network sandboxing. `--allow-all` is
 a broader trust mode that bypasses policy and sandboxing.

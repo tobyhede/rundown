@@ -307,6 +307,8 @@ export function policyDeniedEffect(
         command: input.command,
         reason: input.denialReason,
         position: input.position,
+        networkPolicy: input.networkPolicy,
+        networkSandboxed: input.networkSandboxed,
       },
     },
     commandOutput: input,

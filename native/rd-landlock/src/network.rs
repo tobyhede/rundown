@@ -2,9 +2,10 @@
 //!
 //! Classic seccomp can inspect syscall numbers and integer arguments, but it
 //! cannot dereference `struct sockaddr *` pointers. The first network sandbox
-//! therefore filters socket-family creation only: AF_UNIX sockets remain
-//! available for local IPC, AF_NETLINK remains available for local kernel
-//! metadata queries, and every other socket family fails with EACCES.
+//! therefore filters socket-family creation: AF_UNIX sockets remain available
+//! for local IPC, AF_NETLINK remains available for local kernel metadata
+//! queries, every other socket family fails with EACCES, and alternate socket
+//! creation paths through io_uring are denied.
 
 use crate::spec::NetworkPolicy;
 use crate::sys;

@@ -15,6 +15,8 @@ const SECCOMP_DATA_NR_OFFSET: u32 = 0;
 const SECCOMP_DATA_ARCH_OFFSET: u32 = 4;
 const SECCOMP_DATA_ARGS_OFFSET: u32 = 16;
 const BPF_CLASS_MASK: u32 = 0x07;
+#[cfg(target_arch = "x86_64")]
+const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
 #[cfg(target_arch = "x86_64")]
 const AUDIT_ARCH_CURRENT: u32 = 0xC000_003E;
@@ -41,6 +43,9 @@ impl SeccompAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SocketFilterRule {
     RequireArch(u32),
+    DenySyscall { syscall: i64, errno: i32 },
+    #[cfg(target_arch = "x86_64")]
+    DenySyscallNumberMask { mask: u32, errno: i32 },
     AllowSocketFamily { syscall: i64, family: i32 },
     DenySocketFamiliesByDefault { syscall: i64, errno: i32 },
 }
@@ -53,6 +58,21 @@ fn syscall_socket() -> i64 {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn syscall_socketpair() -> i64 {
     libc::SYS_socketpair
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn syscall_io_uring_setup() -> i64 {
+    libc::SYS_io_uring_setup
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn syscall_io_uring_enter() -> i64 {
+    libc::SYS_io_uring_enter
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn syscall_io_uring_register() -> i64 {
+    libc::SYS_io_uring_register
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -84,6 +104,16 @@ fn load_word(offset: u32) -> libc::sock_filter {
 fn jump_eq(k: u32, jt: u8, jf: u8) -> libc::sock_filter {
     bpf_jump(
         (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+        k,
+        jt,
+        jf,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+fn jump_set(k: u32, jt: u8, jf: u8) -> libc::sock_filter {
+    bpf_jump(
+        (libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K) as u16,
         k,
         jt,
         jf,
@@ -137,6 +167,60 @@ fn default_socket_family_errno(rules: &[SocketFilterRule], syscall: i64) -> Resu
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn denied_syscalls(rules: &[SocketFilterRule]) -> Vec<(i64, i32)> {
+    rules
+        .iter()
+        .filter_map(|rule| match *rule {
+            SocketFilterRule::DenySyscall { syscall, errno } => Some((syscall, errno)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(target_arch = "x86_64")]
+fn denied_syscall_number_masks(rules: &[SocketFilterRule]) -> Vec<(u32, i32)> {
+    rules
+        .iter()
+        .filter_map(|rule| match *rule {
+            SocketFilterRule::DenySyscallNumberMask { mask, errno } => Some((mask, errno)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn append_denied_syscall_checks(
+    program: &mut Vec<libc::sock_filter>,
+    syscalls: &[(i64, i32)],
+) -> Result<(), String> {
+    for (syscall, errno) in syscalls {
+        let jump_index = program.len();
+        program.push(jump_eq(*syscall as u32, 0, 0));
+        program.push(ret(SeccompAction::Errno(*errno as u16)));
+        let next_index = program.len();
+        program[jump_index].jt = checked_skip(jump_index, jump_index + 1)?;
+        program[jump_index].jf = checked_skip(jump_index, next_index)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn append_denied_syscall_mask_checks(
+    program: &mut Vec<libc::sock_filter>,
+    masks: &[(u32, i32)],
+) -> Result<(), String> {
+    for (mask, errno) in masks {
+        let jump_index = program.len();
+        program.push(jump_set(*mask, 0, 0));
+        program.push(ret(SeccompAction::Errno(*errno as u16)));
+        let next_index = program.len();
+        program[jump_index].jt = checked_skip(jump_index, jump_index + 1)?;
+        program[jump_index].jf = checked_skip(jump_index, next_index)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn append_allowed_family_checks(
     program: &mut Vec<libc::sock_filter>,
     families: &[i32],
@@ -182,6 +266,23 @@ fn validate_bpf_jumps(program: &[libc::sock_filter]) -> Result<(), String> {
 fn build_network_filter_rules() -> Vec<SocketFilterRule> {
     vec![
         SocketFilterRule::RequireArch(AUDIT_ARCH_CURRENT),
+        #[cfg(target_arch = "x86_64")]
+        SocketFilterRule::DenySyscallNumberMask {
+            mask: X32_SYSCALL_BIT,
+            errno: libc::ENOSYS,
+        },
+        SocketFilterRule::DenySyscall {
+            syscall: syscall_io_uring_setup(),
+            errno: libc::EACCES,
+        },
+        SocketFilterRule::DenySyscall {
+            syscall: syscall_io_uring_enter(),
+            errno: libc::EACCES,
+        },
+        SocketFilterRule::DenySyscall {
+            syscall: syscall_io_uring_register(),
+            errno: libc::EACCES,
+        },
         SocketFilterRule::AllowSocketFamily {
             syscall: syscall_socket(),
             family: libc::AF_UNIX,
@@ -214,12 +315,19 @@ fn lower_network_filter_rules(
     let socket_errno = default_socket_family_errno(rules, syscall_socket())?;
     let socketpair_families = allowed_socket_families(rules, syscall_socketpair());
     let socketpair_errno = default_socket_family_errno(rules, syscall_socketpair())?;
+    let denied_syscalls = denied_syscalls(rules);
+    #[cfg(target_arch = "x86_64")]
+    let denied_syscall_masks = denied_syscall_number_masks(rules);
 
     let mut program = Vec::new();
     program.push(load_word(SECCOMP_DATA_ARCH_OFFSET));
     program.push(jump_eq(arch, 1, 0));
     program.push(ret(SeccompAction::KillProcess));
     program.push(load_word(SECCOMP_DATA_NR_OFFSET));
+
+    #[cfg(target_arch = "x86_64")]
+    append_denied_syscall_mask_checks(&mut program, &denied_syscall_masks)?;
+    append_denied_syscall_checks(&mut program, &denied_syscalls)?;
 
     let socket_jump = program.len();
     program.push(jump_eq(syscall_socket() as u32, 0, 0));
@@ -430,6 +538,18 @@ mod tests {
 
         for rule in rules {
             match *rule {
+                #[cfg(target_arch = "x86_64")]
+                SocketFilterRule::DenySyscallNumberMask { mask, errno }
+                    if (syscall as u32) & mask != 0 =>
+                {
+                    return SimulatedAction::Errno(errno);
+                }
+                SocketFilterRule::DenySyscall {
+                    syscall: rule_syscall,
+                    errno,
+                } if rule_syscall == syscall => {
+                    return SimulatedAction::Errno(errno);
+                }
                 SocketFilterRule::AllowSocketFamily {
                     syscall: rule_syscall,
                     family: rule_family,
@@ -522,6 +642,34 @@ mod tests {
         assert_eq!(
             simulate_network_filter(&rules, libc::SYS_getpid, 0),
             SimulatedAction::Allow
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_io_uring_socket_creation_path() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_io_uring_setup, 0),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_io_uring_enter, 0),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_io_uring_register, 0),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn network_filter_plan_rejects_x32_syscall_numbers_before_fallthrough_allow() {
+        const X32_SYSCALL_BIT: i64 = 0x4000_0000;
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_getpid | X32_SYSCALL_BIT, 0),
+            SimulatedAction::Errno(libc::ENOSYS)
         );
     }
 

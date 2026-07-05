@@ -40,7 +40,7 @@
 ## Implementation Notes
 
 - Do not change state-machine transition rules in `packages/core/src/runbook/compiler.ts` unless a compile error proves type propagation requires it. This feature is sandbox/policy/helper work.
-- Classic seccomp cannot inspect pointed-to `struct sockaddr *` contents for `connect(2)` or `bind(2)`. The first implementation must enforce network denial by filtering socket-family creation: allow sockets created with the `AF_UNIX` domain, allow local metadata sockets created with the `AF_NETLINK` domain, and deny every other socket family with `EACCES`. Preserve AF_UNIX local IPC and AF_NETLINK local metadata operations. Do not broadly deny `connect` or `bind` in this first implementation.
+- Classic seccomp cannot inspect pointed-to `struct sockaddr *` contents for `connect(2)` or `bind(2)`. The first implementation must enforce network denial by filtering socket-family creation: allow sockets created with the `AF_UNIX` domain, allow local metadata sockets created with the `AF_NETLINK` domain, and deny every other socket family with `EACCES`. Preserve AF_UNIX local IPC and AF_NETLINK local metadata operations. Deny io_uring entry points so `IORING_OP_SOCKET` cannot bypass the socket-family checks, and reject x32 syscall-number variants on x86_64 before the default allow path. Do not broadly deny `connect` or `bind` in this first implementation.
 - The helper must fail closed: if `network: "deny"` is active and seccomp installation fails, write an fd-4 error status whose message starts with `network sandbox failed:` and do not exec.
 - Core must also fail closed before spawning when OS sandboxing is requested, unavailable, `sandboxStrict:false`, and the effective network policy is `deny`. `sandboxStrict:false` may relax filesystem ABI-floor refusal, but it must not silently convert required network denial into network access. Unsandboxed execution remains available only through explicit sandbox disablement (`sandbox:false` / `--no-sandbox`) or an effective `network: allow` policy.
 - macOS is explicitly out of enforcement scope for this plan. When the effective
@@ -1129,9 +1129,10 @@ Create `native/rd-landlock/src/network.rs`:
 //!
 //! Classic seccomp can inspect syscall numbers and integer arguments, but it
 //! cannot dereference `struct sockaddr *` pointers. The first network sandbox
-//! therefore filters socket-family creation only: AF_UNIX sockets remain
-//! available for local IPC, AF_NETLINK remains available for local kernel
-//! metadata queries, and every other socket family fails with EACCES.
+//! therefore filters socket-family creation: AF_UNIX sockets remain available
+//! for local IPC, AF_NETLINK remains available for local kernel metadata
+//! queries, every other socket family fails with EACCES, and alternate socket
+//! creation paths through io_uring are denied.
 
 use crate::spec::NetworkPolicy;
 use crate::sys;
@@ -1160,7 +1161,9 @@ Required implementation units:
   - `socket(AF_UNIX, type, protocol)` is allowed;
   - `socket(AF_NETLINK, type, protocol)` is allowed for local kernel metadata queries;
   - every other `socket()` address family is denied with `EACCES`;
-  - every non-socket syscall remains allowed unless explicitly handled by this filter;
+  - `io_uring_setup`, `io_uring_enter`, and `io_uring_register` are denied with `EACCES`;
+  - x32 syscall-number variants on x86_64 are rejected before the default allow path;
+  - every other non-socket syscall remains allowed unless explicitly handled by this filter;
   - if `socketpair` filtering is included, `socketpair(AF_UNIX, type, protocol, sv)` is allowed and every other `socketpair()` address family is denied with `EACCES`.
 - `lower_network_filter_rules()`: converts the typed rule list into `libc::sock_filter` and owns all jump-offset calculation. This function must have unit tests that prove every rule target is reachable.
 - `install_network_seccomp_filter()`: sets `PR_SET_NO_NEW_PRIVS`, installs the lowered filter with `PR_SET_SECCOMP`, and returns a descriptive `Err(String)` on failure.
@@ -1537,7 +1540,8 @@ In `docs/reference/security.md`, add a Linux network sandbox subsection near the
 On Linux, sandboxed commands run with filesystem restrictions from the bundled
 `rd-landlock` helper and network access denied by default. The network sandbox
 uses seccomp to allow only local Unix-domain IPC and netlink metadata socket
-families before the command is executed.
+families before the command is executed. It also denies io_uring entry points so
+commands cannot create sockets through `IORING_OP_SOCKET`.
 
 Policy files can opt a trusted runbook into network access:
 
@@ -1558,17 +1562,18 @@ It also preserves `AF_NETLINK` for local kernel metadata operations such as
 interface enumeration.
 Classic seccomp cannot inspect `sockaddr` pointer contents passed to
 `connect(2)` or `bind(2)`, so Rundown filters socket-family creation instead of
-claiming host, port, or protocol-level network rules.
+claiming host, port, or protocol-level network rules. On x86_64, the filter
+also rejects x32 syscall-number variants before the default allow path.
 
 `--no-sandbox` disables both filesystem and network sandboxing. `--allow-all`
 is a broader trust mode that bypasses policy and sandboxing.
 
-macOS caveat: the `network` policy field is parsed on every platform, but this
-implementation only enforces it on Linux. On macOS, the current Seatbelt profile
-still allows network access. A sandboxed macOS command with effective
-`network: deny` must therefore be treated as `networkPolicy: "deny"` with
-`networkSandboxed: false` where those result fields are surfaced; it is not
-network-isolated until a separate Seatbelt design implements that backend.
+macOS caveat: the `network` policy field is parsed on every platform, but the
+mechanism is backend-specific. On macOS, the Seatbelt profile emits
+`(deny network-outbound)` and `(deny network-inbound)` for effective
+`network: deny`; sandboxed macOS commands report `networkPolicy: "deny"` with
+`networkSandboxed: true`. `network: allow` emits the corresponding Seatbelt
+network allow rules and reports `networkSandboxed: false`.
 ````
 
 Use the four-backtick outer fence above so the nested YAML example remains valid Markdown.
@@ -1666,8 +1671,8 @@ Expected: PASS.
 - [ ] Spec coverage: policy defaults and runbook overrides, sandbox DTO/spec/status, command observation fields, Rust seccomp enforcement, AF_UNIX preservation, integration tests, and docs are all represented by tasks.
 - [ ] Linux default policy safety: `DEFAULT_POLICY_LINUX.default.mode` remains equal to `DEFAULT_POLICY.default.mode`; `toAllowListOnly` keeps `...policy.default` and does not fail open by dropping `mode`.
 - [ ] Architecture: no task adds runbook behavior to CLI or bypasses the core sandbox/policy seams; state-machine transition rules remain untouched.
-- [ ] Seccomp limitation: the plan explicitly avoids sockaddr-pointer inspection and starts by allowing only `AF_UNIX` and `AF_NETLINK` socket-family creation.
-- [ ] Platform truthfulness: macOS is documented as parsing `network: deny` but not enforcing network isolation in this implementation; result fields must not claim network sandboxing there.
+- [ ] Seccomp limitation: the plan explicitly avoids sockaddr-pointer inspection and starts by allowing only `AF_UNIX` and `AF_NETLINK` socket-family creation while denying io_uring socket creation bypass paths and x32 syscall-number variants.
+- [ ] Platform truthfulness: macOS is documented as enforcing network deny through Seatbelt network rules and reporting `networkSandboxed:true` only when the Seatbelt sandbox is active with `network: deny`.
 - [ ] Compatibility: at least one realistic local runtime command using local metadata lookups still works under `network: deny`.
 - [ ] Fail-closed behavior: missing/malformed fd-4 network status fails closed; seccomp install failure reports an error status and prevents exec.
 - [ ] Verification: focused tests, Rust tests, native build, type checks, gated Linux enforcement, docs checks, and `pnpm run verify` are listed with exact commands.

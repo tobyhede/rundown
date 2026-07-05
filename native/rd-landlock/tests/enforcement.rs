@@ -134,7 +134,7 @@ fn unsafe_getuid() -> u32 {
 fn network_deny_blocks_tcp_socket_creation() {
     let spec = serde_json::json!({
         "command": python_available_command(
-            "import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM)"
+            "import errno, socket, sys\ntry:\n    socket.socket(socket.AF_INET, socket.SOCK_STREAM)\nexcept PermissionError as e:\n    sys.exit(13 if e.errno == errno.EACCES else 42)\nelse:\n    sys.exit(0)"
         ),
         "strict": true,
         "network": "deny",
@@ -149,7 +149,10 @@ fn network_deny_blocks_tcp_socket_creation() {
         "status: {status}"
     );
     assert!(status.contains("\"network\":\"deny\""), "status: {status}");
-    assert_ne!(code, 0, "AF_INET socket creation must be blocked");
+    assert_eq!(
+        code, 13,
+        "AF_INET socket creation must fail with EACCES, not a missing python or unrelated error"
+    );
 }
 
 #[test]

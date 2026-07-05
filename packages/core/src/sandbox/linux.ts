@@ -199,8 +199,8 @@ type HelperStatus =
   | { status: 'denied'; abi: number; missing: string }
   | { status: 'error'; message: string };
 
-function isFiniteNumber(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
+function isPositiveInteger(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1;
 }
 
 function isNetworkPolicy(v: unknown): v is 'deny' | 'allow' {
@@ -227,14 +227,13 @@ export function parseStatus(line: string): HelperStatus | null {
   const o = v as Record<string, unknown>;
   switch (o.status) {
     case 'applied':
-      return isFiniteNumber(o.abi) &&
-        o.abi >= 1 &&
+      return isPositiveInteger(o.abi) &&
         typeof o.downgraded === 'boolean' &&
         isNetworkPolicy(o.network)
         ? { status: 'applied', abi: o.abi, downgraded: o.downgraded, network: o.network }
         : null;
     case 'denied':
-      return isFiniteNumber(o.abi) && typeof o.missing === 'string'
+      return isPositiveInteger(o.abi) && typeof o.missing === 'string'
         ? { status: 'denied', abi: o.abi, missing: o.missing }
         : null;
     case 'error':

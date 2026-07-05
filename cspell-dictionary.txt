@@ -367,7 +367,10 @@ fprog
 insn
 INTERP
 ioctls
+io_uring
 IOERR
+IORING
+JSET
 libc
 metacharacters
 metachars

@@ -169,6 +169,10 @@ export interface PolicyDeniedPayload {
   readonly command: string;
   readonly reason: string;
   readonly position: StepPosition;
+  /** Effective network posture requested for sandboxed execution. */
+  readonly networkPolicy?: 'deny' | 'allow';
+  /** True when network denial was installed by the sandbox helper. */
+  readonly networkSandboxed?: boolean;
 }
 
 /** Payload emitted when a runbook finishes successfully (RUNBOOK_COMPLETED event). */

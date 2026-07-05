@@ -57,7 +57,7 @@ access should follow the same model.
 | Default posture | `deny` network for sandboxed Linux commands | Matches default-deny policy and fail-closed sandbox semantics. |
 | Opt-out | Explicit policy intent, plus existing trust modes that disable sandboxing | Trusted runbooks can request network; `--no-sandbox` and `--allow-all` remain louder broader opt-outs. |
 | Enforcement mechanism | seccomp-BPF in `rd-landlock` | The helper already runs in the child immediately before `exec`, where irreversible process restrictions belong. |
-| Filter model | Allow only Unix-domain and netlink socket families while denying every other socket family | Classic seccomp cannot safely inspect pointed-to `sockaddr` contents; filtering socket-family arguments is the practical boundary. |
+| Filter model | Allow only Unix-domain and netlink socket families while denying every other socket family and alternate io_uring socket creation paths | Classic seccomp cannot safely inspect pointed-to `sockaddr` contents; filtering socket-family arguments is the practical boundary, with explicit syscall-number denies for known alternate socket creation surfaces. |
 | Failure behaviour | Fail closed when `network: deny` cannot be enforced | Reporting sandbox success while network remains open would weaken policy. |
 | Policy granularity | Coarse `deny` / `allow` | Host/port allow-lists would require a much larger resolver and enforcement design. |
 
@@ -199,6 +199,11 @@ The deny filter should be an allowlist for local socket families:
   network transports;
 - allow `socketpair(AF_UNIX, ...)`;
 - deny every other `socketpair()` family with `EACCES`;
+- deny `io_uring_setup(2)`, `io_uring_enter(2)`, and
+  `io_uring_register(2)` so commands cannot create sockets through
+  `IORING_OP_SOCKET`;
+- on x86_64, reject syscall numbers carrying the x32 syscall bit before the
+  filter's default allow path;
 - deny `connect`, `bind`, `listen`, `accept`, `accept4`, `sendto`, `sendmsg`,
   and `sendmmsg` only where denying them does not break AF_UNIX or AF_NETLINK
   operations that were intentionally allowed.

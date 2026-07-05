@@ -112,6 +112,31 @@ describe('LandlockSandbox.execute status handling', () => {
     expect(r.sandboxed).toBe(false);
   });
 
+  it('fractional ABI on applied status fails closed', async () => {
+    const r = await sb().execute(
+      'echo hi',
+      optionsWithStatus(
+        'deny',
+        '{"status":"applied","abi":1.5,"downgraded":false,"network":"deny"}',
+        true,
+      ),
+    );
+
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+  });
+
+  it('fractional ABI on denied status fails closed', async () => {
+    const r = await sb().execute(
+      'cat /secret',
+      optionsWithStatus('deny', '{"status":"denied","abi":1.5,"missing":"TRUNCATE"}', true),
+    );
+
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+    expect(r.denialReason).toContain('protocol violation');
+  });
+
   it('denied status → policyDenied with ABI-gap reason', async () => {
     const r = await sb().execute('cat /secret', {
       ...base,

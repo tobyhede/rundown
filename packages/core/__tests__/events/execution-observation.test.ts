@@ -5,6 +5,7 @@ import {
   commandStartedEffect,
   createExecutionEffectCollector,
   deriveStepEnteredEffect,
+  policyDeniedEffect,
 } from '../../src/events/execution-observation.js';
 import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
 const exactArtifact = {
@@ -286,6 +287,29 @@ describe('execution observation projection', () => {
     if (effect.event.type === 'COMMAND_COMPLETED') {
       expect(effect.event.payload.networkPolicy).toBe('deny');
       expect(effect.event.payload.networkSandboxed).toBe(true);
+    }
+  });
+
+  it('copies network sandbox fields into POLICY_DENIED payload', () => {
+    const effect = policyDeniedEffect({
+      kind: 'policy_denied',
+      command: 'node -e "0"',
+      displayCommand: 'node -e "0"',
+      success: false,
+      exitCode: 126,
+      policyDenied: true,
+      denialReason: 'Sandbox unavailable',
+      sandboxed: false,
+      networkPolicy: 'deny',
+      networkSandboxed: false,
+      channels: [],
+      position: { current: '1', total: 1 },
+    });
+
+    expect(effect.event.type).toBe('POLICY_DENIED');
+    if (effect.event.type === 'POLICY_DENIED') {
+      expect(effect.event.payload.networkPolicy).toBe('deny');
+      expect(effect.event.payload.networkSandboxed).toBe(false);
     }
   });
 });

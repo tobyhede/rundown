@@ -505,6 +505,31 @@ describe('PolicyEvaluator', () => {
       expect(evaluator.getEffectiveNetworkPolicy()).toBe('allow');
     });
 
+    it('does not let allowAll override the effective network policy boundary', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot, allowAll: true });
+
+      expect(evaluator.checkCommand('curl example.com').allowed).toBe(true);
+      expect(evaluator.getEffectiveNetworkPolicy()).toBe('deny');
+    });
+
+    it('does not let denyAll override the effective network policy boundary', () => {
+      const policy = parsePolicy({
+        version: 1,
+        default: {
+          mode: 'prompted',
+          network: 'allow',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+      });
+      const evaluator = new PolicyEvaluator(policy, { repoRoot, denyAll: true });
+
+      expect(evaluator.checkCommand('git status').allowed).toBe(false);
+      expect(evaluator.getEffectiveNetworkPolicy()).toBe('allow');
+    });
+
     it('should apply runbook-specific overrides', () => {
       // Create a minimal policy with overrides
       const policy: PolicyConfig = {
