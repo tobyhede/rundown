@@ -831,6 +831,123 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
     });
 
+    it('retries a linked terminal child without orphaning an active child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const keyForSubstep = (substepId: string) =>
+        buildCompletionKey(activeFrame(buildFrameKey('1'), 1), substepId);
+      const childRunId = assertRunId('rd_33333333333333333333333333333333');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.token === first.token
+            ? {
+                ...entry,
+                status: 'done',
+                result: 'fail',
+                delegation: { ...entry.delegation, token: undefined, childRunId },
+              }
+            : entry,
+        ),
+      }));
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'stopped',
+          parentLinkage: linkageFor(state.id, '1'),
+          lastAction: {
+            type: 'POLICY_DENIED',
+            origin: 'direct',
+            message: 'blocked by policy',
+          },
+        }),
+      );
+      const parentWithLinkedChild = await mgr.load(state.id);
+      if (!parentWithLinkedChild) throw new Error('expected persisted parent');
+      await mgr.save({
+        ...parentWithLinkedChild,
+        resolvedCompletions: {
+          [keyForSubstep('1')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+          [keyForSubstep('2')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+        },
+      });
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(retried.kind).toBe('retried');
+      expect(releaseSpy).toHaveBeenCalledWith(childRunId);
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((s) => s.id === '1');
+      expect(entry?.delegation?.childRunId).toBeNull();
+      expect(entry?.delegation?.tokenHash).not.toBe(first.tokenHash);
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
+      ).resolves.toBeNull();
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('2')),
+      ).resolves.not.toBeNull();
+    });
+
+    it('continues to refuse retry over a running linked child', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const childRunId = assertRunId('rd_44444444444444444444444444444444');
+      deps.delegationLock = {
+        acquire: async () => {
+          await mgr.updateWithState(state.id, (current) => ({
+            substepStates: (current.substepStates ?? []).map((entry) =>
+              entry.delegation?.token === first.token
+                ? {
+                    ...entry,
+                    delegation: { ...entry.delegation, token: undefined, childRunId },
+                  }
+                : entry,
+            ),
+          }));
+          await mgr.save(baseState({ id: childRunId, lifecycle: 'running' }));
+        },
+        release: async () => {},
+      };
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-823');
+    });
+
     it('preserves the FOR iteration in the active retry label', async () => {
       const { seam: localSeam } = await startSeamOnActiveForIterationSubstep();
       const first = await localSeam.issueDelegation({

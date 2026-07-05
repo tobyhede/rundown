@@ -1107,11 +1107,21 @@ export class RunbookLifecycleCommandService {
     // `no-active-runbook` / refusal). Mirrors the fresh path's lazy seam.
     const overrides = await input.resolveOverrides?.();
 
+    const targetSubstep = freshState.substepStates?.find(
+      (entry) => entry.id === substepId && entry.frameKey === frameKey,
+    );
+    const linkedChildRunId = targetSubstep?.delegation?.childRunId ?? null;
+    const linkedChild = linkedChildRunId ? await this.#deps.loadRun(linkedChildRunId) : undefined;
+    const linkedChildTerminal =
+      linkedChild?.lifecycle === 'completed' || linkedChild?.lifecycle === 'stopped';
+    const allowLinkedChildRun = linkedChildTerminal;
+
     const result = retryDelegation(
       {
         state: freshState,
         substepId,
         frameKey,
+        allowLinkedChildRun,
         ...(overrides ? { overrides } : {}),
       },
       steps,
@@ -1121,6 +1131,9 @@ export class RunbookLifecycleCommandService {
     if (result.status !== 'retried') return { kind: 'error', error: result.error };
 
     await this.#supersedePendingOutcome(targetState.id, frameKey, substepId);
+    if (linkedChildRunId && allowLinkedChildRun) {
+      await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
+    }
     await this.#persistIssuedSubstep(
       freshState.id,
       result.updatedSubstepStates,
