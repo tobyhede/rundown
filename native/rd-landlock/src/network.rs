@@ -5,7 +5,9 @@
 //! therefore filters socket-family creation: AF_UNIX sockets remain available
 //! for local IPC, AF_NETLINK remains available for local kernel metadata
 //! queries, every other socket family fails with EACCES, and alternate socket
-//! creation paths through io_uring are denied.
+//! creation paths through io_uring are denied. It does not revoke inherited or
+//! pre-opened file descriptors, and AF_UNIX remains capable of receiving file
+//! descriptors via SCM_RIGHTS from a cooperating local process.
 
 use crate::spec::NetworkPolicy;
 use crate::sys;

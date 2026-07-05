@@ -549,9 +549,9 @@ export class LandlockSandbox implements SandboxImplementation {
         if (status?.status === 'applied') {
           // Command is (or will be) running; its exit code arrives on 'close'.
           appliedStatus = status;
-          if (childClosed) settle(this.resolveStatus(status, childCode));
+          if (childClosed) settle(this.resolveStatus(status, childCode, options.network));
         } else if (status?.status === 'denied') {
-          settle(this.resolveStatus(status, 126));
+          settle(this.resolveStatus(status, 126, options.network));
         } else {
           // error / missing / malformed / oversized / timed-out → protocol
           // violation (Task 19 adds process-group teardown to handleViolation).
@@ -588,7 +588,7 @@ export class LandlockSandbox implements SandboxImplementation {
       child.on('close', (code) => {
         childClosed = true;
         childCode = code ?? 1;
-        if (appliedStatus) settle(this.resolveStatus(appliedStatus, childCode));
+        if (appliedStatus) settle(this.resolveStatus(appliedStatus, childCode, options.network));
       });
 
       specPipe.write(`${JSON.stringify(spec)}\n`);
@@ -602,10 +602,20 @@ export class LandlockSandbox implements SandboxImplementation {
    * @param status - The validated fd-4 status (`applied` or `denied`).
    * @param exitCode - The command's real exit code, used only for `applied`
    *   (ignored for `denied`, where the fixed exit code 126 is used instead).
+   * @param requestedNetwork - Network posture sent to the helper in the fd-3 spec.
    * @returns The corresponding execution result.
    */
-  private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
+  private resolveStatus(
+    status: HelperStatus,
+    exitCode: number,
+    requestedNetwork: 'deny' | 'allow',
+  ): SandboxExecutionResult {
     if (status.status === 'applied') {
+      if (requestedNetwork === 'deny' && status.network !== 'deny') {
+        return this.failClosed(
+          `network policy mismatch: requested deny but helper reported ${status.network}`,
+        );
+      }
       return {
         success: exitCode === 0,
         exitCode,

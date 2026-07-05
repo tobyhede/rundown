@@ -208,6 +208,11 @@ The deny filter should be an allowlist for local socket families:
   and `sendmmsg` only where denying them does not break AF_UNIX or AF_NETLINK
   operations that were intentionally allowed.
 
+The filter does not revoke inherited or pre-opened file descriptors. Because
+`AF_UNIX` remains available for local IPC, a cooperating local process can still
+transfer an already-open descriptor through `SCM_RIGHTS`; this is out of scope
+for the first network-deny boundary.
+
 Because `connect` and `bind` cannot be filtered by dereferencing sockaddr family,
 the implementation should start with a conservative, tested profile:
 

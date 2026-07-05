@@ -88,6 +88,21 @@ describe('LandlockSandbox.execute status handling', () => {
     expect(r.networkSandboxed).toBe(false);
   });
 
+  it('applied status that weakens requested network denial fails closed', async () => {
+    const r = await sb().execute(
+      'echo hi',
+      optionsWithStatus(
+        'deny',
+        '{"status":"applied","abi":3,"downgraded":false,"network":"allow"}',
+        true,
+      ),
+    );
+
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+    expect(r.denialReason).toContain('network policy mismatch');
+  });
+
   it('missing network on applied status fails closed', async () => {
     const r = await sb().execute(
       'echo hi',

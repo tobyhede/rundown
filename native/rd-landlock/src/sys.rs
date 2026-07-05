@@ -568,6 +568,65 @@ mod tests {
         SimulatedAction::Allow
     }
 
+    fn interpret_lowered_network_filter(
+        program: &[libc::sock_filter],
+        arch: u32,
+        syscall: i64,
+        family: u64,
+    ) -> SimulatedAction {
+        let mut pc = 0usize;
+        let mut accumulator = 0u32;
+        while pc < program.len() {
+            let insn = program[pc];
+            let code = u32::from(insn.code);
+            match code {
+                c if c == (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) => {
+                    accumulator = match insn.k {
+                        SECCOMP_DATA_ARCH_OFFSET => arch,
+                        SECCOMP_DATA_NR_OFFSET => syscall as u32,
+                        SECCOMP_DATA_ARGS_OFFSET => family as u32,
+                        offset => panic!("unexpected BPF load offset {offset}"),
+                    };
+                    pc += 1;
+                }
+                c if c == (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) => {
+                    pc += 1
+                        + usize::from(if accumulator == insn.k {
+                            insn.jt
+                        } else {
+                            insn.jf
+                        });
+                }
+                c if c == (libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K) => {
+                    pc += 1
+                        + usize::from(if accumulator & insn.k != 0 {
+                            insn.jt
+                        } else {
+                            insn.jf
+                        });
+                }
+                c if c == (libc::BPF_RET | libc::BPF_K) => {
+                    return match insn.k {
+                        action if action == libc::SECCOMP_RET_ALLOW => SimulatedAction::Allow,
+                        action if action == libc::SECCOMP_RET_KILL_PROCESS => {
+                            SimulatedAction::KillProcess
+                        }
+                        action if action & libc::SECCOMP_RET_ACTION_FULL
+                            == libc::SECCOMP_RET_ERRNO =>
+                        {
+                            SimulatedAction::Errno(
+                                (action & libc::SECCOMP_RET_DATA) as i32,
+                            )
+                        }
+                        action => panic!("unexpected seccomp return action {action:#x}"),
+                    };
+                }
+                other => panic!("unexpected BPF instruction code {other:#x} at {pc}"),
+            }
+        }
+        panic!("BPF program terminated without RET")
+    }
+
     #[test]
     fn abi_read_is_non_negative() {
         // Host-independent: on a Landlock host returns ≥ 1; on a non-Landlock
@@ -714,5 +773,65 @@ mod tests {
         let rules = build_network_filter_rules();
         let program = lower_network_filter_rules(&rules).expect("lower filter");
         validate_bpf_jumps(&program).expect("jump targets in bounds");
+    }
+
+    #[test]
+    fn lowered_network_filter_enforces_expected_syscall_actions() {
+        let rules = build_network_filter_rules();
+        let program = lower_network_filter_rules(&rules).expect("lower filter");
+
+        assert_eq!(
+            interpret_lowered_network_filter(
+                &program,
+                AUDIT_ARCH_CURRENT,
+                libc::SYS_socket,
+                libc::AF_UNIX as u64,
+            ),
+            SimulatedAction::Allow
+        );
+        assert_eq!(
+            interpret_lowered_network_filter(
+                &program,
+                AUDIT_ARCH_CURRENT,
+                libc::SYS_socket,
+                libc::AF_INET as u64,
+            ),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+        assert_eq!(
+            interpret_lowered_network_filter(
+                &program,
+                AUDIT_ARCH_CURRENT,
+                libc::SYS_io_uring_setup,
+                0,
+            ),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+        assert_eq!(
+            interpret_lowered_network_filter(
+                &program,
+                AUDIT_ARCH_CURRENT,
+                libc::SYS_getpid,
+                0,
+            ),
+            SimulatedAction::Allow
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn lowered_network_filter_rejects_x32_syscall_numbers() {
+        let rules = build_network_filter_rules();
+        let program = lower_network_filter_rules(&rules).expect("lower filter");
+
+        assert_eq!(
+            interpret_lowered_network_filter(
+                &program,
+                AUDIT_ARCH_CURRENT,
+                libc::SYS_getpid | i64::from(X32_SYSCALL_BIT),
+                0,
+            ),
+            SimulatedAction::Errno(libc::ENOSYS)
+        );
     }
 }

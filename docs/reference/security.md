@@ -405,6 +405,10 @@ interface enumeration. Every other socket family is denied with `EACCES` under
 passed to `connect(2)` or `bind(2)`, so Rundown filters socket-family creation
 instead of claiming host, port, or protocol-level network rules. On x86_64, the
 filter also rejects x32 syscall-number variants before the default allow path.
+The filter does not revoke inherited or pre-opened file descriptors. Because
+`AF_UNIX` remains available for local IPC, a cooperating local process can still
+transfer an already-open descriptor through `SCM_RIGHTS`; do not treat
+`network: deny` as a boundary against such cooperation.
 
 `--no-sandbox` disables both filesystem and network sandboxing. `--allow-all` is
 a broader trust mode that bypasses policy and sandboxing.

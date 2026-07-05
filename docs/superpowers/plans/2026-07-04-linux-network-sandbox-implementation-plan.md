@@ -1132,7 +1132,9 @@ Create `native/rd-landlock/src/network.rs`:
 //! therefore filters socket-family creation: AF_UNIX sockets remain available
 //! for local IPC, AF_NETLINK remains available for local kernel metadata
 //! queries, every other socket family fails with EACCES, and alternate socket
-//! creation paths through io_uring are denied.
+//! creation paths through io_uring are denied. It does not revoke inherited or
+//! pre-opened file descriptors, and AF_UNIX remains capable of receiving file
+//! descriptors via SCM_RIGHTS from a cooperating local process.
 
 use crate::spec::NetworkPolicy;
 use crate::sys;
@@ -1564,6 +1566,10 @@ Classic seccomp cannot inspect `sockaddr` pointer contents passed to
 `connect(2)` or `bind(2)`, so Rundown filters socket-family creation instead of
 claiming host, port, or protocol-level network rules. On x86_64, the filter
 also rejects x32 syscall-number variants before the default allow path.
+The filter does not revoke inherited or pre-opened file descriptors. Because
+`AF_UNIX` remains available for local IPC, a cooperating local process can still
+transfer an already-open descriptor through `SCM_RIGHTS`; do not treat
+`network: deny` as a boundary against such cooperation.
 
 `--no-sandbox` disables both filesystem and network sandboxing. `--allow-all`
 is a broader trust mode that bypasses policy and sandboxing.
