@@ -35,8 +35,27 @@ if (!availability.available) {
       await workspace.cleanup();
     });
 
+    async function writeDenyByDefaultPolicy(): Promise<void> {
+      await writeFile(
+        join(workspace.cwd, '.rundownrc.json'),
+        JSON.stringify({
+          version: 1,
+          default: {
+            mode: 'deny',
+            run: { allow: ['node'], deny: [] },
+            read: { allow: [], deny: [] },
+            write: { allow: [], deny: [] },
+            env: { allow: ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP'], deny: [] },
+          },
+          overrides: [],
+          grants: [],
+        }),
+      );
+    }
+
     it('lets --allow-read reach a sandboxed command step', async () => {
-      const inputPath = join(workspace.cwd, 'schema.json');
+      await writeDenyByDefaultPolicy();
+      const inputPath = join(workspace.cwd, 'schema-secret.json');
       await writeFile(inputPath, '{"ok":true}');
       await writeFile(
         join(workspace.cwd, 'read-grant.runbook.md'),
@@ -70,9 +89,34 @@ if (!availability.available) {
       );
 
       expect(result.exitCode).toBe(0);
+
+      await writeFile(
+        join(workspace.cwd, 'read-denied.runbook.md'),
+        [
+          '# Read grant',
+          '',
+          '## 1. Read schema',
+          '- PASS COMPLETE',
+          '',
+          '```bash',
+          `node -e 'const fs=require("fs"); JSON.parse(fs.readFileSync(${JSON.stringify(
+            inputPath,
+          )}, "utf8"))'`,
+          '```',
+          '',
+        ].join('\n'),
+      );
+
+      const denied = await runCliInProcess(
+        ['run', 'read-denied.runbook.md', '--yes', '--sandbox', '--allow-run', 'node'],
+        workspace,
+      );
+
+      expect(denied.exitCode).not.toBe(0);
     });
 
     it('lets --allow-write reach a sandboxed command step', async () => {
+      await writeDenyByDefaultPolicy();
       const outputDir = join(workspace.cwd, 'dist');
       const outputPath = join(outputDir, 'out.txt');
       await mkdir(outputDir);
@@ -107,6 +151,29 @@ if (!availability.available) {
 
       expect(result.exitCode).toBe(0);
       expect(await readFile(outputPath, 'utf8')).toBe('ok');
+
+      const deniedPath = join(outputDir, 'denied.txt');
+      await writeFile(
+        join(workspace.cwd, 'write-denied.runbook.md'),
+        [
+          '# Write grant',
+          '',
+          '## 1. Write output',
+          '- PASS COMPLETE',
+          '',
+          '```bash',
+          `node -e 'require("fs").writeFileSync(${JSON.stringify(deniedPath)}, "ok")'`,
+          '```',
+          '',
+        ].join('\n'),
+      );
+
+      const denied = await runCliInProcess(
+        ['run', 'write-denied.runbook.md', '--yes', '--sandbox', '--allow-run', 'node'],
+        workspace,
+      );
+
+      expect(denied.exitCode).not.toBe(0);
     });
   });
 }

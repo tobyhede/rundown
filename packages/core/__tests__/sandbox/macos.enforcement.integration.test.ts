@@ -49,6 +49,7 @@ if (!availability.available) {
   }
 } else {
   describe('SeatbeltSandbox real enforcement (integration)', () => {
+    const realExecutionTimeoutMs = 30_000;
     const repoCwd = realpathSync(process.cwd());
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'rundown-seatbelt-it-')));
     const grantedReadDir = join(root, 'read');
@@ -78,64 +79,76 @@ if (!availability.available) {
         ...options,
       } satisfies SandboxOptions);
 
-    it('allows a real read syscall inside a granted read-only path', async () => {
-      const result = await run(
-        `node -e 'const fs=require("fs"); process.stdout.write(fs.readFileSync(${JSON.stringify(
-          join(grantedReadDir, 'ok.txt'),
-        )}, "utf8"))'`,
-      );
+    it(
+      'allows a real read syscall inside a granted read-only path',
+      async () => {
+        const result = await run(
+          `node -e 'const fs=require("fs"); process.stdout.write(fs.readFileSync(${JSON.stringify(
+            join(grantedReadDir, 'ok.txt'),
+          )}, "utf8"))'`,
+        );
 
-      expect(result.sandboxed).toBe(true);
-      expect(result.exitCode).toBe(0);
-      expect(result.success).toBe(true);
-    });
+        expect(result.sandboxed).toBe(true);
+        expect(result.exitCode).toBe(0);
+        expect(result.success).toBe(true);
+      },
+      realExecutionTimeoutMs,
+    );
 
-    it('allows a real write syscall inside a granted read-write path', async () => {
-      const target = join(grantedWriteDir, 'written.txt');
-      const result = await run(
-        `node -e 'require("fs").writeFileSync(${JSON.stringify(target)}, "written")'`,
-      );
+    it(
+      'allows a real write syscall inside a granted read-write path',
+      async () => {
+        const target = join(grantedWriteDir, 'written.txt');
+        const result = await run(
+          `node -e 'require("fs").writeFileSync(${JSON.stringify(target)}, "written")'`,
+        );
 
-      expect(result.sandboxed).toBe(true);
-      expect(result.exitCode).toBe(0);
-      expect(result.success).toBe(true);
-      expect(readFileSync(target, 'utf8')).toBe('written');
-    });
+        expect(result.sandboxed).toBe(true);
+        expect(result.exitCode).toBe(0);
+        expect(result.success).toBe(true);
+        expect(readFileSync(target, 'utf8')).toBe('written');
+      },
+      realExecutionTimeoutMs,
+    );
 
-    it('blocks a real read syscall outside granted paths', async () => {
-      const result = await run(
-        `node -e 'require("fs").readFileSync(${JSON.stringify(join(secretDir, 'secret.txt'))})'`,
-      );
+    it(
+      'blocks a real read syscall outside granted paths',
+      async () => {
+        const result = await run(
+          `node -e 'require("fs").readFileSync(${JSON.stringify(join(secretDir, 'secret.txt'))})'`,
+        );
 
-      expect(result.sandboxed).toBe(true);
-      expect(result.success).toBe(false);
-      expect(result.exitCode).not.toBe(0);
-    });
+        expect(result.sandboxed).toBe(true);
+        expect(result.success).toBe(false);
+        expect(result.exitCode).not.toBe(0);
+      },
+      realExecutionTimeoutMs,
+    );
 
-    it('allows Node startup and cwd package reads from a /Users-rooted repo using metadata ancestors', async () => {
-      if (!repoCwd.startsWith('/Users/')) {
-        console.info(`[seatbelt-integration] skipped /Users metadata case for cwd ${repoCwd}`);
-        return;
-      }
+    const usersMetadataIt = repoCwd.startsWith('/Users/') ? it : it.skip;
+    usersMetadataIt(
+      'allows Node startup and cwd package reads from a /Users-rooted repo using metadata ancestors',
+      async () => {
+        const result = await sandbox.execute(
+          "node -e \"require('fs').readFileSync(require.resolve('./package.json'), 'utf8')\"",
+          {
+            cwd: repoCwd,
+            repoRoot: repoCwd,
+            readOnlyPaths: [repoCwd],
+            readWritePaths: [],
+            metadataReadPaths: metadataAncestorsFor(repoCwd),
+            denyPaths: [],
+            denyPatterns: [],
+            env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+            allowUnsandboxed: false,
+          } satisfies SandboxOptions,
+        );
 
-      const result = await sandbox.execute(
-        "node -e \"require('fs').readFileSync(require.resolve('./package.json'), 'utf8')\"",
-        {
-          cwd: repoCwd,
-          repoRoot: repoCwd,
-          readOnlyPaths: [repoCwd],
-          readWritePaths: [],
-          metadataReadPaths: metadataAncestorsFor(repoCwd),
-          denyPaths: [],
-          denyPatterns: [],
-          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
-          allowUnsandboxed: false,
-        } satisfies SandboxOptions,
-      );
-
-      expect(result.sandboxed).toBe(true);
-      expect(result.exitCode).toBe(0);
-      expect(result.success).toBe(true);
-    });
+        expect(result.sandboxed).toBe(true);
+        expect(result.exitCode).toBe(0);
+        expect(result.success).toBe(true);
+      },
+      realExecutionTimeoutMs,
+    );
   });
 }

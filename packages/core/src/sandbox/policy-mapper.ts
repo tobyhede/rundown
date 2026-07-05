@@ -151,7 +151,7 @@ function normalizeSandboxPathList(paths: readonly string[]): string[] {
 }
 
 function collectAncestorPaths(paths: readonly string[]): string[] {
-  const ancestors = new Set<string>();
+  const ancestors = new Set<string>(paths);
   for (const candidate of paths) {
     let current = path.dirname(candidate);
     while (current !== path.dirname(current)) {

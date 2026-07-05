@@ -432,6 +432,56 @@ describe('policyToSandboxOptions', () => {
     expect(options.readOnlyPaths).not.toContain('/repo/dist');
   });
 
+  it('maps allowAll to broad sandbox read and write grants', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: ['/repo/.env'] },
+        write: { allow: [], deny: ['/repo/dist/secret.txt'] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      allowAll: true,
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).toContain('/');
+    expect(options.readOnlyPaths).not.toContain('/');
+    expect(options.denyPatterns).toEqual([]);
+    expect(options.denyPaths).toEqual([]);
+  });
+
+  it('maps denyAll to empty sandbox grants', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: ['/repo/**'], deny: [] },
+        write: { allow: ['/repo/dist/**'], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      denyAll: true,
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toEqual([]);
+    expect(options.readWritePaths).toEqual([]);
+    expect(options.denyPatterns).toEqual(['/**']);
+    expect(options.denyPaths).toEqual([]);
+  });
+
   it('does not emit deny paths that are covered by a higher-precedence CLI read grant', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,
@@ -603,6 +653,32 @@ describe('policyToSandboxOptions', () => {
     }
   });
 
+  it('includes metadata-read ancestors and grant roots for raw policy sandbox options', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: ['/Users/alice/project/schema.json'], deny: [] },
+        write: { allow: ['/Users/alice/project/dist/**'], deny: [] },
+      },
+    };
+
+    const options = policyConfigToSandboxOptions(policy, {
+      cwd: '/Users/alice/project',
+      repoRoot: '/Users/alice/project',
+    });
+
+    expect(options.metadataReadPaths).toEqual(
+      expect.arrayContaining([
+        '/Users',
+        '/Users/alice',
+        '/Users/alice/project',
+        '/Users/alice/project/schema.json',
+        '/Users/alice/project/dist',
+      ]),
+    );
+  });
+
   it('includes metadata-read ancestors for sandbox grant roots', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,
@@ -621,6 +697,9 @@ describe('policyToSandboxOptions', () => {
 
     expect(options.metadataReadPaths).toEqual(
       expect.arrayContaining(['/Users', '/Users/alice', '/Users/alice/project']),
+    );
+    expect(options.metadataReadPaths).toEqual(
+      expect.arrayContaining(['/Users/alice/project/schema.json', '/Users/alice/project/dist']),
     );
   });
 

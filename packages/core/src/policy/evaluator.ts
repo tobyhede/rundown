@@ -563,6 +563,22 @@ export class PolicyEvaluator {
    * @returns Permission rules relevant to sandbox allow-list and deny generation.
    */
   getSandboxRules(type: 'read' | 'write'): SandboxPermissionRules {
+    if (this.options.denyAll) {
+      return {
+        allow: [],
+        deny: ['/**'],
+        runtimeGrantAllow: [],
+      };
+    }
+
+    if (this.options.allowAll) {
+      return {
+        allow: ['/**'],
+        deny: [],
+        runtimeGrantAllow: ['/**'],
+      };
+    }
+
     const rules = this.getEffectiveRules(type);
     const cliGrants = this.options.cliGrants?.[type] ?? [];
     const sessionGrants = this.sessionGrants

@@ -63,9 +63,9 @@ function getNodeExecutionPaths(): string[] {
   return paths;
 }
 
-function getPackageManagerExecutionPaths(): string[] {
+function getPackageManagerExecutionPaths(env: Partial<Record<string, string>>): string[] {
   const paths: string[] = [];
-  const home = process.env.HOME;
+  const home = env.HOME ?? process.env.HOME;
   if (home) {
     paths.push(join(home, '.cache', 'node', 'corepack'));
   }
@@ -121,7 +121,7 @@ function getScriptDirectory(): string | null {
 }
 
 function collectAncestorPaths(paths: readonly string[]): string[] {
-  const ancestors = new Set<string>();
+  const ancestors = new Set<string>(paths);
   for (const candidate of paths) {
     let current = dirname(candidate);
     while (current !== dirname(current)) {
@@ -172,7 +172,10 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     .join('\n');
 
   // Get Node.js execution paths dynamically
-  const executionPaths = [...getNodeExecutionPaths(), ...getPackageManagerExecutionPaths()];
+  const executionPaths = [
+    ...getNodeExecutionPaths(),
+    ...getPackageManagerExecutionPaths(options.env),
+  ];
 
   // Add the script directory if available (for symlinked CLI)
   const scriptDir = getScriptDirectory();
@@ -186,10 +189,10 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     .join('\n');
 
   const pathLookupDirs = getPathLookupDirectories(options.env);
+  const metadataPathCandidates = [...(options.metadataReadPaths ?? []), ...pathLookupDirs];
   const metadataReadPaths = [
-    ...(options.metadataReadPaths ?? []),
-    ...pathLookupDirs,
-    ...collectAncestorPaths([...executionPaths, ...pathLookupDirs]),
+    ...metadataPathCandidates,
+    ...collectAncestorPaths([...executionPaths, ...metadataPathCandidates]),
   ];
   const metadataReadRules = [...new Set(metadataReadPaths)]
     .map((p) => `  (literal "${escapePath(p)}")`)
@@ -206,7 +209,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 (deny default)
 
 ;; Allow process execution
-(allow process*)
+(allow process-exec process-fork)
 
 ;; Allow basic system operations
 (allow sysctl-read)
