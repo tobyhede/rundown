@@ -689,7 +689,7 @@ Runbook:  STASHED
 }
 ```
 
-### `rundown stash --claim-capability <claim_capability>`
+### `rundown stash --claim-id <claim_id>`
 
 Same output shape as `rundown stash`, but stashes the delegated child identified
 by `claim_id`.
@@ -731,7 +731,7 @@ Step description.
 }
 ```
 
-### `rundown pop --claim-capability <claim_capability>`
+### `rundown pop --claim-id <claim_id>`
 
 Same output shape as `rundown pop`, but restores the stashed delegated child
 identified by `claim_id`.

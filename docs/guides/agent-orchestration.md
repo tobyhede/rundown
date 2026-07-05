@@ -97,7 +97,7 @@ rundown delegate --step 2.1
 rundown claim <token>
 
 # 4. Subagent works through the delegated runbook, then reports result
-rundown pass --claim-id <claim_id>   # or: rundown fail --claim-id <claim_id>
+rundown pass --claim-capability <claim_capability>   # or: rundown fail --claim-capability <claim_capability>
 ```
 
 ### Dispatch Frontier and Identity
@@ -187,12 +187,15 @@ Executable scenarios for all three forms live at
    injects claim instructions.
 3. **Claim** — each subagent runs `rundown claim <token>`, which launches the
    child runbook with the inherited `ContextId` and any forwarded variables. The
-   command returns a `claim_id`; keep that handle and pass it to every
-   child-targeting command (`rundown status`, `rundown pass`, `rundown fail`,
-   `rundown collect`, `rundown goto`, `rundown stash`, `rundown pop`,
-   `rundown stop`, and `rundown complete`) with `--claim-id <claim_id>`.
+   command returns a `claim_id` for inspection and a `claim_capability` for
+   child mutations. Use `--claim-id <claim_id>` with `rundown status`,
+   `rundown stash`, and `rundown pop`; use
+   `--claim-capability <claim_capability>` with child-targeting mutations
+   (`rundown pass`, `rundown fail`, `rundown collect`, `rundown goto`,
+   `rundown stop`, and `rundown complete`).
 4. **Resolve** — the subagent completes the child runbook and calls
-   `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`.
+   `rundown pass --claim-capability <claim_capability>` /
+   `rundown fail --claim-capability <claim_capability>`.
 5. **Aggregation** — when the final substep resolves, auto-aggregation fires on
    the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
 
@@ -277,9 +280,10 @@ separate operating-system users — not as cooperating processes against the sam
 
 ## Delegation Completion
 
-Subagents complete delegated work using `rundown pass --claim-id <claim_id>` or
-`rundown fail --claim-id <claim_id>`, which updates the child runbook state
-directly. The parent agent observes results via `rundown status`.
+Subagents complete delegated work using
+`rundown pass --claim-capability <claim_capability>` or
+`rundown fail --claim-capability <claim_capability>`, which updates the child
+runbook state directly. The parent agent observes results via `rundown status`.
 
 Parallel delegated siblings are isolated by claim id. A subagent that claims
 token A receives the handle for token A's child, even if another subagent later
@@ -293,12 +297,14 @@ metadata and preserves sibling token metadata.
 When a subagent stops without explicitly closing the delegated work, the plugin
 reports a diagnostic to the parent:
 
-- **Child completed** (`rundown pass --claim-id`/`rundown fail --claim-id` was
+- **Child completed**
+  (`rundown pass --claim-capability`/`rundown fail --claim-capability` was
   called): The child runbook has already propagated the result to the parent. No
   action needed.
 - **Child not explicitly closed**: The plugin tells the parent that delegated
   Rundown work must be closed explicitly with
-  `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.
+  `rundown pass --claim-capability <claim_capability>` or
+  `rundown fail --claim-capability <claim_capability>`.
 
 The plugin never destroys child runbook state. Incomplete delegations preserve
 their context for inspection.

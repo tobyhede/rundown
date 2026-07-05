@@ -324,9 +324,8 @@ function allowed(
  */
 export const COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE =
   'rundown collect requires an actor that controls the target delegating run. ' +
-  'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-  '`rundown run` and carried as runbookId on every event) if you are the orchestrator, ' +
-  'or `--claim-id <claimId>` if you are collecting within delegated work.';
+  'Pass `--run-capability <capability>` if you are the orchestrator, ' +
+  'or `--claim-capability <capability>` if you are collecting within delegated work.';
 
 function requireOrchestratorForCollection(
   role: EffectiveRole,

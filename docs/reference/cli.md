@@ -278,8 +278,10 @@ delegated child, it reports its terminal outcome to the delegating parent, and
 the delegating parent advances only after
 `rundown collect --run-capability <run_capability>`.
 
-`--claim-id` keeps delegated-child scope: `rundown complete --claim-id <id>` and
-`rundown stop --claim-id <id>` target that claimed child directly.
+`--claim-capability` keeps delegated-child mutation scope:
+`rundown complete --claim-capability <claim_capability>` and
+`rundown stop --claim-capability <claim_capability>` target that claimed child
+directly.
 
 These bare force-terminal overrides are not the same as handler-derived
 `COMPLETE` / `STOP` actions authored in a runbook's transitions; the latter are
@@ -758,8 +760,8 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown status --claim-id <claim_id>`                                    | Inspect a claimed child runbook                                                   |
 | `rundown collect --claim-capability <claim_capability>`                   | Collect delegated results for a claimed child scope                               |
 | `rundown goto <step> --claim-capability <claim_capability>`               | Jump within a claimed child runbook                                               |
-| `rundown stash --claim-capability <claim_capability>`                     | Stash a claimed child runbook while preserving the claim record                   |
-| `rundown pop --claim-capability <claim_capability>`                       | Restore a stashed claimed child runbook                                           |
+| `rundown stash --claim-id <claim_id>`                                     | Stash a claimed child runbook while preserving the claim record                   |
+| `rundown pop --claim-id <claim_id>`                                       | Restore a stashed claimed child runbook                                           |
 | `rundown stop --claim-capability <claim_capability>`                      | Stop a claimed child runbook                                                      |
 | `rundown complete --claim-capability <claim_capability>`                  | Complete a claimed child runbook                                                  |
 | `rundown delegate --step <id> --run-capability <run_capability>`          | Orchestrator lane: delegate on a delegation-exposed run you control               |
@@ -1229,7 +1231,7 @@ rdpath --dir <path>          # Path assembly tool (see docs/reference/rdpath.md)
 rdx <file>                   # Render JSON to Markdown (see docs/reference/rdx.md)
 
 # Delegation (orchestrator commands on a delegation-exposed run carry
-# --run-capability <run_capability>; capture the run id from `rundown run` / event `runbookId`)
+# --run-capability <run_capability>; capture the capability from `rundown run`)
 rundown delegate --step <id> --run-capability <run_capability>         # Delegate on the run you control
 rundown delegate <runbook> --step <id> --run-capability <run_capability>  # Explicit child runbook
 rundown delegate --retry <token> --run-capability <run_capability>     # Retry: cancel and re-issue
@@ -1239,8 +1241,8 @@ rundown status --claim-id <claim_id>    # Inspect claimed child
 rundown pass --claim-capability <claim_capability>      # Complete claimed child with PASS
 rundown fail --claim-capability <claim_capability>      # Complete claimed child with FAIL
 rundown goto <step> --claim-capability <claim_capability> # Jump within claimed child
-rundown stash --claim-capability <claim_capability>     # Stash claimed child
-rundown pop --claim-capability <claim_capability>       # Restore stashed claimed child
+rundown stash --claim-id <claim_id>     # Stash claimed child
+rundown pop --claim-id <claim_id>       # Restore stashed claimed child
 rundown collect --claim-capability <claim_capability>   # Collect delegated child results
 rundown stop --claim-capability <claim_capability>      # Stop claimed child
 rundown complete --claim-capability <claim_capability>  # Complete claimed child

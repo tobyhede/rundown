@@ -56,7 +56,10 @@ const VALUE_TAKING_OPTION_PRESENTATION: Record<
 > = {
   '--step': { value: 'stepId', description: 'Target specific substep' },
   '--index': { value: 'number', description: 'FOR loop iteration to target (requires --step)' },
-  '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
+  '--claim-id': {
+    value: 'claimId',
+    description: 'Legacy claim id; mutations require --claim-capability',
+  },
   '--claim-capability': {
     value: 'capability',
     description: 'Prove authority over a claimed delegated child',

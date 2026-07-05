@@ -51,7 +51,7 @@ export function registerCollectCommand(program: Command): void {
     .description('Collect delegation results and fire aggregation transition')
     .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
     .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--claim-id <claimId>', 'Legacy claim id; mutations require --claim-capability')
     .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
     .option('--run-capability <capability>', 'Prove orchestrator authority over a run')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
@@ -442,7 +442,7 @@ function renderCollectOutcome(
       output.flush();
       return true;
     case 'collect_requires_orchestrator':
-      // Core owns the remediation text (names both --run and --claim-id). The
+      // Core owns the remediation text (names both capability lanes). The
       // details deliberately do NOT echo the target run id (decision 4): the
       // refusal is an accident barrier, not a lookup service.
       output.error(outcome.message, 'COLLECT_REQUIRES_ORCHESTRATOR');

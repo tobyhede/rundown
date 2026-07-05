@@ -32,12 +32,11 @@ export function renderStaleClaimRefusal(output: OutputEmitter, message: string):
  * or the JSON details. Echoing it would convert the accident barrier into a
  * copy-paste bypass for exactly the lingering-child agent it exists to stop.
  * This is accident-proofing, not id secrecy: run ids are natively available
- * from `rundown run` output, every event's `runbookId`, and claim output's
- * `parent_run_id`; names are not capabilities.
+ * from `rundown run` and `rundown claim` output; names are capabilities.
  *
  * @param output - Output emitter for CLI output.
  * @param commandName - The command that needs actor context (e.g. `pass`, `stop`).
- * @param claimLanePurpose - Trailing verb phrase describing the `--claim-id`
+ * @param claimLanePurpose - Trailing verb phrase describing the `--claim-capability`
  *   lane's purpose for this command (defaults to the completion wording used by
  *   pass/fail/complete/stop/delegate/goto; collect passes its own).
  * @returns `true` — always requests a non-zero exit code.
@@ -49,8 +48,8 @@ export function renderActorContextRequiredRefusal(
 ): boolean {
   output.error(
     `This run has delegation activity, so a bare \`rundown ${commandName}\` is refused. ` +
-      'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-      '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
+      'Pass `--run-capability <capability>` with the run capability printed by ' +
+      '`rundown run`, or `--claim-capability <capability>` ' +
       `if you are ${claimLanePurpose}.`,
     'ACTOR_CONTEXT_REQUIRED',
   );

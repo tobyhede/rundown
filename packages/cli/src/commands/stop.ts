@@ -27,7 +27,7 @@ export function registerStopCommand(program: Command): void {
     .command('stop')
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--claim-id <claimId>', 'Legacy claim id; mutations require --claim-capability')
     .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
     .option('--run-capability <capability>', 'Prove orchestrator authority over a run')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')

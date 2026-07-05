@@ -302,7 +302,7 @@ export function emitOpenDelegatedChildrenError(
   idleClaimIds: readonly ClaimId[] = [],
 ): void {
   output.error(
-    `Cannot run bare rundown ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rundown ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
+    `Cannot run bare rundown ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rundown ${command} --claim-capability <claim_capability>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
     'OPEN_DELEGATED_CHILDREN',
     {
       command,

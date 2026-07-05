@@ -20,7 +20,7 @@ export function registerGotoCommand(program: Command): void {
     .command('goto <step>')
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
     .option('--index <number>', 'FOR loop iteration to target')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--claim-id <claimId>', 'Legacy claim id; mutations require --claim-capability')
     .option('--claim-capability <capability>', 'Prove authority over a claimed delegated child')
     .option('--run-capability <capability>', 'Prove orchestrator authority over a run')
     .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')

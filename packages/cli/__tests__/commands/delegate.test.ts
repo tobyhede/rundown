@@ -248,7 +248,7 @@ describe('delegate command', () => {
     expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
     expect(raw).toMatchObject({
       code: 'INVALID_DELEGATE_CLAIM_ID',
-      error: expect.stringContaining('does not accept --claim-id'),
+      error: expect.stringContaining('does not accept claim authority'),
     });
   });
 
