@@ -33,6 +33,9 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import type { TransitionOrchestrationPolicy } from './transition-orchestrator.js';
 
+/**
+ * Result returned after attempting to propagate a terminal child run to its parent.
+ */
 export type TerminalPropagationResult =
   | 'reported'
   | 'handled'

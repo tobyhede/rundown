@@ -131,7 +131,7 @@ export function projectDelegationTerminalOutcome(
     const message =
       extractInternalFailureMessage(childState.lastAction) ??
       (childState.lastAction && 'message' in childState.lastAction
-        ? String(childState.lastAction.message)
+        ? childState.lastAction.message
         : stoppedReason);
     return {
       kind: 'command_infrastructure',
@@ -677,6 +677,9 @@ export class RunbookCompletionService {
    * execute inside that lock and a second acquisition would deadlock.
    *
    * @param args - Parent run id, frame, and substep whose delegated rows are stale.
+   * @param args.runbookId - Parent run id containing stale delegated outcome rows.
+   * @param args.frameKey - Parent frame key containing the target substep.
+   * @param args.substepId - Parent substep id whose delegated rows are stale.
    * @returns Number of rows consumed.
    */
   async supersedeDelegationOutcomeUnlocked(args: {

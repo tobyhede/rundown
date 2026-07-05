@@ -1168,6 +1168,10 @@ export class RunbookLifecycleCommandService {
    * deleting terminal diagnostic state.
    *
    * @param args - Parent, child, frame, and substep cleanup target.
+   * @param args.parentState - Parent state whose linked delegation is being cleaned up.
+   * @param args.childRunId - Linked child run id, or null when no child was recorded.
+   * @param args.frameKey - Parent frame key containing the delegated substep.
+   * @param args.substepId - Parent substep id being force-aborted.
    * @returns Cleanup branch that ran.
    */
   async cleanupForceAbortedLinkedChild(args: {
