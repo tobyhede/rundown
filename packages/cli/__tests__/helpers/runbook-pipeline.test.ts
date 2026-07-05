@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
   ClaimId,
+  ClaimCapability,
   ClaimRecord,
   ClaimRunbookResult,
   DelegationLinkage,
@@ -58,11 +59,24 @@ const {
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
+const TEST_CLAIM_CAPABILITY =
+  'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as ClaimCapability;
 const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
 const MOCK_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 const DIFFERENT_PARENT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 const ORPHAN_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
+const TEST_RUN_CAPABILITY =
+  'rdrc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+function createdStateResult(
+  state: RunbookState,
+): Awaited<ReturnType<RunbookStateManager['create']>> {
+  return Object.defineProperties(state, {
+    state: { value: state, enumerable: false },
+    runCapability: { value: TEST_RUN_CAPABILITY, enumerable: false },
+  }) as Awaited<ReturnType<RunbookStateManager['create']>>;
+}
 
 function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
   return {
@@ -85,7 +99,11 @@ function claimedRunbookResult(
   childRunId: RunId,
   overrides: Partial<ClaimRecord> = {},
 ): ClaimRunbookResult {
-  return { status: 'claimed', claim: claimRecord(childRunId, overrides) };
+  return {
+    status: 'claimed',
+    claim: claimRecord(childRunId, overrides),
+    claimCapability: TEST_CLAIM_CAPABILITY,
+  };
 }
 
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
@@ -1956,7 +1974,9 @@ describe('startRunbook', () => {
       activeEntry: 1,
       frameEntryCounts: { '1|': 1 },
     } as unknown as RunbookState;
-    const mockCreate = mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState);
+    const mockCreate = mockFn<RunbookStateManager['create']>().mockResolvedValue(
+      createdStateResult(createdState),
+    );
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(createdState);
     const mockLoad = mockFn<RunbookStateManager['load']>().mockResolvedValue(createdState);
     const mockInitializeSubsteps =
@@ -2044,7 +2064,9 @@ describe('startRunbook', () => {
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       manager: {
-        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
+        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(
+          createdStateResult(createdState),
+        ),
         delete: mockDelete,
       },
       // initializeState resolves to null -> the launch must fail before push.
@@ -2108,7 +2130,9 @@ describe('startRunbook', () => {
         releaseRunbook: mockReleaseRunbook,
       },
       manager: {
-        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
+        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(
+          createdStateResult(createdState),
+        ),
         delete: mockDelete,
       },
       actorService: {

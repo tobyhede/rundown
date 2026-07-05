@@ -277,9 +277,16 @@ export async function writeSession(
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
     claims?: Record<string, Record<string, unknown>>;
+    schemaVersion?: number;
   },
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};
+
+  if (session.schemaVersion !== undefined) {
+    sessionData.schemaVersion = session.schemaVersion;
+  } else if (session.stacks === undefined) {
+    sessionData.schemaVersion = 2;
+  }
 
   // Stack-based format
   if (session.stacks !== undefined) {

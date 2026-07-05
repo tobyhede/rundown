@@ -14,6 +14,13 @@ import type { RunbookStateManager } from './state.js';
 import type { RunId } from './run-id.js';
 import { SessionLock } from './session-lock.js';
 import {
+  generateClaimCapability,
+  hashCapabilitySecret,
+  parseClaimCapability,
+  type ClaimCapability,
+  type CapabilityHash,
+} from './capability.js';
+import {
   createClaimRecord,
   generateClaimId,
   type ClaimId,
@@ -27,6 +34,20 @@ import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
+
+const CLAIM_LEASE_MS = 5 * 60 * 1000;
+
+function mintClaimCapability(claimId: ClaimId): {
+  readonly claimCapability: ClaimCapability;
+  readonly claimCapabilityHash: CapabilityHash;
+} {
+  const claimCapability = generateClaimCapability(claimId);
+  const parsedCapability = parseClaimCapability(claimCapability);
+  return {
+    claimCapability,
+    claimCapabilityHash: hashCapabilitySecret(parsedCapability.secret),
+  };
+}
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
@@ -370,10 +391,20 @@ export class SessionService {
             persisted: existingState.parentLinkage,
           };
         }
-        const refreshed = { ...existingForDelegation, updatedAt: now };
+        const { claimCapability, claimCapabilityHash } = mintClaimCapability(
+          existingForDelegation.claimId,
+        );
+        const refreshed = {
+          ...existingForDelegation,
+          claimCapabilityHash,
+          leaseOwnerHash: claimCapabilityHash,
+          leaseHeartbeatAt: now,
+          leaseExpiresAt: new Date(Date.parse(now) + CLAIM_LEASE_MS).toISOString(),
+          updatedAt: now,
+        };
         session.claims[existingForDelegation.claimId] = refreshed;
         await this.manager.saveSession(session);
-        return { status: 'claimed', claim: refreshed };
+        return { status: 'claimed', claim: refreshed, claimCapability };
       }
 
       const childState = await this.manager.load(childRunId);
@@ -403,17 +434,33 @@ export class SessionService {
             persisted: existingLinkage,
           };
         }
-        const refreshed = { ...existing, updatedAt: now };
+        const { claimCapability, claimCapabilityHash } = mintClaimCapability(existing.claimId);
+        const refreshed = {
+          ...existing,
+          claimCapabilityHash,
+          leaseOwnerHash: claimCapabilityHash,
+          leaseHeartbeatAt: now,
+          leaseExpiresAt: new Date(Date.parse(now) + CLAIM_LEASE_MS).toISOString(),
+          updatedAt: now,
+        };
         session.claims[existing.claimId] = refreshed;
         await this.manager.saveSession(session);
-        return { status: 'claimed', claim: refreshed };
+        return { status: 'claimed', claim: refreshed, claimCapability };
       }
 
       const claimId = generateClaimId();
-      const claim = createClaimRecord(claimId, childRunId, linkage, now);
+      const { claimCapability, claimCapabilityHash } = mintClaimCapability(claimId);
+      const claim = createClaimRecord(
+        claimId,
+        childRunId,
+        linkage,
+        now,
+        claimCapabilityHash,
+        new Date(Date.parse(now) + CLAIM_LEASE_MS).toISOString(),
+      );
       session.claims[claimId] = claim;
       await this.manager.saveSession(session);
-      return { status: 'claimed', claim };
+      return { status: 'claimed', claim, claimCapability };
     });
   }
 

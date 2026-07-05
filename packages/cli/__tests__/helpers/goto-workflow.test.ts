@@ -546,6 +546,7 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
   it('uses stack-pop for default-stack runbooks', async () => {
     const loadSession = mockFn<RunbookStateManager['loadSession']>();
     loadSession.mockResolvedValue({
+      schemaVersion: 2,
       defaultStack: [DEFAULT_RUNBOOK_ID],
       claims: {},
     });
@@ -561,6 +562,7 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
   it('uses release-runbook for claim-targeted runbooks', async () => {
     const loadSession = mockFn<RunbookStateManager['loadSession']>();
     loadSession.mockResolvedValue({
+      schemaVersion: 2,
       defaultStack: [PARENT_RUNBOOK_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {

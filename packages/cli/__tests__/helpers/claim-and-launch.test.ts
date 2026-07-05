@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
   ClaimId,
+  ClaimCapability,
   ClaimRecord,
   ClaimRunbookResult,
   DelegationLinkage,
@@ -45,6 +46,8 @@ const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)
 const DIFFERENT_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`);
 const ORIGINAL_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'c'.repeat(64)}`);
 const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
+const TEST_CLAIM_CAPABILITY =
+  'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as ClaimCapability;
 const RUN_ID = brandRunIdForTest('rd_11111111111111111111111111111111');
 const DIFFERENT_RUN_ID = brandRunIdForTest('rd_22222222222222222222222222222222');
 const EXISTING_CHILD_RUN_ID = brandRunIdForTest('rd_33333333333333333333333333333333');
@@ -73,7 +76,11 @@ function claimedRunbookResult(
   childRunId: RunId,
   overrides: Partial<ClaimRecord> = {},
 ): ClaimRunbookResult {
-  return { status: 'claimed', claim: claimRecord(childRunId, overrides) };
+  return {
+    status: 'claimed',
+    claim: claimRecord(childRunId, overrides),
+    claimCapability: TEST_CLAIM_CAPABILITY,
+  };
 }
 
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {

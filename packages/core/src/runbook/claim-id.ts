@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { CapabilityHash } from './capability.js';
+import type { CapabilityHash, ClaimCapability } from './capability.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
@@ -72,7 +72,11 @@ export interface ClaimRecord {
  *   parent linkage at all.
  */
 export type ClaimRunbookResult =
-  | { readonly status: 'claimed'; readonly claim: ClaimRecord }
+  | {
+      readonly status: 'claimed';
+      readonly claim: ClaimRecord;
+      readonly claimCapability: ClaimCapability;
+    }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | {
       readonly status: 'terminal-child';

@@ -24,6 +24,7 @@ import {
   type DelegationLinkage,
   type ParentLinkage,
   type ClaimId,
+  type ClaimCapability,
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
@@ -1128,7 +1129,12 @@ async function updateStepDelegationChildRunId(
 
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
-  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
+  | {
+      readonly ok: true;
+      readonly claimId: ClaimId;
+      readonly claimCapability: ClaimCapability;
+      readonly childRunId: RunId;
+    }
   | {
       readonly ok: false;
       readonly reason: 'child-missing' | 'delegation-resolved' | 'linkage-mismatch';
@@ -1161,6 +1167,7 @@ async function claimChildForPipeline(
       return {
         ok: true,
         claimId: claim.claim.claimId,
+        claimCapability: claim.claimCapability,
         childRunId: claim.claim.childRunId,
       };
     case 'missing-child':
@@ -1214,6 +1221,8 @@ export interface ClaimedOutputPayload {
   readonly token: string;
   /** Branded claim id for subsequent `--claim-id` commands. */
   readonly claim_id: ClaimId;
+  /** Opaque capability to use with --claim-capability for delegated child mutations. */
+  readonly claim_capability: ClaimCapability;
   /** Run id of the launched (or idempotently returned) child runbook. */
   readonly run_id: string;
   /** Source path of the child runbook. */
@@ -1242,6 +1251,7 @@ function emitClaimedOutput(
  * @param args - Claim payload inputs
  * @param args.truncatedToken - Redacted display form of the delegation token (safe for output)
  * @param args.claimId - Branded claim id identifying this claim record
+ * @param args.claimCapability - Opaque capability proving authority over this claim
  * @param args.childRunId - Run id of the launched child runbook state
  * @param args.childRunbookPath - Source path of the child runbook
  * @param args.parentRunId - Run id of the parent runbook state that issued the delegation
@@ -1251,6 +1261,7 @@ function emitClaimedOutput(
 function buildClaimedPayload(args: {
   readonly truncatedToken: string;
   readonly claimId: ClaimId;
+  readonly claimCapability: ClaimCapability;
   readonly childRunId: RunId;
   readonly childRunbookPath: string;
   readonly parentRunId: RunId;
@@ -1260,6 +1271,7 @@ function buildClaimedPayload(args: {
     action: 'claimed',
     token: args.truncatedToken,
     claim_id: args.claimId,
+    claim_capability: args.claimCapability,
     run_id: args.childRunId,
     runbook: args.childRunbookPath,
     parent_run_id: args.parentRunId,
@@ -1271,6 +1283,7 @@ function emitClaimedSuccess(args: {
   readonly output: OutputEmitter;
   readonly truncatedToken: string;
   readonly claimId: ClaimId;
+  readonly claimCapability: ClaimCapability;
   readonly childRunId: RunId;
   readonly childRunbookPath: string;
   readonly parentRunId: RunId;
@@ -1425,6 +1438,7 @@ export async function claimAndLaunch(
         truncatedToken,
         childRunId: claimResult.childRunId,
         claimId: claimResult.claimId,
+        claimCapability: claimResult.claimCapability,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
         stepId: substepId ?? stepId,
@@ -1475,6 +1489,7 @@ export async function claimAndLaunch(
         truncatedToken,
         childRunId: adoptedChildRunId,
         claimId: claimResult.claimId,
+        claimCapability: claimResult.claimCapability,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
         stepId: substepId ?? stepId,
@@ -1538,6 +1553,7 @@ export async function claimAndLaunch(
         truncatedToken,
         childRunId: claimResult.childRunId,
         claimId: claimResult.claimId,
+        claimCapability: claimResult.claimCapability,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
         stepId: substepId ?? stepId,
@@ -1615,6 +1631,7 @@ export async function claimAndLaunch(
     // 4g. Launch child runbook
     let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
+    let capturedClaimCapability: ClaimCapability | undefined;
     // Captures a write-side claim invariant violation in `afterCreate` so we
     // can surface it as a structured launch-failed result instead of an
     // anonymous thrown Error. Should never trigger in practice — the child
@@ -1646,6 +1663,7 @@ export async function claimAndLaunch(
           tokenHash,
         );
         capturedClaimId = claimResult.claimId;
+        capturedClaimCapability = claimResult.claimCapability;
         capturedChildRunId = claimResult.childRunId;
       },
       afterCreateRollback: async (childStateId) => {
@@ -1658,6 +1676,7 @@ export async function claimAndLaunch(
           tokenHash,
         );
         capturedClaimId = undefined;
+        capturedClaimCapability = undefined;
         capturedChildRunId = undefined;
       },
     });
@@ -1688,6 +1707,7 @@ export async function claimAndLaunch(
     }
 
     const claimId = capturedClaimId;
+    const claimCapability = capturedClaimCapability;
     if (claimId === undefined) {
       return {
         ok: false,
@@ -1695,6 +1715,19 @@ export async function claimAndLaunch(
         runbook: childDisplayPath,
         code: ErrorCodes.LAUNCH_FAILED.code,
         cause: 'Claim id was not created for delegated child.',
+        details: {
+          runbookName: childDisplayPath,
+          runbook: childDisplayPath,
+        },
+      };
+    }
+    if (claimCapability === undefined) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        runbook: childDisplayPath,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        cause: 'Claim capability was not created for delegated child.',
         details: {
           runbookName: childDisplayPath,
           runbook: childDisplayPath,
@@ -1724,6 +1757,7 @@ export async function claimAndLaunch(
       truncatedToken,
       childRunId,
       claimId,
+      claimCapability,
       childRunbookPath: childDisplayPath,
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
