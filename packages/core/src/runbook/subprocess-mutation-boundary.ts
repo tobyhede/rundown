@@ -13,8 +13,8 @@
 // stop a spawned bare mutation from silently consuming the standalone-run
 // convenience lane, and keep refusals rendered at the front end (a clear typed
 // withhold instead of a downstream policy error). Explicitly-targeted
-// mutations — `--claim-id` (claim evidence) and `--run` (named run-controller
-// evidence) — carry their own authority and pass through.
+// mutations — `--claim-capability` (claim authority) and `--run-capability`
+// (orchestrator authority) — carry their own authority and pass through.
 //
 // This predicate is the single source of truth for "which spawned commands carry
 // only direct-CLI trust and must be withheld at the front end." It is a pure
@@ -297,8 +297,13 @@ function carriesClaimEvidence(argv: readonly string[], commandIndex: number): bo
       // trailing `--claim-id` is content, so the mutation is bare and withheld.
       return false;
     }
-    if (arg === '--claim-id' || arg.startsWith('--claim-id=')) {
-      // A real `--claim-id` flag in flag position: claim evidence is present.
+    if (
+      arg === '--claim-capability' ||
+      arg.startsWith('--claim-capability=') ||
+      arg === '--claim-id' ||
+      arg.startsWith('--claim-id=')
+    ) {
+      // A real claim-authority flag in flag position: claim evidence is present.
       return true;
     }
     if (PASS_FAIL_VALUE_TAKING_OPTIONS.has(arg)) {
@@ -335,7 +340,12 @@ function carriesExplicitRunTarget(argv: readonly string[], commandIndex: number)
       // Option terminator: every later token is positional, never a flag.
       return false;
     }
-    if (arg === '--run' || arg.startsWith('--run=')) {
+    if (
+      arg === '--run-capability' ||
+      arg.startsWith('--run-capability=') ||
+      arg === '--run' ||
+      arg.startsWith('--run=')
+    ) {
       return true;
     }
     if (PASS_FAIL_VALUE_TAKING_OPTIONS.has(arg)) {
@@ -427,8 +437,9 @@ export const DELEGATE_CLAIM_ID_REJECTED_CODE = 'INVALID_DELEGATE_CLAIM_ID';
  */
 export function delegateClaimIdRejectionMessage(): string {
   return (
-    '`rundown delegate` does not accept --claim-id; complete claimed children with ' +
-    '`rundown pass --claim-id <claimId>` or `rundown fail --claim-id <claimId>`.'
+    '`rundown delegate` does not accept claim authority; complete claimed children with ' +
+    '`rundown pass --claim-capability <capability>` or ' +
+    '`rundown fail --claim-capability <capability>`.'
   );
 }
 
@@ -457,7 +468,12 @@ export function delegateClaimIdValidationError(
   const commandIndex = locateCommandIndex(argv);
   if (argv[commandIndex] !== 'delegate') return undefined;
   for (const arg of argv.slice(commandIndex + 1)) {
-    if (arg === '--claim-id' || arg.startsWith('--claim-id=')) {
+    if (
+      arg === '--claim-id' ||
+      arg.startsWith('--claim-id=') ||
+      arg === '--claim-capability' ||
+      arg.startsWith('--claim-capability=')
+    ) {
       return {
         code: DELEGATE_CLAIM_ID_REJECTED_CODE,
         message: delegateClaimIdRejectionMessage(),
@@ -477,8 +493,8 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
 /**
  * Build the human-readable refusal message for a withheld bare role-specific
  * mutation. Names the command and points to both explicit-targeting
- * remediations — `--run` (named orchestrator authority) and `--claim-id`
- * (claim evidence); never mentions a source label.
+ * remediations — `--run-capability` (orchestrator authority) and
+ * `--claim-capability` (claim authority); never mentions a source label.
  *
  * @param command - The withheld role-specific mutation command.
  * @returns Single-line refusal message.
@@ -487,8 +503,10 @@ export function subprocessMutationWithheldMessage(command: RoleSpecificMutationC
   return (
     `Refusing to run a bare \`rundown ${command}\` from a subprocess front end: it would ` +
     `silently inherit direct-CLI trust over the active run. Name the run you control with ` +
-    `\`rundown ${command} --run <rd_…>\`, resolve a delegated ` +
-    `child with \`rundown ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
+    `\`rundown ${command} --run-capability <capability>\`, resolve a delegated ` +
+    `child with \`rundown ${
+      command === 'delegate' ? 'pass' : command
+    } --claim-capability <capability>\`, ` +
     `or run \`rundown ${command}\` directly.`
   );
 }

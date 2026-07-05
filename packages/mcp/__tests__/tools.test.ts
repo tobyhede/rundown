@@ -9,6 +9,10 @@ import {
 } from '../src/tools.js';
 
 describe('buildRundownCommand', () => {
+  const claimCapability = 'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const runCapability =
+    'rdrc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
   it.each([
     ['validate', { file: 'workflow.md' }, ['check', 'workflow.md']],
     ['list', { all: true, tags: 'release,prod' }, ['ls', '--all', '--tags', 'release,prod']],
@@ -16,28 +20,28 @@ describe('buildRundownCommand', () => {
     ['run', { file: 'workflow.md', prompted: true }, ['run', 'workflow.md', '--prompted']],
     [
       'pass',
-      { step: '2.1', index: 3, claimId: 'claim-1' },
-      ['pass', '--step', '2.1', '--index', '3', '--claim-id', 'claim-1'],
+      { step: '2.1', index: 3, claimCapability },
+      ['pass', '--step', '2.1', '--index', '3', '--claim-capability', claimCapability],
     ],
     [
       'fail',
-      { step: '2.1', index: 3, claimId: 'claim-1' },
-      ['fail', '--step', '2.1', '--index', '3', '--claim-id', 'claim-1'],
+      { step: '2.1', index: 3, claimCapability },
+      ['fail', '--step', '2.1', '--index', '3', '--claim-capability', claimCapability],
     ],
     [
       'goto',
-      { step: '3.1', index: 2, claimId: 'claim-1' },
-      ['goto', '3.1', '--index', '2', '--claim-id', 'claim-1'],
+      { step: '3.1', index: 2, claimCapability },
+      ['goto', '3.1', '--index', '2', '--claim-capability', claimCapability],
     ],
     [
       'complete',
-      { message: 'done', claimId: 'claim-1' },
-      ['complete', 'done', '--claim-id', 'claim-1'],
+      { message: 'done', claimCapability },
+      ['complete', 'done', '--claim-capability', claimCapability],
     ],
     [
       'stop',
-      { message: 'blocked', claimId: 'claim-1' },
-      ['stop', 'blocked', '--claim-id', 'claim-1'],
+      { message: 'blocked', claimCapability },
+      ['stop', 'blocked', '--claim-capability', claimCapability],
     ],
     ['delegate', { step: '4.1', index: 2 }, ['delegate', '--step', '4.1', '--index', '2']],
     [
@@ -79,8 +83,8 @@ describe('buildRundownCommand', () => {
     ],
     [
       'collect',
-      { step: '5', index: 2, claimId: 'claim-1' },
-      ['collect', '--step', '5', '--index', '2', '--claim-id', 'claim-1'],
+      { step: '5', index: 2, claimCapability },
+      ['collect', '--step', '5', '--index', '2', '--claim-capability', claimCapability],
     ],
   ] satisfies Array<
     [RundownToolName, Record<string, unknown>, string[]]
@@ -101,6 +105,22 @@ describe('buildRundownCommand', () => {
   it('maps bare pass/fail to CLI argv without a frontend-specific guard', () => {
     expect(buildRundownCommand('pass', {})).toEqual(['pass']);
     expect(buildRundownCommand('fail', {})).toEqual(['fail']);
+  });
+
+  it('maps runCapability to --run-capability', () => {
+    expect(buildRundownCommand('collect', { runCapability })).toEqual([
+      'collect',
+      '--run-capability',
+      runCapability,
+    ]);
+  });
+
+  it('maps claimCapability to --claim-capability', () => {
+    expect(buildRundownCommand('pass', { claimCapability })).toEqual([
+      'pass',
+      '--claim-capability',
+      claimCapability,
+    ]);
   });
 
   it('renders CLI data as MCP text without interpreting runbook state', () => {
@@ -171,42 +191,49 @@ describe('inputSchema enforces index requires step', () => {
   });
 });
 
-describe('inputSchema enforces claimId/runId mutual exclusion', () => {
-  // Every tool whose schema accepts both authorities. `--run` and `--claim-id`
-  // name two different authorities and the CLI refuses the pair; the schema
+describe('inputSchema enforces claimCapability/runCapability mutual exclusion', () => {
+  // Every tool whose schema accepts both authority credentials. Run and claim
+  // capabilities name two different authorities; the schema
   // must fail the conflict closed before the handler spawns anything.
   const dualAuthorityTools = ['pass', 'fail', 'goto', 'complete', 'stop', 'collect'] as const;
-  const runId = `rd_${'a'.repeat(32)}`;
-  const claimId = 'rdclm_abcdefghijklmnopqrstu1';
+  const runCapability =
+    'rdrc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const claimCapability = 'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
   // `goto` requires `step`; harmless extra field for the rest.
   const withStep = { step: '3.1' };
 
   describe.each(dualAuthorityTools)('%s', (tool) => {
     const schema = RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema;
 
-    it('accepts claimId alone', () => {
-      expect(schema.safeParse({ ...withStep, claimId }).success).toBe(true);
+    it('accepts claimCapability alone', () => {
+      expect(schema.safeParse({ ...withStep, claimCapability }).success).toBe(true);
     });
 
-    it('accepts runId alone', () => {
-      expect(schema.safeParse({ ...withStep, runId }).success).toBe(true);
+    it('accepts runCapability alone', () => {
+      expect(schema.safeParse({ ...withStep, runCapability }).success).toBe(true);
     });
 
-    it('rejects claimId + runId together with a clear conflict message', () => {
-      const result = schema.safeParse({ ...withStep, claimId, runId });
+    it('rejects claimCapability + runCapability together with a clear conflict message', () => {
+      const result = schema.safeParse({ ...withStep, claimCapability, runCapability });
       expect(result.success).toBe(false);
       if (!result.success) {
         const conflictIssue = result.error.issues.find(
-          (issue) => issue.path.length === 1 && issue.path[0] === 'runId',
+          (issue) => issue.path.length === 1 && issue.path[0] === 'runCapability',
         );
         expect(conflictIssue).toBeDefined();
-        expect(conflictIssue?.message).toMatch(/claimId and runId are mutually exclusive/);
+        expect(conflictIssue?.message).toMatch(
+          /claimCapability and runCapability are mutually exclusive/,
+        );
       }
     });
   });
 });
 
 describe('registerRundownTools', () => {
+  const claimCapability = 'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const runCapability =
+    'rdrc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
   it('registers every parity tool with an input schema', () => {
     const registered = new Map<string, unknown>();
     const fakeServer = {
@@ -228,6 +255,7 @@ describe('registerRundownTools', () => {
         runbook: 'child.md',
         retry: true,
         step: '4.1',
+        runCapability,
         input: ['env=prod'],
         inputJson: ['vars={"a":1}'],
         inputFile: ['vars.yaml'],
@@ -243,23 +271,26 @@ describe('registerRundownTools', () => {
       RUNDOWN_TOOL_DEFINITIONS.collect.inputSchema.safeParse({
         step: '5',
         index: 2,
-        claimId: 'claim-1',
+        claimCapability,
       }).success,
     ).toBe(true);
-    for (const tool of ['status', 'pass', 'fail', 'complete', 'stop'] as const) {
+    expect(
+      RUNDOWN_TOOL_DEFINITIONS.status.inputSchema.safeParse({ claimId: 'claim-1' }).success,
+    ).toBe(true);
+    for (const tool of ['pass', 'fail', 'complete', 'stop'] as const) {
       expect(
         RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema.safeParse({
-          claimId: 'claim-1',
+          claimCapability,
         }).success,
       ).toBe(true);
     }
     expect(RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema.safeParse({ step: '3.1' }).success).toBe(true);
   });
 
-  it('rejects claimId on the delegate tool schema', () => {
+  it('rejects claimCapability on the delegate tool schema', () => {
     const result = RUNDOWN_TOOL_DEFINITIONS.delegate.inputSchema.safeParse({
       runbook: 'child.md',
-      claimId: 'rdclm_abcdefghijklmnopqrstu1',
+      claimCapability,
     });
 
     expect(result.success).toBe(false);
@@ -283,10 +314,16 @@ describe('registerRundownTools', () => {
       .mockResolvedValue({ success: true, data: { collected: true } });
     registerRundownTools(fakeServer, runCli);
 
-    await expect(handlers.get('collect')?.({ step: '1.1', claimId: 'claim-1' })).resolves.toEqual({
+    await expect(handlers.get('collect')?.({ step: '1.1', claimCapability })).resolves.toEqual({
       content: [{ type: 'text', text: JSON.stringify({ collected: true }, null, 2) }],
     });
-    expect(runCli).toHaveBeenCalledWith(['collect', '--step', '1.1', '--claim-id', 'claim-1']);
+    expect(runCli).toHaveBeenCalledWith([
+      'collect',
+      '--step',
+      '1.1',
+      '--claim-capability',
+      claimCapability,
+    ]);
   });
 
   it('wraps handler throws as a structured MCP error response', async () => {
@@ -379,7 +416,7 @@ describe('registerRundownTools', () => {
     'complete',
     'stop',
     'collect',
-  ] as const)('%s handler rejects claimId + runId together before invoking the CLI', async (tool) => {
+  ] as const)('%s handler rejects claimCapability + runCapability together before invoking the CLI', async (tool) => {
     const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
     const fakeServer = {
       registerTool: jest.fn(
@@ -399,14 +436,16 @@ describe('registerRundownTools', () => {
     // schema validation, never reach a spawned CLI to be refused post-spawn.
     const res = await handlers.get(tool)?.({
       step: '3.1',
-      claimId: 'rdclm_abcdefghijklmnopqrstu1',
-      runId: `rd_${'a'.repeat(32)}`,
+      claimCapability,
+      runCapability,
     });
     expect(res).toMatchObject({
       content: [
         {
           type: 'text',
-          text: expect.stringMatching(/runId: claimId and runId are mutually exclusive/),
+          text: expect.stringMatching(
+            /runCapability: claimCapability and runCapability are mutually exclusive/,
+          ),
         },
       ],
     });
@@ -415,6 +454,10 @@ describe('registerRundownTools', () => {
 });
 
 describe('subprocess trust boundary', () => {
+  const claimCapability = 'rdcc_abcdefghijklmnopqrstu1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const runCapability =
+    'rdrc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
   function registerWithHandlers(runCli: RunCli) {
     const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
     const fakeServer = {
@@ -443,13 +486,13 @@ describe('subprocess trust boundary', () => {
     return JSON.parse(text);
   }
 
-  it('advertises delegate as runId-gated: available WITH runId, withheld bare', () => {
-    // Post-R1 the delegate tool is available with explicit runId targeting
-    // (mapped to `--run`); a bare call is still withheld. The description must
-    // name both the constraint and the honest paths (runId, or run
-    // `rd delegate` directly).
+  it('advertises delegate as runCapability-gated: available WITH runCapability, withheld bare', () => {
+    // Post-R1 the delegate tool is available with explicit run capability
+    // targeting; a bare call is still withheld. The description must name both
+    // the constraint and the honest paths (runCapability, or run
+    // `rundown delegate` directly).
     const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
-    expect(description).toMatch(/runId/);
+    expect(description).toMatch(/runCapability/);
     expect(description).toMatch(/withheld bare/i);
     expect(description).toMatch(/rundown delegate/);
   });
@@ -501,51 +544,49 @@ describe('subprocess trust boundary', () => {
     ['pass'],
     ['fail'],
     ['collect'],
-  ] as const)('spawns a %s --claim-id claim-evidence mutation through the boundary', async (tool) => {
+  ] as const)('spawns a %s --claim-capability mutation through the boundary', async (tool) => {
     const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
     const handlers = registerWithHandlers(runCli);
 
-    const res = await handlers.get(tool)?.({ claimId: 'claim-1' });
-    expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
+    const res = await handlers.get(tool)?.({ claimCapability });
+    expect(runCli).toHaveBeenCalledWith([tool, '--claim-capability', claimCapability]);
     // The pass-through path surfaces the CLI's data payload to the MCP client.
     expect(parseToolResponse(res)).toEqual({ ok: true });
   });
 
-  describe('explicit runId targeting', () => {
-    const runId = `rd_${'a'.repeat(32)}`;
-
+  describe('explicit runCapability targeting', () => {
     it.each([
       ['pass'],
       ['fail'],
       ['complete'],
       ['stop'],
       ['collect'],
-    ] as const)('forwards runId as --run argv on %s (explicit orchestrator targeting)', async (tool) => {
+    ] as const)('forwards runCapability as --run-capability argv on %s', async (tool) => {
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
       const handlers = registerWithHandlers(runCli);
 
-      const res = await handlers.get(tool)?.({ runId });
-      expect(runCli).toHaveBeenCalledWith([tool, '--run', runId]);
+      const res = await handlers.get(tool)?.({ runCapability });
+      expect(runCli).toHaveBeenCalledWith([tool, '--run-capability', runCapability]);
       expect(parseToolResponse(res)).toEqual({ ok: true });
     });
 
-    it('forwards runId as --run argv on goto', async () => {
+    it('forwards runCapability as --run-capability argv on goto', async () => {
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
       const handlers = registerWithHandlers(runCli);
 
-      await handlers.get('goto')?.({ step: '3', runId });
-      expect(runCli).toHaveBeenCalledWith(['goto', '3', '--run', runId]);
+      await handlers.get('goto')?.({ step: '3', runCapability });
+      expect(runCli).toHaveBeenCalledWith(['goto', '3', '--run-capability', runCapability]);
     });
 
-    it('spawns delegate WITH runId and keeps withholding it bare', async () => {
+    it('spawns delegate WITH runCapability and keeps withholding it bare', async () => {
       // The single most behavior-inverting MCP change in R1: delegate was
-      // withheld-always; an explicit runId names orchestrator authority and
-      // spawns, while the bare form stays withheld.
+      // withheld-always; an explicit run capability names orchestrator
+      // authority and spawns, while the bare form stays withheld.
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
       const handlers = registerWithHandlers(runCli);
 
-      await handlers.get('delegate')?.({ runId });
-      expect(runCli).toHaveBeenCalledWith(['delegate', '--run', runId]);
+      await handlers.get('delegate')?.({ runCapability });
+      expect(runCli).toHaveBeenCalledWith(['delegate', '--run-capability', runCapability]);
 
       runCli.mockClear();
       const bare = await handlers.get('delegate')?.({});
@@ -556,37 +597,37 @@ describe('subprocess trust boundary', () => {
     });
   });
 
-  it('withholds delegate when a claim-looking token is an input-file value', async () => {
+  it('withholds delegate when a claim-capability-looking token is an input-file value', async () => {
     const runCli = jest.fn<RunCli>();
     const handlers = registerWithHandlers(runCli);
 
     await expect(
       handlers.get('delegate')?.({
         runbook: 'child.md',
-        inputFile: ['--claim-id=foo'],
+        inputFile: ['--claim-capability=foo'],
       }),
     ).resolves.toMatchObject({
       content: [
         {
           type: 'text',
-          text: expect.stringMatching(/does not accept --claim-id/),
+          text: expect.stringMatching(/does not accept claim authority/),
         },
       ],
     });
     expect(runCli).not.toHaveBeenCalled();
   });
 
-  it('rejects delegate claimId input without spawning the CLI', async () => {
+  it('rejects delegate claimCapability input without spawning the CLI', async () => {
     const runCli = jest.fn<RunCli>();
     const handlers = registerWithHandlers(runCli);
 
     await expect(
       handlers.get('delegate')?.({
         runbook: 'child.md',
-        claimId: 'rdclm_abcdefghijklmnopqrstu1',
+        claimCapability,
       }),
     ).resolves.toMatchObject({
-      content: [{ type: 'text', text: expect.stringMatching(/claimId/) }],
+      content: [{ type: 'text', text: expect.stringMatching(/claimCapability/) }],
     });
     expect(runCli).not.toHaveBeenCalled();
   });

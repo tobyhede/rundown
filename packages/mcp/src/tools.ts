@@ -49,8 +49,9 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         // a bare `pass` / `fail` / `complete` / `stop` / `collect` / `delegate`
         // from silently consuming the standalone-run convenience lane, and
         // keeps the refusal front-end-rendered. Invocations carrying explicit
-        // targeting — `--claim-id` (claim evidence) or `--run` (named run
-        // authority) — pass through. See subprocess-mutation-boundary.ts.
+        // targeting — `--claim-capability` (claim authority) or
+        // `--run-capability` (orchestrator authority) — pass through. See
+        // subprocess-mutation-boundary.ts.
         const withheld = bareRoleSpecificMutation(command);
         if (withheld !== undefined) {
           return createMcpTextResponse({ error: subprocessMutationWithheldMessage(withheld) });

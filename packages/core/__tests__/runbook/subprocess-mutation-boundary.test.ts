@@ -356,6 +356,8 @@ describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
       '--step',
       '--index',
       '--claim-id',
+      '--claim-capability',
+      '--run-capability',
       '--run',
     ]);
   });
@@ -369,11 +371,14 @@ describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
     // `--claim-id` itself, by contrast, IS evidence in flag position (covered
     // below), so it is excluded from the value-slot smuggling case.
     for (const option of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
-      if (option === '--claim-id') continue;
-      // `--run` in flag position is itself explicit-targeting evidence (its
-      // malformed value is rejected downstream by parseRunOption), so it is
-      // excluded from the value-slot smuggling case exactly like `--claim-id`.
-      if (option === '--run') continue;
+      if (
+        option === '--claim-id' ||
+        option === '--claim-capability' ||
+        option === '--run-capability' ||
+        option === '--run'
+      ) {
+        continue;
+      }
       expect(bareRoleSpecificMutation(['pass', option, '--claim-id=foo'])).toBe('pass');
       expect(bareRoleSpecificMutation(['fail', option, '--claim-id', 'foo'])).toBe('fail');
     }
@@ -385,9 +390,9 @@ describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
     // Sanity counter-case: when the value-taking option consumes its OWN value and
     // a separate `--claim-id` follows in flag position, the mutation is exempt.
     for (const option of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
-      if (option === '--claim-id') continue;
+      if (option === '--claim-id' || option === '--claim-capability') continue;
       expect(
-        bareRoleSpecificMutation(['pass', option, 'someValue', '--claim-id', 'rdclm_x']),
+        bareRoleSpecificMutation(['pass', option, 'someValue', '--claim-capability', 'rdcc_x']),
       ).toBeUndefined();
     }
   });
@@ -417,7 +422,8 @@ describe('subprocessMutationWithheldMessage', () => {
     for (const command of ['pass', 'fail', 'delegate', 'collect'] as const) {
       const message = subprocessMutationWithheldMessage(command);
       expect(message).toContain(`rundown ${command}`);
-      expect(message).toContain('--claim-id');
+      expect(message).toContain('--claim-capability');
+      expect(message).toContain('--run-capability');
       expect(message).not.toMatch(/actor-source|RD_ACTOR_SOURCE/i);
     }
   });
