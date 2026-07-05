@@ -2568,7 +2568,7 @@ describe('executeCommandWithPolicyCheck', () => {
 
     await executeCommandWithPolicyCheck(command, cwd);
 
-    expect(core.executeCommand).toHaveBeenCalledWith(command, cwd);
+    expect(core.executeCommand).toHaveBeenCalledWith(command, cwd, undefined, {});
     expect(core.executeCommandWithEnv).not.toHaveBeenCalled();
     expect(core.executeCommandWithPolicy).not.toHaveBeenCalled();
   });
@@ -2624,6 +2624,7 @@ describe('executeCommandWithPolicyCheck', () => {
       command,
       cwd,
       expect.objectContaining({ RD_OUTPUTS_Foo: '/tmp/foo' }),
+      {},
     );
     expect(core.executeCommand).not.toHaveBeenCalled();
     expect(core.executeCommandWithPolicy).not.toHaveBeenCalled();

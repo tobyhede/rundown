@@ -510,8 +510,8 @@ export class LandlockSandbox implements SandboxImplementation {
 
       const specPipe = child.stdio[3] as Writable;
       const statusPipe = child.stdio[4] as Readable;
-      const commandStdout = child.stdio[1] as Readable | null;
-      const commandStderr = child.stdio[2] as Readable | null;
+      const commandStdout = child.stdio[1];
+      const commandStderr = child.stdio[2];
 
       if (options.commandOutput === 'stderr') {
         commandStdout?.on('data', (chunk: Buffer | string) => {

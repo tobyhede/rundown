@@ -114,7 +114,7 @@ describe('executeCommandWithPolicyCheck — CLI seam invariant', () => {
     expect(executeCommandWithPolicyMock).not.toHaveBeenCalled();
     expect(getPolicyEvaluatorMock).not.toHaveBeenCalled();
     // With no rdInjected, the no-env un-gated path is used.
-    expect(executeCommandMock).toHaveBeenCalledWith('git status', '/work');
+    expect(executeCommandMock).toHaveBeenCalledWith('git status', '/work', undefined, {});
   });
 
   // Property 5b corollary — trust path with rdInjected still bypasses the gate.

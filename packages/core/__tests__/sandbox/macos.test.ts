@@ -684,7 +684,9 @@ describe('SeatbeltSandbox', () => {
         stderr: new EventEmitter(),
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            closeCallbacks.push(() => callback(0));
+            closeCallbacks.push(() => {
+              callback(0);
+            });
           }
           return mockChild;
         }),

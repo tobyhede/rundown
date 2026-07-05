@@ -102,6 +102,7 @@ function extractRundownSandboxWritePaths(rdInjected?: Record<string, string>): s
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param rdInjected - Optional Rundown-injected env vars (e.g. RD_WORK_PATH) merged after PATH
+ * @param streamOptions - Runtime-only routing for command subprocess stdout/stderr
  * @returns Promise resolving to ExecutionResult with success status and exit code
  */
 export function executeCommand(
@@ -338,6 +339,7 @@ export async function executeCommandWithPolicy(
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param env - Custom environment variables
+ * @param streamOptions - Runtime-only routing for command subprocess stdout/stderr
  * @returns Promise resolving to ExecutionResult
  */
 export function executeCommandWithEnv(
