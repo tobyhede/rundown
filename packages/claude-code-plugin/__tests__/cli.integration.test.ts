@@ -109,6 +109,11 @@ describe('CLI Integration', () => {
         cwd: path.resolve(__dirname, '..'),
       });
 
+      let stdout = '';
+      proc.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+
       let stderr = '';
       proc.stderr.on('data', (data: Buffer) => {
         stderr += data.toString();
@@ -117,6 +122,7 @@ describe('CLI Integration', () => {
       proc.on('close', (code) => {
         expect(code).toBe(2);
         expect(stderr).toContain('empty hook payload');
+        expect(stdout.trim()).toBe('');
         done();
       });
 

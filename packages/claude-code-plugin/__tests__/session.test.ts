@@ -218,6 +218,37 @@ describe('Session', () => {
       expect(Object.keys(meta).sort()).toEqual(agents);
     });
 
+    test('clear serializes against an in-flight update (#470)', async () => {
+      const a = new Session(testDir);
+      const b = new Session(testDir);
+
+      let releaseUpdate: () => void;
+      const updateMayFinish = new Promise<void>((resolve) => {
+        releaseUpdate = resolve;
+      });
+      let updateStarted: () => void;
+      const updateHasLock = new Promise<void>((resolve) => {
+        updateStarted = resolve;
+      });
+
+      const update = a.update('metadata', async (meta) => {
+        updateStarted();
+        await updateMayFinish;
+        return {
+          commit: true,
+          value: { ...meta, agent: 'recorded' },
+          result: undefined,
+        };
+      });
+
+      await updateHasLock;
+      const clear = b.clear();
+      releaseUpdate!();
+      await Promise.all([update, clear]);
+
+      expect(await a.get('metadata')).toEqual({});
+    });
+
     describe('update', () => {
       test('commit: true persists the new value and returns result', async () => {
         const session = new Session(testDir);

@@ -157,11 +157,13 @@ export class Session {
    * Clear session state (remove file)
    */
   async clear(): Promise<void> {
-    try {
-      await fs.unlink(this.stateFile);
-    } catch {
-      // File doesn't exist, that's fine
-    }
+    await this.withLock(async () => {
+      try {
+        await fs.unlink(this.stateFile);
+      } catch {
+        // File doesn't exist, that's fine
+      }
+    });
   }
 
   /**

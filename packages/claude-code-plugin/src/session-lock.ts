@@ -1,6 +1,6 @@
 // src/session-lock.ts
 import { realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import * as path from 'node:path';
 import {
   acquireFileLock,
   FileLockTimeoutError,
@@ -58,8 +58,8 @@ export class PluginSessionLock {
    */
   constructor(cwd = '.') {
     const projectRoot = realpathSync(cwd);
-    this.lockDir = join(projectRoot, '.claude', 'session', 'locks');
-    this.lockFile = join(this.lockDir, 'state.lock');
+    this.lockDir = path.join(projectRoot, '.claude', 'session', 'locks');
+    this.lockFile = path.join(this.lockDir, 'state.lock');
   }
 
   /**
