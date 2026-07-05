@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 
 // getAvailability() runs `--probe` first; honour it like the main fake helper.
 if (process.argv.slice(2).includes('--probe')) {
-  process.stdout.write((process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}') + '\n');
+  process.stdout.write(`${process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}'}\n`);
   process.exit(0);
 }
 

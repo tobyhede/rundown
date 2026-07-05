@@ -405,7 +405,7 @@ describe('claimId join (#531)', () => {
     const result = buildActiveStatus(state, '/test', undefined, undefined, {
       claimIdByChildRunId: new Map([
         [CHILD_RUN_ID, CLAIM_ID],
-        ['rd_' + 'b'.repeat(32), 'rdclm_strayAAAAAAAAAAAAAAAA'],
+        [`rd_${'b'.repeat(32)}`, 'rdclm_strayAAAAAAAAAAAAAAAA'],
       ]),
     });
 

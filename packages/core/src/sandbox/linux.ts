@@ -660,6 +660,7 @@ export class LandlockSandbox implements SandboxImplementation {
    * @param child - The helper's child process handle, used to target teardown.
    * @param status - The offending status (an `error` variant, or `null` for a
    *   missing/malformed/oversized/timed-out status line).
+   * @param requestedNetwork - Network posture sent to the helper in the fd-3 spec.
    * @param settle - Callback that resolves the outer `execute()` promise.
    */
   private handleViolation(
