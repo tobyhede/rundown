@@ -2,11 +2,7 @@
 import { parseHookInput, logger, getErrorMessage } from './shared/index.js';
 import { dispatch } from './dispatcher.js';
 import { buildHookOutput } from './hook-output.js';
-import {
-  HOOK_REFUSAL_EXIT_CODE,
-  type HookDispatchRefusal,
-  refusalMessage,
-} from './hook-refusal.js';
+import { exitWithHookRefusal, type HookDispatchRefusal } from './hook-refusal.js';
 
 async function main(): Promise<void> {
   // The plugin's only CLI mode is native hook dispatch over stdin.
@@ -22,8 +18,7 @@ async function main(): Promise<void> {
  * @param refusal - Typed refusal describing why dispatch was refused
  */
 function failClosed(refusal: HookDispatchRefusal): never {
-  process.stderr.write(`${refusalMessage(refusal)}\n`);
-  process.exit(HOOK_REFUSAL_EXIT_CODE);
+  exitWithHookRefusal(refusal);
 }
 
 /**
