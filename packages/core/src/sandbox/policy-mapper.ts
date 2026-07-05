@@ -15,6 +15,7 @@ import type { PolicyEvaluator } from '../policy/evaluator.js';
 import type { PolicyConfig } from '../policy/schema.js';
 import type { SandboxOptions } from './types.js';
 import { logger } from '../logger.js';
+import { collectAncestorPaths } from './path-utils.js';
 
 /**
  * Options for creating sandbox options from policy.
@@ -129,6 +130,27 @@ function resolveCanonicalPath(value: string): string {
   }
 }
 
+function resolveCanonicalPathForGrant(value: string): string {
+  const absolute = path.resolve(value);
+  try {
+    return fs.realpathSync(absolute);
+  } catch {
+    const parent = path.dirname(absolute);
+    if (parent === absolute) {
+      return absolute;
+    }
+    return path.join(resolveCanonicalPathForGrant(parent), path.basename(absolute));
+  }
+}
+
+function normalizeSandboxPathList(paths: readonly string[]): string[] {
+  const normalized = new Set<string>();
+  for (const candidate of paths) {
+    normalized.add(resolveCanonicalPathForGrant(candidate));
+  }
+  return [...normalized];
+}
+
 function normalizeExtraReadWritePath(candidate: string, repoRoot: string, cwd: string): string {
   const absoluteCandidate = path.isAbsolute(candidate)
     ? candidate
@@ -184,6 +206,46 @@ function buildSandboxPathSets(
     readOnlyPaths: [...new Set(readOnlyPaths)],
     readWritePaths,
   };
+}
+
+function filterDenyPathsCoveredByRuntimeGrants(
+  denyPaths: readonly string[],
+  runtimeGrantPaths: readonly string[],
+): string[] {
+  return denyPaths.filter((denyPath) => {
+    return !runtimeGrantPaths.some((grantPath) => isWithinRoot(denyPath, grantPath));
+  });
+}
+
+function filterDenyPatternsCoveredByRuntimeGrants(
+  denyPatterns: readonly string[],
+  runtimeGrantPaths: readonly string[],
+): string[] {
+  return denyPatterns.filter((denyPattern) => {
+    const comparisonPath = canonicalComparisonPathForDenyPattern(denyPattern);
+    if (comparisonPath === undefined) {
+      return true;
+    }
+    return !runtimeGrantPaths.some((grantPath) => isWithinRoot(comparisonPath, grantPath));
+  });
+}
+
+function canonicalComparisonPathForDenyPattern(denyPattern: string): string | undefined {
+  if (!hasGlob(denyPattern)) {
+    return resolveCanonicalPathForGrant(denyPattern);
+  }
+
+  const basePath = extractBasePath(denyPattern);
+  if (
+    basePath === '.' ||
+    basePath === path.sep ||
+    basePath.includes('*') ||
+    basePath.includes('?')
+  ) {
+    return undefined;
+  }
+
+  return resolveCanonicalPathForGrant(basePath);
 }
 
 function selectExpansionRoots(roots: string[], repoRoot: string, cwd: string): string[] {
@@ -302,12 +364,16 @@ export function policyToSandboxOptions(
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
 
-  const readRules = evaluator.getEffectiveRules('read');
-  const writeRules = evaluator.getEffectiveRules('write');
+  const readRules = evaluator.getSandboxRules('read');
+  const writeRules = evaluator.getSandboxRules('write');
 
   // Resolve read-only paths (from read.allow minus write.allow)
-  const readAllowPaths = resolvePathPatterns(readRules.allow, repoRoot, tmpDir);
-  const writeAllowPaths = resolvePathPatterns(writeRules.allow, repoRoot, tmpDir);
+  const readAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(readRules.allow, repoRoot, tmpDir),
+  );
+  const writeAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(writeRules.allow, repoRoot, tmpDir),
+  );
   const extraReadWritePaths = normalizeExtraReadWritePaths(
     options.extraReadWritePaths,
     repoRoot,
@@ -328,14 +394,38 @@ export function policyToSandboxOptions(
     repoRoot,
     options.cwd,
   );
+  const runtimeGrantPaths = normalizeSandboxPathList(
+    resolvePathPatterns(
+      [...readRules.runtimeGrantAllow, ...writeRules.runtimeGrantAllow],
+      repoRoot,
+      tmpDir,
+    ),
+  );
+  const canonicalDenyPaths = normalizeSandboxPathList(denyPaths);
+  const effectiveDenyPatterns = filterDenyPatternsCoveredByRuntimeGrants(
+    denyPatterns,
+    runtimeGrantPaths,
+  );
+  const effectiveDenyPaths = filterDenyPathsCoveredByRuntimeGrants(
+    canonicalDenyPaths,
+    runtimeGrantPaths,
+  );
+  const metadataReadPaths = collectAncestorPaths([
+    repoRoot,
+    options.cwd,
+    tmpDir,
+    ...readOnlyPaths,
+    ...readWritePaths,
+  ]);
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths,
     readWritePaths,
-    denyPatterns: [...new Set(denyPatterns)],
-    denyPaths: [...new Set(denyPaths)],
+    metadataReadPaths,
+    denyPatterns: [...new Set(effectiveDenyPatterns)],
+    denyPaths: effectiveDenyPaths,
     env: {},
     network: evaluator.getEffectiveNetworkPolicy(),
     allowUnsandboxed: options.allowUnsandboxed,
@@ -358,8 +448,12 @@ export function policyConfigToSandboxOptions(
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
 
-  const readAllowPaths = resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir);
-  const writeAllowPaths = resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir);
+  const readAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir),
+  );
+  const writeAllowPaths = normalizeSandboxPathList(
+    resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir),
+  );
   const extraReadWritePaths = normalizeExtraReadWritePaths(
     options.extraReadWritePaths,
     repoRoot,
@@ -380,14 +474,22 @@ export function policyConfigToSandboxOptions(
     repoRoot,
     options.cwd,
   );
+  const metadataReadPaths = collectAncestorPaths([
+    repoRoot,
+    options.cwd,
+    tmpDir,
+    ...readOnlyPaths,
+    ...readWritePaths,
+  ]);
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths,
     readWritePaths,
+    metadataReadPaths,
     denyPatterns: [...new Set(denyPatterns)],
-    denyPaths: [...new Set(denyPaths)],
+    denyPaths: normalizeSandboxPathList(denyPaths),
     env: {},
     network: policy.default.network,
     allowUnsandboxed: options.allowUnsandboxed,

@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { dirname } from 'node:path';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
 // Mock child_process
@@ -247,6 +248,153 @@ describe('SeatbeltSandbox', () => {
       expect(result.sandboxed).toBe(true);
       expect(writeFileSync).toHaveBeenCalled();
       expect(unlinkSync).toHaveBeenCalled();
+    });
+
+    it('writes metadata-only ancestor rules into the generated profile', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('node script.js', {
+        ...mockOptions,
+        metadataReadPaths: ['/Users/test/project'],
+      });
+
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/Users/test/project")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/Users/test")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/Users")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/usr/bin")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(allow file-read-metadata'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining(`(literal "${dirname(dirname(dirname(process.execPath)))}")`),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/Users/test/.cache/node/corepack")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).not.toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(subpath "/Users/test/.cache/node/corepack")'),
+        expect.any(Object),
+      );
+    });
+
+    it('uses the sandbox command HOME for package manager metadata paths', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('node script.js', {
+        ...mockOptions,
+        env: { PATH: '/usr/bin', HOME: '/tmp/rundown-home' },
+      });
+
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/tmp/rundown-home/.cache/node/corepack")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).not.toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(subpath "/tmp/rundown-home/.cache/node/corepack")'),
+        expect.any(Object),
+      );
+    });
+
+    it('does not grant broad process wildcard rights', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('node script.js', mockOptions);
+
+      expect(writeFileSync).not.toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(allow process*)'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(allow process-exec process-fork)'),
+        expect.any(Object),
+      );
     });
 
     it('handles non-zero exit code', async () => {

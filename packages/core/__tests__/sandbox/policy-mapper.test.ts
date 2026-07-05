@@ -1,7 +1,8 @@
 import { describe, it, expect, jest } from '@jest/globals';
-import { join, dirname } from 'node:path';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import type { Stats } from 'node:fs';
+import { join, dirname, basename, resolve } from 'node:path';
+import { mkdtemp, rm, writeFile, mkdir, realpath, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { realpathSync, type Stats } from 'node:fs';
 import {
   policyToSandboxOptions,
   policyConfigToSandboxOptions,
@@ -12,6 +13,19 @@ import {
   DEFAULT_POLICY_LINUX,
   type PolicyConfig,
 } from '../../src/policy/schema.js';
+
+function canonicalPathForTest(value: string): string {
+  const absolute = resolve(value);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    const parent = dirname(absolute);
+    if (parent === absolute) {
+      return absolute;
+    }
+    return join(canonicalPathForTest(parent), basename(absolute));
+  }
+}
 
 describe('policyToSandboxOptions', () => {
   it('returns minimal options for default policy', () => {
@@ -236,7 +250,7 @@ describe('policyToSandboxOptions', () => {
       tmpDir: '/var/tmp',
     });
 
-    expect(options.readWritePaths).toContain('/var/tmp/cache');
+    expect(options.readWritePaths).toContain(canonicalPathForTest('/var/tmp/cache'));
   });
 
   it('passes through allowUnsandboxed option', () => {
@@ -403,6 +417,425 @@ describe('policyToSandboxOptions', () => {
     });
 
     expect(options.readOnlyPaths).toContain('/repo/granted');
+  });
+
+  it('includes CLI read grants in sandbox read-only paths', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { read: ['/repo/schema.json'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toContain('/repo/schema.json');
+    expect(options.readWritePaths).not.toContain('/repo/schema.json');
+  });
+
+  it('includes CLI write grants in sandbox read-write paths', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { write: ['/repo/dist/**'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).toContain('/repo/dist');
+    expect(options.readOnlyPaths).not.toContain('/repo/dist');
+  });
+
+  it('maps allowAll to broad sandbox read and write grants', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: ['/repo/.env'] },
+        write: { allow: [], deny: ['/repo/dist/secret.txt'] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      allowAll: true,
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).toContain('/');
+    expect(options.readOnlyPaths).not.toContain('/');
+    expect(options.denyPatterns).toEqual([]);
+    expect(options.denyPaths).toEqual([]);
+  });
+
+  it('maps denyAll to empty sandbox grants', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: ['/repo/**'], deny: [] },
+        write: { allow: ['/repo/dist/**'], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      denyAll: true,
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toEqual([]);
+    expect(options.readWritePaths).toEqual([]);
+    expect(options.denyPatterns).toEqual(['/**']);
+    expect(options.denyPaths).toEqual([]);
+  });
+
+  it('does not emit deny paths that are covered by a higher-precedence CLI read grant', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: ['/repo/.env'] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { read: ['/repo/.env'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toContain('/repo/.env');
+    expect(options.denyPaths).not.toContain('/repo/.env');
+    expect(options.denyPatterns).not.toContain('/repo/.env');
+  });
+
+  it('does not emit deny paths that are covered by a higher-precedence session write grant', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: ['/repo/dist/secret.txt'] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/repo' });
+    evaluator.addSessionGrant('write', '/repo/dist/secret.txt');
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).toContain('/repo/dist/secret.txt');
+    expect(options.denyPaths).not.toContain('/repo/dist/secret.txt');
+    expect(options.denyPatterns).not.toContain('/repo/dist/secret.txt');
+  });
+
+  it('retains configured deny paths when no runtime grant covers them', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: ['/repo/.env'] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/repo' });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.denyPaths).toContain('/repo/.env');
+    expect(options.denyPatterns).toContain('/repo/.env');
+  });
+
+  it('filters alias-spelled deny paths covered by canonical runtime grants', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const secrets = join(repoRoot, 'secrets');
+      await mkdir(secrets);
+      const target = join(secrets, '.env');
+      await writeFile(target, 'token');
+      const alias = join(aliasRoot, 'secrets-link');
+      await symlink(secrets, alias);
+      const aliasTarget = join(alias, '.env');
+      const canonicalTarget = await realpath(target);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [aliasTarget] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        cliGrants: { read: [canonicalTarget] },
+      });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalTarget);
+      expect(options.denyPaths).not.toContain(canonicalTarget);
+      expect(options.denyPaths).not.toContain(aliasTarget);
+      expect(options.denyPatterns).not.toContain(aliasTarget);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('filters alias-spelled deny glob patterns covered by canonical runtime grants', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const secrets = join(repoRoot, 'secrets');
+      await mkdir(secrets);
+      const target = join(secrets, '.env');
+      await writeFile(target, 'token');
+      const alias = join(aliasRoot, 'secrets-link');
+      await symlink(secrets, alias);
+      const denyPattern = join(alias, '**');
+      const canonicalSecrets = await realpath(secrets);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [denyPattern] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        cliGrants: { read: [canonicalSecrets] },
+      });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalSecrets);
+      expect(options.denyPaths).not.toContain(canonicalSecrets);
+      expect(options.denyPatterns).not.toContain(denyPattern);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('realpath-normalizes read grants that pass through a symlink', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const dir = join(repoRoot, 'schema-dir');
+      await mkdir(dir);
+      const alias = join(aliasRoot, 'schema-link');
+      await symlink(dir, alias);
+      const canonicalDir = await realpath(dir);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [join(alias, '**')], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalDir);
+      expect(options.readOnlyPaths).not.toContain(alias);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('realpath-normalizes future write grants through the nearest existing symlink ancestor', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const dist = join(repoRoot, 'dist');
+      await mkdir(dist);
+      const alias = join(aliasRoot, 'dist-link');
+      await symlink(dist, alias);
+      const futurePath = join(alias, 'new-file.txt');
+      const canonicalRepo = await realpath(repoRoot);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [futurePath], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readWritePaths).toContain(join(canonicalRepo, 'dist', 'new-file.txt'));
+      expect(options.readWritePaths).not.toContain(futurePath);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  const macOSTmpAliasIt =
+    process.platform === 'darwin' && tmpdir().startsWith('/var/folders/') ? it : it.skip;
+
+  macOSTmpAliasIt(
+    'normalizes the macOS tmpdir alias from /var/folders to /private/var/folders when present',
+    async () => {
+      const tmp = tmpdir();
+      const canonicalTmp = await realpath(tmp);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: ['{tmp}/rundown-sandbox-test/**'], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot: '/repo',
+        tmpDir: tmp,
+      });
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: '/repo',
+        repoRoot: '/repo',
+        tmpDir: tmp,
+      });
+
+      expect(options.readWritePaths).toContain(join(canonicalTmp, 'rundown-sandbox-test'));
+      expect(options.readWritePaths).not.toContain(join(tmp, 'rundown-sandbox-test'));
+    },
+  );
+
+  it('applies the same canonicalization to policyConfigToSandboxOptions', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
+    try {
+      const dir = join(repoRoot, 'raw-policy-read');
+      await mkdir(dir);
+      const alias = join(aliasRoot, 'raw-policy-link');
+      await symlink(dir, alias);
+      const canonicalDir = await realpath(dir);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [join(alias, '**')], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+
+      const options = policyConfigToSandboxOptions(policy, {
+        cwd: repoRoot,
+        repoRoot,
+      });
+
+      expect(options.readOnlyPaths).toContain(canonicalDir);
+      expect(options.readOnlyPaths).not.toContain(alias);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('includes metadata-read ancestors and grant roots for raw policy sandbox options', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: ['/Users/alice/project/schema.json'], deny: [] },
+        write: { allow: ['/Users/alice/project/dist/**'], deny: [] },
+      },
+    };
+
+    const options = policyConfigToSandboxOptions(policy, {
+      cwd: '/Users/alice/project',
+      repoRoot: '/Users/alice/project',
+    });
+
+    expect(options.metadataReadPaths).toEqual(
+      expect.arrayContaining([
+        '/Users',
+        '/Users/alice',
+        '/Users/alice/project',
+        '/Users/alice/project/schema.json',
+        '/Users/alice/project/dist',
+      ]),
+    );
+  });
+
+  it('includes metadata-read ancestors for sandbox grant roots', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: ['/Users/alice/project/schema.json'], deny: [] },
+        write: { allow: ['/Users/alice/project/dist/**'], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/Users/alice/project' });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/Users/alice/project',
+      repoRoot: '/Users/alice/project',
+    });
+
+    expect(options.metadataReadPaths).toEqual(
+      expect.arrayContaining(['/Users', '/Users/alice', '/Users/alice/project']),
+    );
+    expect(options.metadataReadPaths).toEqual(
+      expect.arrayContaining(['/Users/alice/project/schema.json', '/Users/alice/project/dist']),
+    );
   });
 
   it('rejects out-of-root extra read-write paths in policyToSandboxOptions', async () => {
@@ -619,7 +1052,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home/user');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user'));
   });
 
   it('extracts base path from glob with *.ext', () => {
@@ -642,7 +1075,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home/user');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user'));
   });
 
   it('returns path as-is when no glob characters', () => {
@@ -665,7 +1098,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home/user/specific-file.txt');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user/specific-file.txt'));
   });
 
   it('handles glob in middle of path', () => {
@@ -688,6 +1121,6 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain('/home');
+    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home'));
   });
 });

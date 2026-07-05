@@ -97,6 +97,28 @@ describe('PolicyEvaluator', () => {
       expect(decision.reason).toContain('--deny-all');
     });
 
+    it('should apply global overrides to sandbox path rules', () => {
+      const allowAllEvaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        allowAll: true,
+      });
+      const denyAllEvaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        denyAll: true,
+      });
+
+      expect(allowAllEvaluator.getSandboxRules('read')).toEqual({
+        allow: ['/**'],
+        deny: [],
+        runtimeGrantAllow: ['/**'],
+      });
+      expect(denyAllEvaluator.getSandboxRules('read')).toEqual({
+        allow: [],
+        deny: ['/**'],
+        runtimeGrantAllow: [],
+      });
+    });
+
     it('should respect CLI grants', () => {
       const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
         repoRoot,

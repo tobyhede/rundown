@@ -13,6 +13,7 @@ import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { isError } from '../errors.js';
+import { collectAncestorPaths } from './path-utils.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -61,6 +62,20 @@ function getNodeExecutionPaths(): string[] {
   }
 
   return paths;
+}
+
+function getPackageManagerMetadataPaths(env: Partial<Record<string, string>>): string[] {
+  const paths: string[] = [];
+  const home = env.HOME ?? process.env.HOME;
+  if (home) {
+    paths.push(join(home, '.cache', 'node', 'corepack'));
+  }
+  return paths;
+}
+
+function getPathLookupDirectories(env: Partial<Record<string, string>>): string[] {
+  const pathValue = env.PATH ?? env.Path ?? process.env.PATH ?? process.env.Path ?? '';
+  return pathValue.split(':').filter((entry) => entry.length > 0);
 }
 
 /**
@@ -165,6 +180,21 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     .map((p) => `  (subpath "${escapePath(p)}")`)
     .join('\n');
 
+  const pathLookupDirs = getPathLookupDirectories(options.env);
+  const packageManagerMetadataPaths = getPackageManagerMetadataPaths(options.env);
+  const metadataPathCandidates = [
+    ...(options.metadataReadPaths ?? []),
+    ...pathLookupDirs,
+    ...packageManagerMetadataPaths,
+  ];
+  const metadataReadPaths = [
+    ...metadataPathCandidates,
+    ...collectAncestorPaths([...executionPaths, ...metadataPathCandidates]),
+  ];
+  const metadataReadRules = [...new Set(metadataReadPaths)]
+    .map((p) => `  (literal "${escapePath(p)}")`)
+    .join('\n');
+
   // Note: Seatbelt doesn't have a direct "deny subpath" after allowing parent.
   // The approach is to be specific about what's allowed.
   // Deny paths are handled by not including them in allow rules.
@@ -176,8 +206,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 (deny default)
 
 ;; Allow process execution
-(allow process-exec)
-(allow process-fork)
+(allow process-exec process-fork)
 
 ;; Allow basic system operations
 (allow sysctl-read)
@@ -209,6 +238,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 ;; but does NOT allow reading file contents (file-read-data)
 (allow file-read-metadata
   (subpath "/private/var")
+${metadataReadRules}
 )
 
 ;; Allow /dev access for stdio

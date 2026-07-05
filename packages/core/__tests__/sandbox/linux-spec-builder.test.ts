@@ -14,6 +14,7 @@ const base: SandboxOptions = {
   repoRoot: '/repo',
   readOnlyPaths: ['/repo'],
   readWritePaths: ['/repo/dist'],
+  metadataReadPaths: ['/repo-parent'],
   denyPaths: [],
   denyPatterns: [],
   env: {},
@@ -34,6 +35,8 @@ describe('buildSpec', () => {
     expect(spec.rox).toEqual(expect.arrayContaining(['/usr', '/bin']));
     expect(spec.ro).toEqual(expect.arrayContaining(['/repo', '/etc']));
     expect(spec.rw).toEqual(expect.arrayContaining(['/repo/dist', '/dev/null']));
+    expect(spec.ro).not.toContain('/repo-parent');
+    expect(spec.rw).not.toContain('/repo-parent');
   });
 
   it('serializes network posture to the helper spec', () => {
