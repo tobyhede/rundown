@@ -82,6 +82,10 @@ unbuilt plans misleads every reader.
 - **Prospective docs are an immutable, dated record.** Each spec or plan is
   written once, committed, and never overwritten — a new design for the same
   feature becomes a new dated file. `docs/superpowers/` is the home for these.
+- **Roadmaps are GitHub epics.** Use `Epic:` issues for cross-cluster roadmaps,
+  `Cluster:` issues for implementation clusters, and leaf issues for concrete
+  defects or features. `docs/superpowers/plans/` is for actionable cluster
+  handoff plans, not living roadmap trackers.
 
 **Litmus test:** _Does this describe code that exists today?_ →
 `docs/internal/`. _Does this describe code we have not built yet?_ →

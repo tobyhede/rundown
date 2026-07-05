@@ -562,6 +562,14 @@ whether it describes code that exists _today_ or code we _intend_ to build:
   file; existing ones are never overwritten. Trackable issues and follow-up work
   belong in GitHub issues, not in-repo docs.
 
+Roadmaps belong in GitHub epic issues, not dated `docs/superpowers/` files. Use
+an `Epic:` issue for the overall roadmap, `Cluster:` issues for coherent
+implementation clusters, and leaf issues for concrete defects or features. Link
+the hierarchy with GitHub parent/sub-issue relationships when available, and
+keep the readable issue body checklist in sync. Put cluster-level agent handoff
+plans in `docs/superpowers/plans/` only when they contain actionable
+implementation steps.
+
 Litmus test: a dated filename (`YYYY-MM-DD-…`) or a description of unbuilt work
 is **prospective** and belongs under `docs/superpowers/` — never in
 `docs/internal/`. Put the current design in `docs/internal/`; put the plan for
