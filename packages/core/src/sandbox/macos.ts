@@ -144,6 +144,10 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     ])
     .join('\n');
 
+  const metadataReadRules = (options.metadataReadPaths ?? [])
+    .map((p) => `  (literal "${escapePath(p)}")`)
+    .join('\n');
+
   // Get Node.js execution paths dynamically
   const executionPaths = getNodeExecutionPaths();
 
@@ -202,6 +206,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 ;; but does NOT allow reading file contents (file-read-data)
 (allow file-read-metadata
   (subpath "/private/var")
+${metadataReadRules}
 )
 
 ;; Allow /dev access for stdio

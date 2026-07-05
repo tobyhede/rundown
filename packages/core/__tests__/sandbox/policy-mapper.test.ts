@@ -603,6 +603,27 @@ describe('policyToSandboxOptions', () => {
     }
   });
 
+  it('includes metadata-read ancestors for sandbox grant roots', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: ['/Users/alice/project/schema.json'], deny: [] },
+        write: { allow: ['/Users/alice/project/dist/**'], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/Users/alice/project' });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/Users/alice/project',
+      repoRoot: '/Users/alice/project',
+    });
+
+    expect(options.metadataReadPaths).toEqual(
+      expect.arrayContaining(['/Users', '/Users/alice', '/Users/alice/project']),
+    );
+  });
+
   it('rejects out-of-root extra read-write paths in policyToSandboxOptions', async () => {
     const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
     const outsidePath = join(dirname(repoRoot), 'outside.txt');

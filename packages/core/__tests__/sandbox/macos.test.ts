@@ -234,6 +234,46 @@ describe('SeatbeltSandbox', () => {
       expect(unlinkSync).toHaveBeenCalled();
     });
 
+    it('writes metadata-only ancestor rules into the generated profile', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('node script.js', {
+        ...mockOptions,
+        metadataReadPaths: ['/Users', '/Users/test', '/Users/test/project'],
+      });
+
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(literal "/Users/test/project")'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(allow file-read-metadata'),
+        expect.any(Object),
+      );
+    });
+
     it('handles non-zero exit code', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);

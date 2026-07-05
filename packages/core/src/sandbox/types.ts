@@ -24,6 +24,16 @@ export interface SandboxOptions {
   /** Paths that should be writable (read-write access) */
   readWritePaths: string[];
 
+  /**
+   * Paths that should allow metadata-only reads such as stat/lstat traversal.
+   *
+   * Seatbelt needs this for ancestor directories (for example `/Users` and
+   * `/Users/name`) so runtimes can resolve allowed descendants without gaining
+   * permission to read ancestor file contents. Backends that cannot express
+   * metadata-only rights ignore this field.
+   */
+  metadataReadPaths?: string[];
+
   /** Paths that should be explicitly denied (overrides allow) */
   denyPaths: string[];
 

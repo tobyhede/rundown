@@ -150,6 +150,19 @@ function normalizeSandboxPathList(paths: readonly string[]): string[] {
   return [...normalized];
 }
 
+function collectAncestorPaths(paths: readonly string[]): string[] {
+  const ancestors = new Set<string>();
+  for (const candidate of paths) {
+    let current = path.dirname(candidate);
+    while (current !== path.dirname(current)) {
+      ancestors.add(current);
+      current = path.dirname(current);
+    }
+  }
+  ancestors.delete(path.sep);
+  return [...ancestors].sort((a, b) => a.length - b.length);
+}
+
 function normalizeExtraReadWritePath(candidate: string, repoRoot: string, cwd: string): string {
   const absoluteCandidate = path.isAbsolute(candidate)
     ? candidate
@@ -386,12 +399,20 @@ export function policyToSandboxOptions(
     runtimeGrantPaths,
   );
   const effectiveDenyPaths = filterDenyPathsCoveredByRuntimeGrants(denyPaths, runtimeGrantPaths);
+  const metadataReadPaths = collectAncestorPaths([
+    repoRoot,
+    options.cwd,
+    tmpDir,
+    ...readOnlyPaths,
+    ...readWritePaths,
+  ]);
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths,
     readWritePaths,
+    metadataReadPaths,
     denyPatterns: [...new Set(effectiveDenyPatterns)],
     denyPaths: normalizeSandboxPathList(effectiveDenyPaths),
     env: {},
@@ -441,12 +462,20 @@ export function policyConfigToSandboxOptions(
     repoRoot,
     options.cwd,
   );
+  const metadataReadPaths = collectAncestorPaths([
+    repoRoot,
+    options.cwd,
+    tmpDir,
+    ...readOnlyPaths,
+    ...readWritePaths,
+  ]);
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths,
     readWritePaths,
+    metadataReadPaths,
     denyPatterns: [...new Set(denyPatterns)],
     denyPaths: normalizeSandboxPathList(denyPaths),
     env: {},
