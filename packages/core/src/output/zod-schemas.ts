@@ -1207,9 +1207,9 @@ export const RunCommandResponseSchema = ExecutionSummarySchema.extend({
 /**
  * Abort response schema.
  *
- * Output from `rd abort <token>` command.
+ * Output from `rundown abort <token>` and explicit operator claim recovery.
  */
-export const AbortResponseSchema = z
+const TokenAbortResponseSchema = z
   .object({
     /** Response kind discriminant */
     kind: z.literal('abort').describe('Response type discriminant'),
@@ -1230,6 +1230,31 @@ export const AbortResponseSchema = z
     /** Child run ID (when force-cancelling claimed delegation) */
     childRunId: z.string().optional().describe('Child run ID when force-cancelling'),
   })
+  .describe('Response from delegation-token abort');
+
+const OperatorClaimReleaseAbortResponseSchema = z
+  .object({
+    /** Response kind discriminant */
+    kind: z.literal('abort').describe('Response type discriminant'),
+    /** Action performed */
+    action: z.literal('operator-release-claim').describe('Action type'),
+    /** Recovery result status */
+    status: z.literal('released').describe('Recovery result status'),
+    /** Released claim id */
+    claimId: z.string().describe('Released claim ID'),
+    /** Child run ID previously owned by the claim */
+    childRunId: z.string().describe('Child run ID'),
+    /** Parent run ID owning the delegated claim */
+    parentRunId: z.string().describe('Parent run ID'),
+    /** Parent step or substep ID owning the delegated claim */
+    parentStep: z.string().describe('Parent step or substep ID'),
+    /** Explicit operator recovery reason */
+    reason: z.literal('abandoned-child').describe('Operator recovery reason'),
+  })
+  .describe('Response from explicit operator claim release');
+
+export const AbortResponseSchema = z
+  .union([TokenAbortResponseSchema, OperatorClaimReleaseAbortResponseSchema])
   .describe('Response from the abort command');
 
 // ============================================================================

@@ -734,37 +734,38 @@ Two companion CLIs ship alongside `rundown`:
 
 ### Delegation Commands
 
-| Command                                                    | Description                                                                       |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `rundown delegate`                                         | Infer both child runbook and substep from runbook state                           |
-| `rundown delegate --step <id>`                             | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
-| `rundown delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
-| `rundown delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
-| `rundown delegate --retry <token>`                         | Retry a delegation: supersede and re-issue with a fresh token                     |
-| `rundown delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
-| `rundown delegate --retry --step <id> --index <n>`         | Retry a delegation within a FOR iteration                                         |
-| `rundown delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
-| `rundown delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
-| `rundown claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
-| `rundown claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
-| `rundown pass --claim-id <claim_id>`                       | Complete a claimed child with PASS                                                |
-| `rundown fail --claim-id <claim_id>`                       | Complete a claimed child with FAIL                                                |
-| `rundown status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
-| `rundown collect --claim-id <claim_id>`                    | Collect delegated results for a claimed child scope                               |
-| `rundown goto <step> --claim-id <claim_id>`                | Jump within a claimed child runbook                                               |
-| `rundown stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
-| `rundown pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
-| `rundown stop --claim-id <claim_id>`                       | Stop a claimed child runbook                                                      |
-| `rundown complete --claim-id <claim_id>`                   | Complete a claimed child runbook                                                  |
-| `rundown delegate --step <id> --run <rd_…>`                | Orchestrator lane: delegate on a delegation-exposed run you control               |
-| `rundown collect --run <rd_…>`                             | Orchestrator lane: aggregate delegated results for the run you control            |
-| `rundown pass --run <rd_…>`                                | Orchestrator lane: advance the run you control                                    |
-| `rundown fail --run <rd_…>`                                | Orchestrator lane: record a failing advance on the run you control                |
-| `rundown goto <step> --run <rd_…>`                         | Orchestrator lane: jump within the run you control (run-navigation policy gate)   |
-| `rundown complete --run <rd_…>`                            | Orchestrator lane: complete the run you control                                   |
-| `rundown stop --run <rd_…>`                                | Orchestrator lane: stop the run you control                                       |
-| `rundown abort <token>`                                    | Cancel a delegation token                                                         |
-| `rundown abort <token> --force`                            | Cancel or clean up a claimed delegation                                           |
+| Command                                                                   | Description                                                                       |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `rundown delegate`                                                        | Infer both child runbook and substep from runbook state                           |
+| `rundown delegate --step <id>`                                            | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
+| `rundown delegate <runbook> --step <id>`                                  | Delegate substep to an explicit child runbook                                     |
+| `rundown delegate <runbook> --step <id> --input key=value`                | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
+| `rundown delegate --retry <token>`                                        | Retry a delegation: cancel and re-issue with a fresh token                        |
+| `rundown delegate --retry --step <id>`                                    | Retry the delegation on a substep                                                 |
+| `rundown delegate --retry --step <id> --index <n>`                        | Retry a delegation within a FOR iteration                                         |
+| `rundown delegate --retry`                                                | Retry the delegation inferred from the active substep                             |
+| `rundown delegate --retry --step <id> --input key=value`                  | Retry with variable overrides                                                     |
+| `rundown claim <token>`                                                   | Claim a delegation token, launch child, and return `claim_id`                     |
+| `rundown claim <token> --input key=value`                                 | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
+| `rundown pass --claim-id <claim_id>`                                      | Complete a claimed child with PASS                                                |
+| `rundown fail --claim-id <claim_id>`                                      | Complete a claimed child with FAIL                                                |
+| `rundown status --claim-id <claim_id>`                                    | Inspect a claimed child runbook                                                   |
+| `rundown collect --claim-id <claim_id>`                                   | Collect delegated results for a claimed child scope                               |
+| `rundown goto <step> --claim-id <claim_id>`                               | Jump within a claimed child runbook                                               |
+| `rundown stash --claim-id <claim_id>`                                     | Stash a claimed child runbook while preserving the claim record                   |
+| `rundown pop --claim-id <claim_id>`                                       | Restore a stashed claimed child runbook                                           |
+| `rundown stop --claim-id <claim_id>`                                      | Stop a claimed child runbook                                                      |
+| `rundown complete --claim-id <claim_id>`                                  | Complete a claimed child runbook                                                  |
+| `rundown delegate --step <id> --run <rd_…>`                               | Orchestrator lane: delegate on a delegation-exposed run you control               |
+| `rundown collect --run <rd_…>`                                            | Orchestrator lane: aggregate delegated results for the run you control            |
+| `rundown pass --run <rd_…>`                                               | Orchestrator lane: advance the run you control                                    |
+| `rundown fail --run <rd_…>`                                               | Orchestrator lane: record a failing advance on the run you control                |
+| `rundown goto <step> --run <rd_…>`                                        | Orchestrator lane: jump within the run you control (run-navigation policy gate)   |
+| `rundown complete --run <rd_…>`                                           | Orchestrator lane: complete the run you control                                   |
+| `rundown stop --run <rd_…>`                                               | Orchestrator lane: stop the run you control                                       |
+| `rundown abort <token>`                                                   | Cancel a delegation token                                                         |
+| `rundown abort <token> --force`                                           | Cancel a claimed delegation                                                       |
+| `rundown abort --claim-id <claim_id> --operator-override abandoned-child` | Release an abandoned claim record without recording a child outcome               |
 
 Delegation semantics:
 
@@ -800,6 +801,11 @@ Delegation semantics:
 - `rundown abort <token> --force` cancels an active claimed child as fail. When
   the linked child is already terminal or already reported, it performs cleanup
   without recording a duplicate fail.
+- If a child process is abandoned and cannot present its claim capability, an
+  operator may release only the claim record with
+  `rundown abort --claim-id <claim_id> --operator-override abandoned-child`.
+  This recovery form does not synthesize PASS or FAIL; it only removes the
+  parent-side claim routing record.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a stable `claim_id`.
 - Child runbook uses `rundown pass --claim-id <claim_id>` /
@@ -1230,4 +1236,5 @@ rundown collect --claim-id <claim_id>   # Collect delegated child results
 rundown stop --claim-id <claim_id>      # Stop claimed child
 rundown complete --claim-id <claim_id>  # Complete claimed child
 rundown abort <token>                   # Cancel delegation token
+rundown abort --claim-id <claim_id> --operator-override abandoned-child
 ```

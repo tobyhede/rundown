@@ -98,6 +98,25 @@ describe('session capability schema', () => {
       await rm(setup.cwd, { recursive: true, force: true });
     }
   });
+
+  it('lets an explicit operator release an abandoned claim without a child proof', async () => {
+    const setup = await createClaimedChildFixture();
+    try {
+      const released = await setup.session.operatorReleaseClaim(
+        setup.claim.claimId,
+        'abandoned-child',
+      );
+
+      expect(released.status).toBe('released');
+      if (released.status !== 'released') throw new Error('expected released');
+      expect(released.claim.claimId).toBe(setup.claim.claimId);
+
+      const loaded = await setup.manager.loadSession();
+      expect(loaded.claims[setup.claim.claimId]).toBeUndefined();
+    } finally {
+      await rm(setup.cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 async function createClaimedChildFixture(

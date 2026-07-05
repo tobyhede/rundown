@@ -377,6 +377,38 @@ export class SessionService {
   }
 
   /**
+   * Release an abandoned claim through an explicit operator recovery action.
+   *
+   * This does not record a child outcome. It only removes the claim routing
+   * record so the parent-side operator can recover from a child that no longer
+   * holds or can present its claim capability.
+   *
+   * @param claimId - Printed claim id to release
+   * @param reason - Explicit operator recovery reason
+   * @returns Released claim record, or missing when the claim does not exist
+   */
+  async operatorReleaseClaim(
+    claimId: ClaimId,
+    reason: 'abandoned-child',
+  ): Promise<
+    | {
+        readonly status: 'released';
+        readonly claim: ClaimRecord;
+        readonly reason: 'abandoned-child';
+      }
+    | { readonly status: 'missing'; readonly claimId: ClaimId }
+  > {
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      const claim = session.claims[claimId];
+      if (!claim) return { status: 'missing', claimId };
+      delete session.claims[claimId];
+      await this.manager.saveSession(session);
+      return { status: 'released', claim, reason };
+    });
+  }
+
+  /**
    * List open claims for a parent whose leases have expired.
    *
    * @param parentRunId - Parent run whose delegated children should be inspected

@@ -11,10 +11,18 @@ import {
   type RunbookState,
   type ForceAbortLinkedChildCleanupResult,
 } from '@rundown-org/core';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { getCwd } from '../helpers/context.js';
 import { buildNonDelegatingLifecycleSeam } from '../helpers/lifecycle-seam-factory.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+
+interface AbortOptions {
+  readonly force?: boolean;
+  readonly claimId?: string;
+  readonly operatorOverride?: string;
+  readonly text?: boolean;
+}
 
 /**
  * Abort command — cancels a delegation token.
@@ -47,16 +55,96 @@ import { OutputEmitter } from '../services/output-emitter.js';
  */
 export function registerAbortCommand(program: Command): void {
   program
-    .command('abort <token>')
+    .command('abort [token]')
     .description('Cancel a delegation token')
     .option('--force', 'Force cancel even if delegation is claimed (stops child run)')
+    .option('--claim-id <claimId>', 'Release an abandoned claimed child during recovery')
+    .option(
+      '--operator-override <reason>',
+      'Operator recovery override reason (currently: abandoned-child)',
+    )
     .option('--text', 'Output as human-readable text')
-    .action(async (token: string, options: { force?: boolean; text?: boolean }) => {
+    .action(async (token: string | undefined, options: AbortOptions) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'abort' });
           const cwd = getCwd();
-          const { manager, seam: lifecycleCommandService } = buildNonDelegatingLifecycleSeam(cwd);
+          const {
+            manager,
+            sessionService,
+            seam: lifecycleCommandService,
+          } = buildNonDelegatingLifecycleSeam(cwd);
+
+          if (options.claimId !== undefined || options.operatorOverride !== undefined) {
+            const claimTarget = parseClaimIdOption(options.claimId, output);
+            if (!claimTarget.ok) return;
+
+            if (token !== undefined) {
+              output.error(
+                'Claim recovery abort must not include a delegation token.',
+                'INVALID_SYNTAX',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            if (claimTarget.claimId === undefined) {
+              output.error(
+                'Claim recovery abort requires --claim-id <claim_id>.',
+                'CLAIM_ID_REQUIRED',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            if (options.operatorOverride !== 'abandoned-child') {
+              output.error(
+                'Claim recovery abort requires --operator-override abandoned-child.',
+                'OPERATOR_OVERRIDE_REQUIRED',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+
+            const released = await sessionService.operatorReleaseClaim(
+              claimTarget.claimId,
+              'abandoned-child',
+            );
+            if (released.status === 'missing') {
+              output.error('Claim not found.', 'CLAIM_NOT_FOUND', {
+                claimId: released.claimId,
+              });
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+
+            if (!options.text) {
+              output.json({
+                kind: 'abort',
+                action: 'operator-release-claim',
+                status: 'released',
+                claimId: released.claim.claimId,
+                childRunId: released.claim.childRunId,
+                parentRunId: released.claim.parentRunId,
+                parentStep: released.claim.parentStepId,
+                reason: released.reason,
+              });
+            } else {
+              output.message(`RELEASED  ${released.claim.claimId} (${released.reason})`, 'warning');
+            }
+            output.flush();
+            return;
+          }
+
+          if (token === undefined) {
+            output.error('Delegation token is required.', 'MISSING_TOKEN');
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
+
           const hint = truncateDelegationToken(token);
 
           // 1. Validate token format

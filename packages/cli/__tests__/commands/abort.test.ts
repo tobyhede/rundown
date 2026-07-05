@@ -8,6 +8,7 @@ import {
   findActionOutput,
   parseCliJsonObject,
   parseConcatenatedJson,
+  readSession,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -280,6 +281,44 @@ describe('abort command - unit tests', () => {
       const validation = validateCommandOutput('abort', output);
       expect(validation.errors).toEqual([]);
       expect(validation.valid).toBe(true);
+    });
+
+    it('requires operator override to release a claim by printed claim id during recovery', async () => {
+      const token = await setupDelegation();
+
+      let result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimOutput = findActionOutput(result.stdout);
+      const claimId = String(claimOutput?.claim_id);
+      expect(claimId).toMatch(/^rdclm_/);
+
+      result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      expect(result.exitCode).toBe(1);
+      expect(parseCliJsonObject(result.stdout || result.stderr)).toEqual(
+        expect.objectContaining({
+          code: 'CLAIM_CAPABILITY_REQUIRED',
+        }),
+      );
+
+      result = await runCliInProcess(
+        ['abort', '--claim-id', claimId, '--operator-override', 'abandoned-child'],
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const output = parseCliJsonObject(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({
+          kind: 'abort',
+          action: 'operator-release-claim',
+          status: 'released',
+          claimId,
+          reason: 'abandoned-child',
+        }),
+      );
+      expect(validateCommandOutput('abort', output)).toEqual({ valid: true, errors: [] });
+
+      const session = await readSession(workspace);
+      expect(session.claims[claimId]).toBeUndefined();
     });
 
     it('cancelled → claim fails', async () => {
