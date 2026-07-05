@@ -1034,8 +1034,10 @@ describe('collect command', () => {
       const start = runCli('run parent.runbook.md', workspace);
       expect(start.exitCode).toBe(0);
       const started = parseConcatenatedJson(start.stdout).find(
-        (event): event is Record<string, unknown> =>
-          typeof event === 'object' && event !== null && event.type === 'runbook_started',
+        (event): event is Record<string, unknown> => {
+          if (typeof event !== 'object' || event === null) return false;
+          return (event as Record<string, unknown>).type === 'runbook_started';
+        },
       );
       const runId = String(started?.runbookId);
       expect(runId).toMatch(/^rd_/);
