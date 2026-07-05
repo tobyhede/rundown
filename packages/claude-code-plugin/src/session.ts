@@ -11,6 +11,18 @@ import {
   logger,
   getErrorMessage,
 } from './shared/index.js';
+import { PluginSessionLock } from './session-lock.js';
+
+/**
+ * Decision returned by a {@link Session.update} updater.
+ *
+ * Discriminated on `commit` so an updater cannot commit without supplying the
+ * next value, and a read-only pass cannot accidentally write: invalid states
+ * are unrepresentable.
+ */
+export type SessionUpdateDecision<V, R> =
+  | { readonly commit: true; readonly value: V; readonly result: R }
+  | { readonly commit: false; readonly result: R };
 
 /**
  * Manages session state with atomic file updates.
@@ -19,13 +31,33 @@ import {
  */
 export class Session {
   private stateFile: string;
+  private lock: PluginSessionLock;
 
   /**
    * Create a new Session instance for the given project directory.
-   * @param cwd - Project root directory (defaults to current directory)
+   * @param cwd - Project root directory (defaults to current directory; must exist)
    */
   constructor(cwd = '.') {
     this.stateFile = join(cwd, '.claude', 'session', 'state.json');
+    this.lock = new PluginSessionLock(cwd);
+  }
+
+  /**
+   * Run `fn` while holding the plugin session lock.
+   *
+   * Serializes every load-modify-save cycle across concurrent hook processes
+   * (#470 defect 1). Release is scoped with `await using` so it runs on every
+   * exit path without a bare `finally` (RD-102 non-masking policy). The lock
+   * is NOT reentrant: `fn` must not call another locking Session method.
+   *
+   * @param fn - Critical section run under the lock
+   * @returns The value returned by `fn`
+   * @throws {PluginSessionLockTimeoutError} When the lock cannot be acquired
+   */
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    await this.lock.acquire();
+    await using _guard = this.lock.held();
+    return await fn();
   }
 
   /**
@@ -39,32 +71,75 @@ export class Session {
   }
 
   /**
-   * Set a session state value.
+   * Set a session state value under the session lock.
    * @param key - Session state key to update
    * @param value - New value to persist
-   * @throws {Error} If persistence fails (mkdir/write/rename errors from save)
+   * @throws {Error} If persistence fails (lock/mkdir/write/rename errors)
    */
   async set<K extends keyof SessionState>(key: K, value: SessionState[K]): Promise<void> {
-    const state = await this.load();
-    state[key] = value;
-    await this.save(state);
+    await this.withLock(async () => {
+      const state = await this.load();
+      state[key] = value;
+      await this.save(state);
+    });
   }
 
   /**
-   * Append value to array field (deduplicated).
+   * Append value to array field (deduplicated) under the session lock.
    * @param key - Array-typed session state key
    * @param value - String value to append if not already present
-   * @throws {Error} If persistence fails (mkdir/write/rename errors from save)
+   * @throws {Error} If persistence fails (lock/mkdir/write/rename errors)
    */
   async append(key: SessionStateArrayKey, value: string): Promise<void> {
-    const state = await this.load();
-    const array = state[key];
+    await this.withLock(async () => {
+      const state = await this.load();
+      const array = state[key];
 
-    if (!array.includes(value)) {
-      array.push(value);
-      state[key] = array;
-      await this.save(state);
-    }
+      if (!array.includes(value)) {
+        array.push(value);
+        state[key] = array;
+        await this.save(state);
+      }
+    });
+  }
+
+  /**
+   * Atomically read-modify-write a single session state key under the session
+   * lock.
+   *
+   * The updater receives the current value and returns a
+   * {@link SessionUpdateDecision}: `commit: true` persists `value`;
+   * `commit: false` leaves the file untouched. Either way `result` is returned
+   * to the caller. The whole cycle — load, updater (which may await external
+   * reads such as Rundown closure state), conditional save — runs inside one
+   * lock scope, so no concurrent hook process can interleave a write.
+   *
+   * The updater MUST NOT call other Session methods (the lock is not
+   * reentrant) and SHOULD NOT perform writes of its own.
+   *
+   * @param key - Session state key to read and conditionally replace
+   * @param updater - Pure-ish decision function over the current value
+   * @returns The updater's `result`
+   * @throws {Error} Propagates updater throws and persistence failures; the
+   *   lock is released on every path
+   */
+  async update<K extends keyof SessionState, R>(
+    key: K,
+    updater: (
+      current: SessionState[K],
+    ) =>
+      | Promise<SessionUpdateDecision<SessionState[K], R>>
+      | SessionUpdateDecision<SessionState[K], R>,
+  ): Promise<R> {
+    return this.withLock(async () => {
+      const state = await this.load();
+      const decision = await updater(state[key]);
+      if (decision.commit) {
+        state[key] = decision.value;
+        await this.save(state);
+      }
+      return decision.result;
+    });
   }
 
   /**
@@ -82,11 +157,13 @@ export class Session {
    * Clear session state (remove file)
    */
   async clear(): Promise<void> {
-    try {
-      await fs.unlink(this.stateFile);
-    } catch {
-      // File doesn't exist, that's fine
-    }
+    await this.withLock(async () => {
+      try {
+        await fs.unlink(this.stateFile);
+      } catch {
+        // File doesn't exist, that's fine
+      }
+    });
   }
 
   /**
@@ -178,11 +255,10 @@ export class Session {
    * Performance note: File I/O adds small overhead (~1-5ms) per operation.
    * Atomic writes prevent corruption but require temp file creation.
    *
-   * Concurrency note: Atomic rename prevents file corruption (invalid JSON,
-   * partial writes) but does NOT prevent logical race conditions where
-   * concurrent operations overwrite each other's changes. This is acceptable
-   * because hooks run sequentially in practice. If true concurrent access is
-   * needed, add file locking or retry logic.
+   * Concurrency note: atomic rename prevents file corruption (invalid JSON,
+   * partial writes); logical lost-update races are prevented by the
+   * PluginSessionLock every mutating method holds (see withLock). save() is
+   * only ever called while the lock is held.
    * @param state - Session state object to persist
    */
   private async save(state: SessionState): Promise<void> {

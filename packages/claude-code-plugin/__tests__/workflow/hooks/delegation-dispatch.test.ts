@@ -98,7 +98,10 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(input);
 
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    // Final-state assertion (recording now runs through session.update, so the
+    // committed metadata is observable via get rather than a set call shape).
+    const written = await session.get('metadata');
+    expect(written).toEqual({
       existing_key: 'value',
       delegation_active_tokens: {
         'agent-123': {
@@ -110,7 +113,6 @@ describe('handleDelegationDispatch', () => {
         },
       },
     });
-    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
     expect(DelegationActiveTokensMetadataSchema.parse(written.delegation_active_tokens)).toEqual(
       written.delegation_active_tokens,
     );
@@ -142,7 +144,8 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(dispatchInput);
 
-    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    // Final-state assertion after recording (session.update path).
+    const written = await session.get('metadata');
     expect(written.delegation_active_tokens).toMatchObject({
       'agent-123': {
         kind: 'delegation-active-token',
@@ -157,16 +160,32 @@ describe('handleDelegationDispatch', () => {
     });
     expect(JSON.stringify(written.delegation_active_tokens)).not.toContain(VALID_TOKEN);
 
-    setExecSync(mockExecFileSync(JSON.stringify({ active: false, stashed: false })));
+    // SubagentStop reads the just-recorded per-agent entry back. Closure cannot
+    // be proven here (no Rundown state in this harness — core's closure read is
+    // NOT mocked in this suite), so verify-before-consume KEEPS the token and
+    // re-issues the block. That the stop returns a closure violation (rather
+    // than `{}`) proves the dispatched entry round-tripped and was located.
     const stopInput = createMockHookInput('SubagentStop', {
       agent_id: 'agent-123',
       session_id: 'session-abc',
     });
 
-    await handleSubagentStop(stopInput);
+    const stopResult = await handleSubagentStop(stopInput);
+    expect(stopResult.violation).toEqual(
+      expect.stringContaining('Delegated Rundown work was active'),
+    );
+    expect(stopResult.violation).toEqual(
+      expect.stringContaining('rundown pass --claim-id <claim_id>'),
+    );
 
-    expect(mockSet).toHaveBeenLastCalledWith('metadata', {
+    // Token kept (closure unprovable) — both the stopping agent's entry and its
+    // sibling survive. Final-state assertion is agnostic to set vs update.
+    expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: {
+        'agent-123': expect.objectContaining({
+          agent_id: 'agent-123',
+          tokenHash: hashDelegationToken(VALID_TOKEN),
+        }),
         'sibling-agent': expect.objectContaining({
           agent_id: 'sibling-agent',
           tokenHash: hashDelegationToken(siblingToken),
@@ -211,7 +230,19 @@ describe('handleDelegationDispatch', () => {
     expect(getErrorMessage((rejection as { cause?: unknown }).cause)).toContain(
       'delegation_active_tokens key must match metadata.agent_id',
     );
+    // The updater throws before committing, so nothing is persisted: the
+    // pre-existing (drifted) metadata is left untouched (fail-closed, no write).
     expect(mockSet).not.toHaveBeenCalled();
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'different-agent',
+          tokenHash: hashDelegationToken(VALID_TOKEN),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
   });
 
   it('stores a token hash in legacy global metadata when agent_id is absent', async () => {
@@ -224,7 +255,7 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(input);
 
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    expect(await session.get('metadata')).toEqual({
       delegation_active_token: hashDelegationToken(VALID_TOKEN),
     });
   });
@@ -266,7 +297,7 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(input);
 
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    expect(await session.get('metadata')).toEqual({
       existing_key: 'value',
       delegation_active_token: hashDelegationToken(VALID_TOKEN),
     });

@@ -14,10 +14,33 @@ process.env.CLAUDE_PLUGIN_ROOT = path.resolve(__dirname, '..');
 // fail-open catch. Each case configures its own failure mode (write vs parse).
 const sessionSet = jest.fn<(key: string, value: unknown) => Promise<void>>();
 const sessionGet = jest.fn<(key: string) => Promise<unknown>>();
+// recordDelegationToken now performs a single locked read-modify-write via
+// Session#update. The inline mock mirrors the real update contract: read
+// current value, run the updater, and route a committed decision through
+// sessionSet — so the write-throw (sessionSet rejects) and parse-throw
+// (updater throws before commit) fail-closed cases, and their sessionSet call
+// assertions, stay meaningful.
+type SessionUpdateDecision =
+  | { commit: true; value: unknown; result: unknown }
+  | { commit: false; result: unknown };
+const sessionUpdate = jest.fn(
+  async (
+    key: string,
+    updater: (current: unknown) => Promise<SessionUpdateDecision> | SessionUpdateDecision,
+  ): Promise<unknown> => {
+    const current = await sessionGet(key);
+    const decision = await updater(current);
+    if (decision.commit) {
+      await sessionSet(key, decision.value);
+    }
+    return decision.result;
+  },
+);
 jest.unstable_mockModule('../src/session.js', () => ({
   Session: class {
     get = sessionGet;
     set = sessionSet;
+    update = sessionUpdate;
   },
 }));
 
@@ -59,6 +82,7 @@ describe('Delegation dispatch fails closed when token cannot be recorded (#463)'
   beforeEach(() => {
     sessionGet.mockReset().mockResolvedValue({});
     sessionSet.mockReset().mockResolvedValue(undefined);
+    sessionUpdate.mockClear();
     loggerError.mockReset().mockResolvedValue(undefined);
   });
 
