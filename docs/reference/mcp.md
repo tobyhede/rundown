@@ -106,15 +106,16 @@ explicitly, in one of two lanes:
   targeting of the run you control; the run id is printed by `rundown run` and
   carried as `runbookId` on every event).
 
-A call carrying either `claimId` OR `runId` passes through on all six mutating
-commands — `pass`, `fail`, `complete`, `stop`, `collect`, and `delegate`
-(`delegate` accepts the run lane only; see [§5.11](#delegate)). Only the
-**bare** form (neither `claimId` nor `runId`) is withheld in-process, refused
-without invoking the CLI (see [§5.6](#pass), [§5.7](#fail), [§5.11](#delegate),
-and [§5.13](#collect)). `claimId` and `runId` are mutually exclusive: supplying
-both is a validation error surfaced on the `runId` path, rejected before the CLI
-is invoked. Tools that exist purely for local session management, destructive
-state operations, or authoring helpers are CLI-only (see
+A call carrying either `claimId` OR `runId` passes through on the shared
+mutating commands — `pass`, `fail`, `complete`, `stop`, and `collect`.
+`delegate` is the exception: it accepts the run lane only, because delegation is
+an orchestrator action (see [§5.11](#delegate)). Only the **bare** form (neither
+`claimId` nor `runId`, or no `runId` for `delegate`) is withheld in-process,
+refused without invoking the CLI (see [§5.6](#pass), [§5.7](#fail),
+[§5.11](#delegate), and [§5.13](#collect)). `claimId` and `runId` are mutually
+exclusive: supplying both is a validation error surfaced on the `runId` path,
+rejected before the CLI is invoked. Tools that exist purely for local session
+management, destructive state operations, or authoring helpers are CLI-only (see
 [§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:

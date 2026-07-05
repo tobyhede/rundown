@@ -761,6 +761,8 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown pass --run <rd_…>`                                | Orchestrator lane: advance the run you control                                    |
 | `rundown fail --run <rd_…>`                                | Orchestrator lane: record a failing advance on the run you control                |
 | `rundown goto <step> --run <rd_…>`                         | Orchestrator lane: jump within the run you control (run-navigation policy gate)   |
+| `rundown complete --run <rd_…>`                            | Orchestrator lane: complete the run you control                                   |
+| `rundown stop --run <rd_…>`                                | Orchestrator lane: stop the run you control                                       |
 | `rundown abort <token>`                                    | Cancel a delegation token                                                         |
 | `rundown abort <token> --force`                            | Cancel a claimed delegation                                                       |
 

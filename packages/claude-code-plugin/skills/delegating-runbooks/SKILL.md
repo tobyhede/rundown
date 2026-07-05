@@ -66,7 +66,7 @@ On a standalone run with no delegation activity, bare `rundown delegate` / `rund
 
 ## Delegation Flow
 
-```
+```text
 Parent                          Child
   |                               |
   |  rundown delegate --step 2.1 --run <rd_…>
