@@ -58,7 +58,7 @@ dist_abs="$(cd dist && pwd)"
 
 # pnpm pack has no workspace selector (--filter rejects `pack`), so pack each
 # package from inside its directory, writing to the absolute dist/ path.
-for pkg in parser core cli claude-code-plugin; do
+for pkg in parser core cli claude-code-plugin mcp; do
   log "  Packing packages/$pkg..."
   ( cd "packages/$pkg" && pnpm pack --pack-destination "$dist_abs" )
 done

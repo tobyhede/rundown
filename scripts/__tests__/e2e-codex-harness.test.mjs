@@ -212,6 +212,15 @@ test('e2e image installs Codex CLI, ships the Codex entrypoint, and the Codex AG
   );
 });
 
+test('E2E local image packs and installs the Rundown MCP server', async () => {
+  const build = await readRepoFile('scripts/build-e2e.sh');
+  const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
+
+  assert.match(build, /for pkg in parser core cli claude-code-plugin mcp; do/);
+  assert.match(dockerfile, /COPY dist\/rundown-org-mcp-\*\.tgz \/tmp\/tarballs\//);
+  assert.match(dockerfile, /\/tmp\/tarballs\/rundown-org-mcp-\*\.tgz/);
+});
+
 test('Rundown Claude plugin package also ships a Codex plugin surface', async () => {
   const manifest = JSON.parse(
     await readRepoFile('packages/claude-code-plugin/codex-plugin/.codex-plugin/plugin.json'),
