@@ -1,64 +1,118 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
-import type { DelegationLinkage, ParentLinkageBase, RunbookState } from './types.js';
+import type { DelegationLinkage, RunbookState } from './types.js';
 
-declare const claimIdBrand: unique symbol;
+declare const claimBearerBrand: unique symbol;
+declare const claimLookupKeyBrand: unique symbol;
+declare const claimSecretHashBrand: unique symbol;
 
-/** Stable CLI-owned handle for a claimed delegated child runbook. */
-export type ClaimId = string & { readonly [claimIdBrand]: true };
+/** Bearer credential printed as `claim_id` and accepted by `--claim-id`. */
+export type ClaimId = string & { readonly [claimBearerBrand]: true };
 
-/** Prefix for every generated claim id. */
+/** Non-secret lookup key persisted in `.rundown/session.json`. */
+export type ClaimLookupKey = string & { readonly [claimLookupKeyBrand]: true };
+
+/** Hash of the secret segment of a claim bearer credential. */
+export type ClaimSecretHash = string & { readonly [claimSecretHashBrand]: true };
+
+/** Prefix for every public bearer claim id. */
 export const CLAIM_ID_PREFIX = 'rdclm_';
 
-/** Canonical claim id pattern. */
-export const CLAIM_ID_PATTERN = /^rdclm_[A-Za-z0-9_-]{22}$/;
+/** Prefix for every persisted non-secret claim lookup key. */
+export const CLAIM_LOOKUP_KEY_PREFIX = 'rdclk_';
 
-/** Persisted claim record stored in SessionData.claims. */
-export interface ClaimRecord {
-  /** Record discriminant for claim entries persisted in session state. */
-  readonly kind: 'claim-record';
-  /** Stable command-targeting handle returned by rd claim. */
+/** Canonical public bearer claim id pattern. */
+export const CLAIM_ID_PATTERN = /^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/;
+
+/** Canonical persisted non-secret lookup key pattern. */
+export const CLAIM_LOOKUP_KEY_PATTERN = /^rdclk_[a-f0-9]{32}$/;
+
+/** Canonical claim secret hash pattern. */
+export const CLAIM_SECRET_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+/** Parsed components of a public bearer claim id. */
+export interface ParsedClaimBearer {
+  /** Original bearer value. */
   readonly claimId: ClaimId;
-  /** Child runbook state id controlled by this claim. */
+  /** Non-secret lookup key derived from the bearer. */
+  readonly claimKey: ClaimLookupKey;
+  /** Secret segment presented by the caller and never persisted. */
+  readonly secret: string;
+}
+
+/** Delegation relationship data preserved on delegated child claims. */
+export interface DelegationClaimLinkage {
+  /** Claimed child runbook state id. */
   readonly childRunId: RunId;
-  /** Hash of the delegation token that produced this claimed child. */
+  /** Hash of the delegation token that produced this child claim. */
   readonly tokenHash: DelegationTokenHash;
   /** Parent runbook state id that delegated the child. */
-  readonly parentRunId: ParentLinkageBase['parentRunId'];
+  readonly parentRunId: RunId;
   /** Parent step or substep id where the delegation originated. */
-  readonly parentStepId: ParentLinkageBase['parentStepId'];
+  readonly parentStepId: string;
   /** Parent step name at delegation time. */
-  readonly parentStep: ParentLinkageBase['parentStep'];
+  readonly parentStep: string;
   /** Parent execution frame key used for completion propagation. */
   readonly parentFrameKey: FrameKey;
   /** Parent entry counter used for completion propagation. */
   readonly parentEntry: number;
+}
+
+/** Explicit permission over one Rundown resource. */
+export type ClaimGrant =
+  | { readonly action: 'mutate-run'; readonly runId: RunId }
+  | { readonly action: 'delegate-from-run'; readonly runId: RunId }
+  | { readonly action: 'collect-for-run'; readonly runId: RunId }
+  | { readonly action: 'abort-delegation'; readonly runId: RunId; readonly stepId?: string }
+  | { readonly action: 'retry-delegation'; readonly runId: RunId; readonly stepId?: string }
+  | ({ readonly action: 'report-delegation-result' } & DelegationClaimLinkage);
+
+/** Authorization request checked against a claim grant. */
+export type ClaimAuthorizationRequest =
+  | { readonly action: 'mutate-run'; readonly runId: RunId }
+  | { readonly action: 'delegate-from-run'; readonly runId: RunId }
+  | { readonly action: 'collect-for-run'; readonly runId: RunId }
+  | { readonly action: 'abort-delegation'; readonly runId: RunId; readonly stepId: string }
+  | { readonly action: 'retry-delegation'; readonly runId: RunId; readonly stepId: string }
+  | ({ readonly action: 'report-delegation-result' } & DelegationClaimLinkage);
+
+/** Persisted claim record stored in SessionData.claims. */
+export interface ClaimRecord {
+  /** Non-secret lookup key for this claim. */
+  readonly claimKey: ClaimLookupKey;
+  /** Hash of the bearer secret segment. */
+  readonly secretHash: ClaimSecretHash;
+  /** Run this claim can target for local run mutation. */
+  readonly controlledRunId: RunId;
+  /** Delegation relationship data, present only for claims created from delegation tokens. */
+  readonly delegation?: DelegationClaimLinkage;
+  /** Explicit permissions attached to this claim. */
+  readonly grants: readonly ClaimGrant[];
   /** ISO timestamp when this claim was first created. */
-  readonly claimedAt: string;
+  readonly issuedAt: string;
   /** ISO timestamp when this claim was last refreshed. */
   readonly updatedAt: string;
+}
+
+/** Claim record after bearer proof verification. */
+export interface VerifiedClaim {
+  /** Non-secret lookup key for this claim. */
+  readonly claimKey: ClaimLookupKey;
+  /** Run this verified claim can target for local run mutation. */
+  readonly controlledRunId: RunId;
+  /** Delegation relationship data, present only for claims created from delegation tokens. */
+  readonly delegation?: DelegationClaimLinkage;
+  /** Explicit permissions attached to this claim. */
+  readonly grants: readonly ClaimGrant[];
 }
 
 /**
  * Result of creating or refreshing a claim record for a child runbook.
  *
- * - `claimed` — Claim recorded successfully. The included `claim` is the
- *   freshly created or idempotently refreshed record.
- * - `missing-child` — Transient failure: the child run state file is absent
- *   on disk. May be recoverable by pruning + restarting the parent.
- * - `terminal-child` — The child run exists but is already completed or
- *   stopped, so the delegation should be treated as resolved rather than
- *   claimed again.
- * - `linkage-mismatch` — Corruption signal: the child's persisted
- *   `parentLinkage` disagrees with the freshly token-validated `incoming`
- *   linkage on at least one identifying field (`parentRunId`,
- *   `parentStepId`, `tokenHash`). Operator intervention required — inspect
- *   `.rundown/runs/<childRunId>.json`. Fields are named from the write
- *   site's POV: `incoming` is what the caller offered, `persisted` is what
- *   was already on disk. `persisted` is `undefined` when the child has no
- *   parent linkage at all.
+ * @remarks The bearer-bearing `claimed` shape is migrated in the session
+ * service task. This task updates the core claim primitives first.
  */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claim: ClaimRecord }
@@ -93,64 +147,234 @@ export type ClaimIdResolution =
     };
 
 /**
- * Return true when value is a canonical claim id.
+ * Return true when value is a canonical public bearer claim id.
  *
- * @param value - Value to test
- * @returns Whether the value is a branded claim id string
+ * @param value - Value to test.
+ * @returns Whether the value is a branded bearer claim id string.
  */
 export function isClaimId(value: unknown): value is ClaimId {
   return typeof value === 'string' && CLAIM_ID_PATTERN.test(value);
 }
 
 /**
- * Assert and brand a canonical claim id.
+ * Assert and brand a canonical public bearer claim id.
  *
- * @param value - String to validate
- * @returns Branded claim id
- * @throws {Error} If the string is not a canonical claim id
+ * @param value - String to validate.
+ * @returns Branded bearer claim id.
+ * @throws {Error} If the string is not a canonical bearer claim id.
  */
-export function assertClaimId(value: string): ClaimId {
+export function assertClaimBearer(value: string): ClaimId {
   if (!isClaimId(value)) {
-    throw new Error('Invalid claim id: expected rdclm_<22 base64url characters>');
+    throw new Error(
+      'Invalid claim id: expected rdclm_<32 lowercase hex lookup key>_<43 base64url characters>',
+    );
+  }
+  return value;
+}
+
+/** Alias for asserting a public bearer claim id. */
+export const assertClaimId = assertClaimBearer;
+
+/**
+ * Return true when value is a canonical persisted claim lookup key.
+ *
+ * @param value - Value to test.
+ * @returns Whether the value is a branded claim lookup key string.
+ */
+export function isClaimLookupKey(value: unknown): value is ClaimLookupKey {
+  return typeof value === 'string' && CLAIM_LOOKUP_KEY_PATTERN.test(value);
+}
+
+/**
+ * Assert and brand a canonical persisted claim lookup key.
+ *
+ * @param value - String to validate.
+ * @returns Branded claim lookup key.
+ * @throws {Error} If the string is not a canonical claim lookup key.
+ */
+export function assertClaimLookupKey(value: string): ClaimLookupKey {
+  if (!isClaimLookupKey(value)) {
+    throw new Error('Invalid claim lookup key: expected rdclk_<32 lowercase hex characters>');
   }
   return value;
 }
 
 /**
- * Generate a cryptographically random claim id.
+ * Assert and brand a canonical claim secret hash.
  *
- * @returns New branded claim id
+ * @param value - String to validate.
+ * @returns Branded claim secret hash.
+ * @throws {Error} If the string is not a canonical claim secret hash.
  */
-export function generateClaimId(): ClaimId {
-  return assertClaimId(`${CLAIM_ID_PREFIX}${randomBytes(16).toString('base64url')}`);
+export function assertClaimSecretHash(value: string): ClaimSecretHash {
+  if (!CLAIM_SECRET_HASH_PATTERN.test(value)) {
+    throw new Error('Invalid claim secret hash: expected sha256:<64 lowercase hex characters>');
+  }
+  return value as ClaimSecretHash;
 }
 
 /**
- * Create a persisted claim record from delegation linkage.
+ * Parse a public bearer claim id into lookup and secret components.
  *
- * @param claimId - Claim id to store
- * @param childRunId - Child runbook state id controlled by the claim
- * @param linkage - Delegation linkage from the child runbook
- * @param now - ISO timestamp for claim creation and update time
- * @returns Persisted claim record
+ * @param value - Bearer claim id to parse.
+ * @returns Parsed bearer components.
+ * @throws {Error} If the string is not a canonical bearer claim id.
  */
-export function createClaimRecord(
-  claimId: ClaimId,
-  childRunId: RunId,
-  linkage: DelegationLinkage,
-  now: string,
-): ClaimRecord {
+export function parseClaimBearer(value: string): ParsedClaimBearer {
+  const claimId = assertClaimBearer(value);
+  const match = /^rdclm_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/.exec(claimId);
+  if (!match) {
+    throw new Error('Invalid claim id');
+  }
+  const [, lookupBody, secret] = match;
   return {
-    kind: 'claim-record',
     claimId,
-    childRunId,
-    tokenHash: linkage.tokenHash,
-    parentRunId: linkage.parentRunId,
-    parentStepId: linkage.parentStepId,
-    parentStep: linkage.parentStep,
-    parentFrameKey: linkage.parentFrameKey,
-    parentEntry: linkage.parentEntry,
-    claimedAt: now,
-    updatedAt: now,
+    claimKey: assertClaimLookupKey(`${CLAIM_LOOKUP_KEY_PREFIX}${lookupBody}`),
+    secret,
   };
+}
+
+/**
+ * Derive the persisted non-secret lookup key from a bearer claim id.
+ *
+ * @param value - Bearer claim id.
+ * @returns Non-secret lookup key for session storage.
+ */
+export function claimKeyFromBearer(value: ClaimId): ClaimLookupKey {
+  return parseClaimBearer(value).claimKey;
+}
+
+/**
+ * Generate a cryptographically random bearer claim id.
+ *
+ * @returns New branded bearer claim id.
+ */
+export function generateClaimBearer(): ClaimId {
+  const lookup = randomBytes(16).toString('hex');
+  const secret = randomBytes(32).toString('base64url');
+  return assertClaimBearer(`${CLAIM_ID_PREFIX}${lookup}_${secret}`);
+}
+
+/**
+ * Generate a cryptographically random bearer claim id.
+ *
+ * @returns New branded bearer claim id.
+ * @deprecated Use {@link generateClaimBearer}. This alias remains during the
+ * staged authority migration.
+ */
+export function generateClaimId(): ClaimId {
+  return generateClaimBearer();
+}
+
+/**
+ * Hash a claim bearer secret segment for persistence.
+ *
+ * @param secret - Raw bearer secret segment.
+ * @returns Canonical SHA-256 secret hash.
+ */
+export function hashClaimSecret(secret: string): ClaimSecretHash {
+  return assertClaimSecretHash(`sha256:${createHash('sha256').update(secret).digest('hex')}`);
+}
+
+/**
+ * Verify a claim bearer secret segment against a persisted hash.
+ *
+ * @param secret - Raw bearer secret segment presented by the caller.
+ * @param expectedHash - Persisted canonical SHA-256 hash.
+ * @returns Whether the secret matches the persisted hash.
+ */
+export function verifyClaimSecret(secret: string, expectedHash: ClaimSecretHash): boolean {
+  const actual = Buffer.from(hashClaimSecret(secret).slice('sha256:'.length), 'hex');
+  const expected = Buffer.from(expectedHash.slice('sha256:'.length), 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+/**
+ * Create grants that let a local controller operate on a started run.
+ *
+ * @param runId - Run controlled by the issued claim.
+ * @returns Explicit run-control grants.
+ */
+export function createRunControlGrants(runId: RunId): readonly ClaimGrant[] {
+  return [
+    { action: 'mutate-run', runId },
+    { action: 'delegate-from-run', runId },
+    { action: 'collect-for-run', runId },
+    { action: 'abort-delegation', runId },
+    { action: 'retry-delegation', runId },
+  ];
+}
+
+/**
+ * Create grants for a child run claimed from a delegation token.
+ *
+ * @param input - Delegation linkage for the claimed child run.
+ * @returns Explicit child mutation and parent report grants.
+ */
+export function createDelegatedChildGrants(input: {
+  readonly linkage: DelegationClaimLinkage;
+}): readonly ClaimGrant[] {
+  return [
+    { action: 'mutate-run', runId: input.linkage.childRunId },
+    {
+      action: 'report-delegation-result',
+      ...input.linkage,
+    },
+  ];
+}
+
+/**
+ * Test whether a single grant authorizes a concrete request.
+ *
+ * @param grant - Grant attached to a verified claim.
+ * @param request - Requested mutation or propagation action.
+ * @returns Whether the grant authorizes the request.
+ */
+export function grantAllows(grant: ClaimGrant, request: ClaimAuthorizationRequest): boolean {
+  switch (request.action) {
+    case 'mutate-run':
+    case 'delegate-from-run':
+    case 'collect-for-run':
+      return grant.action === request.action && grant.runId === request.runId;
+    case 'abort-delegation':
+    case 'retry-delegation':
+      return (
+        grant.action === request.action &&
+        grant.runId === request.runId &&
+        (grant.stepId === undefined || grant.stepId === request.stepId)
+      );
+    case 'report-delegation-result':
+      return (
+        grant.action === 'report-delegation-result' &&
+        grant.childRunId === request.childRunId &&
+        grant.parentRunId === request.parentRunId &&
+        grant.parentStepId === request.parentStepId &&
+        grant.parentStep === request.parentStep &&
+        grant.parentFrameKey === request.parentFrameKey &&
+        grant.parentEntry === request.parentEntry &&
+        grant.tokenHash === request.tokenHash
+      );
+    default: {
+      const _exhaustive: never = request;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Authorize a concrete request against a verified claim's grants.
+ *
+ * @param claim - Verified claim whose grants should be checked.
+ * @param request - Requested mutation or propagation action.
+ * @returns Grant authorization decision.
+ */
+export function authorizeClaim(
+  claim: VerifiedClaim,
+  request: ClaimAuthorizationRequest,
+):
+  | { readonly kind: 'allowed' }
+  | { readonly kind: 'denied'; readonly reason: 'claim_grant_required' } {
+  return claim.grants.some((grant) => grantAllows(grant, request))
+    ? { kind: 'allowed' }
+    : { kind: 'denied', reason: 'claim_grant_required' };
 }
