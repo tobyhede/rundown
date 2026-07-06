@@ -272,11 +272,13 @@ export type ClaimResult =
  * @param emitter - Event emitter for publishing execution events
  * @param runbookState - Current runbook state with title and description
  * @param prompted - Whether the runbook is running in prompted mode
+ * @param claimId - Optional run-control bearer minted for the orchestrator
  */
 function emitRunbookStarted(
   emitter: ExecutionEventEmitter,
   runbookState: RunbookState,
   prompted: boolean,
+  claimId?: ClaimId,
 ): void {
   emitter.emit({
     type: 'RUNBOOK_STARTED',
@@ -284,6 +286,7 @@ function emitRunbookStarted(
       title: runbookState.title,
       description: runbookState.description,
       prompted,
+      ...(claimId !== undefined ? { claimId } : {}),
       statePath: `${RUNS_DIR}/${runbookState.id}.json`,
     },
   });
@@ -994,7 +997,7 @@ async function launchRunbook(
     const emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
-    emitRunbookStarted(emitter, initializedState, options.prompted);
+    emitRunbookStarted(emitter, initializedState, options.prompted, issuedRunControlClaimId);
 
     launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {

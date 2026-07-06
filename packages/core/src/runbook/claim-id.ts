@@ -119,7 +119,7 @@ export type VerifiedClaimAuthority =
       readonly claimKey: ClaimLookupKey;
     }
   | {
-      /** Authority came from the implicit singleton local-session path. */
+      /** Legacy diagnostic authority from a persisted non-secret lookup key. */
       readonly kind: 'implicit';
       /** Non-secret persisted lookup key. */
       readonly claimKey: ClaimLookupKey;

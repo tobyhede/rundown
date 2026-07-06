@@ -106,11 +106,11 @@ authority explicitly:
   run but is not authority by itself.
 
 A call carrying `claimId` passes through on the shared mutating commands. A call
-carrying only `runId` is withheld in-process, because a subprocess front end
-must not consume the direct-CLI implicit singleton path. `claimId` and `runId`
-may be supplied together; the CLI/core use the bearer as authority and the run
-id as target selection. Tools that exist purely for local session management,
-destructive state operations, or authoring helpers are CLI-only (see
+carrying only `runId` is withheld in-process, because run ids are selectors, not
+bearer authority. The current CLI rejects `claimId` and `runId` together; use
+the bearer claim alone unless an API explicitly models claim-plus-selector
+targeting. Tools that exist purely for local session management, destructive
+state operations, or authoring helpers are CLI-only (see
 [§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:
@@ -209,12 +209,10 @@ Mark a step as passed.
 Over MCP, `pass` REQUIRES bearer authority: a `pass` without a real `claimId` is
 classified as a subprocess lifecycle mutation and withheld in-process — the
 server MUST return a withheld-mutation `error` payload WITHOUT invoking the CLI.
-A spawned bare `rundown pass` would silently inherit direct-CLI
-(`trusted_run_controller`) trust over the active run, which a subprocess front
-end MUST NOT be able to mint. `runId` is forwarded only when a claim is also
-present; by itself it is target selection, not authority. To mark a
-non-delegated standalone step passed, run `rundown pass` directly in a trusted
-terminal.
+A spawned bare `rundown pass` would be a mutation without bearer proof. `runId`
+by itself is target selection, not authority; the current CLI rejects
+claim-plus-run combinations. To mark a non-delegated standalone step passed, run
+`rundown pass` directly in a trusted terminal.
 
 <a id="fail"></a>
 
@@ -230,14 +228,11 @@ Mark a step as failed.
 | `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself. |
 
 Over MCP, `fail` REQUIRES explicit targeting, exactly as [`pass`](#pass): a bare
-`fail` without a real `claimId` or `runId` is classified as a subprocess
-lifecycle mutation and withheld in-process — the server MUST return a
-withheld-mutation `error` payload WITHOUT invoking the CLI, because a spawned
-bare `rundown fail` would silently inherit direct-CLI (`trusted_run_controller`)
-trust over the active run. Either a real `claimId` (claim lane) or a real
-`runId` (orchestrator lane, `--run <rd_…>`) is forwarded to the CLI. To mark a
-non-delegated standalone step failed, run `rundown fail` directly in a trusted
-terminal.
+`fail` without a real `claimId` is classified as a subprocess lifecycle mutation
+and withheld in-process — the server MUST return a withheld-mutation `error`
+payload WITHOUT invoking the CLI. A real `claimId` is forwarded to the CLI;
+`runId` alone is not authority. To mark a non-delegated standalone step failed,
+run `rundown fail` directly in a trusted terminal.
 
 <a id="goto"></a>
 
@@ -245,16 +240,16 @@ terminal.
 
 Jump to a step.
 
-| Parameter | Type        | Required | Behavior                                                                                                                                                                                               |
-| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`.                                                                                                                      |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.                                                                                                                               |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                                                                                                            |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for explicit orchestrator targeting. Mutually exclusive with `claimId`. `goto` is additionally gated behind the `run-navigation` policy intent. |
+| Parameter | Type        | Required | Behavior                                                                                                   |
+| --------- | ----------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`.                          |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.                                   |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
+| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
 
 Over MCP, `goto` follows the same two-lane rule as [`pass`](#pass): a bare jump
-(no `claimId` and no `runId`) on a delegation-exposed run is withheld
-in-process; name the claim lane (`claimId`) or the orchestrator lane (`runId`).
+(no `claimId`) on a delegation-exposed run is withheld in-process; name the
+claim bearer (`claimId`). `runId` alone is withheld.
 
 <a id="complete"></a>
 
@@ -262,18 +257,18 @@ in-process; name the claim lane (`claimId`) or the orchestrator lane (`runId`).
 
 Force early completion of the active runbook.
 
-| Parameter | Type   | Required | Behavior                                                                                                                       |
-| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`.                                                  |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                                    |
-| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for explicit orchestrator targeting. Mutually exclusive with `claimId`. |
+| Parameter | Type   | Required | Behavior                                                                                                   |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`.                              |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
+| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
 
 Without `claimId` or `runId`, this mirrors bare `rundown complete`, which is
 withheld at the boundary (and, since R1, refused by core on any
 delegation-exposed run with `ACTOR_CONTEXT_REQUIRED`). Supply the claim lane
-(`claimId`) or the orchestrator lane (`runId` → `--run <rd_…>`) to forward the
-call. When forwarded, bare `rundown complete` inside inline composition targets
-the outermost contiguous-inline ancestor. See
+(`claimId`) to forward the call. `runId` alone is withheld. When forwarded, bare
+`rundown complete` inside inline composition targets the outermost
+contiguous-inline ancestor. See
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 targeting semantics.
 
@@ -283,19 +278,18 @@ targeting semantics.
 
 Abort the active runbook.
 
-| Parameter | Type   | Required | Behavior                                                                                                                       |
-| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.                                                      |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                                    |
-| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for explicit orchestrator targeting. Mutually exclusive with `claimId`. |
+| Parameter | Type   | Required | Behavior                                                                                                   |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.                                  |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
+| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
 
 Without `claimId` or `runId`, this mirrors bare `rundown stop`, which is
 withheld at the boundary (and, since R1, refused by core on any
 delegation-exposed run with `ACTOR_CONTEXT_REQUIRED`). Supply the claim lane
-(`claimId`) or the orchestrator lane (`runId` → `--run <rd_…>`) to forward the
-call. When forwarded, bare `rundown stop` is a failure terminal that exits
-non-zero, and inside inline composition it targets the outermost
-contiguous-inline ancestor. See
+(`claimId`) to forward the call. `runId` alone is withheld. When forwarded, bare
+`rundown stop` is a failure terminal that exits non-zero, and inside inline
+composition it targets the outermost contiguous-inline ancestor. See
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 targeting semantics.
 
@@ -303,26 +297,24 @@ targeting semantics.
 
 ### 5.11 `delegate`
 
-**Available WITH `runId`; the bare form is withheld.** A `delegate` call that
-names the run the orchestrator controls (`runId`, mapped to `--run <rd_…>`) is
-forwarded to the CLI. A **bare** `delegate` (no `runId`) is withheld: the server
-MUST return a withheld-mutation `error` payload WITHOUT spawning the CLI,
-because a subprocess-spawned bare `delegate` would silently inherit direct-CLI
-(`trusted_run_controller`) trust over the active run — a trust a subprocess
-front end MUST NOT be able to mint. `claimId` is **schema-rejected** on
-`delegate` (delegation is an orchestrator action, not a claim-holder action), so
-the claim lane cannot exempt a `delegate` call — only the run lane can.
+**Available WITH `claimId`; the bare form is withheld.** A `delegate` call that
+presents the orchestrator bearer (`claimId`, mapped to `--claim-id <id>`) is
+forwarded to the CLI. A **bare** `delegate` (no `claimId`) is withheld: the
+server MUST return a withheld-mutation `error` payload WITHOUT spawning the CLI,
+because a subprocess-spawned bare `delegate` would mutate without bearer
+authority. `runId` is target selection only and cannot exempt the withhold.
 
-| Parameter   | Type        | Required | Behavior                                                                                        |
-| ----------- | ----------- | -------- | ----------------------------------------------------------------------------------------------- |
-| `runbook`   | string      | No       | Positional runbook argument forwarded to `rundown delegate`.                                    |
-| `step`      | string      | No       | Substep being delegated, forwarded as `--step <value>`.                                         |
-| `index`     | integer ≥ 0 | No       | FOR-loop targeting, forwarded as `--index <value>`. Requires `step`.                            |
-| `retry`     | boolean     | No       | Retry an existing delegation, forwarded as `--retry`.                                           |
-| `runId`     | string      | No       | Run you control (`rd_<32 hex>`), forwarded as `--run <value>`. Required to exempt the withhold. |
-| `input`     | string[]    | No       | `--input <value>` arguments.                                                                    |
-| `inputJson` | string[]    | No       | `--input-json <value>` arguments.                                                               |
-| `inputFile` | string[]    | No       | `--input-file <path>` arguments.                                                                |
+| Parameter   | Type        | Required | Behavior                                                                                                                   |
+| ----------- | ----------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `runbook`   | string      | No       | Positional runbook argument forwarded to `rundown delegate`.                                                               |
+| `step`      | string      | No       | Substep being delegated, forwarded as `--step <value>`.                                                                    |
+| `index`     | integer ≥ 0 | No       | FOR-loop targeting, forwarded as `--index <value>`. Requires `step`.                                                       |
+| `retry`     | boolean     | No       | Retry an existing delegation, forwarded as `--retry`.                                                                      |
+| `claimId`   | string      | No       | Bearer claim returned by `rundown run`, forwarded as `--claim-id <value>`. Required to exempt the withhold.                |
+| `runId`     | string      | No       | Optional run selector (`rd_<32 hex>`), forwarded as `--run <value>` only when an API models claim-plus-selector targeting. |
+| `input`     | string[]    | No       | `--input <value>` arguments.                                                                                               |
+| `inputJson` | string[]    | No       | `--input-json <value>` arguments.                                                                                          |
+| `inputFile` | string[]    | No       | `--input-file <path>` arguments.                                                                                           |
 
 To delegate or retry from a plain terminal instead, run `rundown delegate`
 directly. Delegation semantics — token issuance, claim lifecycle, abort,
@@ -348,25 +340,23 @@ Claim a delegation token and launch the child runbook.
 
 Aggregate a delegated step and advance the parent runbook through core.
 
-| Parameter | Type        | Required | Behavior                                                                                                                       |
-| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to scope the collection to a specific substep.                                         |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.                                              |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                                    |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for explicit orchestrator targeting. Mutually exclusive with `claimId`. |
+| Parameter | Type        | Required | Behavior                                                                                                   |
+| --------- | ----------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to scope the collection to a specific substep.                     |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.                          |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
+| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
 
 Over MCP, `collect` REQUIRES bearer authority: a `collect` without a real
 `claimId` is classified as a subprocess lifecycle mutation and withheld
 in-process — the server MUST return a withheld-mutation `error` payload WITHOUT
-invoking the CLI. A spawned bare `rundown collect` would silently inherit
-direct-CLI (`trusted_run_controller`) trust over the delegating run and drive
-parent aggregation that is orchestrator-only. A `collect` carrying a real
-`claimId` presents independent claim-controller evidence; `runId`, when also
-present, selects the target run. Collection still requires an actor controlling
-the target delegating run: collecting into an ancestor the caller does not
-control remains refused by core policy (`COLLECT_REQUIRES_ORCHESTRATOR`). To
-aggregate a delegated step on the parent from a plain terminal, run
-`rundown collect` directly.
+invoking the CLI. A spawned bare `rundown collect` would be parent aggregation
+without bearer proof. A `collect` carrying a real `claimId` presents bearer
+evidence; `runId` alone is withheld. Collection still requires an actor
+controlling the target delegating run: collecting into an ancestor the caller
+does not control remains refused by core policy
+(`COLLECT_REQUIRES_ORCHESTRATOR`). To aggregate a delegated step on the parent
+from a plain terminal, run `rundown collect` directly.
 
 <a id="unsupported-cli-operations"></a>
 

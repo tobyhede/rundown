@@ -21,7 +21,7 @@ Only nested review and collation runbooks are delegated. If the wrapper complete
 ## Operating Rules
 
 - Follow the active prompt. Use default JSON output; never add `--text` (it is human-only output, not part of the agent protocol).
-- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context. Parent-side pass/fail/collect carry `--run <rd_…>` (capture the run id from `rundown run` output, echoed as `runbookId` on every event); child-side commands carry `--claim-id <claim_id>`.
+- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context. Parent-side pass/fail/collect carry `--claim-id <claim_id>` (capture it from `rundown run` output on the `runbook_started` event); child-side commands carry the `claim_id` returned by `rundown claim`.
 - Use `rundown status` only to recover orientation after an error or interruption.
 - Pass only after the current step is complete; fail when it cannot be completed as written.
 - Preserve state on errors. Do not prune, clear, or delete `.rundown`.

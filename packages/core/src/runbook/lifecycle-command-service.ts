@@ -8,6 +8,7 @@ import {
 import type { RunbookActorService } from './actor-service.js';
 import { claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
+import { classifyDelegationExposure } from './delegation-exposure.js';
 import type {
   CommandIntent,
   CommandTargetSelector,
@@ -1302,11 +1303,24 @@ export class RunbookLifecycleCommandService {
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
-    if (claimId === undefined) {
+    if (input.callerEvidence.kind === 'claim_bearer') {
       const target = await resolveCommandTarget(sessionService, {
+        ...(claimId ? { claimId } : {}),
         ...(runId ? { runId } : {}),
       });
       switch (target.kind) {
+        case 'claim':
+        case 'terminal_claim': {
+          actorContext = verifiedClaimContext({
+            authority: {
+              kind: 'bearer',
+              claimId: target.claimId,
+              claimKey: target.claim.claimKey,
+            },
+            claim: target.claim,
+          });
+          break;
+        }
         case 'default':
         case 'run': {
           const authority = await this.#resolveMutationActorContext({
@@ -1325,13 +1339,26 @@ export class RunbookLifecycleCommandService {
           break;
         case 'unknown_run':
           return { kind: 'unknown_run', runId: target.runId, message: target.message };
-        case 'claim':
-        case 'terminal_claim':
         case 'stale_claim':
-          throw new Error(`Unexpected transition pre-resolution: ${target.kind}`);
+          break;
         default: {
           const _exhaustive: never = target;
           return _exhaustive;
+        }
+      }
+    }
+
+    if (actorContext.kind === 'unknown' && claimId === undefined && runId === undefined) {
+      const target = await resolveCommandTarget(sessionService);
+      if (target.kind === 'default') {
+        const openClaims = await sessionService.listOpenClaimsForParent(target.state.id);
+        const exposure = classifyDelegationExposure({
+          state: target.state,
+          steps: await this.#deps.loadSteps(target.state),
+          openClaims,
+        });
+        if (exposure === 'delegating') {
+          return { kind: 'actor_context_required' };
         }
       }
     }
@@ -1466,6 +1493,18 @@ export class RunbookLifecycleCommandService {
 
     const state = resolution.state;
 
+    if (
+      input.callerEvidence.kind !== 'claim_bearer' &&
+      selector.kind === 'default' &&
+      classifyDelegationExposure({
+        state,
+        steps: await this.#deps.loadSteps(state),
+        openClaims: await this.#deps.sessionService.listOpenClaimsForParent(state.id),
+      }) === 'delegating'
+    ) {
+      return { kind: 'actor_context_required' };
+    }
+
     const actorContext =
       resolution.kind === 'claim'
         ? verifiedClaimContext({
@@ -1477,6 +1516,9 @@ export class RunbookLifecycleCommandService {
             claim: resolution.claim,
           })
         : await (async (): Promise<ActorContext> => {
+            if (input.callerEvidence.kind !== 'claim_bearer') {
+              return UNKNOWN_ACTOR_CONTEXT;
+            }
             const authority = await this.#resolveMutationActorContext({
               callerEvidence: input.callerEvidence,
               targetState: state,
@@ -1679,17 +1721,18 @@ export class RunbookLifecycleCommandService {
     // Gate the resolved ROOT before forcing. Identifier-only `--run` anchoring
     // selects the inline chain root, but authority still comes from a verified
     // claim grant over that root.
-    const authority = await this.#resolveMutationActorContext({
-      callerEvidence: input.callerEvidence,
-      targetState: plan.targetState,
-      request: { action: 'mutate-run', runId: plan.targetState.id },
-      intent: 'terminal-run-force',
-    });
-    if (authority.kind === 'refused') {
-      return { kind: 'actor_context_required' };
-    }
+    const authority =
+      input.callerEvidence.kind === 'claim_bearer'
+        ? await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: plan.targetState,
+            request: { action: 'mutate-run', runId: plan.targetState.id },
+            intent: 'terminal-run-force',
+          })
+        : undefined;
+    if (authority?.kind === 'refused') return { kind: 'actor_context_required' };
     const policy = resolveCommandIntent({
-      actorContext: authority.actorContext,
+      actorContext: authority?.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
       targetSelector: { kind: 'default' },
       targetState: plan.targetState,

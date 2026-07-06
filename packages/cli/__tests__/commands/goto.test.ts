@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
+  issueRunControlClaim,
   runCliInProcess,
   getActiveState,
   type TestWorkspace,
@@ -91,11 +92,12 @@ describe('goto command', () => {
       await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
     });
 
-    it('navigates the named run via goto <step> --run <id>', async () => {
+    it('navigates the claimed run via goto <step> --claim-id <id>', async () => {
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
 
-      const result = await runCliInProcess(`goto 3 --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(['goto', '3', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);

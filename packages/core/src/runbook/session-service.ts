@@ -338,13 +338,12 @@ export class SessionService {
   /**
    * List active local claims whose grants authorize a request.
    *
-   * This is the implicit singleton authority path. It returns the same
-   * {@link VerifiedClaim} payload as explicit bearer verification, but the
-   * authority source is the non-secret persisted lookup key, not a reconstructed
-   * bearer.
+   * This is retained for diagnostics and tests that need to inspect persisted
+   * grants. It is not mutation authority: callers must present the bearer
+   * `claim_id` and use {@link verifyClaimId} for command authorization.
    *
    * @param request - Authorization request to check against persisted grants.
-   * @returns Active authorizing claims using non-bearer implicit authority.
+   * @returns Active authorizing claims, annotated with their persisted lookup key.
    */
   async listClaimsAuthorizing(
     request: ClaimAuthorizationRequest,
@@ -390,9 +389,8 @@ export class SessionService {
    *
    * Read-only: bypasses the session lock (consistent with {@link getActive}).
    * Resolves only ids present on the session `defaultStack` (any depth) —
-   * `--run` names authority over a run this session is orchestrating;
-   * cross-session work stays claim-based. Claimed children are never stack
-   * members, so `--run` can never substitute for `--claim-id`.
+   * `--run` is target selection only. Claimed children are never stack members,
+   * so `--run` can never substitute for `--claim-id`.
    *
    * @param runId - Run id supplied by the caller via `--run`
    * @returns The run state, or `null` when the id is not an active stack member

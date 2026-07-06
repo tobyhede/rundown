@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
 
@@ -37,6 +37,9 @@ export function registerStopCommand(program: Command): void {
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'stop' });
             const cwd = getCwd();
+            if (rejectClaimRunCombination({ claimId: options.claimId, run: options.run, output })) {
+              return;
+            }
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
             const runTarget = parseRunOption(options.run, output);

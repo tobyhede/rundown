@@ -765,8 +765,8 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown goto <step> --claim-id <claim_id>`                | Bearer-authorized jump (run-navigation policy gate)                               |
 | `rundown complete --claim-id <claim_id>`                   | Bearer-authorized completion                                                      |
 | `rundown stop --claim-id <claim_id>`                       | Bearer-authorized stop                                                            |
-| `rundown abort <token>`                                    | Cancel a delegation token                                                         |
-| `rundown abort <token> --force`                            | Cancel or clean up a claimed delegation                                           |
+| `rundown abort <token> --claim-id <claim_id>`              | Cancel a delegation token                                                         |
+| `rundown abort <token> --claim-id <claim_id> --force`      | Cancel or clean up a claimed delegation                                           |
 
 `rundown collect` may continue execution into the next command step after
 aggregation. In default JSON mode, bytes written by that command step are
@@ -795,17 +795,18 @@ Delegation semantics:
   without minting or exposing a token.
 - Targeting a substep whose delegation is **claimed** by a live child fails with
   RD-811 (`DELEGATION_ALREADY_CLAIMED`) — a fresh mint would orphan the running
-  child. Recover explicitly with `rundown abort <token> --force` then
-  re-delegate, or `rundown delegate --retry`.
+  child. Recover explicitly with
+  `rundown abort <token> --claim-id <claim_id> --force` then re-delegate, or
+  `rundown delegate --retry <token> --claim-id <claim_id>`.
 - `rundown delegate --retry <token>` refuses a live claimed child, but can
   supersede a terminal linked child and mint a fresh token. The target is
   resolved from a token positional, from `--step` (optionally with `--index` for
   a FOR iteration), or inferred from the active substep.
   `--input`/`--input-json`/`--input-file` supply variable overrides on the
   re-issued delegation.
-- `rundown abort <token> --force` cancels an active claimed child as fail. When
-  the linked child is already terminal or already reported, it performs cleanup
-  without recording a duplicate fail.
+- `rundown abort <token> --claim-id <claim_id> --force` cancels an active
+  claimed child as fail. When the linked child is already terminal or already
+  reported, it performs cleanup without recording a duplicate fail.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a stable `claim_id`.
 - Child runbook uses `rundown pass --claim-id <claim_id>` /
@@ -1237,5 +1238,5 @@ rundown pop --claim-id <claim_id>       # Restore stashed claimed child
 rundown collect --claim-id <claim_id>   # Collect delegated child results
 rundown stop --claim-id <claim_id>      # Stop claimed child
 rundown complete --claim-id <claim_id>  # Complete claimed child
-rundown abort <token>                   # Cancel delegation token
+rundown abort <token> --claim-id <claim_id> # Cancel delegation token
 ```

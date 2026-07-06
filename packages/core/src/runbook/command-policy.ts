@@ -94,7 +94,7 @@ export type CommandTargetSelector =
   | {
       /** Explicit run-id target selector from `--run <rd_…>`. */
       readonly kind: 'run';
-      /** Run id supplied by the caller as both target and named authority. */
+      /** Run id supplied by the caller as target selection only. */
       readonly runId: RunId;
     };
 
@@ -406,7 +406,21 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
     return { kind: 'actor_context_required', intent: input.intent.kind };
   }
 
-  const request = requestForIntent(input.intent, input.targetState);
+  const pendingFailure = rejectBareMutationIfCollectionPending(input);
+  const hasOpenClaims =
+    input.intent.kind === 'delegating-run-advance' &&
+    !input.intent.targeted &&
+    input.openClaims !== undefined &&
+    input.openClaims.length > 0;
+  const requiresBearer =
+    input.actorContext.kind === 'verified_claim' ||
+    input.intent.kind === 'delegation-issuance' ||
+    input.intent.kind === 'delegation-collection' ||
+    input.targetSelector.kind === 'run' ||
+    pendingFailure !== undefined ||
+    hasOpenClaims;
+
+  const request = requiresBearer ? requestForIntent(input.intent, input.targetState) : undefined;
   if (request !== undefined) {
     if (input.actorContext.kind !== 'verified_claim') {
       return { kind: 'actor_context_required', intent: input.intent.kind };
@@ -421,7 +435,6 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
     }
   }
 
-  const pendingFailure = rejectBareMutationIfCollectionPending(input);
   if (pendingFailure) return pendingFailure;
 
   if (

@@ -12,6 +12,7 @@ import {
   createRunbook,
   runCliInProcess,
   getActiveState,
+  issueRunControlClaim,
   type TestWorkspace,
 } from './test-utils.js';
 
@@ -104,20 +105,27 @@ describe('buildNonDelegatingLifecycleSeam', () => {
       const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
         ?.token;
       expect(autoToken).toBeDefined();
+      const parentClaimId = await issueRunControlClaim(workspace, state!.id);
 
-      const abortResult = await runCliInProcess(['abort', autoToken!], workspace);
+      const abortResult = await runCliInProcess(
+        ['abort', autoToken!, '--claim-id', parentClaimId],
+        workspace,
+      );
       expect(abortResult.exitCode).toBe(0);
 
       const { seam } = buildNonDelegatingLifecycleSeam(workspace.cwd);
       await expect(
         seam.issueDelegation({
           mode: 'fresh',
-          // Named orchestrator authority (post-R1, direct_cli is refused on a
-          // delegating run before the resolver stub is ever reached).
+          // A run id is target selection only, not bearer authority, so the seam
+          // refuses before the resolver stub is ever reached.
           callerEvidence: { kind: 'run_controller', runId: state!.id },
           explicitStep: '1.1',
         }),
-      ).rejects.toThrow(REFUSAL);
+      ).resolves.toEqual({
+        kind: 'refused',
+        policy: { kind: 'actor_context_required', intent: 'delegation-issuance' },
+      });
     });
   });
 

@@ -6,6 +6,7 @@ import {
   getActiveState,
   parseCliJsonObject,
   parseFinalCliJsonObject,
+  issueRunControlClaim,
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -311,6 +312,7 @@ rd echo --result pass
       expect(parentState!.step).toBe('1');
       expect(parentState!.substep).toBe('1');
       const parentRunId = parentState!.id;
+      const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
 
       const token1 = await getAutoIssuedToken('1');
       const token2 = await getAutoIssuedToken('2');
@@ -325,7 +327,7 @@ rd echo --result pass
       expect(result.exitCode).toBe(0);
 
       // Explicit collect aggregates both reported outcomes: PASS ALL → CONTINUE → step 2.
-      result = runCli(`collect --text --run ${parentRunId}`, workspace);
+      result = runCli(`collect --text --claim-id ${parentClaimId}`, workspace);
       expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -351,6 +353,7 @@ rd echo --result fail
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
+      const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
 
       const token1 = await getAutoIssuedToken('1');
       const token2 = await getAutoIssuedToken('2');
@@ -366,7 +369,7 @@ rd echo --result fail
       expect(result.exitCode).toBe(1);
 
       // Explicit collect aggregates the reported outcomes: FAIL ANY → STOP.
-      result = runCli(`collect --text --run ${parentRunId}`, workspace);
+      result = runCli(`collect --text --claim-id ${parentClaimId}`, workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent should be stopped

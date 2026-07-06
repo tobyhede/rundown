@@ -325,7 +325,7 @@ async function resolveClaimTarget(
   }
 }
 
-/** Mutation authority verified from either explicit bearer or implicit singleton evidence. */
+/** Mutation authority verified from an explicit bearer claim id. */
 export type MutationAuthorityResolution =
   | {
       /** Mutation authority was verified. */
@@ -343,10 +343,10 @@ export type MutationAuthorityResolution =
     };
 
 /**
- * Resolve mutation authority from an optional bearer or the implicit singleton path.
+ * Resolve mutation authority from a presented bearer claim id.
  *
  * @param input - Reader, optional presented bearer, target, and authorization request.
- * @param input.targetReader - Read-side dependency for claim proof and implicit lookup.
+ * @param input.targetReader - Read-side dependency for claim proof.
  * @param input.presentedClaimId - Optional explicit bearer claim id.
  * @param input.targetState - Mutation target state.
  * @param input.request - Exact grant authorization request.
@@ -358,39 +358,28 @@ export async function resolveMutationAuthority(input: {
   readonly targetState: RunbookState;
   readonly request: ClaimAuthorizationRequest;
 }): Promise<MutationAuthorityResolution> {
-  if (input.presentedClaimId !== undefined) {
-    const verified = await input.targetReader.verifyClaimId(input.presentedClaimId);
-    if (verified.status !== 'verified') {
-      return {
-        kind: 'refused',
-        reason: verified.status === 'invalid-secret' ? 'invalid-secret' : 'missing',
-      };
-    }
-    return authorizeClaim(verified.claim, input.request).kind === 'allowed'
-      ? {
-          kind: 'verified',
-          authority: {
-            kind: 'bearer',
-            claimId: input.presentedClaimId,
-            claimKey: verified.claim.claimKey,
-          },
-          claim: verified.claim,
-        }
-      : { kind: 'refused', reason: 'no-authorizing-claim' };
+  if (input.presentedClaimId === undefined) {
+    return { kind: 'refused', reason: 'missing' };
   }
 
-  const candidates = await input.targetReader.listClaimsAuthorizing(input.request);
-  if (candidates.length === 1) {
+  const verified = await input.targetReader.verifyClaimId(input.presentedClaimId);
+  if (verified.status !== 'verified') {
     return {
-      kind: 'verified',
-      authority: candidates[0].authority,
-      claim: candidates[0].claim,
+      kind: 'refused',
+      reason: verified.status === 'invalid-secret' ? 'invalid-secret' : 'missing',
     };
   }
-  return {
-    kind: 'refused',
-    reason: candidates.length === 0 ? 'no-authorizing-claim' : 'ambiguous',
-  };
+  return authorizeClaim(verified.claim, input.request).kind === 'allowed'
+    ? {
+        kind: 'verified',
+        authority: {
+          kind: 'bearer',
+          claimId: input.presentedClaimId,
+          claimKey: verified.claim.claimKey,
+        },
+        claim: verified.claim,
+      }
+    : { kind: 'refused', reason: 'no-authorizing-claim' };
 }
 
 function claimAuthorizesRunMutation(claim: VerifiedClaim, state: RunbookState): boolean {
@@ -522,8 +511,17 @@ export async function resolveTransitionTarget(
       };
     }
     if (claimed.kind !== 'terminal_claim') {
-      // 'claim' and 'stale_claim' have identical shapes in both unions; TS
-      // narrows `claimed` to exactly those two here.
+      const refusal = await evaluateTransitionPolicy(
+        targetReader,
+        options,
+        claimed.state,
+        {
+          kind: 'claim',
+          claimId: claimed.claimId,
+        },
+        { skipOpenClaims: claimed.claim.delegation !== undefined },
+      );
+      if (refusal) return refusal;
       return claimed;
     }
     // Split the base terminal_claim into confirm vs conflict. `claimed.lifecycle`
@@ -558,7 +556,7 @@ export async function resolveTransitionTarget(
       return run;
     }
     // A run-shaped target flows through the SAME policy block as the default
-    // path — `--run` names authority, it does not bypass the collection guards.
+    // path — `--run` selects a target, but never authorizes mutation.
     const refusal = await evaluateTransitionPolicy(targetReader, options, run.state, {
       kind: 'run',
       runId: run.runId,
@@ -597,6 +595,8 @@ export async function resolveTransitionTarget(
  * @param options - Transition options carrying command, targeting, and actor context
  * @param target - Resolved target run state (default active or `--run`-named)
  * @param targetSelector - Selector shape describing how the target was named
+ * @param policyOptions - Extra policy switches for claim-targeted transitions
+ * @param policyOptions.skipOpenClaims - Skip parent open-claim reads for delegated child claims
  * @returns A refusing resolution, or `undefined` when allowed
  * @throws {Error} On policy outcomes unreachable for a transition intent
  */
@@ -605,12 +605,16 @@ async function evaluateTransitionPolicy(
   options: ResolveTransitionTargetOptions,
   target: RunbookState,
   targetSelector: CommandTargetSelector,
+  policyOptions: { readonly skipOpenClaims?: boolean } = {},
 ): Promise<TransitionTargetResolution | undefined> {
   const targeted = options.targeted === true;
   // Open claims feed only the bare-shaped open-children guard; a targeted
   // transition is exempt from it, so the read is skipped (and reader fakes
   // asserting "no open-claim read for targeted" stay valid).
-  const openClaims = targeted ? [] : await targetReader.listOpenClaimsForParent(target.id);
+  const openClaims =
+    targeted || policyOptions.skipOpenClaims === true
+      ? []
+      : await targetReader.listOpenClaimsForParent(target.id);
   const actorContext = options.actorContext ?? UNKNOWN_ACTOR_CONTEXT;
   const policy = resolveCommandIntent({
     actorContext,

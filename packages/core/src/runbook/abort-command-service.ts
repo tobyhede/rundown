@@ -11,12 +11,12 @@ import type { RunbookState } from './types.js';
 /**
  * Dependencies for the core abort command authorization seam.
  *
- * The seam only needs read access for claim verification and implicit singleton
- * lookup. The CLI remains responsible for token parsing, output formatting, and
- * lock ownership while it migrates to this seam.
+ * The seam only needs read access for bearer claim verification. The CLI remains
+ * responsible for token parsing, output formatting, and lock ownership while it
+ * migrates to this seam.
  */
 export interface AbortCommandServiceDependencies {
-  /** Reader used to verify bearer claims and resolve implicit authority. */
+  /** Reader used to verify bearer claims. */
   readonly targetReader: CommandTargetReader;
 }
 

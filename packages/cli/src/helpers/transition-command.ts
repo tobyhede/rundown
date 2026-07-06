@@ -12,7 +12,7 @@ import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
-import { parseClaimIdOption } from './claim-id-option.js';
+import { parseClaimIdOption, rejectClaimRunCombination } from './claim-id-option.js';
 import { parseRunOption } from './run-option.js';
 
 /**
@@ -113,6 +113,9 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             }
 
             const cwd = getCwd();
+            if (rejectClaimRunCombination({ claimId: options.claimId, run: options.run, output })) {
+              return;
+            }
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
             const runTarget = parseRunOption(options.run, output);

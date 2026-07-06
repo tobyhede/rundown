@@ -7,7 +7,7 @@ description: Use when stepping through a Rundown runbook that is already active 
 
 Rundown executes markdown runbooks step-by-step. The CLI controls progress — you follow the output and respond.
 
-Capture the run id when you start the runbook: `rundown run` prints it at start and every subsequent event carries it as `runbookId`. You need it for every mutating command you issue as the orchestrator of a delegation-exposed run (`--run <rd_…>`). A claimed child never needs it — a child names its own lane with `--claim-id <claim_id>`.
+Capture the run claim when you start the runbook: `rundown run` emits it as `runbook_started.claim_id`. You need it for every mutating command you issue as the orchestrator of a delegation-exposed run (`--claim-id <claim_id>`). A claimed child uses the `claim_id` returned by `rundown claim`.
 
 ## When to Use
 
@@ -42,20 +42,21 @@ rundown complete                # Complete the active workflow; inside inline co
 The bare `rundown pass` / `rundown fail` / `rundown stop` / `rundown complete`
 forms above apply to a **standalone run** (one with no delegation activity). On a
 **delegation-exposed run** the bare form is refused with `ACTOR_CONTEXT_REQUIRED`;
-name your lane instead — orchestrators pass `--run <rd_…>`, delegated children pass
+name your lane instead — orchestrators and delegated children both pass their
+bearer with
 `--claim-id <claim_id>`:
 
 ```bash
-rundown pass --run <rd_…>        # Orchestrator advances the run it controls
+rundown pass --claim-id <claim_id>   # Orchestrator advances the run it controls
 rundown pass --claim-id <claim_id>   # Delegated child reports its result
 ```
 
 Inside inline-composed runbooks, use `rundown pass` or `rundown fail` to finish the
 current inline unit and let the parent continue (on a delegation-exposed
-composition, `--run <rd_…>` naming any member of the contiguous inline chain).
+composition, use the current run's `claim_id`).
 Use `rundown complete` or `rundown stop` only when the intended outcome is to
 force the composed workflow terminal. Delegated children still use `--claim-id`
-and report to the parent; the parent advances on `rundown collect --run <rd_…>`.
+and report to the parent; the parent advances on `rundown collect --claim-id <claim_id>`.
 
 ## How Steps Work
 
@@ -142,7 +143,7 @@ rundown claim <token> --input-json key=json
 rundown claim <token> --input-file <path>
 ```
 
-On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED` — it does not silently target anything. Orchestrators pass `--run <rd_…>`; children pass `--claim-id <claim_id>`. Only a standalone run (no delegation activity) accepts the bare form.
+On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED` — it does not silently target anything. Orchestrators and children present bearer authority with `--claim-id <claim_id>`. Only a standalone run (no delegation activity) accepts the bare form.
 
 <important>
 **A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
@@ -192,7 +193,7 @@ the JSON instead.
 | Skipping steps | Follow every step — runbook controls flow |
 | Bare `rundown pass` with substeps active | Use `rundown pass --step 2.1` |
 | Bare `rundown pass`/`rundown fail` in a claimed child | Use `rundown pass --claim-id <claim_id>` to report to the parent |
-| Bare mutating command on a delegation-exposed run | Refused with `ACTOR_CONTEXT_REQUIRED`; name your lane — `--run <rd_…>` (orchestrator) or `--claim-id <claim_id>` (child) |
+| Bare mutating command on a delegation-exposed run | Refused with `ACTOR_CONTEXT_REQUIRED`; present bearer authority with `--claim-id <claim_id>` |
 | Claimed child keeps going after reporting | Stop after `rundown pass --claim-id`; the parent's next steps belong to the orchestrator, not you |
 | Abandoning without `rundown stop` | Complete all steps or explicitly stop |
 

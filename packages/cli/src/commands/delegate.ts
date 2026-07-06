@@ -35,7 +35,7 @@ import {
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { parseRunOption } from '../helpers/run-option.js';
-import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
@@ -65,12 +65,14 @@ interface DelegateActionOptions {
  * @param input - Parsed targeting values and output emitter.
  * @param input.claimId - Raw `--claim-id` bearer value, when supplied.
  * @param input.runId - Validated `--run` selector, when supplied.
+ * @param input.rawRun - Raw `--run` selector value, when supplied.
  * @param input.output - Output emitter used for claim-id validation failures.
  * @returns Spreadable `callerEvidence` (+ `targetRunId` when named) fields.
  */
 function targetedSeamFields(input: {
   readonly claimId?: string;
   readonly runId?: RunId;
+  readonly rawRun?: string;
   readonly output: OutputEmitter;
 }):
   | {
@@ -78,6 +80,11 @@ function targetedSeamFields(input: {
       readonly targetRunId?: RunId;
     }
   | undefined {
+  if (
+    rejectClaimRunCombination({ claimId: input.claimId, run: input.rawRun, output: input.output })
+  ) {
+    return undefined;
+  }
   const claimTarget = parseClaimIdOption(input.claimId, input.output);
   if (!claimTarget.ok) return undefined;
   return {
@@ -219,6 +226,7 @@ export function registerDelegateCommand(program: Command): void {
           if (!runTarget.ok) return;
           const seamFields = targetedSeamFields({
             claimId: options.claimId,
+            rawRun: options.run,
             runId: runTarget.runId,
             output,
           });

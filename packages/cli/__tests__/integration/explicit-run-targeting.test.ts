@@ -7,6 +7,7 @@ import {
   extractToken,
   findActionOutput,
   getActiveState,
+  issueRunControlClaim,
   parseConcatenatedJson,
   readRunbookState,
   readSession,
@@ -14,9 +15,9 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
-// R1 acceptance suite for explicit --run targeting (#460): ambient direct-CLI
+// R1 acceptance suite for explicit bearer targeting (#460): ambient direct-CLI
 // trust over delegation-exposed runs is removed; orchestrators name their
-// authority with --run, delegated children keep --claim-id, and bare commands
+// authority with --claim-id, delegated children keep --claim-id, and bare commands
 // remain acceptable only for standalone runs.
 
 interface ErrorEnvelope {
@@ -85,13 +86,15 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(start.exitCode).toBe(0);
   }
 
-  it('refuses a lingering child agent bare pass and bare delegate against the parent, while --run succeeds (#460)', async () => {
+  it('refuses a lingering child agent bare pass and bare delegate against the parent, while --claim-id succeeds (#460)', async () => {
     await setupDelegatingParent();
     const parent = await getActiveState(workspace);
     if (!parent) throw new Error('Expected active parent run');
 
+    const parentClaimId = await issueRunControlClaim(workspace, parent.id);
+
     // The orchestrator names its authority to issue the delegation.
-    const issued = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+    const issued = await runCliInProcess(['delegate', '--claim-id', parentClaimId], workspace);
     expect(issued.exitCode).toBe(0);
     const token = extractToken(issued.stdout);
     if (!token) throw new Error('Expected delegation token');
@@ -125,13 +128,13 @@ describe('explicit --run targeting (R1, #460)', () => {
 
     // The orchestrator names its authority and proceeds: collect the reported
     // outcome, advancing the parent to step 2.
-    const collected = await runCliInProcess(['collect', '--run', parent.id], workspace);
+    const collected = await runCliInProcess(['collect', '--claim-id', parentClaimId], workspace);
     expect(collected.exitCode).toBe(0);
     const advanced = await getActiveState(workspace);
     expect(advanced?.step).toBe('2');
 
     // A run-targeted pass drives the parent even though it is delegating.
-    const targeted = await runCliInProcess(['pass', '--run', parent.id], workspace);
+    const targeted = await runCliInProcess(['pass', '--claim-id', parentClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
   });
 
@@ -178,12 +181,13 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(bare.exitCode).not.toBe(0);
     expect(findErrorEnvelope(bare.stdout)?.code).toBe('ACTOR_CONTEXT_REQUIRED');
 
-    // The orchestrator lane works.
-    const targeted = await runCliInProcess(['pass', '--run', state!.id], workspace);
+    // The orchestrator bearer works.
+    const parentClaimId = await issueRunControlClaim(workspace, state!.id);
+    const targeted = await runCliInProcess(['pass', '--claim-id', parentClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
   });
 
-  it('refuses bare pass on an inline-linked child stage and accepts --run <childRunId> (clause e)', async () => {
+  it('refuses bare pass on an inline-linked child stage and accepts --claim-id <childClaimId> (clause e)', async () => {
     const stageContent = createRunbook({
       name: 'stage',
       title: 'Stage',
@@ -219,7 +223,8 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(bare.exitCode).not.toBe(0);
     expect(findErrorEnvelope(bare.stdout)?.code).toBe('ACTOR_CONTEXT_REQUIRED');
 
-    const targeted = await runCliInProcess(['pass', '--run', stage.id], workspace);
+    const stageClaimId = await issueRunControlClaim(workspace, stage.id);
+    const targeted = await runCliInProcess(['pass', '--claim-id', stageClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
     const after = await getActiveState(workspace);
     expect(after?.step).toBe('2');
@@ -300,7 +305,8 @@ describe('explicit --run targeting (R1, #460)', () => {
 
     // The orchestrator collects the stage; the stage completes and propagates
     // inline to the root, which advances to step 2.
-    const collected = await runCliInProcess(['collect', '--run', stage.id], workspace);
+    const stageClaimId = await issueRunControlClaim(workspace, stage.id);
+    const collected = await runCliInProcess(['collect', '--claim-id', stageClaimId], workspace);
     expect(collected.exitCode).toBe(0);
     const rootAfter = await readRunbookState(workspace, root.runbookId);
     expect(rootAfter?.step).toBe('2');
@@ -321,12 +327,13 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(bare.exitCode).not.toBe(0);
     expect(findErrorEnvelope(bare.stdout)?.code).toBe('ACTOR_CONTEXT_REQUIRED');
 
-    // The orchestrator lane still works.
-    const targeted = await runCliInProcess(['pass', '--run', back.id], workspace);
+    // The orchestrator bearer still works.
+    const rootClaimId = await issueRunControlClaim(workspace, back.id);
+    const targeted = await runCliInProcess(['pass', '--claim-id', rootClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
   });
 
-  it('refuses a bare goto on a delegating run with ACTOR_CONTEXT_REQUIRED, while goto --run succeeds', async () => {
+  it('refuses a bare goto on a delegating run with ACTOR_CONTEXT_REQUIRED, while goto --claim-id succeeds', async () => {
     // Navigation is role-gated like an advance: a lingering child (or any
     // caller without named authority) must not steer a delegating parent's
     // cursor with a bare `goto`.
@@ -346,7 +353,8 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(after?.step).toBe(parent.step);
 
     // The orchestrator names its authority and navigates the same run.
-    const targeted = await runCliInProcess(['goto', '2', '--run', parent.id], workspace);
+    const parentClaimId = await issueRunControlClaim(workspace, parent.id);
+    const targeted = await runCliInProcess(['goto', '2', '--claim-id', parentClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
     const navigated = await getActiveState(workspace);
     expect(navigated?.step).toBe('2');
@@ -434,7 +442,8 @@ describe('explicit --run targeting (R1, #460)', () => {
 
     // ...while the equivalent named authority the creating process held
     // implicitly succeeds explicitly.
-    const targeted = await runCliInProcess(['goto', '1', '--run', state.id], workspace);
+    const claimId = await issueRunControlClaim(workspace, state.id);
+    const targeted = await runCliInProcess(['goto', '1', '--claim-id', claimId], workspace);
     expect(targeted.exitCode).toBe(0);
     const after = await getActiveState(workspace);
     expect(after?.step).toBe('1');
@@ -445,7 +454,8 @@ describe('explicit --run targeting (R1, #460)', () => {
     const parent = await getActiveState(workspace);
     if (!parent) throw new Error('Expected active parent run');
 
-    const issued = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+    const parentClaimId = await issueRunControlClaim(workspace, parent.id);
+    const issued = await runCliInProcess(['delegate', '--claim-id', parentClaimId], workspace);
     const token = extractToken(issued.stdout);
     if (!token) throw new Error('Expected delegation token');
     const claimed = await runCliInProcess(['claim', token], workspace);

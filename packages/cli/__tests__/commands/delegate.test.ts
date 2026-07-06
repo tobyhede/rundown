@@ -7,6 +7,7 @@ import {
   createTestWorkspace,
   extractToken,
   injectDelegationOutcomeForActiveRun,
+  issueRunControlClaim,
   runCliInProcess,
   getActiveState,
   type TestWorkspace,
@@ -187,7 +188,11 @@ describe('delegate command', () => {
     if (!autoToken) {
       throw new Error('setup run did not persist an auto-issued delegation token');
     }
-    const abortResult = await runCliInProcess(['abort', autoToken], workspace);
+    const parentClaimId = await issueRunControlClaim(workspace, state.id);
+    const abortResult = await runCliInProcess(
+      ['abort', autoToken, '--claim-id', parentClaimId],
+      workspace,
+    );
     if (abortResult.exitCode !== 0) {
       throw new Error(`setup abort failed:\n${abortResult.stdout}\n${abortResult.stderr}`);
     }
@@ -358,12 +363,13 @@ describe('delegate command', () => {
   });
 
   describe('delegate --run', () => {
-    it('issues delegation against the named run', async () => {
+    it('issues delegation against the claimed parent run', async () => {
       await setupDelegation();
       const parent = await getActiveState(workspace);
       if (!parent) throw new Error('Expected active parent run');
+      const parentClaimId = await issueRunControlClaim(workspace, parent.id);
 
-      const result = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+      const result = await runCliInProcess(['delegate', '--claim-id', parentClaimId], workspace);
 
       expect(result.exitCode).toBe(0);
       expect(extractToken(result.stdout)).toBeDefined();
@@ -530,7 +536,13 @@ describe('delegate command', () => {
           ?.map((substep) => substep.delegation?.token)
           .filter((token): token is string => typeof token === 'string') ?? [];
       for (const token of autoTokens) {
-        const abort = await runCliInProcess(['abort', token], workspace);
+        const state = await getActiveState(workspace);
+        if (!state) throw new Error('Expected active run for abort setup');
+        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const abort = await runCliInProcess(
+          ['abort', token, '--claim-id', parentClaimId],
+          workspace,
+        );
         expect(abort.exitCode).toBe(0);
       }
 
@@ -1881,7 +1893,13 @@ describe('delegate command', () => {
           ?.map((substep) => substep.delegation?.token)
           .filter((token): token is string => typeof token === 'string') ?? [];
       for (const token of autoTokens) {
-        const abort = await runCliInProcess(['abort', token], workspace);
+        const state = await getActiveState(workspace);
+        if (!state) throw new Error('Expected active run for abort setup');
+        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const abort = await runCliInProcess(
+          ['abort', token, '--claim-id', parentClaimId],
+          workspace,
+        );
         expect(abort.exitCode).toBe(0);
       }
 

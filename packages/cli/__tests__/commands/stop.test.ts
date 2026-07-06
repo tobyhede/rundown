@@ -14,6 +14,7 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
+  issueRunControlClaim,
   parseFinalCliJsonObject,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -892,7 +893,8 @@ Run the child task.
       expect(result.exitCode).toBe(0);
 
       // The orchestrator collects with named authority: FAIL ANY fires STOP.
-      result = await runCliInProcess(['collect', '--run', parentRunId], workspace);
+      const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+      result = await runCliInProcess(['collect', '--claim-id', parentClaimId], workspace);
       expect(result.exitCode).toBe(1);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -1057,7 +1059,8 @@ Approve the deployment.
 
       // The orchestrator collects the grandparent with named authority:
       // FAIL ANY aggregation fires STOP.
-      result = await runCliInProcess(['collect', '--run', grandparentRunId], workspace);
+      const grandparentClaimId = await issueRunControlClaim(workspace, grandparentRunId);
+      result = await runCliInProcess(['collect', '--claim-id', grandparentClaimId], workspace);
       expect(result.exitCode).toBe(1);
 
       // Verify grandparent is stopped

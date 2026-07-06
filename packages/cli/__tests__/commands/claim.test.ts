@@ -11,6 +11,7 @@ import {
   getCliPath,
   parseCliJsonObject,
   parseFinalCliJsonObject,
+  issueRunControlClaim,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -723,14 +724,12 @@ rd echo --result fail
       await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       const token = await getAutoIssuedToken();
 
-      // Cancel the delegation (via run-targeted stop on the delegating parent
-      // — named authority post-R1). A stop is a failure terminal and exits
-      // non-zero.
+      // Cancel the delegation via bearer-authorized stop on the delegating parent.
       let result = await runCliInProcess(
         await withRunTarget(['stop', '--text'], workspace),
         workspace,
       );
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
 
       // Attempt to claim — parent is stopped, delegation cannot be claimed
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -743,10 +742,15 @@ rd echo --result fail
       await writeChildRunbook();
 
       await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      const parent = await getActiveState(workspace);
       const token = await getAutoIssuedToken();
+      const parentClaimId = await issueRunControlClaim(workspace, parent!.id);
 
       // Abort the delegation
-      let result = await runCliInProcess(`abort ${token} --text`, workspace);
+      let result = await runCliInProcess(
+        `abort ${token} --claim-id ${parentClaimId} --text`,
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       // Attempt to claim aborted delegation

@@ -71,7 +71,6 @@ describe('delegated runbook claim guidance', () => {
       expect(claim).toContain(`rundown ${command}`);
     }
     expect(claim).toContain('ACTOR_CONTEXT_REQUIRED');
-    expect(claim).toContain('--run <rd_…>');
     expect(claim).toContain('--claim-id <claim_id>');
   });
 
@@ -84,6 +83,6 @@ describe('delegated runbook claim guidance', () => {
     expect(delegate).not.toBe('');
     expect(delegate).toContain('action: "already-delegated"');
     expect(delegate).not.toContain('command: "already-delegated"');
-    expect(delegate).toContain('rundown delegate --retry --run <rd_…>');
+    expect(delegate).toContain('rundown delegate --retry --claim-id <claim_id>');
   });
 });

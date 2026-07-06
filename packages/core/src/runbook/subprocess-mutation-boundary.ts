@@ -309,8 +309,8 @@ function carriesClaimEvidence(argv: readonly string[], commandIndex: number): bo
  * A call is bare iff its command is `pass`, `fail`, `delegate`, `complete`,
  * `stop`, or `collect` and it carries no bearer claim evidence (`--claim-id`).
  * `--run` is target selection only; it is not mutation authority. A subprocess
- * front end (plugin / MCP) must withhold claim-less mutations rather than let
- * them silently use the parent process's implicit singleton authority.
+ * front end (plugin / MCP) must withhold claim-less mutations rather than
+ * spawning a mutation without bearer proof.
  *
  * The command token may be preceded by program-level global options
  * (`['--deny-all','pass']`, `['--policy','foo','pass']`): the rundown CLI accepts

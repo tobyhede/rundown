@@ -3,6 +3,7 @@ import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
 import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
 import type { ContextSnapshot } from '../runbook/types.js';
+import type { ClaimId } from '../runbook/claim-id.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -37,6 +38,8 @@ export interface RunbookStartedPayload {
   readonly title?: string;
   readonly description?: string;
   readonly prompted: boolean;
+  /** Orchestrator bearer claim id minted for the run controller. */
+  readonly claimId?: ClaimId;
   /** State file path for metadata display (e.g., ".rundown/runs/wf-xxx.json") */
   readonly statePath: string;
 }

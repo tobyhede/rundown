@@ -6,7 +6,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
-import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 
@@ -32,6 +32,9 @@ export function registerGotoCommand(program: Command): void {
             const output = new OutputEmitter({ text: options.text, command: 'goto' });
             const cwd = getCwd();
 
+            if (rejectClaimRunCombination({ claimId: options.claimId, run: options.run, output })) {
+              return;
+            }
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
             const runTarget = parseRunOption(options.run, output);

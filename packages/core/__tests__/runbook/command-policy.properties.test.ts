@@ -191,10 +191,12 @@ describe('resolveCommandIntent properties', () => {
     );
   });
 
-  it('never allows an unknown actor a non-inspect intent', () => {
-    const nonInspect = intentArb.filter((intent) => intent.kind !== 'inspect');
+  it('never allows an unknown actor for bearer-required intents', () => {
+    const bearerRequired = intentArb.filter(
+      (intent) => intent.kind === 'delegation-issuance' || intent.kind === 'delegation-collection',
+    );
     fc.assert(
-      fc.property(nonInspect, (intent) => {
+      fc.property(bearerRequired, (intent) => {
         expect(
           resolveCommandIntent({
             actorContext: UNKNOWN_ACTOR_CONTEXT,

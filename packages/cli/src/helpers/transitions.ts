@@ -347,10 +347,7 @@ export function emitDelegationCollectionPendingError(
 export interface SeamTransitionOptions {
   /** Explicit claim-id bearer authority (`--claim-id`). */
   readonly claimId?: ClaimId;
-  /**
-   * Explicit run target and named authority (`--run`). Mutually exclusive with
-   * `claimId` (enforced upstream by `parseRunOption`).
-   */
+  /** Explicit run target selector (`--run`). Mutually exclusive with `claimId`. */
   readonly runId?: RunId;
   /** Explicit substep target (`--step`). */
   readonly step?: string;

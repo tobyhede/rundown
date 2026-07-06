@@ -180,9 +180,9 @@ describe('Delegation propagation integration', () => {
       };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
       expect(payload.error).toContain('rundown pass --claim-id');
-      expect(payload.error).toContain(claimId);
+      expect(payload.error).not.toContain(claimId);
       // The structured details payload is the contract MCP (Task 4) relies on.
-      expect(payload.details?.claimIds).toEqual([claimId]);
+      expect(payload.details?.claimIds?.[0]).toMatch(/^rdclk_/);
       expect(payload.details?.parentRunId).toBeDefined();
       expect(payload.details?.childRunIds?.length).toBe(1);
     });
@@ -207,7 +207,7 @@ describe('Delegation propagation integration', () => {
       const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
       expect(payload.error).toContain('rundown fail --claim-id');
-      expect(payload.error).toContain(claimId);
+      expect(payload.error).not.toContain(claimId);
     });
 
     it('allows bare rd collect while a claimed delegated child is open (collect is exempt)', async () => {
@@ -282,7 +282,6 @@ describe('Delegation propagation integration', () => {
       // A delegated child claim lands.
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      const claimId = String(findActionOutput(result.stdout)!.claim_id);
 
       // The bare-shaped run-targeted parent advance must refuse.
       result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
@@ -292,7 +291,7 @@ describe('Delegation propagation integration', () => {
         details?: { claimIds?: string[] };
       };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
-      expect(payload.details?.claimIds).toEqual([claimId]);
+      expect(payload.details?.claimIds?.[0]).toMatch(/^rdclk_/);
 
       // The parent must NOT have advanced: no substep was marked done.
       const parent = await readRunbookState(workspace, parentRunId);

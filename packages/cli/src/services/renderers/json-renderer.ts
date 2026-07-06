@@ -366,6 +366,14 @@ export class JSONRenderer implements OutputRenderer {
   }
 
   private publicExecutionPayload(event: RunbookEventV1): Record<string, unknown> {
+    if (event.type === 'RUNBOOK_STARTED') {
+      const { claimId, ...payload } = event.payload;
+      return {
+        ...payload,
+        ...(claimId !== undefined ? { claim_id: claimId } : {}),
+      };
+    }
+
     if (event.type !== 'STEP_ENTERED' || event.payload.inlineLaunch === undefined) {
       return event.payload as unknown as Record<string, unknown>;
     }

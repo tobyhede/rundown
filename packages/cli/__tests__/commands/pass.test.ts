@@ -5,6 +5,7 @@ import {
   createTestWorkspace,
   findActionOutput,
   injectDelegationOutcomeForActiveRun,
+  issueRunControlClaim,
   runCliInProcess,
   getActiveState,
   readRunbookState,
@@ -102,12 +103,13 @@ describe('pass command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('applies pass --run <id> to the named running run', async () => {
+    it('applies pass --claim-id <id> to the claimed running run', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
 
-      const result = await runCliInProcess(`pass --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -142,7 +144,7 @@ describe('pass command', () => {
       expect(payload.code).toBe('INVALID_RUN_ID');
     });
 
-    it('resolves --claim-id authority before --run target selection', async () => {
+    it('rejects combining --claim-id with --run instead of ignoring the run selector', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
 
@@ -153,15 +155,19 @@ describe('pass command', () => {
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
+      expect(payload.code).toBe('INVALID_SYNTAX');
     });
 
-    it('drives the named run substep via pass --run <id> --step <n>', async () => {
+    it('drives the claimed run substep via pass --claim-id <id> --step <n>', async () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
 
-      const result = await runCliInProcess(`pass --run ${active!.id} --step 1.1`, workspace);
+      const result = await runCliInProcess(
+        ['pass', '--claim-id', claimId, '--step', '1.1'],
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('step_transitioned');
@@ -534,7 +540,7 @@ Do child work.
       const barePass = await runCliInProcess('pass', workspace);
       expect(barePass.exitCode).toBe(1);
       expect((JSON.parse(barePass.stdout) as { code?: string }).code).toBe(
-        'OPEN_DELEGATED_CHILDREN',
+        'ACTOR_CONTEXT_REQUIRED',
       );
       const passResult = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(passResult.exitCode).toBe(1);

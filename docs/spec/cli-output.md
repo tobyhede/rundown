@@ -238,9 +238,10 @@ variables and are surfaced through `vars` rather than a separate field.
 Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
 (pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for
 correlation. Bearer `claim_id` values are only returned by `rundown claim` and
-are never reconstructed from status output. The Zod
-`DelegationStatusEntrySchema` in `@rundown-org/core` remains the single source
-of truth for the exact per-entry shape.
+the `runbook_started` event emitted by `rundown run`; they are never
+reconstructed from status output. The Zod `DelegationStatusEntrySchema` in
+`@rundown-org/core` remains the single source of truth for the exact per-entry
+shape.
 
 ### `rundown status` (no active runbook)
 
@@ -306,7 +307,7 @@ arbitrary command bytes cannot corrupt the JSON stream. `--text` preserves the
 human terminal behavior.
 
 ```jsonl
-{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","claim_id":"rdclm_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
 {"type":"command_started","command":"echo \"hello\"","displayCommand":"echo \"hello\"","position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":3}
 {"type":"command_completed","command":"echo \"hello\"","success":true,"exitCode":0,"position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":4}
@@ -1119,11 +1120,11 @@ Error: Runbook file not found: missing.runbook.md
 ### Actor context required
 
 A bare mutating command (`pass`, `fail`, `goto`, `collect`, `complete`, `stop`,
-`delegate`) issued when no bearer or implicit singleton claim authorizes the
-mutation. Exposure is sticky, so refusal may persist after claims close and
-after `rundown prune`. The remediation names the bearer lane and **never echoes
-the target run id** (accident-proofing, not id secrecy — run ids are natively
-available from `rundown run` output and every event's `runbookId`).
+`delegate`) issued without bearer claim authority. Exposure is sticky, so
+refusal may persist after claims close and after `rundown prune`. The
+remediation names the bearer lane and **never echoes the target run id**
+(accident-proofing, not id secrecy — run ids are natively available from
+`rundown run` output and every event's `runbookId`).
 
 **Text:**
 

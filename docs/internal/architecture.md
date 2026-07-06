@@ -463,13 +463,10 @@ The CLI constructs **no** `ActorContext`.
 
 `ActorContext` has no `source` field. Source tagging is not a trust mechanism:
 there is no `--actor-source` flag and no `RD_ACTOR_SOURCE` env var, and they
-must not be reintroduced. The only trust-granting `CallerEvidence` variants are
-`run_controller` (caller-named run authority from an explicit `--run <rd_…>`),
-`claim` (reconstructable claim-controller evidence), and `direct_cli` — the
-**standalone-run convenience lane only**: on a delegation-exposed target it maps
-to `UNKNOWN_ACTOR_CONTEXT` (the structural fix for #460). `plugin` and `mcp`
-evidence — and any agent id, session id, or tool name they carry — always map to
-`UNKNOWN_ACTOR_CONTEXT`.
+must not be reintroduced. The only trust-granting evidence is a verified bearer
+claim id. `run_controller`, shape-only `claim`, `direct_cli`, `plugin`, and
+`mcp` evidence — and any agent id, session id, run id, or tool name they carry —
+map to `UNKNOWN_ACTOR_CONTEXT`.
 
 ### Run-targeted terminals carry derived authority over contiguous inline chains
 

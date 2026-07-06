@@ -145,7 +145,7 @@ describe('resolveCommandIntent', () => {
     });
   });
 
-  it('rejects unknown bare transition in the strict core policy model', () => {
+  it('allows an unknown bare transition on a standalone run', () => {
     const targetState = state();
 
     expect(
@@ -155,10 +155,7 @@ describe('resolveCommandIntent', () => {
         targetSelector: { kind: 'default' },
         targetState,
       }),
-    ).toEqual({
-      kind: 'actor_context_required',
-      intent: 'delegating-run-advance',
-    });
+    ).toMatchObject({ kind: 'allowed', role: 'unknown_for_target', targetRunId: targetState.id });
   });
 
   it('allows a mutation only when a verified claim has the exact grant', () => {
@@ -414,14 +411,14 @@ describe('post-flip determinations', () => {
 });
 
 describe('resolveCommandIntent run-navigation', () => {
-  it('refuses run-navigation without actor evidence', () => {
+  it('allows standalone run-navigation without actor evidence', () => {
     const outcome = resolveCommandIntent({
       actorContext: UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'run-navigation', command: 'goto', targeted: true },
       targetSelector: { kind: 'default' },
       targetState: state(),
     });
-    expect(outcome).toEqual({ kind: 'actor_context_required', intent: 'run-navigation' });
+    expect(outcome).toMatchObject({ kind: 'allowed', role: 'unknown_for_target' });
   });
 
   it('allows run-navigation for the trusted controller of the target', () => {
@@ -457,14 +454,14 @@ describe('resolveCommandIntent run-navigation', () => {
 });
 
 describe('resolveCommandIntent terminal-run-force', () => {
-  it('refuses a bare terminal force with no actor evidence as actor_context_required', () => {
+  it('allows standalone terminal force without actor evidence', () => {
     const outcome = resolveCommandIntent({
       actorContext: UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'terminal-run-force', command: 'complete', targeted: false },
       targetSelector: { kind: 'default' },
       targetState: state(),
     });
-    expect(outcome).toEqual({ kind: 'actor_context_required', intent: 'terminal-run-force' });
+    expect(outcome).toMatchObject({ kind: 'allowed', role: 'unknown_for_target' });
   });
 
   it('refuses a bare terminal force when the delegating run is collection pending', () => {

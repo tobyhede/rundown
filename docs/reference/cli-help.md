@@ -532,9 +532,12 @@ Usage: rundown abort [options] <token>
 Cancel a delegation token
 
 Options:
-  --force     Force cancel even if delegation is claimed (stops child run)
-  --text      Output as human-readable text
-  -h, --help  display help for command
+  --claim-id <claimId>  Bearer authority for the parent run that owns the
+                        delegation
+  --force               Force cancel even if delegation is claimed (stops child
+                        run)
+  --text                Output as human-readable text
+  -h, --help            display help for command
 ```
 
 ### `rundown collect`

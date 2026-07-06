@@ -49,7 +49,6 @@ const secondClaimId = assertClaimId(
 const claim = makeClaim(claimId);
 const secondClaim = makeClaim(secondClaimId);
 const verifiedClaim = makeVerifiedClaim(claim);
-const secondVerifiedClaim = makeVerifiedClaim(secondClaim);
 const claimWithoutMutateGrant: ClaimRecord = {
   ...claim,
   grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
@@ -309,7 +308,7 @@ describe('resolveMutationAuthority', () => {
     expect(result).toEqual({ kind: 'refused', reason: 'invalid-secret' });
   });
 
-  it('uses implicit authority when exactly one local claim authorizes the target request', async () => {
+  it('refuses mutation authority when no bearer is presented, even if a local claim authorizes the request', async () => {
     const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
 
     const result = await resolveMutationAuthority({
@@ -325,34 +324,21 @@ describe('resolveMutationAuthority', () => {
       request,
     });
 
-    expect(result).toEqual({
-      kind: 'verified',
-      authority: { kind: 'implicit', claimKey: verifiedClaim.claimKey },
-      claim: verifiedClaim,
-    });
+    expect(result).toEqual({ kind: 'refused', reason: 'missing' });
   });
 
-  it('refuses implicit authority when more than one local claim authorizes the request', async () => {
+  it('does not scan local claims when no bearer is presented', async () => {
     const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
 
     const result = await resolveMutationAuthority({
       targetReader: fakeReader({
-        authorizingClaims: [
-          {
-            authority: { kind: 'implicit', claimKey: verifiedClaim.claimKey },
-            claim: verifiedClaim,
-          },
-          {
-            authority: { kind: 'implicit', claimKey: secondVerifiedClaim.claimKey },
-            claim: secondVerifiedClaim,
-          },
-        ],
+        failOnDefaultRead: true,
       }),
       targetState: child,
       request,
     });
 
-    expect(result).toEqual({ kind: 'refused', reason: 'ambiguous' });
+    expect(result).toEqual({ kind: 'refused', reason: 'missing' });
   });
 });
 
@@ -447,21 +433,12 @@ describe('resolveTransitionTarget', () => {
     });
   });
 
-  it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
-    // No actorContext supplied: the strict core default evaluates as unknown for
-    // the target, so a bare transition is refused as a typed resolution rather
-    // than throwing. Frontends pass bearer evidence through core verification
-    // before reaching here; callers that pass none render the policy error
-    // consistently from this result.
+  it('resolves a standalone default transition with no actor evidence', async () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
       }),
-    ).resolves.toEqual({
-      // Deliberately carries NO run id: the refusal is an accident barrier and
-      // must not hand the caller the id it needs to bypass it (decision 4).
-      kind: 'actor_context_required',
-    });
+    ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
   it('skips the open delegated child guard for targeted transitions (with trusted evidence)', async () => {
@@ -477,7 +454,7 @@ describe('resolveTransitionTarget', () => {
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
-  it('refuses a targeted transition with no trusted evidence on a delegating run (--step is not authority)', async () => {
+  it('resolves a targeted standalone transition with no actor evidence', async () => {
     // The #460 child could as easily issue `rd pass --step N`: a step name is
     // a completion target, not authority. The role gate applies to targeted
     // and bare transitions alike; only the collection guards stay exempt.
@@ -486,7 +463,7 @@ describe('resolveTransitionTarget', () => {
         fakeReader({ active: parent, openClaims: [claim], failOnOpenClaimRead: true }),
         { command: 'pass', targeted: true },
       ),
-    ).resolves.toEqual({ kind: 'actor_context_required' });
+    ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
   it('resolves an explicit live claim without checking default stack or parent open claims', async () => {

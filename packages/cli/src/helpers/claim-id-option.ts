@@ -22,3 +22,32 @@ export function parseClaimIdOption(
   process.exitCode = 1;
   return { ok: false };
 }
+
+/**
+ * Reject ambiguous claim-plus-run targeting.
+ *
+ * `--claim-id` is bearer authority and currently resolves its own target;
+ * `--run` is only a selector. Until the API explicitly models
+ * claim-plus-selector narrowing, accepting both would silently ignore one of
+ * the caller's constraints.
+ *
+ * @param input - Raw option presence and output emitter.
+ * @param input.claimId - Raw claim id option value.
+ * @param input.run - Raw run id option value.
+ * @param input.output - Output emitter used to report validation errors.
+ * @returns True when the command should stop.
+ */
+export function rejectClaimRunCombination(input: {
+  readonly claimId?: string;
+  readonly run?: string;
+  readonly output: OutputEmitter;
+}): boolean {
+  if (input.claimId === undefined || input.run === undefined) return false;
+  input.output.error(
+    'Pass either --claim-id or --run, not both. --claim-id is bearer authority; --run is target selection only.',
+    'INVALID_SYNTAX',
+  );
+  input.output.flush();
+  process.exitCode = 1;
+  return true;
+}

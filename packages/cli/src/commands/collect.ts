@@ -23,7 +23,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
-import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
@@ -68,6 +68,9 @@ export function registerCollectCommand(program: Command): void {
             const cwd = getCwd();
             const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
 
+            if (rejectClaimRunCombination({ claimId: options.claimId, run: options.run, output })) {
+              return;
+            }
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
             const runTarget = parseRunOption(options.run, output);
