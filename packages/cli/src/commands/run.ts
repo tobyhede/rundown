@@ -284,13 +284,11 @@ export function registerRunCommand(program: Command): void {
             // policy gate. It cannot reach a pre-existing run — result.stateId
             // is the id startRunbook just minted via manager.create in this
             // same invocation, never a session-stack or --run resolution — and
-            // the creator holding that in-process id has exactly the authority
-            // the gate grants `goto --run <own-id>`: run_controller evidence
-            // maps to trusted run controller regardless of exposure
-            // (actorContextFromEvidence). Gating here would refuse
+            // the creator is still inside the same launch call, before any
+            // subprocess boundary exists. Gating here would refuse
             // `run --prompted --step` on any document that authors a DELEGATE
             // substep (delegating-from-birth static exposure) while the
-            // equivalent `goto --run <fresh-id>` succeeds — a refusal with no
+            // equivalent launch-local jump succeeds — a refusal with no
             // security content. Pinned by "run --prompted --step jumps a
             // freshly created delegating-document run" in
             // explicit-run-targeting.test.ts.

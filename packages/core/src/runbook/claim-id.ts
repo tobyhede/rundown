@@ -74,7 +74,7 @@ export type ClaimAuthorizationRequest =
   | { readonly action: 'mutate-run'; readonly runId: RunId }
   | { readonly action: 'delegate-from-run'; readonly runId: RunId }
   | { readonly action: 'collect-for-run'; readonly runId: RunId }
-  | { readonly action: 'abort-delegation'; readonly runId: RunId; readonly stepId: string }
+  | { readonly action: 'abort-delegation'; readonly runId: RunId; readonly stepId?: string }
   | { readonly action: 'retry-delegation'; readonly runId: RunId; readonly stepId: string }
   | ({ readonly action: 'report-delegation-result' } & DelegationClaimLinkage);
 
@@ -141,11 +141,6 @@ export interface AuthorizedClaim {
  */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claimId: ClaimId; readonly claim: ClaimRecord }
-  | {
-      readonly status: 'already-claimed';
-      readonly childRunId: RunId;
-      readonly claimKey: ClaimLookupKey;
-    }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | {
       readonly status: 'terminal-child';
@@ -352,13 +347,14 @@ export function createRunControlGrants(runId: RunId): readonly ClaimGrant[] {
  * Create grants for a child run claimed from a delegation token.
  *
  * @param input - Delegation linkage for the claimed child run.
+ * @param input.linkage - Exact parent/child delegation linkage.
  * @returns Explicit child mutation and parent report grants.
  */
 export function createDelegatedChildGrants(input: {
   readonly linkage: DelegationClaimLinkage;
 }): readonly ClaimGrant[] {
   return [
-    { action: 'mutate-run', runId: input.linkage.childRunId },
+    ...createRunControlGrants(input.linkage.childRunId),
     {
       action: 'report-delegation-result',
       ...input.linkage,
@@ -370,6 +366,12 @@ export function createDelegatedChildGrants(input: {
  * Create a persisted proof-backed claim record.
  *
  * @param input - Claim proof, target, grant, and timestamp data.
+ * @param input.claimKey - Non-secret lookup key for the claim record.
+ * @param input.secretHash - Hash of the bearer secret.
+ * @param input.controlledRunId - Run controlled by this claim.
+ * @param input.delegation - Optional parent/child delegation linkage.
+ * @param input.grants - Explicit authorization grants for this claim.
+ * @param input.now - Timestamp to store as issued/updated time.
  * @returns Persisted claim record.
  */
 export function createClaimRecord(input: {

@@ -16,7 +16,6 @@ import {
   parseStepIdFromString,
   resolveCommandTarget,
   type ActionType,
-  type ClaimRecord,
   type CommandTargetResolution,
   type CommandTargetSelector,
   type ExecutionEventEmitter,
@@ -28,6 +27,7 @@ import {
   type RunId,
   type CommandExecutionStreamOptions,
   type LifecycleTransitionOutcome,
+  type VerifiedClaim,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
@@ -163,7 +163,7 @@ export interface TransitionContext {
    * needed to build a claim-controller actor context for core policy. Surfaced
    * on the base (collect) path only — see {@link buildTransitionContext}.
    */
-  claim?: ClaimRecord;
+  claim?: VerifiedClaim;
 }
 
 /**
@@ -195,7 +195,8 @@ export type BaseBuildTransitionContextResult =
  * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
- *   stack; mutually exclusive with `claimId` (enforced upstream)
+ *   stack. This selects a target run; bearer authority still comes from
+ *   `claimId` when one is supplied.
  * @param options.commandStreamOptions - Runtime-only routing for command
  * subprocess stdout/stderr while transition follow-on execution continues
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
@@ -219,7 +220,7 @@ export async function buildTransitionContext(
   let state: RunbookState;
   // Resolved claim record, surfaced so the collect command can build a
   // claim-controller actor context; undefined for the default-stack target.
-  let claim: ClaimRecord | undefined;
+  let claim: VerifiedClaim | undefined;
 
   const active = await resolveCommandTarget(sessionService, {
     ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
@@ -298,7 +299,7 @@ export function emitOpenDelegatedChildrenError(
   output: OutputEmitter,
   command: 'pass' | 'fail',
   parentRunId: RunId,
-  claimIds: readonly ClaimId[],
+  claimIds: readonly string[],
   childRunIds: readonly RunId[],
 ): void {
   output.error(
@@ -344,7 +345,7 @@ export function emitDelegationCollectionPendingError(
 
 /** CLI options forwarded to a pass/fail seam transition. */
 export interface SeamTransitionOptions {
-  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
+  /** Explicit claim-id bearer authority (`--claim-id`). */
   readonly claimId?: ClaimId;
   /**
    * Explicit run target and named authority (`--run`). Mutually exclusive with
@@ -471,8 +472,8 @@ function renderRefusal(
         output,
         config.commandName,
         outcome.parentRunId,
-        outcome.claims.map((claim) => claim.claimId),
-        outcome.claims.map((claim) => claim.childRunId),
+        outcome.claims.map((claim) => claim.claimKey),
+        outcome.claims.map((claim) => claim.controlledRunId),
       );
       return true;
     case 'delegation_collection_pending':
@@ -629,7 +630,7 @@ export async function runSeamTransition(
   const outcome = await seam.runTransition({
     command: config.commandName,
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.claimId !== undefined ? { claimId: options.claimId } : {},
     ),
     targetSelector,
     terminalPolicy: config.policy,

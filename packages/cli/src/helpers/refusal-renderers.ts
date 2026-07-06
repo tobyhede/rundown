@@ -49,9 +49,7 @@ export function renderActorContextRequiredRefusal(
 ): boolean {
   output.error(
     `This run has delegation activity, so a bare \`rundown ${commandName}\` is refused. ` +
-      'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-      '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
-      `if you are ${claimLanePurpose}.`,
+      `Pass \`--claim-id <claimId>\` if you are ${claimLanePurpose}.`,
     'ACTOR_CONTEXT_REQUIRED',
   );
   return true;

@@ -74,10 +74,10 @@ describe('RunbookCollectionService', () => {
 
   // Post-R1, collection targets author DELEGATE and therefore classify
   // `delegating`, so bare direct-CLI evidence no longer mints orchestrator
-  // trust — the orchestrator names its run explicitly (`--run` =>
-  // run_controller evidence). The behavioural suites below exercise the
-  // collection operation as that named orchestrator; the refusal twin pinning
-  // direct_cli on these fixtures lives in the policy-gate describe.
+  // trust — the orchestrator supplies bearer claim evidence. The behavioural
+  // suites below exercise the collection operation as that verified controller;
+  // the refusal twin pinning direct_cli on these fixtures lives in the
+  // policy-gate describe.
   const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'claim_bearer', claimId };
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
@@ -977,7 +977,7 @@ describe('RunbookCollectionService', () => {
     const recorded = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 

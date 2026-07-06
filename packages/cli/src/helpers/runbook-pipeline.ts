@@ -175,7 +175,12 @@ export interface RunbookStartFailure {
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: RunId }
+  | {
+      ok: true;
+      loopResult: 'done' | 'stopped' | 'waiting';
+      stateId: RunId;
+      claimId?: ClaimId;
+    }
   | RunbookStartFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
@@ -251,7 +256,7 @@ export type ClaimResult =
       ok: true;
       /** Unique identifier of the launched (or idempotently returned) child run. */
       childRunId: RunId;
-      /** Claim id for explicit child targeting. */
+      /** Bearer claim id for newly claimed children. */
       claimId: ClaimId;
       /** Unique identifier of the parent run that owns the delegation. */
       parentRunId: RunId;
@@ -914,6 +919,7 @@ async function launchRunbook(
   };
   let sessionActivated = false;
   let afterCreateAttempted = false;
+  let issuedRunControlClaimId: ClaimId | undefined;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
     if (afterCreateAttempted && options.afterCreateRollback) {
@@ -972,6 +978,7 @@ async function launchRunbook(
       case 'default-stack':
         await sessionService.pushRunbook(state.id);
         sessionActivated = true;
+        issuedRunControlClaimId = (await sessionService.issueRunControlClaim(state.id)).claimId;
         break;
       case 'none':
         break;
@@ -1035,7 +1042,12 @@ async function launchRunbook(
     },
   );
 
-  return { ok: true, loopResult, stateId: launchedStateId };
+  return {
+    ok: true,
+    loopResult,
+    stateId: launchedStateId,
+    ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
+  };
 }
 
 /**
@@ -1164,8 +1176,8 @@ async function claimChildForPipeline(
     case 'claimed':
       return {
         ok: true,
-        claimId: claim.claim.claimId,
-        childRunId: claim.claim.childRunId,
+        claimId: claim.claimId,
+        childRunId: claim.claim.controlledRunId,
       };
     case 'missing-child':
       return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
@@ -1216,7 +1228,7 @@ export interface ClaimedOutputPayload {
   readonly action: 'claimed';
   /** Redacted display form of the delegation token (safe to log). */
   readonly token: string;
-  /** Branded claim id for subsequent `--claim-id` commands. */
+  /** Branded claim id for subsequent `--claim-id` commands, when freshly minted. */
   readonly claim_id: ClaimId;
   /** Run id of the launched (or idempotently returned) child runbook. */
   readonly run_id: string;
@@ -1282,10 +1294,11 @@ function emitClaimedSuccess(args: {
   readonly parentStepAt: string | undefined;
   readonly loopResult: 'done' | 'stopped' | 'waiting';
 }): Extract<ClaimResult, { ok: true }> {
+  const payload = buildClaimedPayload(args);
   emitClaimedOutput(
     args.output,
     `Claimed ${args.truncatedToken} -> ${args.childRunbookPath}`,
-    buildClaimedPayload(args),
+    payload,
   );
 
   return {
@@ -1503,14 +1516,14 @@ export async function claimAndLaunch(
 
     const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);
     if (existingClaim !== null) {
-      const existingChild = await manager.load(existingClaim.childRunId);
+      const existingChild = await manager.load(existingClaim.controlledRunId);
       if (!existingChild) {
         return {
           ok: false,
           reason: 'child-missing',
           parentRunId: freshParent.id,
           stepId,
-          childRunId: existingClaim.childRunId,
+          childRunId: existingClaim.controlledRunId,
         };
       }
       if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
@@ -1519,12 +1532,12 @@ export async function claimAndLaunch(
           reason: 'delegation-resolved',
           parentRunId: freshParent.id,
           stepId,
-          childRunId: existingClaim.childRunId,
+          childRunId: existingClaim.controlledRunId,
         };
       }
       const claimResult = await claimChildForPipeline(
         ctx,
-        existingClaim.childRunId,
+        existingClaim.controlledRunId,
         delegationLinkage,
       );
       if (!claimResult.ok) {
@@ -1649,7 +1662,7 @@ export async function claimAndLaunch(
           claimResult.childRunId,
           tokenHash,
         );
-        capturedClaimId = claimResult.claimId;
+        capturedClaimId = 'claimId' in claimResult ? claimResult.claimId : undefined;
         capturedChildRunId = claimResult.childRunId;
       },
       afterCreateRollback: async (childStateId) => {

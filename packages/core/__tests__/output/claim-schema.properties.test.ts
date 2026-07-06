@@ -4,26 +4,30 @@ import { ClaimResponseSchema } from '../../src/output/zod-schemas.js';
 import { isClaimResponse, isActionResponse } from '../../src/output/schema.js';
 import type { CLIResponse } from '../../src/output/schema.js';
 
-// Mirrors CLAIM_ID_PATTERN at packages/core/src/runbook/claim-id.ts:16
-// (^rdclm_[A-Za-z0-9_-]{22}$). Regex arbitraries via fc.stringMatching
-// aren't supported in this fast-check version; a deterministic generator
-// over the alphabet is sufficient. The alphabet is ASCII-only so iterating
-// via Array.from is safe.
+// Mirrors CLAIM_ID_PATTERN at packages/core/src/runbook/claim-id.ts. Regex
+// arbitraries via fc.stringMatching aren't supported in this fast-check
+// version; deterministic generators over ASCII alphabets are sufficient.
 const CLAIM_ID_ALPHABET = Array.from(
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-',
 );
+const HEX_ALPHABET = Array.from('0123456789abcdef');
+const hex32Arb = fc.array(fc.constantFrom(...HEX_ALPHABET), { minLength: 32, maxLength: 32 });
 const claimIdArb: fc.Arbitrary<string> = fc
-  .array(fc.constantFrom(...CLAIM_ID_ALPHABET), { minLength: 22, maxLength: 22 })
-  .map((chars) => `rdclm_${chars.join('')}`);
+  .tuple(
+    hex32Arb,
+    fc.array(fc.constantFrom(...CLAIM_ID_ALPHABET), { minLength: 43, maxLength: 43 }),
+  )
+  .map(([lookup, secret]) => `rdclm_${lookup.join('')}_${secret.join('')}`);
+const runIdArb = hex32Arb.map((chars) => `rd_${chars.join('')}`);
 
 const validClaimPayloadArb = fc.record({
   kind: fc.constant('claim' as const),
   action: fc.constant('claimed' as const),
   token: fc.string({ minLength: 1, maxLength: 64 }),
   claim_id: claimIdArb,
-  run_id: fc.string({ minLength: 1, maxLength: 64 }),
+  run_id: runIdArb,
   runbook: fc.string({ minLength: 1, maxLength: 128 }),
-  parent_run_id: fc.string({ minLength: 1, maxLength: 64 }),
+  parent_run_id: runIdArb,
   parent_step: fc.option(fc.string({ minLength: 1, maxLength: 32 }), { nil: undefined }),
 });
 

@@ -1,4 +1,4 @@
-import { assertRunId, assertClaimId, assertDelegationTokenHash } from '@rundown-org/core';
+import { assertClaimId } from '@rundown-org/core';
 import { readLifecycleCallerEvidence } from '../../src/helpers/caller-evidence.js';
 
 describe('readLifecycleCallerEvidence', () => {
@@ -6,33 +6,13 @@ describe('readLifecycleCallerEvidence', () => {
     expect(readLifecycleCallerEvidence()).toEqual({ kind: 'direct_cli' });
   });
 
-  it('maps a resolved claim record to claim evidence anchored on the controlled run', () => {
-    const claim = {
-      claimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
-      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-      controlledRunId: assertRunId('rd_11111111111111111111111111111111'),
-    };
+  it('maps a bearer claim id to claim_bearer evidence', () => {
+    const claimId = assertClaimId(`rdclm_${'a'.repeat(32)}_${'A'.repeat(43)}`);
 
-    expect(readLifecycleCallerEvidence({ claim })).toEqual({ kind: 'claim', ...claim });
-  });
-
-  it('maps a validated --run id to run_controller evidence naming that run', () => {
-    const runId = assertRunId('rd_22222222222222222222222222222222');
-
-    expect(readLifecycleCallerEvidence({ runId })).toEqual({ kind: 'run_controller', runId });
-  });
-
-  it('gives claim evidence precedence when both inputs are somehow present', () => {
-    // Exclusivity is enforced upstream by parseRunOption; the evidence reader
-    // still has a deterministic precedence rather than an undefined state.
-    const claim = {
-      claimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
-      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-      controlledRunId: assertRunId('rd_11111111111111111111111111111111'),
-    };
-    const runId = assertRunId('rd_22222222222222222222222222222222');
-
-    expect(readLifecycleCallerEvidence({ claim, runId })).toEqual({ kind: 'claim', ...claim });
+    expect(readLifecycleCallerEvidence({ claimId })).toEqual({
+      kind: 'claim_bearer',
+      claimId,
+    });
   });
 
   it('never emits a source label', () => {

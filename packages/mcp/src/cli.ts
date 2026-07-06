@@ -29,7 +29,7 @@ const execFileAsync = promisify(execFile) as ExecFileAsync;
  * Per `docs/spec/cli-output.md`, the CLI's JSON output is a documented
  * contract: commands emit either a single JSON
  * value or newline-delimited JSON (one object per line), where a streamed
- * `rd run`/`rd pass` etc. sequence ends with the terminal command/action
+ * `rundown run`/`rundown pass` etc. sequence ends with the terminal command/action
  * object on the last line. We parse to that contract directly — a single
  * `JSON.parse`, else line-delimited JSON — and prefer the terminal object with
  * a `command`/`action` field so MCP callers receive the command result rather
@@ -46,7 +46,7 @@ function parseJsonOrJsonl(stdout: string): unknown {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    // Fall through to newline-delimited JSON (the documented `rd run` contract).
+    // Fall through to newline-delimited JSON (the documented `rundown run` contract).
   }
 
   const parsedObjects: unknown[] = [];

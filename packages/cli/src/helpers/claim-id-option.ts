@@ -14,7 +14,10 @@ export function parseClaimIdOption(
 ): { readonly ok: true; readonly claimId?: ClaimId } | { readonly ok: false } {
   if (raw === undefined) return { ok: true };
   if (isClaimId(raw)) return { ok: true, claimId: raw };
-  output.error('Invalid claim id. Expected rdclm_<22 base64url characters>.', 'INVALID_CLAIM_ID');
+  output.error(
+    'Invalid claim id. Expected rdclm_<32 lowercase hex characters>_<43 base64url characters>.',
+    'INVALID_CLAIM_ID',
+  );
   output.flush();
   process.exitCode = 1;
   return { ok: false };

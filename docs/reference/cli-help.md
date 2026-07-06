@@ -154,8 +154,7 @@ Options:
   --step <stepId>       Target specific substep
   --index <number>      FOR loop iteration to target (requires --step)
   --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
+  --run <runId>         Target a runbook by run id
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -171,8 +170,7 @@ Options:
   --step <stepId>       Target specific substep
   --index <number>      FOR loop iteration to target (requires --step)
   --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
+  --run <runId>         Target a runbook by run id
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -189,8 +187,7 @@ Arguments:
 
 Options:
   --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
+  --run <runId>         Target a runbook by run id
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -205,8 +202,7 @@ Jump to specific step (e.g., "3" or "3.1" for substep)
 Options:
   --index <number>      FOR loop iteration to target
   --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
+  --run <runId>         Target a runbook by run id
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -236,8 +232,7 @@ Arguments:
 
 Options:
   --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
+  --run <runId>         Target a runbook by run id
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -483,10 +478,12 @@ Options:
   --step <stepId>              Step to delegate (e.g., 1.1 or 1.2.1 for
                                step.iteration.substep)
   --index <number>             FOR loop iteration to target (requires --step)
+  --claim-id <claimId>         Bearer authority for the run that issues the
+                               delegation
   --retry                      Retry an existing delegation: cancel and re-issue
                                with a fresh token
-  --run <runId>                Name the run you control (explicit orchestrator
-                               targeting)
+  --run <runId>                Select the target run; authority still comes from
+                               --claim-id
   --text                       Output as human-readable text
   -h, --help                   display help for command
 
@@ -552,8 +549,7 @@ Options:
   --index <number>      FOR loop iteration to target (requires --step on a FOR
                         step)
   --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
+  --run <runId>         Target a runbook by run id
   --text                Output as human-readable text
   -h, --help            display help for command
 ```

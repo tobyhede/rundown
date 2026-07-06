@@ -566,11 +566,11 @@ export function substituteClaimIds(command: string, capturedClaimIds: readonly s
  *
  * `${RUN_ID}` maps to the first captured run id, `${RUN_ID_2}` maps to the
  * second, and so on. Run ids are captured in emission order from
- * `runbook_started` events (`runbookId`), so a scenario's own `rd run` start
+ * `runbook_started` events (`runbookId`), so a scenario's own `rundown run` start
  * output supplies `${RUN_ID}` and later starts (inline children, claimed
  * children) supply the higher indexes. Lets bundled scenario runbooks express
- * orchestrator commands as `rd collect --run ${RUN_ID}` (post-R1 named
- * authority). Mirrors {@link substituteClaimIds}.
+ * target-narrowing commands as `rundown collect --claim-id ${CLAIM_ID} --run
+ * ${RUN_ID}`. Mirrors {@link substituteClaimIds}.
  *
  * @param command - Command string with optional run id placeholders
  * @param capturedRunIds - Run ids captured from earlier `runbook_started` events
@@ -807,9 +807,9 @@ function processJsonObject(
   }
 
   // Extract pre-issued delegation tokens from STEP_ENTERED delegateFrontier.
-  // Emitted when `rd run` enters a DELEGATE step: tokens are auto-issued for
+  // Emitted when `rundown run` enters a DELEGATE step: tokens are auto-issued for
   // each delegated substep so the agent can claim without a separate
-  // `rd delegate` command.
+  // `rundown delegate` command.
   if (obj.type === 'step_entered' && Array.isArray(obj.delegateFrontier)) {
     for (const entry of obj.delegateFrontier) {
       if (

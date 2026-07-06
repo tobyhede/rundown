@@ -27,7 +27,9 @@ import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 const PARENT_RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId;
 const CHILD_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as RunId;
-const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
+const TEST_CLAIM_ID =
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_' as ClaimId;
+const TEST_CLAIM_KEY = 'rdclk_11111111111111111111111111111111';
 
 const mockRunTransition = mockFn<(args: unknown) => Promise<LifecycleTransitionOutcome>>();
 const mockManagerLoad = mockFn<(id: RunId) => Promise<RunbookState | null>>();
@@ -161,16 +163,20 @@ function makeOutput(json = true): MockOutput & OutputEmitter {
 
 function claimRecord(): ClaimRecord {
   return {
-    kind: 'claim-record',
-    claimId: TEST_CLAIM_ID,
-    childRunId: CHILD_RUN_ID,
-    tokenHash: `sha256:${'a'.repeat(64)}`,
-    parentRunId: PARENT_RUN_ID,
-    parentStepId: '1',
-    parentStep: '1',
-    parentFrameKey: '1',
-    parentEntry: 1,
-    claimedAt: '2026-07-02T00:00:00.000Z',
+    claimKey: TEST_CLAIM_KEY,
+    secretHash: `sha256:${'a'.repeat(64)}`,
+    controlledRunId: CHILD_RUN_ID,
+    delegation: {
+      childRunId: CHILD_RUN_ID,
+      tokenHash: `sha256:${'a'.repeat(64)}`,
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1',
+      parentEntry: 1,
+    },
+    grants: [],
+    issuedAt: '2026-07-02T00:00:00.000Z',
     updatedAt: '2026-07-02T00:00:00.000Z',
   } as unknown as ClaimRecord;
 }
@@ -570,7 +576,7 @@ describe('runSeamTransition — refusal render table', () => {
     expect(details).toEqual({
       command: 'pass',
       parentRunId: PARENT_RUN_ID,
-      claimIds: [TEST_CLAIM_ID],
+      claimIds: [TEST_CLAIM_KEY],
       childRunIds: [CHILD_RUN_ID],
     });
     expect(result.exitError).toBe(true);
@@ -607,8 +613,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const [message, code, details] = output.error.mock.calls[0];
     expect(code).toBe('ACTOR_CONTEXT_REQUIRED');
-    // The remediation names both explicit-authority lanes...
-    expect(message).toContain('--run');
+    // The remediation names the bearer-authority lane.
     expect(message).toContain('--claim-id');
     expect(message).toContain('rundown fail');
     // ...and never hands the id back: no details object, no run id anywhere

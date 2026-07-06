@@ -353,33 +353,16 @@ function allowed(
 /**
  * Remediation message for the `collect_requires_orchestrator` refusal.
  *
- * Names BOTH explicit-authority lanes with wording consistent with the
- * `RUN_TARGET_UNAVAILABLE` / `ACTOR_CONTEXT_REQUIRED` remediations, and never
- * echoes the target run id (decision 4 — accident-proofing, not secrecy: run
- * ids are natively available from `rundown run` output and every event's
- * `runbookId`).
+ * Names bearer claim authority with wording consistent with the
+ * `RUN_TARGET_UNAVAILABLE` / `ACTOR_CONTEXT_REQUIRED` remediations. `--run` is
+ * only target selection, and the message never echoes the target run id
+ * (decision 4 — accident-proofing, not secrecy: run ids are natively available
+ * from `rundown run` output and every event's `runbookId`).
  */
 export const COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE =
   'rundown collect requires an actor that controls the target delegating run. ' +
-  'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-  '`rundown run` and carried as runbookId on every event) if you are the orchestrator, ' +
-  'or `--claim-id <claimId>` if you are collecting within delegated work.';
-
-function requireOrchestratorForCollection(
-  role: EffectiveRole,
-  intent: CommandIntent,
-  targetState: RunbookState | undefined,
-): DelegationPolicyOutcome | undefined {
-  if (role === 'orchestrator_for_target') return undefined;
-  if (role === 'unknown_for_target' || !targetState) {
-    return { kind: 'actor_context_required', intent: intent.kind };
-  }
-  return {
-    kind: 'collect_requires_orchestrator',
-    targetRunId: targetState.id,
-    message: COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
-  };
-}
+  'Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. ' +
+  'Add `--run <rd_…>` only when the bearer controls more than one possible target.';
 
 function rejectBareMutationIfCollectionPending(
   input: ResolveCommandIntentInput,
@@ -433,7 +416,7 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
       return {
         kind: 'claim_grant_required',
         intent: input.intent.kind,
-        ...(input.targetState ? { targetRunId: input.targetState.id } : {}),
+        targetRunId: input.targetState.id,
       };
     }
   }
@@ -445,8 +428,7 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
     input.intent.kind === 'delegating-run-advance' &&
     !input.intent.targeted &&
     input.openClaims &&
-    input.openClaims.length > 0 &&
-    input.targetState
+    input.openClaims.length > 0
   ) {
     return {
       kind: 'open_claims',

@@ -17,7 +17,6 @@ import {
   type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
-  type ClaimLookupKey,
   type ClaimRecord,
   type ClaimVerificationResult,
   type VerifiedClaim,
@@ -424,9 +423,9 @@ describe('resolveTransitionTarget', () => {
   it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
     // No actorContext supplied: the strict core default evaluates as unknown for
     // the target, so a bare transition is refused as a typed resolution rather
-    // than throwing. Frontends map typed caller evidence to an actor context
-    // (direct CLI -> trusted run controller) before reaching here; callers that
-    // pass none render the policy error consistently from this result.
+    // than throwing. Frontends pass bearer evidence through core verification
+    // before reaching here; callers that pass none render the policy error
+    // consistently from this result.
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',

@@ -22,6 +22,7 @@ import type {
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import type { ResolvedRunbook } from '@rundown-org/parser';
+import { assertClaimLookupKey, assertClaimSecretHash } from '@rundown-org/core';
 import { assertVariant } from './assert-variant.js';
 import {
   brandDelegationTokenHashForTest,
@@ -52,18 +53,22 @@ const ORPHAN_RUN_ID = brandRunIdForTest('rd_44444444444444444444444444444444');
 const EXISTING_SESSION_CHILD_ID = brandRunIdForTest('rd_55555555555555555555555555555555');
 const NEW_CHILD_ID = brandRunIdForTest('rd_66666666666666666666666666666666');
 
-function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
+function claimRecord(childRunId: RunId, overrides: Record<string, unknown> = {}): ClaimRecord {
   return {
-    kind: 'claim-record',
-    claimId: TEST_CLAIM_ID,
-    childRunId,
-    tokenHash: MOCK_TOKEN_HASH,
-    parentRunId: RUN_ID,
-    parentStepId: '1',
-    parentStep: '1',
-    parentFrameKey: brandFrameKeyForTest('1'),
-    parentEntry: 1,
-    claimedAt: '2026-02-27T10:00:00.000Z',
+    claimKey: assertClaimLookupKey('rdclk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+    secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
+    controlledRunId: childRunId,
+    delegation: {
+      childRunId,
+      tokenHash: MOCK_TOKEN_HASH,
+      parentRunId: RUN_ID,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
+    },
+    grants: [],
+    issuedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
     ...overrides,
   };
@@ -71,9 +76,9 @@ function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): C
 
 function claimedRunbookResult(
   childRunId: RunId,
-  overrides: Partial<ClaimRecord> = {},
+  overrides: Record<string, unknown> = {},
 ): ClaimRunbookResult {
-  return { status: 'claimed', claim: claimRecord(childRunId, overrides) };
+  return { status: 'claimed', claimId: TEST_CLAIM_ID, claim: claimRecord(childRunId, overrides) };
 }
 
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {

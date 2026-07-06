@@ -35,6 +35,7 @@ import {
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { parseRunOption } from '../helpers/run-option.js';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
@@ -47,6 +48,7 @@ import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@run
 interface DelegateActionOptions {
   step?: string;
   index?: string;
+  claimId?: string;
   run?: string;
   retry?: boolean;
   input: string[];
@@ -58,21 +60,29 @@ interface DelegateActionOptions {
 }
 
 /**
- * Derive the seam-call fields a validated `--run` id contributes: the typed
- * caller evidence (run-controller when named, direct-CLI otherwise) and the
- * explicit `targetRunId`. Single-sourced so the fresh-issue and `--retry`
- * flows cannot drift on how named authority reaches the seam.
+ * Derive the seam-call fields from parsed targeting options.
  *
- * @param runId - Validated `--run` id, or `undefined` for a bare invocation.
+ * @param input - Parsed targeting values and output emitter.
+ * @param input.claimId - Raw `--claim-id` bearer value, when supplied.
+ * @param input.runId - Validated `--run` selector, when supplied.
+ * @param input.output - Output emitter used for claim-id validation failures.
  * @returns Spreadable `callerEvidence` (+ `targetRunId` when named) fields.
  */
-function runTargetedSeamFields(runId: RunId | undefined): {
-  readonly callerEvidence: CallerEvidence;
-  readonly targetRunId?: RunId;
-} {
+function targetedSeamFields(input: {
+  readonly claimId?: string;
+  readonly runId?: RunId;
+  readonly output: OutputEmitter;
+}):
+  | {
+      readonly callerEvidence: CallerEvidence;
+      readonly targetRunId?: RunId;
+    }
+  | undefined {
+  const claimTarget = parseClaimIdOption(input.claimId, input.output);
+  if (!claimTarget.ok) return undefined;
   return {
-    callerEvidence: readLifecycleCallerEvidence(runId !== undefined ? { runId } : {}),
-    ...(runId !== undefined ? { targetRunId: runId } : {}),
+    callerEvidence: readLifecycleCallerEvidence({ claimId: claimTarget.claimId }),
+    ...(input.runId !== undefined ? { targetRunId: input.runId } : {}),
   };
 }
 
@@ -95,11 +105,27 @@ function buildDelegateValidationArgv(
   if (runbookArg !== undefined) argv.push(runbookArg);
   if (options.step !== undefined) argv.push('--step', options.step);
   if (options.index !== undefined) argv.push('--index', options.index);
+  if (options.claimId !== undefined) argv.push('--claim-id', options.claimId);
   if (options.retry === true) argv.push('--retry');
   pushOptionValues(argv, '--input', options.input);
   pushOptionValues(argv, '--input-json', options.inputJson);
   pushOptionValues(argv, '--input-file', options.inputFile);
   return argv;
+}
+
+function rejectClaimIdValueSmuggling(
+  output: OutputEmitter,
+  options: DelegateActionOptions,
+): boolean {
+  const values = [...options.input, ...(options.inputJson ?? []), ...(options.inputFile ?? [])];
+  if (!values.some((value) => value === '--claim-id' || value.startsWith('--claim-id='))) {
+    return false;
+  }
+  output.error(
+    'Invalid claim id. Pass bearer authority with --claim-id <claimId>; do not pass claim-id flags as input values.',
+    'INVALID_CLAIM_ID',
+  );
+  return true;
 }
 
 /**
@@ -116,8 +142,9 @@ export function registerDelegateCommand(program: Command): void {
     .description('Create a delegation token for a child runbook')
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
+    .option('--claim-id <claimId>', 'Bearer authority for the run that issues the delegation')
     .option('--retry', 'Retry an existing delegation: cancel and re-issue with a fresh token')
-    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
+    .option('--run <runId>', 'Select the target run; authority still comes from --claim-id')
     .addOption(
       new Option(
         '--input <key=value>',
@@ -169,6 +196,12 @@ export function registerDelegateCommand(program: Command): void {
             return;
           }
 
+          if (rejectClaimIdValueSmuggling(output, options)) {
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
+
           if (rejectArtifactInheritance(output, options)) {
             output.flush();
             process.exitCode = 1;
@@ -182,10 +215,14 @@ export function registerDelegateCommand(program: Command): void {
 
           const cwd = getCwd();
 
-          // Delegate has no claim lane (validated above), so mutual exclusion
-          // is against `undefined`; this validates --run format only.
-          const runTarget = parseRunOption(options.run, undefined, output);
+          const runTarget = parseRunOption(options.run, output);
           if (!runTarget.ok) return;
+          const seamFields = targetedSeamFields({
+            claimId: options.claimId,
+            runId: runTarget.runId,
+            output,
+          });
+          if (seamFields === undefined) return;
 
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
@@ -225,7 +262,7 @@ export function registerDelegateCommand(program: Command): void {
 
             const outcome = await seam.issueDelegation({
               mode: 'retry',
-              ...runTargetedSeamFields(runTarget.runId),
+              ...seamFields,
               locator,
               // Lazily parse --input* overrides (Category-A flag handling stays in
               // the CLI), deferred by the seam to AFTER the retry target is located
@@ -284,8 +321,8 @@ export function registerDelegateCommand(program: Command): void {
                   );
                   process.exitCode = 1;
                 } else if (outcome.policy.kind === 'actor_context_required') {
-                  // Post-flip: a bare retry on a delegation-exposed run needs
-                  // named authority (--run). No run-id echo (decision 4).
+                  // A bare retry on a delegation-exposed run needs bearer
+                  // authority. No run-id echo (decision 4).
                   renderActorContextRequiredRefusal(output, 'delegate');
                   process.exitCode = 1;
                 } else {
@@ -353,7 +390,7 @@ export function registerDelegateCommand(program: Command): void {
 
           const outcome = await seam.issueDelegation({
             mode: 'fresh',
-            ...runTargetedSeamFields(runTarget.runId),
+            ...seamFields,
             ...(options.step ? { explicitStep: options.step } : {}),
             ...(explicitIteration !== undefined ? { explicitIteration } : {}),
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),
@@ -385,8 +422,8 @@ export function registerDelegateCommand(program: Command): void {
                 );
                 process.exitCode = 1;
               } else if (outcome.policy.kind === 'actor_context_required') {
-                // Post-flip: a bare delegate on a delegation-exposed run needs
-                // named authority (--run). No run-id echo (decision 4).
+                // A bare delegate on a delegation-exposed run needs bearer
+                // authority. No run-id echo (decision 4).
                 renderActorContextRequiredRefusal(output, 'delegate');
                 process.exitCode = 1;
               } else {

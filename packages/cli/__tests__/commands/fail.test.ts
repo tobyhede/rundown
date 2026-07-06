@@ -383,7 +383,7 @@ Do work.
       const bareFail = await runCliInProcess('fail', workspace);
       expect(bareFail.exitCode).toBe(1);
       expect((JSON.parse(bareFail.stdout) as { code?: string }).code).toBe(
-        'ACTOR_CONTEXT_REQUIRED',
+        'OPEN_DELEGATED_CHILDREN',
       );
       const failResult = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
       expect(failResult.exitCode).toBe(1);

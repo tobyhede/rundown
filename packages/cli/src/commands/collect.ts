@@ -9,6 +9,7 @@ import {
   inactiveFrame,
   RunbookCollectionService,
   RunbookCompletionService,
+  type ClaimId,
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
@@ -51,7 +52,7 @@ export function registerCollectCommand(program: Command): void {
     .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
     .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
-    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
+    .option('--run <runId>', 'Target a runbook by run id')
     .option('--text', 'Output as human-readable text')
     .action(
       async (options: {
@@ -69,7 +70,7 @@ export function registerCollectCommand(program: Command): void {
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            const runTarget = parseRunOption(options.run, output);
             if (!runTarget.ok) return;
             const contextResult = await buildTransitionContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
@@ -105,6 +106,7 @@ export function registerCollectCommand(program: Command): void {
               step: options.step,
               index: options.index,
               text: options.text,
+              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
 
@@ -124,6 +126,8 @@ interface CollectOptions {
   step?: string;
   /** Optional `--index <number>` for FOR iteration targeting (requires --step). */
   index?: string;
+  /** Optional bearer claim id when collecting a claimed delegated child. */
+  claimId?: ClaimId;
   /** True when `--text` is set (human-readable); false/undefined for JSON. */
   text?: boolean;
   /** Validated `--run` run id supplying run-controller caller evidence. */
@@ -401,6 +405,10 @@ function renderCollectOutcome(
       renderActorContextRequiredRefusal(output, 'collect', 'collecting within delegated work');
       output.flush();
       return true;
+    case 'claim_grant_required':
+      renderActorContextRequiredRefusal(output, 'collect', 'collecting delegated work');
+      output.flush();
+      return true;
     case 'collect_requires_orchestrator':
       // Core owns the remediation text (names both --run and --claim-id). The
       // details deliberately do NOT echo the target run id (decision 4): the
@@ -459,17 +467,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // direct-CLI lane. The CLI never constructs an actor context — core maps
   // evidence to trust (actorContextFromEvidence) behind the collection seam.
   const callerEvidence = readLifecycleCallerEvidence(
-    ctx.claim
-      ? {
-          claim: {
-            claimId: ctx.claim.claimId,
-            tokenHash: ctx.claim.tokenHash,
-            controlledRunId: ctx.claim.childRunId,
-          },
-        }
-      : options.runId !== undefined
-        ? { runId: options.runId }
-        : {},
+    options.claimId !== undefined ? { claimId: options.claimId } : {},
   );
 
   const collectionService = new RunbookCollectionService({
@@ -477,6 +475,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     actorService,
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+    sessionService: ctx.sessionService,
   });
 
   const outcome = await collectionService.collectDelegationOutcomes({

@@ -155,6 +155,7 @@ const intentArb: fc.Arbitrary<CommandIntent> = fc.oneof(
 const KNOWN_KINDS = new Set([
   'allowed',
   'actor_context_required',
+  'claim_grant_required',
   'collect_requires_orchestrator',
   'delegation_collection_pending',
   'open_claims',
@@ -310,7 +311,7 @@ describe('resolveCommandIntent properties', () => {
     );
   });
 
-  it('evidence role composition: orchestrator_for_target iff (run_controller or claim naming the target) or (direct_cli on a standalone target)', () => {
+  it('frontend evidence never maps directly to trusted actor context', () => {
     const evidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
       fc.constant({ kind: 'direct_cli' } as const),
       fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
@@ -338,11 +339,7 @@ describe('resolveCommandIntent properties', () => {
             actorContextFromEvidence(evidence, { runId: targetId, exposure }),
             baseState(targetId),
           );
-          const expectOrchestrator =
-            (evidence.kind === 'direct_cli' && exposure === 'standalone') ||
-            (evidence.kind === 'run_controller' && evidence.runId === targetId) ||
-            (evidence.kind === 'claim' && evidence.controlledRunId === targetId);
-          expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
+          expect(role).toBe('unknown_for_target');
         },
       ),
     );

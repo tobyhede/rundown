@@ -213,6 +213,23 @@ function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {
   };
 }
 
+function rotateClaimBearer(
+  record: ClaimRecord,
+  now: string,
+): {
+  readonly claimId: ClaimId;
+  readonly claim: ClaimRecord;
+} {
+  const parsed = parseClaimBearer(generateClaimBearer());
+  const claim: ClaimRecord = {
+    ...record,
+    claimKey: parsed.claimKey,
+    secretHash: hashClaimSecret(parsed.secret),
+    updatedAt: now,
+  };
+  return { claimId: parsed.claimId, claim };
+}
+
 /**
  * Manages runbook session stacks and stash operations.
  *
@@ -308,10 +325,10 @@ export class SessionService {
   async verifyClaimId(claimId: ClaimId): Promise<ClaimVerificationResult> {
     const parsed = parseClaimBearer(claimId);
     const session = await this.manager.loadSession();
-    const record = session.claims[parsed.claimKey];
-    if (!record) {
+    if (!Object.hasOwn(session.claims, parsed.claimKey)) {
       return { status: 'missing', claimKey: parsed.claimKey };
     }
+    const record = session.claims[parsed.claimKey];
     if (!verifyClaimSecret(parsed.secret, record.secretHash)) {
       return { status: 'invalid-secret', claimKey: parsed.claimKey };
     }
@@ -478,11 +495,11 @@ export class SessionService {
             persisted: existingState.parentLinkage,
           };
         }
-        return {
-          status: 'already-claimed',
-          childRunId: existingForDelegation.controlledRunId,
-          claimKey: existingForDelegation.claimKey,
-        };
+        const rotated = rotateClaimBearer(existingForDelegation, now);
+        delete session.claims[existingForDelegation.claimKey];
+        session.claims[rotated.claim.claimKey] = rotated.claim;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claimId: rotated.claimId, claim: rotated.claim };
       }
 
       const childState = await this.manager.load(childRunId);
@@ -512,11 +529,11 @@ export class SessionService {
             persisted: existingLinkage,
           };
         }
-        return {
-          status: 'already-claimed',
-          childRunId: existing.controlledRunId,
-          claimKey: existing.claimKey,
-        };
+        const rotated = rotateClaimBearer(existing, now);
+        delete session.claims[existing.claimKey];
+        session.claims[rotated.claim.claimKey] = rotated.claim;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claimId: rotated.claimId, claim: rotated.claim };
       }
 
       const parsed = parseClaimBearer(generateClaimBearer());
@@ -566,10 +583,10 @@ export class SessionService {
   ): Promise<ClaimIdResolution> {
     const parsed = parseClaimBearer(claimId);
     const session = await this.manager.loadSession();
-    const record = session.claims[parsed.claimKey];
-    if (!record) {
+    if (!Object.hasOwn(session.claims, parsed.claimKey)) {
       return { status: 'missing', claimId };
     }
+    const record = session.claims[parsed.claimKey];
     if (!verifyClaimSecret(parsed.secret, record.secretHash)) {
       return { status: 'invalid-secret', claimId };
     }
@@ -1012,8 +1029,11 @@ export class SessionService {
     return this.withLock(async () => {
       const parsed = parseClaimBearer(claimId);
       const session = await this.manager.loadSession();
+      if (!Object.hasOwn(session.claims, parsed.claimKey)) {
+        return { status: 'missing-claim', claimId };
+      }
       const claim = session.claims[parsed.claimKey];
-      if (!claim || !verifyClaimSecret(parsed.secret, claim.secretHash)) {
+      if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
         return { status: 'missing-claim', claimId };
       }
       if (session.stashedRunbookId !== claim.controlledRunId) {
@@ -1063,10 +1083,10 @@ export class SessionService {
 
       if (!stashedId) return null;
 
-      const targetedByClaim = Object.values(session.claims).some(
-        (claim) => claim.controlledRunId === stashedId,
+      const targetedByDelegatedClaim = Object.values(session.claims).some(
+        (claim) => claim.delegation !== undefined && claim.controlledRunId === stashedId,
       );
-      if (targetedByClaim) {
+      if (targetedByDelegatedClaim) {
         return null;
       }
 

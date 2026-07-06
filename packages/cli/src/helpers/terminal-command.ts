@@ -85,12 +85,9 @@ export class ForceTerminalEventBridge {
 
 /** CLI options forwarded to a terminal seam command. */
 export interface SeamTerminalOptions {
-  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
+  /** Explicit claim-id bearer authority (`--claim-id`). */
   readonly claimId?: ClaimId;
-  /**
-   * Explicit run target and named authority (`--run`). Mutually exclusive with
-   * `claimId` (enforced upstream by `parseRunOption`).
-   */
+  /** Explicit run target selector (`--run`), not authority by itself. */
   readonly runId?: RunId;
   /** Optional terminal message forwarded to the machine. */
   readonly message?: string;
@@ -238,7 +235,7 @@ export async function runSeamTerminal(
   const outcome = await seam.runTerminal({
     command,
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.claimId !== undefined ? { claimId: options.claimId } : {},
     ),
     targetSelector,
     ...(options.message !== undefined ? { message: options.message } : {}),
@@ -254,9 +251,6 @@ export async function runSeamTerminal(
   // reported as a removal (exit 0). An empty stack or a healthy top cleans
   // nothing and falls through to the normal `no active runbook` rendering. No
   // prior error exists here, so a guard failure may propagate normally.
-  // The `runId === undefined` leg is defensive hardening: `--run` targeting
-  // never returns `none` today (it refuses `unknown_run`), but if it ever did,
-  // default-stack cleanup must not run for a named-run target.
   if (outcome.kind === 'none' && options.claimId === undefined && options.runId === undefined) {
     const cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
     if (cleanup.kind === 'removed') {
@@ -289,18 +283,14 @@ export interface TerminalRecoveryTarget {
  * cleanup and reports a clean removal, while the claim path maps the same
  * failure per command — `complete` to a `CLAIMED_RUNBOOK_UNAVAILABLE` error
  * (exit 1), `stop` to "no active runbook" (a claimed child that is no longer
- * usable is nothing to stop). A `--run`-targeted failure NEVER runs
- * default-stack orphan cleanup: the operator named a specific run, and popping
- * whatever happens to sit on the default stack would report success without
- * terminating the named run — the failure is surfaced against the named run
- * instead (fail closed). Any other error is rethrown for the outer
+ * usable is nothing to stop). Any other error is rethrown for the outer
  * `withErrorHandling` to render.
  *
  * @param command - The terminal command that failed (`complete` / `stop`).
  * @param error - The error thrown by the seam.
  * @param output - Output emitter for the recovery message.
  * @param cwd - Current working directory (used to build the cleanup manager).
- * @param target - Explicit `--claim-id` / `--run` target the command carried.
+ * @param target - Explicit `--claim-id` target the command carried.
  * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
  */
 export async function handleTerminalRecovery(

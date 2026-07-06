@@ -235,9 +235,10 @@ additionally include `delegations` and `parentLinkage` when present. Accumulated
 artifact records live in the unified `state.variables` map alongside other
 variables and are surfaced through `vars` rather than a separate field.
 
-Claimed `delegations` entries MAY carry an optional `claimId` (pattern
-`rdclm_...`, present only when the entry's `state` is `claimed`); use it with
-`--claim-id` to drive or recover the claimed child (#531). The Zod
+Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
+(pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for
+correlation. Bearer `claim_id` values are only returned by `rundown claim` and
+are never reconstructed from status output. The Zod
 `DelegationStatusEntrySchema` in `@rundown-org/core` remains the single source
 of truth for the exact per-entry shape.
 
@@ -416,8 +417,9 @@ for delegated child work.
 ## pass
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
+than one possible target.
 
 ### `rundown pass`
 
@@ -467,8 +469,9 @@ by `claim_id` instead of the default stack.
 ## fail
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
+than one possible target.
 
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
 for stopping).
@@ -534,9 +537,10 @@ by `claim_id` instead of the default stack.
 ## goto
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child). `goto` is
-additionally gated behind the `run-navigation` policy intent.
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
+than one possible target. `goto` is additionally gated behind the
+`run-navigation` policy intent.
 
 ### `rundown goto <step>`
 
@@ -577,8 +581,9 @@ Step description.
 ## stop
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
+than one possible target.
 
 ### `rundown stop [message]`
 
@@ -623,8 +628,9 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 ## complete
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
+than one possible target.
 
 ### `rundown complete [message]`
 
@@ -1101,8 +1107,9 @@ Error: Runbook file not found: missing.runbook.md
 
 <!--
   RUN_TARGET_MISMATCH is intentionally NOT documented here. It is emitted by
-  `rundown delegate --retry <token> --run <rd_…>` (packages/cli/src/commands/delegate.ts,
-  case 'run_target_mismatch') when the named run does not own the token, but it is
+  `rundown delegate --retry <token> --claim-id <claim_id> --run <rd_…>`
+  (packages/cli/src/commands/delegate.ts, case 'run_target_mismatch') when the
+  selected run does not own the token, but it is
   NOT registered in CLISymbolicErrorCodeValues (packages/core/src/output/zod-schemas.ts),
   so its envelope fails ErrorCodeSchema / --schema validation. Documenting it would
   document a schema-invalid envelope. Pending the follow-up enum-registration issue
@@ -1112,17 +1119,16 @@ Error: Runbook file not found: missing.runbook.md
 ### Actor context required
 
 A bare mutating command (`pass`, `fail`, `goto`, `collect`, `complete`, `stop`,
-`delegate`) issued against a **delegation-exposed** run. Exposure is sticky, so
-the refusal persists after claims close and after `rundown prune`. The
-remediation names both explicit-authority lanes and **never echoes the target
-run id** (accident-proofing, not id secrecy — run ids are natively available
-from `rundown run` output and every event's `runbookId`); this no-echo property
-is pinned by the explicit-run-targeting tests.
+`delegate`) issued when no bearer or implicit singleton claim authorizes the
+mutation. Exposure is sticky, so refusal may persist after claims close and
+after `rundown prune`. The remediation names the bearer lane and **never echoes
+the target run id** (accident-proofing, not id secrecy — run ids are natively
+available from `rundown run` output and every event's `runbookId`).
 
 **Text:**
 
 ```text
-Error: This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` if you are completing delegated work.
+Error: This run has delegation activity, so a bare `rundown pass` is refused. Pass `--claim-id <claimId>` if you are completing delegated work.
 Code: ACTOR_CONTEXT_REQUIRED
 ```
 
@@ -1131,7 +1137,7 @@ Code: ACTOR_CONTEXT_REQUIRED
 ```json
 {
   "kind": "error",
-  "error": "This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` if you are completing delegated work.",
+  "error": "This run has delegation activity, so a bare `rundown pass` is refused. Pass `--claim-id <claimId>` if you are completing delegated work.",
   "code": "ACTOR_CONTEXT_REQUIRED",
   "command": "pass"
 }
@@ -1188,14 +1194,15 @@ Code: INVALID_RUN_ID
 ### Collect requires orchestrator
 
 `rundown collect` was issued by an actor that does not control the target
-delegating run. Collection is an orchestrator action; a claimant may collect
-only delegations issued by its own claimed run. Like the other refusals, the
-message names both lanes and never echoes the target run id.
+delegating run. Collection requires a bearer grant that controls the delegating
+run; a claimant may collect only delegations issued by its own claimed run. Like
+the other refusals, the message names bearer authority and never echoes the
+target run id.
 
 **Text:**
 
 ```text
-Error: rundown collect requires an actor that controls the target delegating run. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event) if you are the orchestrator, or `--claim-id <claimId>` if you are collecting within delegated work.
+Error: rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Add `--run <rd_…>` only when the bearer controls more than one possible target.
 Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```
 
@@ -1204,7 +1211,7 @@ Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```json
 {
   "kind": "error",
-  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event) if you are the orchestrator, or `--claim-id <claimId>` if you are collecting within delegated work.",
+  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Add `--run <rd_…>` only when the bearer controls more than one possible target.",
   "code": "COLLECT_REQUIRES_ORCHESTRATOR",
   "command": "collect"
 }

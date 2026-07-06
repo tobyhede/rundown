@@ -169,6 +169,13 @@ export {
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
 export {
+  AbortCommandService,
+  type AbortCommandAuthorizationInput,
+  type AbortCommandAuthorizationResult,
+  type AbortCommandServiceDependencies,
+  type AuthorizedAbortCommand,
+} from './abort-command-service.js';
+export {
   RunbookLifecycleCommandService,
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,

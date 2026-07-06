@@ -521,7 +521,9 @@ Do work.
       expect(String(errorResponse.error)).toContain('missing child state');
 
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
       expect(session.defaultStack).toContain(parentState!.id);
       expect(session.active).toBe(parentState!.id);
       expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
@@ -579,7 +581,9 @@ Do work.
       const session = await readSession(workspace);
       // Item 4: the terminal claim is RETAINED as a tombstone (release with
       // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
       expect(session.defaultStack).toContain(parentState!.id);
     });
 
@@ -632,7 +636,9 @@ Do work.
 
       // The claim tombstone is retained (record-before-release + retain).
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
     });
   });
 
@@ -665,7 +671,11 @@ Do work.
       expect(parentId).toBeDefined();
 
       const result = await runCliInProcess(
-        ['stop', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'],
+        [
+          'stop',
+          '--claim-id',
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
         workspace,
       );
 
@@ -679,7 +689,7 @@ Do work.
         }),
       );
       expect(String(errorResponse.error)).toContain(
-        'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist',
+        'Claim id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA does not exist',
       );
 
       const sessionAfter = await readSession(workspace);

@@ -576,7 +576,9 @@ Do work.
     expect(result.exitCode).not.toBe(0);
 
     const session = await readSession(workspace);
-    expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+    expect(Object.values(session.claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: childRunId }),
+    );
     expect(session.defaultStack).toContain(parentState!.id);
     expect(session.active).toBe(parentState!.id);
   });
@@ -645,7 +647,9 @@ Do work.
     expect(session.defaultStack).not.toContain(String(childRunId));
     // Item 4: the terminal claim is RETAINED as a tombstone (release with
     // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
-    expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+    expect(Object.values(session.claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: childRunId }),
+    );
   });
 
   it('pops orphaned default-stack entry when state file is missing', async () => {
@@ -703,13 +707,18 @@ Do work.
     expect(parentId).toBeDefined();
 
     const result = await runCliInProcess(
-      ['complete', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV', '--text'],
+      [
+        'complete',
+        '--claim-id',
+        'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        '--text',
+      ],
       workspace,
     );
 
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
-      'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist',
+      'Claim id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA does not exist',
     );
     const sessionAfter = await readSession(workspace);
     expect(sessionAfter.defaultStack).toEqual([parentId]);
@@ -823,17 +832,24 @@ describe('claim ids on claimed delegations (#531)', () => {
     return { claimId: claimOutput.claim_id, childRunId: claimOutput.run_id };
   }
 
-  it('surfaces claimId for claimed delegations in status JSON (#531)', async () => {
-    const { claimId, childRunId } = await setupClaimedDelegation();
+  it('surfaces claimed child runs in status JSON (#531)', async () => {
+    const { childRunId } = await setupClaimedDelegation();
 
     const result = await runCliInProcess('status', workspace); // plain status -> parent
     expect(result.exitCode).toBe(0);
 
     const output = JSON.parse(result.stdout) as {
-      delegations?: Array<{ state: string; childRunId?: string; claimId?: string }>;
+      delegations?: Array<{
+        state: string;
+        childRunId?: string;
+        claimId?: string;
+        claimKey?: string;
+      }>;
     };
     const entry = output.delegations?.find((d) => d.childRunId === childRunId);
-    expect(entry).toMatchObject({ state: 'claimed', childRunId, claimId });
+    expect(entry).toMatchObject({ state: 'claimed', childRunId });
+    expect(entry?.claimKey).toMatch(/^rdclk_[a-f0-9]{32}$/);
+    expect(entry).not.toHaveProperty('claimId');
 
     // The whole payload still validates against the status schema.
     const validation = validateStatusOutput(output);
@@ -841,29 +857,40 @@ describe('claim ids on claimed delegations (#531)', () => {
     expect(validation.valid).toBe(true);
   });
 
-  it('renders the claim id in the claimed label in text output (#531)', async () => {
-    const { claimId, childRunId } = await setupClaimedDelegation();
+  it('renders the child run id in the claimed label in text output (#531)', async () => {
+    const { childRunId } = await setupClaimedDelegation();
 
     const result = await runCliInProcess('status --text', workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(`claimed: ${claimId}`);
+    expect(result.stdout).toMatch(/claimed: rdclk_[a-f0-9]{32} run: rd_[a-f0-9]{32}/);
     expect(result.stdout).toContain(childRunId);
   });
 
-  it('DelegationStatusEntrySchema forbids claimId off the claimed state (#531)', () => {
+  it('DelegationStatusEntrySchema forbids claimId on delegation status entries (#531)', () => {
     const base = {
       substep: '1.1',
       runbook: 'runbooks/child-claim-id.runbook.md',
       tokenHash: `sha256:${'a'.repeat(64)}`,
     };
-    const claimId = 'rdclm_AAAAAAAAAAAAAAAAAAAAAA';
+    const claimId =
+      'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
     const childRunId = `rd_${'a'.repeat(32)}`;
 
-    // Claimed entries may carry claimId.
+    expect(
+      DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId }).success,
+    ).toBe(true);
     expect(
       DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId, claimId })
         .success,
+    ).toBe(false);
+    expect(
+      DelegationStatusEntrySchema.safeParse({
+        ...base,
+        state: 'claimed',
+        childRunId,
+        claimKey: `rdclk_${'b'.repeat(32)}`,
+      }).success,
     ).toBe(true);
     // Cancelled-after-claim entries retain childRunId but must NOT carry claimId.
     expect(

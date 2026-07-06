@@ -69,6 +69,10 @@ describe('claim bearer credentials', () => {
   it('creates explicit delegated-child grants for the claimed child and parent report linkage', () => {
     expect(createDelegatedChildGrants({ linkage })).toEqual([
       { action: 'mutate-run', runId: childRunId },
+      { action: 'delegate-from-run', runId: childRunId },
+      { action: 'collect-for-run', runId: childRunId },
+      { action: 'abort-delegation', runId: childRunId },
+      { action: 'retry-delegation', runId: childRunId },
       { action: 'report-delegation-result', ...linkage },
     ]);
   });
@@ -79,13 +83,13 @@ describe('claim bearer credentials', () => {
     expect(grantAllows(grants[0], { action: 'mutate-run', runId: childRunId })).toBe(true);
     expect(grantAllows(grants[0], { action: 'mutate-run', runId: parentRunId })).toBe(false);
     expect(
-      grantAllows(grants[1], {
+      grantAllows(grants[5], {
         action: 'report-delegation-result',
         ...linkage,
       }),
     ).toBe(true);
     expect(
-      grantAllows(grants[1], {
+      grantAllows(grants[5], {
         action: 'report-delegation-result',
         ...linkage,
         tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),

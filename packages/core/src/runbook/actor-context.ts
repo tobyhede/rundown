@@ -21,8 +21,8 @@ export type ActorContext =
 /**
  * Effective role after resolving actor evidence against one target run.
  *
- * @deprecated Grant authorization is the policy boundary. This remains only
- * for legacy diagnostics and tests during the migration.
+ * Grant authorization is the policy boundary. This remains only for legacy
+ * diagnostics and tests during the migration.
  */
 export type EffectiveRole =
   | 'orchestrator_for_target'
@@ -52,7 +52,6 @@ export function verifiedClaimContext(input: {
  *
  * @param _runId - Run id formerly treated as trusted authority.
  * @returns Unknown actor context; run identifiers no longer prove authority.
- * @deprecated Use verified claim evidence resolved by core.
  */
 export function trustedRunControllerContext(_runId: RunId): ActorContext {
   return UNKNOWN_ACTOR_CONTEXT;
@@ -62,8 +61,10 @@ export function trustedRunControllerContext(_runId: RunId): ActorContext {
  * Build claim-controller actor context.
  *
  * @param _input - Former shape-only claim-controller evidence.
+ * @param _input.claimId - Former claim id metadata.
+ * @param _input.tokenHash - Former delegation token hash metadata.
+ * @param _input.controlledRunId - Former controlled run metadata.
  * @returns Unknown actor context; shape-only claim data no longer proves authority.
- * @deprecated Use verified claim evidence resolved by core.
  */
 export function claimControllerContext(_input: {
   readonly claimId: ClaimId;
@@ -123,9 +124,8 @@ export type CallerEvidence =
 /**
  * The resolved target a caller's evidence is mapped against.
  *
- * @deprecated Frontend evidence no longer maps directly to trusted actor
- * context. Core services verify claim bearers and then call
- * {@link verifiedClaimContext}.
+ * Frontend evidence no longer maps directly to trusted actor context. Core
+ * services verify claim bearers and then call {@link verifiedClaimContext}.
  */
 export interface EvidenceTarget {
   /** Run the command targets. */

@@ -17,7 +17,9 @@ import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const PARENT_ID = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-const CLAIM_ID = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const CLAIM_ID = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
 
 interface Recorded {
   readonly method: string;
@@ -105,8 +107,7 @@ describe('renderTerminalOutcome', () => {
     expect(exitError).toBe(true);
     expect(codeOf(calls, 'error')).toBe('ACTOR_CONTEXT_REQUIRED');
     const errorCall = calls.find((c) => c.method === 'error');
-    // The remediation names both explicit-authority lanes...
-    expect(errorCall?.args[0]).toContain('--run');
+    // The remediation names the bearer-authority lane.
     expect(errorCall?.args[0]).toContain('--claim-id');
     // ...and the envelope carries NO details object and never echoes the
     // target run id — that would hand the refused caller a copy-paste bypass

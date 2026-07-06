@@ -142,18 +142,18 @@ describe('pass command', () => {
       expect(payload.code).toBe('INVALID_RUN_ID');
     });
 
-    it('rejects --run combined with --claim-id as INVALID_SYNTAX', async () => {
+    it('resolves --claim-id authority before --run target selection', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
 
       const result = await runCliInProcess(
-        `pass --run ${active!.id} --claim-id rdclm_abcdefghijklmnopqrstu1`,
+        `pass --run ${active!.id} --claim-id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
         workspace,
       );
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).toBe('INVALID_SYNTAX');
+      expect(payload.code).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
     });
 
     it('drives the named run substep via pass --run <id> --step <n>', async () => {
@@ -534,7 +534,7 @@ Do child work.
       const barePass = await runCliInProcess('pass', workspace);
       expect(barePass.exitCode).toBe(1);
       expect((JSON.parse(barePass.stdout) as { code?: string }).code).toBe(
-        'ACTOR_CONTEXT_REQUIRED',
+        'OPEN_DELEGATED_CHILDREN',
       );
       const passResult = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(passResult.exitCode).toBe(1);
@@ -839,7 +839,11 @@ This step stops on pass.
 
     it('rd pass --claim-id on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
       const result = await runCliInProcess(
-        ['pass', '--claim-id', 'rdclm_AAAAAAAAAAAAAAAAAAAAAA'],
+        [
+          'pass',
+          '--claim-id',
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
         workspace,
       );
 

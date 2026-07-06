@@ -1,53 +1,25 @@
 // packages/cli/src/helpers/caller-evidence.ts
 
-import type { CallerEvidence, RunId } from '@rundown-org/core';
-
-/**
- * Claim evidence reconstructed CLI-side from a resolved `--claim-id` record.
- *
- * The fields are exactly the claim variant of {@link CallerEvidence} minus its
- * discriminant — derived from it so the two cannot drift.
- */
-export type ResolvedClaimEvidence = Omit<Extract<CallerEvidence, { kind: 'claim' }>, 'kind'>;
+import type { CallerEvidence, ClaimId } from '@rundown-org/core';
 
 /** Inputs for gathering direct-CLI lifecycle caller evidence. */
 export interface LifecycleEvidenceInput {
-  /** Resolved claim evidence when the command targets a claimed child via `--claim-id`. */
-  readonly claim?: ResolvedClaimEvidence;
-  /** Caller-named run authority from a validated `--run` flag. */
-  readonly runId?: RunId;
+  /** Bearer claim id when the command targets a claimed child via `--claim-id`. */
+  readonly claimId?: ClaimId;
 }
 
 /**
  * Gather the typed caller evidence for a direct-CLI lifecycle command.
  *
- * Three lanes, in precedence order (exclusivity of `--run` / `--claim-id` is
- * enforced upstream by `parseRunOption`, so at most one input is present):
+ * Only two lanes remain: claim bearer evidence and bare direct-CLI. Run
+ * identifiers are target selectors, not authority.
  *
- * 1. **Claim** — a `--claim-id` invocation carries claim evidence (`claimId`,
- *    `tokenHash`, `controlledRunId`) reconstructed from the resolved claim
- *    record, which core maps to a claim controller over the controlled run.
- * 2. **Run controller** — a `--run <rd_…>` invocation names the run the caller
- *    claims authority over; core maps it to a trusted controller of exactly
- *    that named run (`deriveEffectiveRole` refuses an id/target mismatch).
- * 3. **Direct CLI** — a bare invocation maps to `{ kind: 'direct_cli' }`; core
- *    decides whether that grants anything for the resolved target.
- *
- * The CLI process cannot itself distinguish a human invocation from a
- * subprocess-spawned one, so it does not try to: subprocess front ends (plugin /
- * MCP) withhold bare role-specific mutations upstream (see
- * `@rundown-org/core` `bareRoleSpecificMutation`), leaving the CLI free to treat
- * its own bare invocation as direct-CLI. No source label is read or trusted.
- *
- * @param input - Optional claim evidence and/or validated `--run` run id.
+ * @param input - Optional claim evidence.
  * @returns Typed caller evidence for the core lifecycle command seam.
  */
 export function readLifecycleCallerEvidence(input: LifecycleEvidenceInput = {}): CallerEvidence {
-  if (input.claim) {
-    return { kind: 'claim', ...input.claim };
-  }
-  if (input.runId !== undefined) {
-    return { kind: 'run_controller', runId: input.runId };
+  if (input.claimId !== undefined) {
+    return { kind: 'claim_bearer', claimId: input.claimId };
   }
   return { kind: 'direct_cli' };
 }

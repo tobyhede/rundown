@@ -7,42 +7,14 @@ const repeatableInputShape = {
   inputFile: z.array(z.string()).optional(),
 } satisfies z.ZodRawShape;
 const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
-// Explicit run targeting (`--run <rd_…>`): names the run the caller controls.
+// Explicit run targeting (`--run <rd_…>`): selects the run. It does not prove
+// subprocess authority; mutating MCP calls still need `claimId`.
 // MCP performs no validation beyond string-ness — the CLI validates format
 // (Category A stays in one place; malformed ids fail closed through isRunId).
 const runIdShape = { runId: z.string().optional() } satisfies z.ZodRawShape;
 // Shared `index` validator so the step/index constraint stays consistent
 // between `stepIndexPair` and the `goto` schema.
 const optionalIndex = z.number().int().nonnegative().optional();
-
-// Mirrors the CLI's `--run` / `--claim-id` mutual exclusion (parseRunOption):
-// the two name different authorities (caller-named run control vs claim
-// evidence), so supplying both is always a conflict. Encoding it here fails
-// the pair closed at `tools/call` validation instead of post-spawn.
-const CLAIM_RUN_CONFLICT_MESSAGE =
-  'claimId and runId are mutually exclusive: name the run you control with runId, or the claim you hold with claimId.';
-
-/**
- * Wrap a tool input schema that accepts both `claimId` and `runId` with the
- * mutual-exclusion refinement, so the conflict is rejected at schema
- * validation time (before the handler spawns the CLI).
- *
- * @param schema - Base input schema carrying optional `claimId` and `runId`.
- * @returns Schema that additionally rejects `claimId` + `runId` together.
- */
-function claimRunExclusive(
-  schema: z.ZodType<Record<string, unknown>>,
-): z.ZodType<Record<string, unknown>> {
-  return schema.superRefine((value, ctx) => {
-    if (value.claimId !== undefined && value.runId !== undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['runId'],
-        message: CLAIM_RUN_CONFLICT_MESSAGE,
-      });
-    }
-  });
-}
 
 /**
  * Build an input schema that pairs optional `step` with optional `index`, where
@@ -105,50 +77,45 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   pass: {
     description: 'Mark a step passed',
-    inputSchema: claimRunExclusive(stepIndexPair({ ...claimIdShape, ...runIdShape })),
+    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
   },
   fail: {
     description: 'Mark a step failed',
-    inputSchema: claimRunExclusive(stepIndexPair({ ...claimIdShape, ...runIdShape })),
+    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
   },
   goto: {
     description: 'Jump to a step',
-    inputSchema: claimRunExclusive(
-      z.object({
-        step: z.string(),
-        index: optionalIndex,
-        ...claimIdShape,
-        ...runIdShape,
-      }),
-    ),
+    inputSchema: z.object({
+      step: z.string(),
+      index: optionalIndex,
+      ...claimIdShape,
+      ...runIdShape,
+    }),
   },
   complete: {
     description: 'Force current runbook completion',
-    inputSchema: claimRunExclusive(
-      z.object({
-        message: z.string().optional(),
-        ...claimIdShape,
-        ...runIdShape,
-      }),
-    ),
+    inputSchema: z.object({
+      message: z.string().optional(),
+      ...claimIdShape,
+      ...runIdShape,
+    }),
   },
   stop: {
     description: 'Stop current runbook',
-    inputSchema: claimRunExclusive(
-      z.object({
-        message: z.string().optional(),
-        ...claimIdShape,
-        ...runIdShape,
-      }),
-    ),
+    inputSchema: z.object({
+      message: z.string().optional(),
+      ...claimIdShape,
+      ...runIdShape,
+    }),
   },
   delegate: {
-    description: `Issue or retry a delegation for the run you control. Available WITH \`runId\` (explicit orchestrator targeting mapped to \`--run <rd_…>\`); withheld bare — a bare subprocess-spawned \`delegate\` would silently inherit direct-CLI trust over the active run, so it returns a withheld-mutation error without spawning the CLI. Supply the run id from your orchestration context (printed by \`rundown run\` and carried as runbookId on every event), or run \`rundown delegate\` directly in a trusted terminal.`,
+    description: `Issue or retry a delegation with \`rundown delegate\` for the run you control. Subprocess-spawned mutations require bearer authority; use a claimId grant from \`rundown run\` or delegated work, and optionally supply runId only to select the target run. Bare or runId-only delegate calls are withheld before spawning the CLI.`,
     inputSchema: stepIndexPair(
       {
         runbook: z.string().optional(),
         retry: z.boolean().optional(),
         ...repeatableInputShape,
+        ...claimIdShape,
         ...runIdShape,
       },
       { strict: true },
@@ -160,7 +127,7 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   collect: {
     description: 'Aggregate a delegated step and advance through core',
-    inputSchema: claimRunExclusive(stepIndexPair({ ...claimIdShape, ...runIdShape })),
+    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
   },
 };
 

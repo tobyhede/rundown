@@ -3096,9 +3096,8 @@ describe('RunbookLifecycleCommandService', () => {
 
       await seam.runTransition({
         command: 'pass',
-        // run_controller evidence maps directly (no classification read), so
-        // the drive-side single-resolution property stays observable; the
-        // direct_cli lane adds one classification read by design.
+        // Legacy run_controller evidence remains descriptive only; this branch
+        // still pins the drive-side single-resolution property for old callers.
         callerEvidence: { kind: 'run_controller', runId },
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,

@@ -20,7 +20,7 @@ export function registerGotoCommand(program: Command): void {
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
     .option('--index <number>', 'FOR loop iteration to target')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
-    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
+    .option('--run <runId>', 'Target a runbook by run id')
     .option('--text', 'Output as human-readable text')
     .action(
       async (
@@ -34,7 +34,7 @@ export function registerGotoCommand(program: Command): void {
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            const runTarget = parseRunOption(options.run, output);
             if (!runTarget.ok) return;
             const contextResult = await buildGotoContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),

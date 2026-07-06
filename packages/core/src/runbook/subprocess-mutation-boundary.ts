@@ -147,15 +147,6 @@ export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = [
  */
 export type PassFailValueTakingOptionName = (typeof PASS_FAIL_VALUE_TAKING_OPTION_NAMES)[number];
 
-/**
- * Space-form value-taking options of the guarded `pass` / `fail` commands,
- * derived from {@link PASS_FAIL_VALUE_TAKING_OPTION_NAMES} (single source of
- * truth). Used by {@link carriesClaimEvidence} to skip each option's consumed
- * value token while scanning for claim evidence.
- */
-const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set(
-  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
-);
 const SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
   ...PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
   '--input-file',
@@ -366,7 +357,7 @@ export function delegateClaimIdRejectionMessage(): string {
 /**
  * Legacy no-op validator retained for downstream callers during migration.
  *
- * @param argv - CLI argument vector (a command token optionally preceded by
+ * @param _argv - CLI argument vector (a command token optionally preceded by
  *   program-level global options).
  * @returns Always `undefined`; delegate claim-id is accepted.
  */
@@ -385,9 +376,9 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
 
 /**
  * Build the human-readable refusal message for a withheld bare role-specific
- * mutation. Names the command and points to both explicit-targeting
- * remediations — `--run` (named orchestrator authority) and `--claim-id`
- * (claim evidence); never mentions a source label.
+ * mutation. Names the command and points to bearer claim authority; `--run` is
+ * only target selection and cannot prove subprocess authority. Never mentions a
+ * source label.
  *
  * @param command - The withheld role-specific mutation command.
  * @returns Single-line refusal message.
@@ -395,9 +386,9 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
 export function subprocessMutationWithheldMessage(command: RoleSpecificMutationCommand): string {
   return (
     `Refusing to run a bare \`rundown ${command}\` from a subprocess front end: it would ` +
-    `silently inherit direct-CLI trust over the active run. Name the run you control with ` +
-    `\`rundown ${command} --run <rd_…>\`, resolve a delegated ` +
-    `child with \`rundown ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
-    `or run \`rundown ${command}\` directly.`
+    `silently inherit direct-CLI trust over the active run. Supply bearer authority with ` +
+    `\`rundown ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
+    `optionally add \`--run <rd_…>\` only to select the target run, or run ` +
+    `\`rundown ${command}\` directly.`
   );
 }

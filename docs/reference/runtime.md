@@ -233,18 +233,25 @@ The session tracks top-level runs and delegated children separately.
   "defaultStack": ["rd_11111111111111111111111111111111"],
   "stashedRunbookId": null,
   "claims": {
-    "rdclm_F3J3n3d_f8fo0a0b1B2c3Q": {
-      "kind": "claim-record",
-      "claimId": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
-      "childRunId": "rd_22222222222222222222222222222222",
-      "tokenHash": "sha256:...",
-      "parentRunId": "rd_11111111111111111111111111111111",
-      "parentStepId": "1.1",
-      "parentStep": "Process item",
-      "parentFrameKey": "1|",
-      "parentEntry": 1,
-      "claimedAt": "2026-04-28T00:00:00.000Z",
-      "updatedAt": "2026-04-28T00:00:00.000Z"
+    "rdclk_22222222222222222222222222222222": {
+      "claimKey": "rdclk_22222222222222222222222222222222",
+      "secretHash": "sha256:...",
+      "controlledRunId": "rd_22222222222222222222222222222222",
+      "delegation": {
+        "childRunId": "rd_22222222222222222222222222222222",
+        "tokenHash": "sha256:...",
+        "parentRunId": "rd_11111111111111111111111111111111",
+        "parentStepId": "1.1",
+        "parentStep": "Process item",
+        "parentFrameKey": "1|",
+        "parentEntry": 1
+      },
+      "grants": [
+        { "action": "mutate-run", "runId": "rd_22222222222222222222222222222222" },
+        { "action": "collect-for-run", "runId": "rd_22222222222222222222222222222222" }
+      ],
+      "issuedAt": "2026-07-06T00:00:00.000Z",
+      "updatedAt": "2026-07-06T00:00:00.000Z"
     }
   }
 }

@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
-import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
+import { CLAIM_ID_PATTERN, CLAIM_LOOKUP_KEY_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 import { PublicArtifactRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
@@ -396,12 +396,12 @@ export const DelegationStatusEntrySchema = z
       .describe('Delegation state: pending, claimed, or cancelled'),
     /** Child run ID (when claimed) */
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
-    /** Stable claim handle for driving or recovering the claimed child */
-    claimId: z
+    /** Stable non-secret claim lookup key for claimed delegation correlation */
+    claimKey: z
       .string()
-      .regex(CLAIM_ID_PATTERN)
+      .regex(CLAIM_LOOKUP_KEY_PATTERN)
       .optional()
-      .describe('Claim id for a claimed delegation; drive or recover the child with --claim-id'),
+      .describe('Non-secret claim lookup key for a claimed delegation'),
     /** SHA-256 hash of the delegation token for correlation */
     tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
     /** Raw delegation token for pending-token recovery */
@@ -411,6 +411,7 @@ export const DelegationStatusEntrySchema = z
       .optional()
       .describe('Raw delegation token, present only while the delegation is pending'),
   })
+  .strict()
   .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
     message: 'childRunId is required when state is claimed',
     path: ['childRunId'],
@@ -419,9 +420,9 @@ export const DelegationStatusEntrySchema = z
     message: 'token is only available while state is pending',
     path: ['token'],
   })
-  .refine((entry) => entry.state === 'claimed' || entry.claimId === undefined, {
-    message: 'claimId is only available when state is claimed',
-    path: ['claimId'],
+  .refine((entry) => entry.state === 'claimed' || entry.claimKey === undefined, {
+    message: 'claimKey is only available when state is claimed',
+    path: ['claimKey'],
   })
   .describe('Delegation status entry');
 

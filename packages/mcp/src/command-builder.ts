@@ -24,8 +24,8 @@ function pushClaimId(cmd: string[], input: Record<string, unknown>): void {
   if (typeof input.claimId === 'string') cmd.push('--claim-id', input.claimId);
 }
 
-// Map the optional `runId` input to `--run <rd_…>` (explicit orchestrator
-// targeting). String-ness only — the CLI validates the format via isRunId.
+// Map the optional `runId` input to `--run <rd_…>` (target selection only).
+// String-ness only — the CLI validates the format via isRunId.
 function pushRunId(cmd: string[], input: Record<string, unknown>): void {
   if (typeof input.runId === 'string') cmd.push('--run', input.runId);
 }
@@ -97,6 +97,7 @@ export function buildRundownCommand(
       if (input.retry === true) cmd.push('--retry');
       if (typeof input.runbook === 'string') cmd.push(input.runbook);
       pushStepIndex(cmd, input);
+      pushClaimId(cmd, input);
       pushRepeatableInputs(cmd, input);
       pushRunId(cmd, input);
       return cmd;

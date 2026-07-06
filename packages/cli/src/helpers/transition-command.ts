@@ -58,7 +58,7 @@ const VALUE_TAKING_OPTION_PRESENTATION: Record<
   '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
   '--run': {
     value: 'runId',
-    description: 'Name the run you control (explicit orchestrator targeting)',
+    description: 'Target a runbook by run id',
   },
 };
 
@@ -115,7 +115,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            const runTarget = parseRunOption(options.run, output);
             if (!runTarget.ok) return;
 
             const config = def.buildConfig();

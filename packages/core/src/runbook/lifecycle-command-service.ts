@@ -1288,9 +1288,10 @@ export class RunbookLifecycleCommandService {
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
     // `targeted` derives from the presence of an explicit step target, never
-    // from the selector kind alone (decision 3): `pass --run <id> --step <n>`
-    // is targeted (the sanctioned operator recovery, exempt from the collection
-    // guards) while a bare-shaped `--run` advance is not and stays guarded.
+    // from the selector kind alone (decision 3): `pass --claim-id <id> --step
+    // <n>` is targeted (the sanctioned operator recovery, exempt from the
+    // collection guards) while a bare-shaped advance with only target selection
+    // is not and stays guarded.
     const targeted = input.explicitTarget !== undefined;
     const claimId =
       input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
@@ -1667,7 +1668,6 @@ export class RunbookLifecycleCommandService {
     // Gate the resolved ROOT before forcing. Identifier-only `--run` anchoring
     // selects the inline chain root, but authority still comes from a verified
     // claim grant over that root.
-    const rootSteps = await this.#deps.loadSteps(plan.targetState);
     const authority = await this.#resolveMutationActorContext({
       callerEvidence: input.callerEvidence,
       targetState: plan.targetState,

@@ -26,7 +26,7 @@ export function registerStopCommand(program: Command): void {
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
-    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
+    .option('--run <runId>', 'Target a runbook by run id')
     .option('--text', 'Output as human-readable text')
     .action(
       async (
@@ -39,7 +39,7 @@ export function registerStopCommand(program: Command): void {
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            const runTarget = parseRunOption(options.run, output);
             if (!runTarget.ok) return;
 
             try {

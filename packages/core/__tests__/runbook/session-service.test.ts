@@ -327,6 +327,10 @@ describe('SessionService', () => {
       expect(claimed.claim.delegation).toEqual(expectedDelegation);
       expect(claimed.claim.grants).toEqual([
         { action: 'mutate-run', runId: CHILD_RUN_ID },
+        { action: 'delegate-from-run', runId: CHILD_RUN_ID },
+        { action: 'collect-for-run', runId: CHILD_RUN_ID },
+        { action: 'abort-delegation', runId: CHILD_RUN_ID },
+        { action: 'retry-delegation', runId: CHILD_RUN_ID },
         { action: 'report-delegation-result', ...expectedDelegation },
       ]);
 
@@ -359,7 +363,7 @@ describe('SessionService', () => {
       }
     });
 
-    it('refuses token replay for an already-claimed child without minting another bearer', async () => {
+    it('reissues a bearer for an already-claimed child without persisting the old proof', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -370,16 +374,19 @@ describe('SessionService', () => {
       });
 
       const first = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
-      const second = await sessionService.claimRunbook(child.id, linkage);
+      const second = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const session = await manager.loadSession();
 
-      expect(second).toEqual({
-        status: 'already-claimed',
-        childRunId: child.id,
-        claimKey: first.claim.claimKey,
-      });
+      expect(second.claimId).toMatch(/^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/);
+      expect(second.claimId).not.toBe(first.claimId);
+      expect(second.claim.controlledRunId).toBe(child.id);
+      expect(second.claim.delegation).toEqual(first.claim.delegation);
+      expect(session.claims[first.claim.claimKey]).toBeUndefined();
+      expect(session.claims[second.claim.claimKey]).toEqual(second.claim);
+      expect(JSON.stringify(session)).not.toContain(second.claimId);
     });
 
-    it('refuses token replay for an existing delegation before treating a new child id as claimable', async () => {
+    it('reissues the existing delegation claim before treating a new child id as claimable', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -395,13 +402,15 @@ describe('SessionService', () => {
       const first = assertClaimed(await sessionService.claimRunbook(existingChild.id, linkage));
 
       const missingChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
-      const second = await sessionService.claimRunbook(missingChildId, linkage);
+      const second = assertClaimed(await sessionService.claimRunbook(missingChildId, linkage));
+      const session = await manager.loadSession();
 
-      expect(second).toEqual({
-        status: 'already-claimed',
-        childRunId: existingChild.id,
-        claimKey: first.claim.claimKey,
-      });
+      expect(second.claimId).toMatch(/^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/);
+      expect(second.claimId).not.toBe(first.claimId);
+      expect(second.claim.controlledRunId).toBe(existingChild.id);
+      expect(second.claim.delegation).toEqual(first.claim.delegation);
+      expect(session.claims[first.claim.claimKey]).toBeUndefined();
+      expect(session.claims[second.claim.claimKey]).toEqual(second.claim);
     });
 
     it('returns missing for an unknown claim id', async () => {

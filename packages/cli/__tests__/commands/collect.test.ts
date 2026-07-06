@@ -366,12 +366,13 @@ describe('collect command', () => {
       });
 
       // The active run is itself delegated upward. Under the target-relative
-      // model the orchestrator gate must NOT reject it as a collection target —
-      // but post-R1 the orchestrator must NAME the run it collects: the child
-      // is delegation-linked (clause e), so a bare collect is refused.
+      // model the orchestrator gate must NOT reject it as a collection target.
+      // The preserved singleton child claim supplies implicit authority, so a
+      // bare collect reaches the collection operation and reports that the
+      // child has no delegations of its own.
       const bare = await runCliInProcess(['collect'], workspace);
       const bareEnvelope = JSON.parse(bare.stdout) as { code?: string };
-      expect(bareEnvelope.code).toBe('ACTOR_CONTEXT_REQUIRED');
+      expect(bareEnvelope.code).toBe('NOT_DELEGATE_STEP');
 
       const result = await runCliInProcess(['collect', '--run', childRunId], workspace);
 
@@ -410,11 +411,11 @@ describe('collect command', () => {
       expect(state?.step).toBe('1');
     });
 
-    it('names the --run remediation in the orchestrator-gate refusal message', () => {
-      // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at BOTH explicit
-      // authority lanes and never echo a run id (decision 4).
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--run');
+    it('names claim bearer authority in the orchestrator-gate refusal message', () => {
+      // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at bearer
+      // authority and never echo a run id (decision 4).
       expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-id');
+      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--run');
       expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).not.toMatch(/rd_[a-f0-9]{32}/);
     });
   });

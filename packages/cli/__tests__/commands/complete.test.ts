@@ -428,7 +428,9 @@ Do work.
       const session = await readSession(workspace);
       // Item 4: the terminal claim is RETAINED as a tombstone (release with
       // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
       expect(session.defaultStack).toContain(parentState!.id);
     });
 
@@ -484,7 +486,9 @@ Do work.
       expect(result.exitCode).not.toBe(0);
       // Still retained as a tombstone (conflict path releases with retain too).
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
     });
   });
 

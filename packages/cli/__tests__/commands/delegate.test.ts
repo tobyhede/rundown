@@ -237,7 +237,7 @@ describe('delegate command', () => {
     return autoToken;
   }
 
-  it('rejects --claim-id-looking delegate input before delegation logic runs', async () => {
+  it('rejects malformed --claim-id before delegation logic runs', async () => {
     const result = await runCliInProcess(
       ['delegate', 'child.md', '--input-file', '--claim-id=foo'],
       workspace,
@@ -247,8 +247,8 @@ describe('delegate command', () => {
     const raw = JSON.parse(result.stdout);
     expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
     expect(raw).toMatchObject({
-      code: 'INVALID_DELEGATE_CLAIM_ID',
-      error: expect.stringContaining('does not accept --claim-id'),
+      code: 'INVALID_CLAIM_ID',
+      error: expect.stringContaining('Invalid claim id'),
     });
   });
 

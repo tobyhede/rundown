@@ -197,18 +197,20 @@ describe('rundown', () => {
 
       expect(() =>
         rundown(['delegate', 'child.md', '--input-file', '--claim-id=foo'], '/test'),
-      ).toThrow(/does not accept --claim-id/);
+      ).toThrow(/subprocess front end/);
       expect(mockExec).not.toHaveBeenCalled();
     });
 
-    it('rejects delegate --claim-id before spawning the CLI', () => {
-      const mockExec = mockExecFileSync('should not run');
+    it('spawns delegate --claim-id claim evidence through the boundary', () => {
+      const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
 
-      expect(() => rundown(['delegate', '--claim-id=foo'], '/test')).toThrow(
-        /does not accept --claim-id/,
+      expect(() => rundown(['delegate', '--claim-id=foo'], '/test')).not.toThrow();
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        [expect.any(String), 'delegate', '--claim-id=foo'],
+        expect.any(Object),
       );
-      expect(mockExec).not.toHaveBeenCalled();
     });
 
     it('spawns read-only commands unchanged', () => {
