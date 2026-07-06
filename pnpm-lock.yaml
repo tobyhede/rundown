@@ -112,6 +112,9 @@ importers:
       '@rundown-org/core':
         specifier: '*'
         version: link:../core
+      '@rundown-org/mcp':
+        specifier: '*'
+        version: link:../mcp
       commander:
         specifier: ^15.0.0
         version: 15.0.0

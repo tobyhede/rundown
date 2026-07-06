@@ -212,6 +212,31 @@ test('e2e image installs Codex CLI, ships the Codex entrypoint, and the Codex AG
   );
 });
 
+test('Rundown Claude plugin package also ships a Codex plugin surface', async () => {
+  const manifest = JSON.parse(
+    await readRepoFile('packages/claude-code-plugin/codex-plugin/.codex-plugin/plugin.json'),
+  );
+  const mcp = JSON.parse(await readRepoFile('packages/claude-code-plugin/codex-plugin/.mcp.json'));
+  const pluginPackage = JSON.parse(await readRepoFile('packages/claude-code-plugin/package.json'));
+
+  assert.equal(manifest.name, 'rundown');
+  assert.equal(manifest.skills, './skills/');
+  assert.equal(manifest.mcpServers, './.mcp.json');
+  assert.equal(manifest.interface.displayName, 'Rundown');
+  assert.equal(manifest.interface.category, 'Developer Tools');
+  assert.match(manifest.interface.longDescription, /runbook/i);
+  assert.ok(manifest.interface.capabilities.includes('Interactive'));
+  assert.equal(manifest.interface.logo, './assets/rundown.svg');
+  assert.equal(manifest.interface.composerIcon, './assets/rundown.svg');
+
+  assert.deepEqual(mcp.mcpServers.rundown, {
+    command: 'rundown-mcp',
+  });
+
+  assert.ok(pluginPackage.files.includes('codex-plugin'));
+  assert.equal(pluginPackage.dependencies['@rundown-org/mcp'], '*');
+});
+
 test('e2e shell wrapper selects Claude or Codex entrypoint', async () => {
   const shellScript = await readRepoFile('scripts/e2e-shell.sh');
 
