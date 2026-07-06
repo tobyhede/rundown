@@ -96,7 +96,7 @@ COPY --chmod=755 scripts/e2e-codex-shell-entrypoint.sh /usr/local/bin/e2e-codex-
 
 # Rundown Codex plugin root. Stage 1 uses plugin metadata, bundled skills, and
 # MCP config; it intentionally does not install Codex hooks.
-COPY --chown=testuser:testuser packages/claude-code-plugin/codex-plugin /usr/local/share/rundown/codex-plugin
+COPY --chown=testuser:testuser packages/claude-code-plugin/codex-plugin /usr/local/share/rundown/packages/claude-code-plugin/codex-plugin
 
 # Local Codex marketplace used by the E2E entrypoint to install the plugin
 # through Codex's supported plugin flow.

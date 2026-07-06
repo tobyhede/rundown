@@ -8,7 +8,7 @@
       "name": "rundown",
       "source": {
         "source": "local",
-        "path": "./codex-plugin"
+        "path": "./packages/claude-code-plugin/codex-plugin"
       },
       "policy": {
         "installation": "AVAILABLE",

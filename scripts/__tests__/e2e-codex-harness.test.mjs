@@ -259,7 +259,7 @@ test('E2E image copies the Rundown Codex plugin root', async () => {
 
   assert.match(
     dockerfile,
-    /packages\/claude-code-plugin\/codex-plugin \/usr\/local\/share\/rundown\/codex-plugin/,
+    /packages\/claude-code-plugin\/codex-plugin \/usr\/local\/share\/rundown\/packages\/claude-code-plugin\/codex-plugin/,
   );
   assert.match(
     dockerfile,
@@ -276,7 +276,7 @@ test('repo-local Codex marketplace exposes the Rundown plugin', async () => {
     name: 'rundown',
     source: {
       source: 'local',
-      path: './codex-plugin',
+      path: './packages/claude-code-plugin/codex-plugin',
     },
     policy: {
       installation: 'AVAILABLE',
@@ -284,6 +284,17 @@ test('repo-local Codex marketplace exposes the Rundown plugin', async () => {
     },
     category: 'Developer Tools',
   });
+});
+
+test('repo-local Codex marketplace source path resolves from the checkout root', async () => {
+  const marketplace = JSON.parse(await readRepoFile('.agents/plugins/marketplace.json'));
+  const sourcePath = marketplace.plugins[0].source.path;
+
+  assert.equal(join(repoRoot, sourcePath), join(repoRoot, 'packages/claude-code-plugin/codex-plugin'));
+  assert.equal(
+    join(repoRoot, sourcePath, '.codex-plugin', 'plugin.json'),
+    join(repoRoot, 'packages/claude-code-plugin/codex-plugin', '.codex-plugin', 'plugin.json'),
+  );
 });
 
 test('Rundown Claude plugin package also ships a Codex plugin surface', async () => {
@@ -304,7 +315,8 @@ test('Rundown Claude plugin package also ships a Codex plugin surface', async ()
   assert.equal(manifest.interface.composerIcon, './assets/rundown.svg');
 
   assert.deepEqual(mcp.mcpServers.rundown, {
-    command: 'rundown-mcp',
+    command: 'node',
+    args: ['${CODEX_PLUGIN_ROOT}/../dist/rundown-mcp.js'],
   });
 
   assert.ok(pluginPackage.files.includes('codex-plugin'));
@@ -572,7 +584,10 @@ test('Codex shell entrypoint validates auth and launches Codex in the workspace'
 test('Codex shell entrypoint installs the local Rundown Codex plugin and exports MCP env', async () => {
   const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
 
-  assert.match(entrypoint, /PLUGIN_DIR="\/usr\/local\/share\/rundown\/codex-plugin"/);
+  assert.match(
+    entrypoint,
+    /PLUGIN_DIR="\/usr\/local\/share\/rundown\/packages\/claude-code-plugin\/codex-plugin"/,
+  );
   assert.match(entrypoint, /MARKETPLACE_ROOT="\/usr\/local\/share\/rundown"/);
   assert.match(entrypoint, /export CODEX_PLUGIN_ROOT="\$PLUGIN_DIR"/);
   assert.match(entrypoint, /export RUNDOWN_PLUGIN_ROOT="\$PLUGIN_DIR"/);

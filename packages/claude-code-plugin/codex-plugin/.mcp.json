@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "rundown": {
-      "command": "rundown-mcp"
+      "command": "node",
+      "args": ["${CODEX_PLUGIN_ROOT}/../dist/rundown-mcp.js"]
     }
   }
 }

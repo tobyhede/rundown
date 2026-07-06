@@ -20,7 +20,7 @@ hr()  { echo "----------------------------------------------------------------";
 # paths inherit it.
 export NODE_OPTIONS="--experimental-sqlite"
 
-PLUGIN_DIR="/usr/local/share/rundown/codex-plugin"
+PLUGIN_DIR="/usr/local/share/rundown/packages/claude-code-plugin/codex-plugin"
 MARKETPLACE_ROOT="/usr/local/share/rundown"
 export CODEX_PLUGIN_ROOT="$PLUGIN_DIR"
 export RUNDOWN_PLUGIN_ROOT="$PLUGIN_DIR"

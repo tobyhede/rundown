@@ -164,7 +164,8 @@ so it is unit-testable without a Docker build.
 The Claude entrypoint wires Rundown into the session with `--plugin-dir`. Codex
 plugins are installed through Codex marketplaces, so the Codex E2E entrypoint
 installs the repository's Codex plugin from the local `rundown-local`
-marketplace rooted at `/usr/local/share/rundown`.
+marketplace rooted at `/usr/local/share/rundown`, using the repo's
+`packages/claude-code-plugin/codex-plugin` layout inside that root.
 
 That plugin root contains:
 
