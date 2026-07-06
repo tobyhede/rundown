@@ -290,7 +290,10 @@ test('repo-local Codex marketplace source path resolves from the checkout root',
   const marketplace = JSON.parse(await readRepoFile('.agents/plugins/marketplace.json'));
   const sourcePath = marketplace.plugins[0].source.path;
 
-  assert.equal(join(repoRoot, sourcePath), join(repoRoot, 'packages/claude-code-plugin/codex-plugin'));
+  assert.equal(
+    join(repoRoot, sourcePath),
+    join(repoRoot, 'packages/claude-code-plugin/codex-plugin'),
+  );
   assert.equal(
     join(repoRoot, sourcePath, '.codex-plugin', 'plugin.json'),
     join(repoRoot, 'packages/claude-code-plugin/codex-plugin', '.codex-plugin', 'plugin.json'),
