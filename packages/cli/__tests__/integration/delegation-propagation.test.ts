@@ -70,6 +70,10 @@ describe('Delegation propagation integration', () => {
     return token!;
   }
 
+  function claimKeyFromClaimId(claimId: string): string {
+    return claimId.replace(/^rdclm_([a-f0-9]{32})_[A-Za-z0-9_-]{43}$/, 'rdclk_$1');
+  }
+
   /** Helper: read resolvedCompletions from a run state file. */
   async function readResolvedCompletions(runId: string): Promise<Record<string, unknown>> {
     try {
@@ -165,6 +169,7 @@ describe('Delegation propagation integration', () => {
       const claimAction = findActionOutput(result.stdout);
       expect(claimAction).not.toBeNull();
       const claimId = String(claimAction!.claim_id);
+      const claimKey = claimKeyFromClaimId(claimId);
 
       // Post-R1 the guard needs named authority: a run-targeted bare-shaped
       // advance still refuses with OPEN_DELEGATED_CHILDREN (naming authority
@@ -180,9 +185,10 @@ describe('Delegation propagation integration', () => {
       };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
       expect(payload.error).toContain('rundown pass --claim-id');
+      expect(payload.error).toContain(claimKey);
       expect(payload.error).not.toContain(claimId);
       // The structured details payload is the contract MCP (Task 4) relies on.
-      expect(payload.details?.claimIds?.[0]).toMatch(/^rdclk_/);
+      expect(payload.details?.claimIds).toEqual([claimKey]);
       expect(payload.details?.parentRunId).toBeDefined();
       expect(payload.details?.childRunIds?.length).toBe(1);
     });
@@ -200,6 +206,7 @@ describe('Delegation propagation integration', () => {
       const claimAction = findActionOutput(result.stdout);
       expect(claimAction).not.toBeNull();
       const claimId = String(claimAction!.claim_id);
+      const claimKey = claimKeyFromClaimId(claimId);
 
       result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
 
@@ -207,6 +214,7 @@ describe('Delegation propagation integration', () => {
       const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
       expect(payload.error).toContain('rundown fail --claim-id');
+      expect(payload.error).toContain(claimKey);
       expect(payload.error).not.toContain(claimId);
     });
 
@@ -282,6 +290,8 @@ describe('Delegation propagation integration', () => {
       // A delegated child claim lands.
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
+      const claimId = String(findActionOutput(result.stdout)!.claim_id);
+      const claimKey = claimKeyFromClaimId(claimId);
 
       // The bare-shaped run-targeted parent advance must refuse.
       result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
@@ -291,7 +301,7 @@ describe('Delegation propagation integration', () => {
         details?: { claimIds?: string[] };
       };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
-      expect(payload.details?.claimIds?.[0]).toMatch(/^rdclk_/);
+      expect(payload.details?.claimIds).toEqual([claimKey]);
 
       // The parent must NOT have advanced: no substep was marked done.
       const parent = await readRunbookState(workspace, parentRunId);

@@ -45,6 +45,13 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"claim_id": "<claimId>"');
   });
 
+  it('replaces canonical bearer claim ids with <claimId>', () => {
+    // cspell:disable-next-line
+    const input =
+      '"claim_id": "rdclm_0123456789abcdef0123456789abcdef_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_"';
+    expect(normalizeCliOutput(input, workspace)).toBe('"claim_id": "<claimId>"');
+  });
+
   it('replaces sha256 hex digests with <tokenHash>', () => {
     const input =
       '"token_hash": "sha256:99f78f8946aa2736d1894b2f5800989c37343f04cf645e0110735913e7607306"';
