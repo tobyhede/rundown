@@ -23,6 +23,7 @@ import {
   type ExecutionResult,
   type CommandExecutionServices,
   type ExecutionObservationEffect,
+  type CommandExecutionStreamOptions,
   executeCommand,
   executeCommandWithEnv,
   executeCommandWithPolicy,
@@ -75,6 +76,18 @@ import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 export { buildStepVariables };
+
+/**
+ * Select command subprocess stream routing for a CLI output mode.
+ *
+ * @param text - Whether the surrounding command is rendering human-readable text
+ * @returns Runtime-only command stream options for execution services
+ */
+export function commandStreamOptionsForOutputMode(
+  text: boolean | undefined,
+): CommandExecutionStreamOptions {
+  return { commandOutput: text ? 'inherit' : 'stderr' };
+}
 
 /**
  * Find a step by name, throwing if not found.
@@ -223,6 +236,8 @@ export interface ExecutionLoopOptions {
   readonly actorService?: RunbookActorService;
   /** Optional command services test seam. */
   readonly commandServices?: CommandExecutionServices;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  readonly commandStreamOptions?: CommandExecutionStreamOptions;
   /** Output emitter used when the loop launches an inline child runbook. */
   readonly output?: OutputEmitter;
 }
@@ -237,6 +252,7 @@ interface InlineLaunchArgs {
   readonly intent: InlineLaunchIntent;
   readonly prompted: boolean;
   readonly output: OutputEmitter;
+  readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
 async function applyExecutionTerminalRelease(
@@ -255,14 +271,16 @@ async function applyExecutionTerminalRelease(
   await sessionService.popRunbook();
 }
 
-function createCliCommandServices(): CommandExecutionServices {
+function createCliCommandServices(
+  streamOptions: CommandExecutionStreamOptions = {},
+): CommandExecutionServices {
   return {
     runInternalCommand: async ({ command, cwd, rdInjected }) => {
       if (!isInternalRdCommand(command)) return null;
       return executeRdCommandInternal(command, cwd, rdInjected);
     },
     runExternalCommand: async ({ command, cwd, runbookPath, rdInjected }) =>
-      executeCommandWithPolicyCheck(command, cwd, runbookPath, rdInjected),
+      executeCommandWithPolicyCheck(command, cwd, runbookPath, rdInjected, streamOptions),
   };
 }
 
@@ -361,8 +379,9 @@ async function propagateInlineChildTerminalResult(args: {
   readonly loopResult: 'done' | 'stopped' | 'waiting';
   readonly cwd: string;
   readonly output: OutputEmitter;
+  readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }): Promise<'done' | 'stopped' | 'waiting'> {
-  const { manager, childRunId, loopResult, cwd, output } = args;
+  const { manager, childRunId, loopResult, cwd, output, commandStreamOptions } = args;
   if (loopResult !== 'done' && loopResult !== 'stopped') return loopResult;
 
   const childState = await manager.load(childRunId);
@@ -372,10 +391,17 @@ async function propagateInlineChildTerminalResult(args: {
   // same orchestrator that ran the child advances the parent here. Drain and
   // advance the parent immediately (there is no separate `rd collect` for
   // inline). The child's own loopResult governs the result here unless advancing
-  // the parent reaches a STOP terminal, which surfaces as 'stopped'.
+  // the parent reaches a STOP or blocked terminal, both of which surface to the
+  // execution loop as 'stopped'.
   const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
-  const propagated = await propagateChildTerminal(childState, undefined, cwd, output);
-  return propagated === 'stopped' ? 'stopped' : loopResult;
+  const propagated = await propagateChildTerminal(
+    childState,
+    undefined,
+    cwd,
+    output,
+    commandStreamOptions,
+  );
+  return propagated === 'stopped' || propagated === 'blocked' ? 'stopped' : loopResult;
 }
 
 async function consumeInlineLaunchIntent(args: {
@@ -429,6 +455,7 @@ async function launchInlineChildFromIntent({
   intent,
   prompted,
   output,
+  commandStreamOptions,
 }: InlineLaunchArgs): Promise<'done' | 'stopped' | 'waiting'> {
   const parentLinkage: InlineLinkage = {
     kind: 'inline',
@@ -550,7 +577,7 @@ async function launchInlineChildFromIntent({
         cwd,
         !!existingChild.prompted,
         createBridgedEmitter(existingChild, output),
-        { output },
+        { output, commandStreamOptions },
       );
       return await propagateInlineChildTerminalResult({
         manager,
@@ -558,6 +585,7 @@ async function launchInlineChildFromIntent({
         loopResult,
         cwd,
         output,
+        commandStreamOptions,
       });
     }
 
@@ -629,6 +657,7 @@ async function launchInlineChildFromIntent({
         sessionService,
         lifecycleService: new ExecutionLifecycleService(manager),
         cwd,
+        commandStreamOptions,
       },
       prepared.prepared,
       {
@@ -675,6 +704,7 @@ async function launchInlineChildFromIntent({
         loopResult: launchResult.loopResult,
         cwd,
         output,
+        commandStreamOptions,
       });
     }
 
@@ -996,9 +1026,10 @@ export async function runExecutionLoop(
       ? EXECUTION_TERMINAL_NO_STACK_POLICY
       : EXECUTION_TERMINAL_POLICY;
 
+  const commandServices =
+    options.commandServices ?? createCliCommandServices(options.commandStreamOptions);
   const actorService =
-    options.actorService ??
-    createCliRunbookActorService(manager, options.commandServices ?? createCliCommandServices());
+    options.actorService ?? createCliRunbookActorService(manager, commandServices);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
@@ -1280,6 +1311,7 @@ export async function runExecutionLoop(
         intent: inlineLaunch,
         prompted,
         output: options.output,
+        commandStreamOptions: options.commandStreamOptions,
       });
     }
 
@@ -1450,6 +1482,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
  * @param cwd - Working directory for execution
  * @param runbookPath - Optional runbook file path for override matching
  * @param rdInjected - Optional rundown-injected env vars (`RD_OUTPUTS_*`, `RD_WORK_PATH`, etc.) merged into the child process environment
+ * @param streamOptions - Runtime-only routing for command subprocess stdout/stderr
  * @returns Execution result
  */
 export async function executeCommandWithPolicyCheck(
@@ -1457,6 +1490,7 @@ export async function executeCommandWithPolicyCheck(
   cwd: string,
   runbookPath?: string,
   rdInjected?: Record<string, string>,
+  streamOptions: CommandExecutionStreamOptions = {},
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
@@ -1465,9 +1499,9 @@ export async function executeCommandWithPolicyCheck(
     // file-backed OUTPUTS channels are visible to the subprocess.
     if (rdInjected && Object.keys(rdInjected).length > 0) {
       const env = { ...process.env, ...rdInjected } as Record<string, string>;
-      return executeCommandWithEnv(command, cwd, env);
+      return executeCommandWithEnv(command, cwd, env, streamOptions);
     }
-    return executeCommand(command, cwd);
+    return executeCommand(command, cwd, undefined, streamOptions);
   }
 
   // Get evaluator and set runbook path for override matching
@@ -1486,5 +1520,6 @@ export async function executeCommandWithPolicyCheck(
     rdInjected,
     sandbox: sandboxOpts.sandbox,
     sandboxStrict: sandboxOpts.sandboxStrict,
+    streamOptions,
   });
 }

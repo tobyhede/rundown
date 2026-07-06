@@ -21,6 +21,7 @@ import { registerCollectCommand } from '../../src/commands/collect.js';
 import {
   createTestWorkspace,
   createRunbook,
+  runCli,
   runCliInProcess,
   getActiveState,
   withRunTarget,
@@ -996,6 +997,119 @@ describe('collect command', () => {
       ) as Record<string, unknown>;
       expect(collectedParent.step).toBe('2');
     }, 20_000);
+
+    async function setupCollectAdvancesIntoCommand(): Promise<{ runId: string }> {
+      const parent = [
+        '# Parent',
+        '',
+        '## 1. Fan-out',
+        '',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Child',
+        '',
+        '- DELEGATE',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Emits bytes',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        '```bash',
+        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\117\\125\\124\\012'",
+        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
+        '```',
+        '',
+      ].join('\n');
+
+      const child = ['# Child', '', '## 1. Done', '', '- PASS COMPLETE', '', 'Done.', ''].join(
+        '\n',
+      );
+
+      await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), parent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), child);
+
+      const start = runCli('run parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const started = parseConcatenatedJson(start.stdout).find(
+        (event): event is Record<string, unknown> => {
+          if (typeof event !== 'object' || event === null) return false;
+          return (event as Record<string, unknown>).type === 'runbook_started';
+        },
+      );
+      const runId = String(started?.runbookId);
+      expect(runId).toMatch(/^rd_/);
+
+      type FrontierEntry = { token: string };
+      type StepEnteredEvent = {
+        type?: string;
+        delegateFrontier?: FrontierEntry[];
+      };
+
+      function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+        for (const ev of events) {
+          if (Array.isArray(ev)) {
+            const nested = findFrontierInEvents(ev);
+            if (nested) return nested;
+          } else if (ev && typeof ev === 'object') {
+            const e = ev as StepEnteredEvent;
+            if (e.type === 'step_entered' && e.delegateFrontier) {
+              return e.delegateFrontier;
+            }
+          }
+        }
+        return undefined;
+      }
+
+      const token = String(findFrontierInEvents(parseConcatenatedJson(start.stdout))?.[0]?.token);
+      expect(token).toMatch(/^rdtk_/);
+
+      const claim = runCli(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)?.claim_id);
+      expect(claimId).toMatch(/^rdclm_/);
+
+      const passed = runCli(`pass --claim-id ${claimId}`, workspace);
+      expect(passed.exitCode).toBe(0);
+
+      return { runId };
+    }
+
+    it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
+      const { runId } = await setupCollectAdvancesIntoCommand();
+
+      const collected = runCli(`collect --run ${runId} --allow-run printf --no-sandbox`, workspace);
+      expect(collected.exitCode).toBe(0);
+      expect(collected.stdout).not.toContain('COMMAND_STDOUT');
+      expect(collected.stdout).not.toContain('COMMAND_STDERR');
+      expect(collected.stderr).toContain('COMMAND_STDOUT');
+      expect(collected.stderr).toContain('COMMAND_STDERR');
+
+      const objects = parseConcatenatedJson(collected.stdout);
+      expect(objects.at(-1)).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+      });
+    });
+
+    it('routes command stdout and stderr separately when collect text output advances into a command', async () => {
+      const { runId } = await setupCollectAdvancesIntoCommand();
+
+      const collected = runCli(
+        `collect --run ${runId} --text --allow-run printf --no-sandbox`,
+        workspace,
+      );
+
+      expect(collected.exitCode).toBe(0);
+      expect(collected.stdout).toContain('COMMAND_STDOUT');
+      expect(collected.stdout).not.toContain('COMMAND_STDERR');
+      expect(collected.stderr).toContain('COMMAND_STDERR');
+      expect(collected.stderr).not.toContain('COMMAND_STDOUT');
+    });
   });
 
   describe('error cases', () => {

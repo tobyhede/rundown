@@ -9,6 +9,7 @@ import { createCliRunbookActorService } from '../helpers/actor-service-factory.j
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import {
   parseArtifactJsonOption,
   parseArtifactOption,
@@ -190,6 +191,7 @@ export function registerClaimCommand(program: Command): void {
             const actorService = createCliRunbookActorService(manager);
             const sessionService = new SessionService(manager);
             const lifecycleService = new ExecutionLifecycleService(manager);
+            const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
 
             const ctx: RunPipelineContext = {
               output,
@@ -198,6 +200,7 @@ export function registerClaimCommand(program: Command): void {
               sessionService,
               lifecycleService,
               cwd,
+              commandStreamOptions,
             };
 
             const inputOpts = {
@@ -225,7 +228,13 @@ export function registerClaimCommand(program: Command): void {
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
               if (childState && extractParentLinkage(childState)) {
-                await propagateChildTerminal(childState, undefined, cwd, output);
+                await propagateChildTerminal(
+                  childState,
+                  undefined,
+                  cwd,
+                  output,
+                  commandStreamOptions,
+                );
               }
             }
 

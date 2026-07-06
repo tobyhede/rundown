@@ -1,14 +1,22 @@
 import * as os from 'node:os';
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import {
-  executeCommand,
-  executeCommandWithPolicy,
-  executeCommandWithEnv,
-  POLICY_DENIED_EXIT_CODE,
-} from '../../src/runbook/executor.js';
 import { PolicyEvaluator } from '../../src/policy/evaluator.js';
 import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
 import type { PolicyPrompter } from '../../src/policy/prompter.js';
+import type { spawn as nodeSpawn } from 'node:child_process';
+
+const actualChildProcess = await import('node:child_process');
+const spawnMock = jest.fn((...args: Parameters<typeof nodeSpawn>) =>
+  actualChildProcess.spawn(...args),
+);
+
+jest.unstable_mockModule('node:child_process', () => ({
+  ...actualChildProcess,
+  spawn: spawnMock,
+}));
+
+const { executeCommand, executeCommandWithPolicy, executeCommandWithEnv, POLICY_DENIED_EXIT_CODE } =
+  await import('../../src/runbook/executor.js');
 
 /**
  * Creates a mock PolicyPrompter for testing.
@@ -32,6 +40,10 @@ function createMockPrompter(requestPermissionResult: {
 }
 
 describe('executeCommand', () => {
+  beforeEach(() => {
+    spawnMock.mockClear();
+  });
+
   it('returns success true for exit code 0', async () => {
     // Use node for cross-platform compatibility
     const result = await executeCommand('node -e "process.exit(0)"', process.cwd());
@@ -73,6 +85,53 @@ describe('executeCommand', () => {
     const result = await executeCommand('jest --version', process.cwd());
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
+  });
+
+  it('routes command stdout and stderr to process stderr when commandOutput is stderr', async () => {
+    const stdoutWrite = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      const result = await executeCommand(
+        "node -e \"process.stdout.write('out-from-command'); process.stderr.write('err-from-command')\"",
+        process.cwd(),
+        undefined,
+        { commandOutput: 'stderr' },
+      );
+
+      expect(result.success).toBe(true);
+      expect(stdoutWrite).not.toHaveBeenCalledWith(expect.stringContaining('out-from-command'));
+      const stderrChunks = stderrWrite.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(stderrChunks).toContain('out-from-command');
+      expect(stderrChunks).toContain('err-from-command');
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
+  });
+
+  it('keeps inherited command stdio as the default stream policy', async () => {
+    const stdoutWrite = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      const result = await executeCommand(
+        'node -e "process.stdout.write(\'default-out\')"',
+        process.cwd(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({ stdio: 'inherit' }),
+      );
+      expect(stdoutWrite).not.toHaveBeenCalledWith(expect.stringContaining('default-out'));
+      expect(stderrWrite).not.toHaveBeenCalledWith(expect.stringContaining('default-out'));
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
   });
 });
 

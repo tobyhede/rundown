@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
@@ -38,6 +39,7 @@ export function registerGotoCommand(program: Command): void {
             const contextResult = await buildGotoContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              commandStreamOptions: commandStreamOptionsForOutputMode(options.text),
             });
             switch (contextResult.kind) {
               case 'ready':

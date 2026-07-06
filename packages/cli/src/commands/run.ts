@@ -53,6 +53,7 @@ import {
 } from '../helpers/index-option.js';
 import { propagateChildTerminal } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
+import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -128,6 +129,7 @@ export function registerRunCommand(program: Command): void {
           const sessionService = new SessionService(manager);
           const lifecycleService = new ExecutionLifecycleService(manager);
 
+          const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
           const ctx: RunPipelineContext = {
             output,
             manager,
@@ -135,6 +137,7 @@ export function registerRunCommand(program: Command): void {
             sessionService,
             lifecycleService,
             cwd,
+            commandStreamOptions,
           };
 
           // Validate --index requires --step
@@ -263,6 +266,7 @@ export function registerRunCommand(program: Command): void {
                     undefined,
                     cwd,
                     output,
+                    commandStreamOptions,
                   );
                   if (propOutcome === 'stopped' || propOutcome === 'blocked') {
                     output.flush();

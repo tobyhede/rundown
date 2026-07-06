@@ -19,6 +19,7 @@ import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
@@ -64,6 +65,7 @@ export function registerCollectCommand(program: Command): void {
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'collect' });
             const cwd = getCwd();
+            const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
@@ -72,6 +74,7 @@ export function registerCollectCommand(program: Command): void {
             const contextResult = await buildTransitionContext(output, cwd, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              commandStreamOptions,
             });
             switch (contextResult.kind) {
               case 'ready':
@@ -437,7 +440,16 @@ function renderCollectOutcome(
  * @returns True if the command should set a non-zero exit code
  */
 async function runCollect(ctx: TransitionContext, options: CollectOptions): Promise<boolean> {
-  const { output, manager, actorService, lifecycleService, state, steps, cwd } = ctx;
+  const {
+    output,
+    manager,
+    actorService,
+    lifecycleService,
+    state,
+    steps,
+    cwd,
+    commandStreamOptions,
+  } = ctx;
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
@@ -527,7 +539,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         cwd,
         !!advanced.prompted,
         emitter,
-        { terminalReleaseMode: 'release-runbook', output },
+        {
+          terminalReleaseMode: 'release-runbook',
+          output,
+          commandStreamOptions,
+        },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a
       // terminal state INSIDE the loop and still owe its parent a propagation
@@ -552,7 +568,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     linkage &&
     (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
   ) {
-    const propagation = await propagateChildTerminal(terminal, undefined, cwd, output);
+    const propagation = await propagateChildTerminal(
+      terminal,
+      undefined,
+      cwd,
+      output,
+      commandStreamOptions,
+    );
     // Inline propagation may itself drive the parent terminal (STOP) — its
     // outcome decides the exit code for inline, ORed with a stopped loop.
     // Delegation propagation is report-only (no parent advancement) but can

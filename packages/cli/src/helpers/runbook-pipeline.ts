@@ -39,6 +39,7 @@ import {
   type TemplateVarValue,
   type VariableValue,
   type RoutedVariableValue,
+  type CommandExecutionStreamOptions,
   generateRunId,
   partitionVariables,
   prepareParsedRunbook,
@@ -106,6 +107,8 @@ export interface RunPipelineContext {
   lifecycleService: ExecutionLifecycleService;
   /** Current working directory for file resolution */
   cwd: string;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
 /** Template variables available after runbook resolution but before execution starts. */
@@ -1028,6 +1031,7 @@ async function launchRunbook(
       terminalReleaseMode:
         options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
       output,
+      commandStreamOptions: ctx.commandStreamOptions,
     },
   );
 

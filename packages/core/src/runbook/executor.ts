@@ -5,6 +5,11 @@ import type { PolicyEvaluator, PolicyPrompter, PolicyDecision } from '../policy/
 import type { NetworkPolicy } from '../policy/schema.js';
 import { executeWithSandbox, isSandboxAvailable } from '../sandbox/index.js';
 import { policyToSandboxOptions } from '../sandbox/policy-mapper.js';
+import {
+  pipeCommandOutputToStderr,
+  stdioForCommandOutput,
+  type CommandExecutionStreamOptions,
+} from './command-stream-policy.js';
 
 /**
  * Result of executing a shell command.
@@ -46,6 +51,8 @@ export interface PolicyExecutionOptions {
   rdInjected?: Record<string, string>;
   /** Enable OS-level sandbox for file access enforcement (default: true on supported platforms) */
   sandbox?: boolean;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  streamOptions?: CommandExecutionStreamOptions;
   /**
    * Require the OS sandbox: fail closed when sandboxing is enabled but
    * unavailable instead of running unsandboxed (default: true).
@@ -95,12 +102,14 @@ function extractRundownSandboxWritePaths(rdInjected?: Record<string, string>): s
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param rdInjected - Optional Rundown-injected env vars (e.g. RD_WORK_PATH) merged after PATH
+ * @param streamOptions - Runtime-only routing for command subprocess stdout/stderr
  * @returns Promise resolving to ExecutionResult with success status and exit code
  */
 export function executeCommand(
   command: string,
   cwd: string,
   rdInjected?: Record<string, string>,
+  streamOptions: CommandExecutionStreamOptions = {},
 ): Promise<ExecutionResult> {
   return new Promise((resolve) => {
     // Build PATH that includes node_modules/.bin for local package binaries
@@ -121,9 +130,10 @@ export function executeCommand(
 
     const child = spawn(shell, shellArgs, {
       cwd,
-      stdio: 'inherit',
+      stdio: stdioForCommandOutput(streamOptions.commandOutput),
       env,
     });
+    pipeCommandOutputToStderr(child, streamOptions.commandOutput);
 
     child.on('close', (code) => {
       resolve({
@@ -188,11 +198,19 @@ export async function executeCommandWithPolicy(
   cwd: string,
   options: PolicyExecutionOptions = {},
 ): Promise<ExecutionResult> {
-  const { evaluator, prompter, env, rdInjected, sandbox = true, sandboxStrict = true } = options;
+  const {
+    evaluator,
+    prompter,
+    env,
+    rdInjected,
+    sandbox = true,
+    sandboxStrict = true,
+    streamOptions = {},
+  } = options;
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
-    const result = await executeCommand(command, cwd, rdInjected);
+    const result = await executeCommand(command, cwd, rdInjected, streamOptions);
     return { ...result, networkSandboxed: false };
   }
 
@@ -254,6 +272,7 @@ export async function executeCommandWithPolicy(
         extraReadWritePaths: extractRundownSandboxWritePaths(rdInjected),
       });
       sandboxOptions.env = finalEnv;
+      sandboxOptions.commandOutput = streamOptions.commandOutput;
 
       const result = await executeWithSandbox(command, sandboxOptions);
       return {
@@ -305,7 +324,7 @@ export async function executeCommandWithPolicy(
   }
 
   // Execute without sandbox
-  const result = await executeCommandWithEnv(command, cwd, finalEnv);
+  const result = await executeCommandWithEnv(command, cwd, finalEnv, streamOptions);
   return {
     ...result,
     sandboxed: false,
@@ -320,12 +339,14 @@ export async function executeCommandWithPolicy(
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param env - Custom environment variables
+ * @param streamOptions - Runtime-only routing for command subprocess stdout/stderr
  * @returns Promise resolving to ExecutionResult
  */
 export function executeCommandWithEnv(
   command: string,
   cwd: string,
   env: Record<string, string>,
+  streamOptions: CommandExecutionStreamOptions = {},
 ): Promise<ExecutionResult> {
   return new Promise((resolve) => {
     const binPath = path.join(cwd, 'node_modules', '.bin');
@@ -344,9 +365,10 @@ export function executeCommandWithEnv(
 
     const child = spawn(shell, shellArgs, {
       cwd,
-      stdio: 'inherit',
+      stdio: stdioForCommandOutput(streamOptions.commandOutput),
       env: finalEnv,
     });
+    pipeCommandOutputToStderr(child, streamOptions.commandOutput);
 
     child.on('close', (code) => {
       resolve({

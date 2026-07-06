@@ -21,6 +21,7 @@ import {
   type RunbookState,
   type ClaimId,
   type RunId,
+  type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
@@ -50,6 +51,8 @@ export interface GotoContext {
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
   terminalReleaseMode: ExecutionTerminalReleaseMode;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
+  commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
 /**
@@ -114,6 +117,8 @@ export async function resolveTerminalReleaseModeForRunbook(
  * @param options.claimId - Claim id to resolve instead of the default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
  *   stack; mutually exclusive with `claimId` (enforced upstream)
+ * @param options.commandStreamOptions - Runtime-only routing for command
+ * subprocess stdout/stderr while goto continues execution
  * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
  *   was resolved and a goto context is available; `{ kind: 'none' }` when no
  *   active runbook exists; `{ kind: 'stale_claim' | 'terminal_claim' }` when
@@ -125,7 +130,11 @@ export async function resolveTerminalReleaseModeForRunbook(
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
+  options: {
+    readonly claimId?: ClaimId;
+    readonly runId?: RunId;
+    readonly commandStreamOptions?: CommandExecutionStreamOptions;
+  } = {},
 ): Promise<BuildGotoContextResult> {
   const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
@@ -156,6 +165,7 @@ export async function buildGotoContext(
       steps: [...outcome.steps],
       cwd,
       terminalReleaseMode: outcome.terminalReleaseMode,
+      commandStreamOptions: options.commandStreamOptions,
     },
   };
 }
@@ -295,7 +305,11 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     cwd,
     !!state.prompted,
     emitter,
-    { terminalReleaseMode: ctx.terminalReleaseMode, output },
+    {
+      terminalReleaseMode: ctx.terminalReleaseMode,
+      output,
+      commandStreamOptions: ctx.commandStreamOptions,
+    },
   );
 
   return { ok: true, loopResult };
