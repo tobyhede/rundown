@@ -17,11 +17,14 @@ import {
   createDelegatedChildGrants,
   createClaimRecord,
   createRunControlGrants,
+  authorizeClaim,
   hashClaimSecret,
   parseClaimBearer,
   generateClaimBearer,
   refreshedClaimRecord,
   verifyClaimSecret,
+  type AuthorizedClaim,
+  type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
   type ClaimRecord,
@@ -313,6 +316,42 @@ export class SessionService {
       return { status: 'invalid-secret', claimKey: parsed.claimKey };
     }
     return { status: 'verified', claim: verifiedClaimFromRecord(record) };
+  }
+
+  /**
+   * List active local claims whose grants authorize a request.
+   *
+   * This is the implicit singleton authority path. It returns the same
+   * {@link VerifiedClaim} payload as explicit bearer verification, but the
+   * authority source is the non-secret persisted lookup key, not a reconstructed
+   * bearer.
+   *
+   * @param request - Authorization request to check against persisted grants.
+   * @returns Active authorizing claims using non-bearer implicit authority.
+   */
+  async listClaimsAuthorizing(
+    request: ClaimAuthorizationRequest,
+  ): Promise<readonly AuthorizedClaim[]> {
+    const session = await this.manager.loadSession();
+    const candidates: AuthorizedClaim[] = [];
+    for (const record of Object.values(session.claims)) {
+      const claim = verifiedClaimFromRecord(record);
+      if (authorizeClaim(claim, request).kind !== 'allowed') {
+        continue;
+      }
+      if (session.stashedRunbookId === record.controlledRunId) {
+        continue;
+      }
+      const state = await this.manager.load(record.controlledRunId);
+      if (!state || state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
+        continue;
+      }
+      candidates.push({
+        authority: { kind: 'implicit', claimKey: record.claimKey },
+        claim,
+      });
+    }
+    return candidates;
   }
 
   /**

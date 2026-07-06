@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   activeFrame,
   assertClaimId,
+  assertClaimSecretHash,
   assertDelegationTokenHash,
   assertRunId,
   buildCompletionKey,
@@ -14,6 +15,7 @@ import {
   verifiedClaimContext,
   type ClaimGrant,
   type ClaimLookupKey,
+  type RunId,
   type ClaimRecord,
   type RunbookState,
 } from '../../src/runbook/index.js';
@@ -54,7 +56,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
 function claimRecord(): ClaimRecord {
   return {
     claimKey,
-    secretHash: `sha256:${'b'.repeat(64)}`,
+    secretHash: assertClaimSecretHash(`sha256:${'b'.repeat(64)}`),
     controlledRunId: childRunId,
     delegation: {
       childRunId,

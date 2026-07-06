@@ -1,5 +1,15 @@
 import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
-import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
+import {
+  authorizeClaim,
+  type AuthorizedClaim,
+  type ClaimAuthorizationRequest,
+  type ClaimId,
+  type ClaimIdResolution,
+  type ClaimRecord,
+  type ClaimVerificationResult,
+  type VerifiedClaim,
+  type VerifiedClaimAuthority,
+} from './claim-id.js';
 import { resolveCommandIntent, type CommandTargetSelector } from './command-policy.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
@@ -20,13 +30,13 @@ export type CommandTargetResolution =
   | {
       readonly kind: 'claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
   | {
       readonly kind: 'terminal_claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly message: string;
@@ -71,7 +81,7 @@ export type TransitionTargetResolution =
   | {
       readonly kind: 'claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
   | { readonly kind: 'default'; readonly state: RunbookState }
@@ -80,7 +90,7 @@ export type TransitionTargetResolution =
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly result: TransitionCommandName;
@@ -88,7 +98,7 @@ export type TransitionTargetResolution =
   | {
       readonly kind: 'terminal_claim_conflict';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly expectedResult: TransitionCommandName;
@@ -222,6 +232,22 @@ export interface CommandTargetReader {
   ): Promise<ClaimIdResolution>;
 
   /**
+   * Verify an explicit bearer claim id against session proof data.
+   *
+   * @param claimId - Bearer claim id presented by the caller.
+   * @returns Verification status.
+   */
+  verifyClaimId(claimId: ClaimId): Promise<ClaimVerificationResult>;
+
+  /**
+   * List active local claims that authorize a mutation request.
+   *
+   * @param request - Grant authorization request.
+   * @returns Authorizing claims with non-bearer implicit authority evidence.
+   */
+  listClaimsAuthorizing(request: ClaimAuthorizationRequest): Promise<readonly AuthorizedClaim[]>;
+
+  /**
    * List unresolved delegated child claims for a parent runbook.
    *
    * @param parentRunId - Parent runbook id to inspect
@@ -266,6 +292,12 @@ async function resolveClaimTarget(
       };
     case 'missing':
       return { kind: 'stale_claim', claimId, message: `Claim id ${claimId} does not exist.` };
+    case 'invalid-secret':
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message: `Claim id ${claimId} is not valid for this session.`,
+      };
     case 'stale':
       return {
         kind: 'stale_claim',
@@ -286,6 +318,74 @@ async function resolveClaimTarget(
       return _exhaustive;
     }
   }
+}
+
+/** Mutation authority verified from either explicit bearer or implicit singleton evidence. */
+export type MutationAuthorityResolution =
+  | {
+      /** Mutation authority was verified. */
+      readonly kind: 'verified';
+      /** How authority was proven, without changing the verified claim payload. */
+      readonly authority: VerifiedClaimAuthority;
+      /** Shared verified claim data for both explicit and implicit authority. */
+      readonly claim: VerifiedClaim;
+    }
+  | {
+      /** Mutation authority was refused. */
+      readonly kind: 'refused';
+      /** Refusal reason. */
+      readonly reason: 'missing' | 'invalid-secret' | 'ambiguous' | 'no-authorizing-claim';
+    };
+
+/**
+ * Resolve mutation authority from an optional bearer or the implicit singleton path.
+ *
+ * @param input - Reader, optional presented bearer, target, and authorization request.
+ * @param input.targetReader - Read-side dependency for claim proof and implicit lookup.
+ * @param input.presentedClaimId - Optional explicit bearer claim id.
+ * @param input.targetState - Mutation target state.
+ * @param input.request - Exact grant authorization request.
+ * @returns Verified authority or a typed refusal.
+ */
+export async function resolveMutationAuthority(input: {
+  readonly targetReader: CommandTargetReader;
+  readonly presentedClaimId?: ClaimId;
+  readonly targetState: RunbookState;
+  readonly request: ClaimAuthorizationRequest;
+}): Promise<MutationAuthorityResolution> {
+  if (input.presentedClaimId !== undefined) {
+    const verified = await input.targetReader.verifyClaimId(input.presentedClaimId);
+    if (verified.status !== 'verified') {
+      return {
+        kind: 'refused',
+        reason: verified.status === 'invalid-secret' ? 'invalid-secret' : 'missing',
+      };
+    }
+    return authorizeClaim(verified.claim, input.request).kind === 'allowed'
+      ? {
+          kind: 'verified',
+          authority: {
+            kind: 'bearer',
+            claimId: input.presentedClaimId,
+            claimKey: verified.claim.claimKey,
+          },
+          claim: verified.claim,
+        }
+      : { kind: 'refused', reason: 'no-authorizing-claim' };
+  }
+
+  const candidates = await input.targetReader.listClaimsAuthorizing(input.request);
+  if (candidates.length === 1) {
+    return {
+      kind: 'verified',
+      authority: candidates[0].authority,
+      claim: candidates[0].claim,
+    };
+  }
+  return {
+    kind: 'refused',
+    reason: candidates.length === 0 ? 'no-authorizing-claim' : 'ambiguous',
+  };
 }
 
 /**
@@ -514,6 +614,8 @@ async function evaluateTransitionPolicy(
       return { kind: 'open_delegated_children', parentRunId: target.id, claims: policy.claims };
     case 'actor_context_required':
       return { kind: 'actor_context_required' };
+    case 'claim_grant_required':
+      return { kind: 'actor_context_required' };
     case 'collect_requires_orchestrator':
     case 'missing_outcomes':
     case 'already_collected':
@@ -553,14 +655,14 @@ export type TerminalTargetResolution =
   | {
       readonly kind: 'claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly command: TerminalCommandName;
@@ -568,7 +670,7 @@ export type TerminalTargetResolution =
   | {
       readonly kind: 'terminal_claim_conflict';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly expectedCommand: TerminalCommandName;

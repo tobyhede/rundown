@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import {
   actorContextFromEvidence,
   assertClaimId,
+  assertClaimLookupKey,
   assertRunId,
   buildFrameKey,
   deriveEffectiveRole,
@@ -19,7 +20,7 @@ const runIdB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 const claimId = assertClaimId(
   'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
 );
-const claimKey = 'rdclk_11111111111111111111111111111111' as const;
+const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
 
 function baseState(id = runIdA): RunbookState {
   return {

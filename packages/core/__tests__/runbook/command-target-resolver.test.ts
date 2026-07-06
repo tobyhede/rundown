@@ -4,15 +4,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type CommandTargetReader,
+  resolveMutationAuthority,
   resolveCommandTarget,
   resolveTerminalTarget,
   resolveTransitionTarget,
 } from '../../src/runbook/command-target-resolver.js';
 import {
+  assertClaimLookupKey,
   assertClaimId,
+  assertClaimSecretHash,
+  type AuthorizedClaim,
+  type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
+  type ClaimLookupKey,
   type ClaimRecord,
+  type ClaimVerificationResult,
+  type VerifiedClaim,
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
@@ -24,7 +32,7 @@ import {
   buildFrameKey,
   buildResolvedCompletion,
 } from '../../src/runbook/targeting.js';
-import { trustedRunControllerContext } from '../../src/runbook/actor-context.js';
+import { verifiedClaimContext } from '../../src/runbook/actor-context.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
@@ -33,10 +41,16 @@ const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
 const child = { id: 'child', lifecycle: 'running' } as RunbookState;
 const terminalCompletedChild = { ...child, lifecycle: 'completed' } as RunbookState;
 const terminalStoppedChild = { ...child, lifecycle: 'stopped' } as RunbookState;
-const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
-const secondClaimId = assertClaimId('rdclm_abcdefghijklmnopqrstu2');
+const claimId = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
+const secondClaimId = assertClaimId(
+  'rdclm_22222222222222222222222222222222_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
 const claim = makeClaim(claimId);
 const secondClaim = makeClaim(secondClaimId);
+const verifiedClaim = makeVerifiedClaim(claim);
+const secondVerifiedClaim = makeVerifiedClaim(secondClaim);
 
 const KNOWN_TRANSITION_KINDS = new Set([
   'claim',
@@ -49,29 +63,68 @@ const KNOWN_TRANSITION_KINDS = new Set([
 ]);
 
 function makeClaim(id: ClaimId): ClaimRecord {
+  const claimKey = assertClaimLookupKey(`rdclk_${id.slice('rdclm_'.length, 'rdclm_'.length + 32)}`);
   return {
-    kind: 'claim-record',
-    claimId: id,
-    childRunId: child.id,
-    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-    parentRunId: parent.id,
-    parentStepId: '1.1',
-    parentStep: '1',
-    parentFrameKey: buildFrameKey('1'),
-    parentEntry: 1,
-    claimedAt: '2026-05-01T00:00:00.000Z',
+    claimKey,
+    secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
+    controlledRunId: child.id,
+    delegation: {
+      childRunId: child.id,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      parentRunId: parent.id,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    },
+    grants: [
+      { action: 'mutate-run', runId: child.id },
+      {
+        action: 'report-delegation-result',
+        childRunId: child.id,
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+        parentRunId: parent.id,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      },
+    ],
+    issuedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:00.000Z',
   };
 }
 
+function makeVerifiedClaim(record: ClaimRecord): VerifiedClaim {
+  return {
+    claimKey: record.claimKey,
+    controlledRunId: record.controlledRunId,
+    ...(record.delegation ? { delegation: record.delegation } : {}),
+    grants: record.grants,
+  };
+}
+
+function verifiedRunContext(runId: RunbookState['id']) {
+  return verifiedClaimContext({
+    claimId,
+    claim: {
+      claimKey: claim.claimKey,
+      controlledRunId: runId,
+      grants: [{ action: 'mutate-run', runId }],
+    },
+  });
+}
+
 function claimedResolution(state: RunbookState = child): ClaimIdResolution {
-  return { status: 'claimed', claim, state };
+  return { status: 'claimed', claimId, claim: verifiedClaim, record: claim, state };
 }
 
 function fakeReader(options: {
   readonly active?: RunbookState | null;
   readonly openClaims?: readonly ClaimRecord[];
   readonly claimResolution?: ClaimIdResolution;
+  readonly claimVerification?: ClaimVerificationResult;
+  readonly authorizingClaims?: readonly AuthorizedClaim[];
   readonly expectedClaimId?: ClaimId;
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
@@ -100,6 +153,13 @@ function fakeReader(options: {
       }
       return options.claimResolution ?? { status: 'missing', claimId: _claimId };
     },
+    async verifyClaimId(_claimId) {
+      expect(_claimId).toBe(options.expectedClaimId ?? claimId);
+      return options.claimVerification ?? { status: 'missing', claimKey: claim.claimKey };
+    },
+    async listClaimsAuthorizing() {
+      return options.authorizingClaims ?? [];
+    },
     async listOpenClaimsForParent(parentRunId) {
       if (options.failOnOpenClaimRead) {
         throw new Error('open delegated children should not be inspected');
@@ -121,7 +181,7 @@ describe('resolveCommandTarget', () => {
       { claimId },
     );
 
-    expect(result).toEqual({ kind: 'claim', claimId, claim, state: child });
+    expect(result).toEqual({ kind: 'claim', claimId, claim: verifiedClaim, state: child });
   });
 
   it('passes allowStashed through claim resolution for read-only targeting', async () => {
@@ -152,6 +212,22 @@ describe('resolveCommandTarget', () => {
       kind: 'stale_claim',
       claimId,
       message: `Claim id ${claimId} does not exist.`,
+    });
+  });
+
+  it('refuses a claim id with an invalid secret', async () => {
+    const result = await resolveCommandTarget(
+      fakeReader({
+        claimResolution: { status: 'invalid-secret', claimId },
+        failOnDefaultRead: true,
+      }),
+      { claimId },
+    );
+
+    expect(result).toEqual({
+      kind: 'stale_claim',
+      claimId,
+      message: `Claim id ${claimId} is not valid for this session.`,
     });
   });
 
@@ -192,6 +268,90 @@ describe('resolveCommandTarget', () => {
   });
 });
 
+describe('resolveMutationAuthority', () => {
+  it('uses explicit bearer authority when the verified claim has the exact grant', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'verified', claim: verifiedClaim },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({
+      kind: 'verified',
+      authority: { kind: 'bearer', claimId, claimKey: verifiedClaim.claimKey },
+      claim: verifiedClaim,
+    });
+  });
+
+  it('refuses a presented bearer claim id with an invalid secret', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'invalid-secret', claimKey: verifiedClaim.claimKey },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'invalid-secret' });
+  });
+
+  it('uses implicit authority when exactly one local claim authorizes the target request', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        authorizingClaims: [
+          {
+            authority: { kind: 'implicit', claimKey: verifiedClaim.claimKey },
+            claim: verifiedClaim,
+          },
+        ],
+      }),
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({
+      kind: 'verified',
+      authority: { kind: 'implicit', claimKey: verifiedClaim.claimKey },
+      claim: verifiedClaim,
+    });
+  });
+
+  it('refuses implicit authority when more than one local claim authorizes the request', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        authorizingClaims: [
+          {
+            authority: { kind: 'implicit', claimKey: verifiedClaim.claimKey },
+            claim: verifiedClaim,
+          },
+          {
+            authority: { kind: 'implicit', claimKey: secondVerifiedClaim.claimKey },
+            claim: secondVerifiedClaim,
+          },
+        ],
+      }),
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'ambiguous' });
+  });
+});
+
 describe('resolveTransitionTarget', () => {
   it.each([
     'pass',
@@ -200,7 +360,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
         command,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'open_delegated_children',
@@ -213,7 +373,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       }),
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
@@ -242,7 +402,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: pendingParent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'delegation_collection_pending',
@@ -285,7 +445,7 @@ describe('resolveTransitionTarget', () => {
         {
           command: 'pass',
           targeted: true,
-          actorContext: trustedRunControllerContext(parent.id),
+          actorContext: verifiedRunContext(parent.id),
         },
       ),
     ).resolves.toEqual({ kind: 'default', state: parent });
@@ -314,7 +474,7 @@ describe('resolveTransitionTarget', () => {
         }),
         { command: 'pass', claimId },
       ),
-    ).resolves.toEqual({ kind: 'claim', claimId, claim, state: child });
+    ).resolves.toEqual({ kind: 'claim', claimId, claim: verifiedClaim, state: child });
   });
 
   it.each([
@@ -417,7 +577,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [] }),
       options: {
         command: 'pass' as const,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     },
     {
@@ -430,7 +590,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [secondClaim] }),
       options: {
         command: 'fail' as const,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     },
   ])('returns a known transition target variant for $label', async (caseDef) => {
@@ -447,7 +607,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
@@ -460,7 +620,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: foreign,
-        actorContext: trustedRunControllerContext(foreign),
+        actorContext: verifiedRunContext(foreign),
       },
     );
     expect(resolution).toEqual({
@@ -477,7 +637,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({
@@ -499,7 +659,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({
@@ -524,7 +684,7 @@ describe('resolveTransitionTarget --run targeting', () => {
         command: 'pass',
         runId: parent.id,
         targeted: true,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
@@ -560,7 +720,12 @@ describe('resolveTerminalTarget', () => {
   function terminalReader(lifecycle: 'completed' | 'stopped'): CommandTargetReader {
     const terminalChild = lifecycle === 'completed' ? terminalCompletedChild : terminalStoppedChild;
     return fakeReader({
-      claimResolution: { status: 'terminal', claim, state: terminalChild, lifecycle },
+      claimResolution: {
+        status: 'terminal',
+        claim: verifiedClaim,
+        state: terminalChild,
+        lifecycle,
+      },
       expectedIncludeStashed: false,
     });
   }
@@ -578,14 +743,14 @@ describe('resolveTerminalTarget', () => {
       expect(res.command).toBe(command);
       expect(res.lifecycle).toBe(lifecycle);
       expect(res.claimId).toBe(claimId);
-      expect(res.claim).toBe(claim);
+      expect(res.claim).toBe(verifiedClaim);
       expect(res.state).toBe(terminalChild);
     }
     if (res.kind === 'terminal_claim_conflict') {
       expect(res.requestedCommand).toBe(command);
       expect(res.expectedCommand).toBe(lifecycle === 'completed' ? 'complete' : 'stop');
       expect(res.claimId).toBe(claimId);
-      expect(res.claim).toBe(claim);
+      expect(res.claim).toBe(verifiedClaim);
       expect(res.state).toBe(terminalChild);
     }
   });
@@ -636,7 +801,7 @@ describe('resolveTransitionTarget integration', () => {
       await expect(
         resolveTransitionTarget(sessionService, {
           command: 'pass',
-          actorContext: trustedRunControllerContext(parentState.id),
+          actorContext: verifiedRunContext(parentState.id),
         }),
       ).resolves.toEqual({
         kind: 'open_delegated_children',

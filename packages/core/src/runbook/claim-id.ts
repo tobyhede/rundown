@@ -108,6 +108,31 @@ export interface VerifiedClaim {
   readonly grants: readonly ClaimGrant[];
 }
 
+/** Authority source for a verified claim. */
+export type VerifiedClaimAuthority =
+  | {
+      /** Authority came from a bearer value presented by the caller. */
+      readonly kind: 'bearer';
+      /** Presented bearer claim id. */
+      readonly claimId: ClaimId;
+      /** Non-secret lookup key derived from the bearer. */
+      readonly claimKey: ClaimLookupKey;
+    }
+  | {
+      /** Authority came from the implicit singleton local-session path. */
+      readonly kind: 'implicit';
+      /** Non-secret persisted lookup key. */
+      readonly claimKey: ClaimLookupKey;
+    };
+
+/** Verified claim paired with how authority was established. */
+export interface AuthorizedClaim {
+  /** Authority evidence source. */
+  readonly authority: VerifiedClaimAuthority;
+  /** Shared verified claim payload. */
+  readonly claim: VerifiedClaim;
+}
+
 /**
  * Result of creating or refreshing a claim record for a child runbook.
  *

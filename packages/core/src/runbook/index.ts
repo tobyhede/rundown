@@ -89,11 +89,13 @@ export {
 } from './session-service.js';
 export {
   resolveCommandTarget,
+  resolveMutationAuthority,
   resolveTerminalTarget,
   resolveTransitionTarget,
   type CommandTargetResolution,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
+  type MutationAuthorityResolution,
   type TerminalCommandName,
   type TerminalTargetResolution,
   type TransitionCommandName,

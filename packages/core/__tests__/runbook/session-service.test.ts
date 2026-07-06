@@ -1098,11 +1098,13 @@ describe('SessionService', () => {
       // linkage) done while the child stays non-terminal. The claim is now stale
       // and must NOT count as open — otherwise it wedges future bare parent
       // transitions even though the parent has moved on.
+      expect(claimed.claim.delegation).toBeDefined();
+      if (!claimed.claim.delegation) return;
       await manager.update(parent.id, {
         substepStates: [
           {
-            id: claimed.claim.delegation?.parentStepId ?? '',
-            frameKey: claimed.claim.delegation?.parentFrameKey ?? '',
+            id: claimed.claim.delegation.parentStepId,
+            frameKey: claimed.claim.delegation.parentFrameKey,
             status: 'done',
             result: 'pass',
           },
