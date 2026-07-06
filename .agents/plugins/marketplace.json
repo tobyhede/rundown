@@ -1,0 +1,20 @@
+{
+  "name": "rundown-local",
+  "interface": {
+    "displayName": "Rundown Local"
+  },
+  "plugins": [
+    {
+      "name": "rundown",
+      "source": {
+        "source": "local",
+        "path": "./codex-plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
