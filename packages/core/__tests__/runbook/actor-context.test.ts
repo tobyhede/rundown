@@ -47,7 +47,7 @@ function baseState(id = runIdA): RunbookState {
 
 function verifiedContext(controlledRunId = runIdA) {
   return verifiedClaimContext({
-    claimId,
+    authority: { kind: 'bearer', claimId, claimKey },
     claim: {
       claimKey,
       controlledRunId,
@@ -106,7 +106,7 @@ describe('verifiedClaimContext', () => {
   it('carries core-verified claim evidence', () => {
     expect(verifiedContext()).toEqual({
       kind: 'verified_claim',
-      claimId,
+      authority: { kind: 'bearer', claimId, claimKey },
       claim: {
         claimKey,
         controlledRunId: runIdA,

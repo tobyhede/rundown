@@ -1,4 +1,4 @@
-import type { ClaimId, VerifiedClaim } from './claim-id.js';
+import type { ClaimId, VerifiedClaim, VerifiedClaimAuthority } from './claim-id.js';
 import type { DelegationExposure } from './delegation-exposure.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { RunId } from './run-id.js';
@@ -8,8 +8,8 @@ export type ActorContext =
   | {
       /** Verified claim bearer authorized by core session proof checks. */
       readonly kind: 'verified_claim';
-      /** Bearer claim id presented by the caller. */
-      readonly claimId: ClaimId;
+      /** Source proving authority for this verified claim. */
+      readonly authority: VerifiedClaimAuthority;
       /** Non-secret verified claim data and explicit grants. */
       readonly claim: VerifiedClaim;
     }
@@ -36,15 +36,15 @@ export const UNKNOWN_ACTOR_CONTEXT: ActorContext = { kind: 'unknown' };
  * Build verified-claim actor context from core-verified proof data.
  *
  * @param input - Verified claim context input.
- * @param input.claimId - Bearer claim id presented by the caller.
+ * @param input.authority - Source proving authority for this verified claim.
  * @param input.claim - Verified non-secret claim data and grants.
  * @returns Actor context carrying verified claim authority.
  */
 export function verifiedClaimContext(input: {
-  readonly claimId: ClaimId;
+  readonly authority: VerifiedClaimAuthority;
   readonly claim: VerifiedClaim;
 }): ActorContext {
-  return { kind: 'verified_claim', claimId: input.claimId, claim: input.claim };
+  return { kind: 'verified_claim', authority: input.authority, claim: input.claim };
 }
 
 /**
@@ -80,6 +80,26 @@ export type CallerEvidence =
       readonly kind: 'claim_bearer';
       /** Bearer claim id to verify in core. */
       readonly claimId: ClaimId;
+    }
+  | {
+      /** Legacy direct CLI metadata; never sufficient for trust. */
+      readonly kind: 'direct_cli';
+    }
+  | {
+      /** Legacy run id metadata; never sufficient for trust. */
+      readonly kind: 'run_controller';
+      /** Run id formerly treated as authority. */
+      readonly runId: RunId;
+    }
+  | {
+      /** Legacy shape-only claim metadata; never sufficient for trust. */
+      readonly kind: 'claim';
+      /** Claim id metadata supplied by an old frontend. */
+      readonly claimId: ClaimId;
+      /** Delegation token hash metadata supplied by an old frontend. */
+      readonly tokenHash: DelegationTokenHash;
+      /** Controlled run id metadata supplied by an old frontend. */
+      readonly controlledRunId: RunId;
     }
   | {
       /** Claude Code plugin subprocess; metadata is descriptive only. */

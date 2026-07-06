@@ -1,16 +1,17 @@
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import {
   UNKNOWN_ACTOR_CONTEXT,
-  actorContextFromEvidence,
-  trustedRunControllerContext,
+  verifiedClaimContext,
   type ActorContext,
   type CallerEvidence,
-  type EvidenceTarget,
 } from './actor-context.js';
-import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { ClaimId, ClaimRecord } from './claim-id.js';
-import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
+import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
+import type {
+  CommandIntent,
+  CommandTargetSelector,
+  DelegationPolicyOutcome,
+} from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { createDelegation, retryDelegation } from './delegation-service.js';
 import { DelegationLockTimeoutError, type DelegationLockLike } from './delegation-lock.js';
@@ -22,6 +23,7 @@ import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
   resolveCommandTarget,
+  resolveMutationAuthority,
   resolveTerminalTarget,
   resolveTransitionTarget,
   unknownRunRefusal,
@@ -771,6 +773,45 @@ export class RunbookLifecycleCommandService {
     this.#deps = deps;
   }
 
+  async #resolveMutationActorContext(input: {
+    readonly callerEvidence: CallerEvidence;
+    readonly targetState: RunbookState;
+    readonly request: ClaimAuthorizationRequest;
+    readonly intent: CommandIntent['kind'];
+  }): Promise<
+    | { readonly kind: 'verified'; readonly actorContext: ActorContext }
+    | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+  > {
+    const presentedClaimId =
+      input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
+    const authority = await resolveMutationAuthority({
+      targetReader: this.#deps.sessionService,
+      ...(presentedClaimId !== undefined ? { presentedClaimId } : {}),
+      targetState: input.targetState,
+      request: input.request,
+    });
+    if (authority.kind === 'verified') {
+      return {
+        kind: 'verified',
+        actorContext: verifiedClaimContext({
+          authority: authority.authority,
+          claim: authority.claim,
+        }),
+      };
+    }
+    return {
+      kind: 'refused',
+      policy:
+        presentedClaimId !== undefined && authority.reason === 'no-authorizing-claim'
+          ? {
+              kind: 'claim_grant_required',
+              intent: input.intent,
+              targetRunId: input.targetState.id,
+            }
+          : { kind: 'actor_context_required', intent: input.intent },
+    };
+  }
+
   /**
    * Issue, echo, or retry a delegation for an authored DELEGATE substep.
    *
@@ -844,12 +885,17 @@ export class RunbookLifecycleCommandService {
     // Classification is from the locked re-read (`state`) — the same instance
     // the issuance resolution below decides from.
     const targeted = input.explicitStep !== undefined;
-    const actorContext = actorContextFromEvidence(
-      input.callerEvidence,
-      await this.#evidenceTargetFor(input.callerEvidence, state, steps),
-    );
+    const authority = await this.#resolveMutationActorContext({
+      callerEvidence: input.callerEvidence,
+      targetState: state,
+      request: { action: 'delegate-from-run', runId: state.id },
+      intent: 'delegation-issuance',
+    });
+    if (authority.kind === 'refused') {
+      return { kind: 'refused', policy: authority.policy };
+    }
     const policy = resolveCommandIntent({
-      actorContext,
+      actorContext: authority.actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
       targetSelector: { kind: 'default' },
       targetState: state,
@@ -1098,13 +1144,23 @@ export class RunbookLifecycleCommandService {
     // so a pending collection does not refuse it. Classification is from the
     // locked re-read (`freshState`) — the same instance retryDelegation
     // decides from.
-    const actorContext = actorContextFromEvidence(
-      input.callerEvidence,
-      await this.#evidenceTargetFor(input.callerEvidence, freshState, steps),
-    );
+    const authority = await this.#resolveMutationActorContext({
+      callerEvidence: input.callerEvidence,
+      targetState: freshState,
+      request: { action: 'retry-delegation', runId: freshState.id, stepId: substepId },
+      intent: 'delegation-issuance',
+    });
+    if (authority.kind === 'refused') {
+      return { kind: 'refused', policy: authority.policy };
+    }
     const policy = resolveCommandIntent({
-      actorContext,
-      intent: { kind: 'delegation-issuance', command: 'delegate', targeted: true },
+      actorContext: authority.actorContext,
+      intent: {
+        kind: 'delegation-issuance',
+        command: 'retry',
+        targeted: true,
+        stepId: substepId,
+      },
       targetSelector: { kind: 'default' },
       targetState: freshState,
     });
@@ -1240,7 +1296,40 @@ export class RunbookLifecycleCommandService {
       input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
-    const actorContext = await this.#resolveActorContext(input.callerEvidence, claimId);
+    let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
+    if (claimId === undefined) {
+      const target = await resolveCommandTarget(sessionService, {
+        ...(runId ? { runId } : {}),
+      });
+      switch (target.kind) {
+        case 'default':
+        case 'run': {
+          const authority = await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: target.state,
+            request: { action: 'mutate-run', runId: target.state.id },
+            intent: 'delegating-run-advance',
+          });
+          if (authority.kind === 'refused') {
+            return { kind: 'actor_context_required' };
+          }
+          actorContext = authority.actorContext;
+          break;
+        }
+        case 'none':
+          break;
+        case 'unknown_run':
+          return { kind: 'unknown_run', runId: target.runId, message: target.message };
+        case 'claim':
+        case 'terminal_claim':
+        case 'stale_claim':
+          throw new Error(`Unexpected transition pre-resolution: ${target.kind}`);
+        default: {
+          const _exhaustive: never = target;
+          return _exhaustive;
+        }
+      }
+    }
 
     const resolution = await resolveTransitionTarget(sessionService, {
       command: input.command,
@@ -1371,26 +1460,26 @@ export class RunbookLifecycleCommandService {
     }
 
     const state = resolution.state;
-    const steps = await this.#deps.loadSteps(state);
 
-    // A claim-resolved target carries its own claim evidence: the resolved
-    // claim record IS the caller's proof of control over the claimed child.
-    // Every other resolution evaluates the caller-supplied evidence against
-    // the resolved target (direct_cli consults exposure via the shared
-    // evidence-target derivation; run_controller binds to its named run).
-    const evidence: CallerEvidence =
+    const actorContext =
       resolution.kind === 'claim'
-        ? {
-            kind: 'claim',
-            claimId: resolution.claimId,
-            tokenHash: resolution.claim.tokenHash,
-            controlledRunId: resolution.claim.childRunId,
-          }
-        : input.callerEvidence;
-    const actorContext = actorContextFromEvidence(
-      evidence,
-      await this.#evidenceTargetFor(evidence, state, steps),
-    );
+        ? verifiedClaimContext({
+            authority: {
+              kind: 'bearer',
+              claimId: resolution.claimId,
+              claimKey: resolution.claim.claimKey,
+            },
+            claim: resolution.claim,
+          })
+        : await (async (): Promise<ActorContext> => {
+            const authority = await this.#resolveMutationActorContext({
+              callerEvidence: input.callerEvidence,
+              targetState: state,
+              request: { action: 'mutate-run', runId: state.id },
+              intent: 'run-navigation',
+            });
+            return authority.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT;
+          })();
 
     const policy = resolveCommandIntent({
       actorContext,
@@ -1409,7 +1498,7 @@ export class RunbookLifecycleCommandService {
       kind: 'allowed',
       runId: state.id,
       state,
-      steps,
+      steps: await this.#deps.loadSteps(state),
       terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
     };
   }
@@ -1575,29 +1664,21 @@ export class RunbookLifecycleCommandService {
       };
     }
 
-    // Gate the resolved ROOT before forcing (items 8 + 2-core). Root linkage is
-    // delegation-or-none, so `terminal-run-force` targeted:false runs the
-    // actor-context + collection-pending gates on it. Classification is from
-    // plan.targetState with the steps this gate already needs in scope.
-    //
-    // A contiguous-inline chain is one orchestrator's composition by
-    // construction (inline children run in the same agent session as their
-    // composer), so `run_controller` evidence naming ANY member of the walked
-    // chain names that composition: it is evaluated as controller of the
-    // walked-to root. This is explicit, derived authority — the chain was
-    // reached by climbing inline linkage from the named run — never ambient.
+    // Gate the resolved ROOT before forcing. Identifier-only `--run` anchoring
+    // selects the inline chain root, but authority still comes from a verified
+    // claim grant over that root.
     const rootSteps = await this.#deps.loadSteps(plan.targetState);
-    const evidence = input.callerEvidence;
-    const actorContext =
-      evidence.kind === 'run_controller' &&
-      plan.forceOrder.some((member) => member.id === evidence.runId)
-        ? trustedRunControllerContext(plan.targetState.id)
-        : actorContextFromEvidence(
-            evidence,
-            await this.#evidenceTargetFor(evidence, plan.targetState, rootSteps),
-          );
+    const authority = await this.#resolveMutationActorContext({
+      callerEvidence: input.callerEvidence,
+      targetState: plan.targetState,
+      request: { action: 'mutate-run', runId: plan.targetState.id },
+      intent: 'terminal-run-force',
+    });
+    if (authority.kind === 'refused') {
+      return { kind: 'actor_context_required' };
+    }
     const policy = resolveCommandIntent({
-      actorContext,
+      actorContext: authority.actorContext,
       intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
       targetSelector: { kind: 'default' },
       targetState: plan.targetState,
@@ -1606,6 +1687,7 @@ export class RunbookLifecycleCommandService {
       case 'allowed':
         break;
       case 'actor_context_required':
+      case 'claim_grant_required':
         return { kind: 'actor_context_required' };
       case 'delegation_collection_pending':
         return {
@@ -1702,36 +1784,6 @@ export class RunbookLifecycleCommandService {
     };
   }
 
-  // Build the EvidenceTarget for a resolved anchor run. Only `direct_cli`
-  // evidence consults exposure, so classification (a read-only event-time
-  // derivation: parsed steps + open claims + state — never persisted) runs for
-  // that lane alone; every other variant receives the fail-closed
-  // `'delegating'` placeholder, which its mapping arm never reads.
-  //
-  // Lock conventions: exposure classification is a read-only operation and
-  // must never be called while holding the SessionLock (write path); inside a
-  // held DelegationLock it is safe (session reads never acquire a lock;
-  // DelegationLock → CompletionLock ordering is unaffected).
-  //
-  // Document-edit caveat (clauses a/f-static): `steps` are re-parsed at
-  // decision time, so a mid-run edit of the runbook document can flip a
-  // not-yet-issued run's static exposure — accepted; every state-derived
-  // clause is monotone and never decays.
-  async #evidenceTargetFor(
-    evidence: CallerEvidence,
-    state: RunbookState,
-    steps: readonly ResolvedStep[],
-  ): Promise<EvidenceTarget> {
-    if (evidence.kind !== 'direct_cli') {
-      return { runId: state.id, exposure: 'delegating' };
-    }
-    const openClaims = await this.#deps.sessionService.listOpenClaimsForParent(state.id);
-    return {
-      runId: state.id,
-      exposure: classifyDelegationExposure({ state, steps, openClaims }),
-    };
-  }
-
   // Resolve the issuance anchor run: the `--run`-named session-stack member
   // when a target run id is supplied (a missing/foreign/terminal id refuses as
   // `unknown_run` via the shared stack-member resolution, carrying the same
@@ -1753,52 +1805,6 @@ export class RunbookLifecycleCommandService {
     }
     const active = await this.#deps.sessionService.getActive();
     return active ? { kind: 'ok', state: active } : { kind: 'none' };
-  }
-
-  // Map caller evidence to an actor context anchored on the resolved run.
-  // `direct_cli` evidence anchors on the active default run and is trusted
-  // only when that run classifies `standalone` (the flip — ambient trust over
-  // any delegation-exposed run is gone); `run_controller` evidence anchors on
-  // its own named run; `claim` evidence anchors on its own controlled run;
-  // everything else maps to the unknown context. Returns the unknown context
-  // when no anchor run exists (a direct-CLI caller with no active run is
-  // refused downstream as `none`).
-  //
-  // The classification here and the transition resolver's target resolution
-  // are two lock-free reads; classifying from the active anchor the resolver
-  // will re-resolve keeps them aligned in practice, and the
-  // deriveEffectiveRole id binding is the fail-closed backstop for any
-  // interleave (trust minted for run A is unknown_for_target against run B).
-  async #resolveActorContext(
-    evidence: CallerEvidence,
-    claimId: ClaimId | undefined,
-  ): Promise<ActorContext> {
-    if (evidence.kind === 'claim') {
-      return actorContextFromEvidence(evidence, {
-        runId: evidence.controlledRunId,
-        // Fail-closed placeholder: the claim arm never reads exposure.
-        exposure: 'delegating',
-      });
-    }
-    if (evidence.kind === 'run_controller') {
-      return actorContextFromEvidence(evidence, {
-        runId: evidence.runId,
-        // Fail-closed placeholder: the run_controller arm never reads exposure.
-        exposure: 'delegating',
-      });
-    }
-    if (claimId !== undefined) {
-      // Claim-targeted writes resolve through the resolver's claim path, which
-      // does not consult the actor context for the bare-advance gate.
-      return UNKNOWN_ACTOR_CONTEXT;
-    }
-    const active = await this.#deps.sessionService.getActive();
-    if (!active) return UNKNOWN_ACTOR_CONTEXT;
-    const steps = await this.#deps.loadSteps(active);
-    return actorContextFromEvidence(
-      evidence,
-      await this.#evidenceTargetFor(evidence, active, steps),
-    );
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed

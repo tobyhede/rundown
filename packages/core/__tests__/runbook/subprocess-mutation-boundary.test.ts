@@ -2,11 +2,9 @@ import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
   bareRoleSpecificMutation,
-  delegateClaimIdRejectionMessage,
   delegateClaimIdValidationError,
   mutationCommandAliases,
   subprocessMutationWithheldMessage,
-  DELEGATE_CLAIM_ID_REJECTED_CODE,
   GLOBAL_VALUE_TAKING_OPTION_NAMES,
   PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
@@ -61,12 +59,14 @@ describe('bareRoleSpecificMutation', () => {
     [['delegate', '--claim-id', 'claim-1']],
     [['delegate', '--claim-id=claim-1']],
     [['delegate', 'child.md', '--claim-id', 'claim-1']],
-    // Headline exploit: `--claim-id=foo` here is the value of `--input-file`, but
-    // `delegate` is claim-less and must ALWAYS be withheld regardless.
-    [['delegate', 'child.md', '--input-file', '--claim-id=foo']],
-  ])('still withholds delegate even with --claim-id %j', (argv) => {
-    // `delegate` has no claim form, so a stray `--claim-id` cannot exempt it.
-    expect(bareRoleSpecificMutation(argv)).toBe('delegate');
+  ])('does not withhold delegate with claim-id authority %j', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it('still withholds delegate when --claim-id is a consumed option value', () => {
+    expect(
+      bareRoleSpecificMutation(['delegate', 'child.md', '--input-file', '--claim-id=foo']),
+    ).toBe('delegate');
   });
 
   it.each([
@@ -203,12 +203,11 @@ describe('bareRoleSpecificMutation', () => {
     );
   });
 
-  it('always withholds delegate even when it carries --claim-id (property)', () => {
-    // `delegate` has no claim form, so claim evidence cannot exempt it.
+  it('does not withhold delegate when it carries claim-id authority (property)', () => {
     fc.assert(
       fc.property(fc.array(fc.string(), { maxLength: 4 }), fc.string(), (extra, claimId) => {
         const argv = ['delegate', ...extra, '--claim-id', claimId];
-        expect(bareRoleSpecificMutation(argv)).toBe('delegate');
+        expect(bareRoleSpecificMutation(argv)).toBeUndefined();
       }),
     );
   });
@@ -240,8 +239,8 @@ describe('bareRoleSpecificMutation: explicit --run targeting', () => {
     'collect',
     'delegate',
     'goto',
-  ])('does not withhold a --run-targeted %s (explicit targeting is evidence, not ambient trust)', (command) => {
-    expect(bareRoleSpecificMutation([command, '--run', runId])).toBeUndefined();
+  ])('withholds a --run-targeted %s without claim authority', (command) => {
+    expect(bareRoleSpecificMutation([command, '--run', runId])).toBe(command);
   });
 
   it.each([
@@ -252,8 +251,8 @@ describe('bareRoleSpecificMutation: explicit --run targeting', () => {
     'collect',
     'delegate',
     'goto',
-  ])('does not withhold the inline --run= form of %s', (command) => {
-    expect(bareRoleSpecificMutation([command, `--run=${runId}`])).toBeUndefined();
+  ])('withholds the inline --run= form of %s without claim authority', (command) => {
+    expect(bareRoleSpecificMutation([command, `--run=${runId}`])).toBe(command);
   });
 
   it('withholds when --run sits in a value slot (smuggling)', () => {
@@ -266,11 +265,11 @@ describe('bareRoleSpecificMutation: explicit --run targeting', () => {
     expect(bareRoleSpecificMutation(['pass', '--', '--run', runId])).toBe('pass');
   });
 
-  it('exempts run-targeted mutations behind program-level global options', () => {
-    expect(bareRoleSpecificMutation(['--deny-all', 'pass', '--run', runId])).toBeUndefined();
-    expect(
-      bareRoleSpecificMutation(['--policy', 'foo.json', 'delegate', '--run', runId]),
-    ).toBeUndefined();
+  it('withholds run-targeted mutations behind program-level global options', () => {
+    expect(bareRoleSpecificMutation(['--deny-all', 'pass', '--run', runId])).toBe('pass');
+    expect(bareRoleSpecificMutation(['--policy', 'foo.json', 'delegate', '--run', runId])).toBe(
+      'delegate',
+    );
   });
 
   it('keeps withholding bare forms of all six commands', () => {
@@ -432,11 +431,8 @@ describe('delegateClaimIdValidationError', () => {
     ['delegate', '--claim-id', 'claim-1'],
     ['delegate', '--claim-id=claim-1'],
     ['delegate', 'child.md', '--input-file', '--claim-id=foo'],
-  ])('rejects claim-id-looking delegate argv %j', (...argv) => {
-    expect(delegateClaimIdValidationError(argv)).toEqual({
-      code: DELEGATE_CLAIM_ID_REJECTED_CODE,
-      message: delegateClaimIdRejectionMessage(),
-    });
+  ])('does not reject claim-id-looking delegate argv %j', (...argv) => {
+    expect(delegateClaimIdValidationError(argv)).toBeUndefined();
   });
 
   it.each([
@@ -452,11 +448,8 @@ describe('delegateClaimIdValidationError', () => {
     // locate it at its real index before rejecting `--claim-id`.
     [['--deny-all', 'delegate', '--claim-id', 'x']],
     [['--policy', 'x.json', 'delegate', '--claim-id=x']],
-  ])('rejects claim-id on delegate located behind globals %j', (argv) => {
-    expect(delegateClaimIdValidationError(argv)).toEqual({
-      code: DELEGATE_CLAIM_ID_REJECTED_CODE,
-      message: delegateClaimIdRejectionMessage(),
-    });
+  ])('does not reject claim-id on delegate located behind globals %j', (argv) => {
+    expect(delegateClaimIdValidationError(argv)).toBeUndefined();
   });
 
   it.each([

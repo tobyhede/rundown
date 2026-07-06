@@ -106,7 +106,7 @@ function makeVerifiedClaim(record: ClaimRecord): VerifiedClaim {
 
 function verifiedRunContext(runId: RunbookState['id']) {
   return verifiedClaimContext({
-    claimId,
+    authority: { kind: 'bearer', claimId, claimKey: claim.claimKey },
     claim: {
       claimKey: claim.claimKey,
       controlledRunId: runId,

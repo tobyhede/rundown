@@ -90,7 +90,7 @@ function verifiedRunContext(
   grants: readonly ClaimGrant[] = createRunControlGrants(runId),
 ) {
   return verifiedClaimContext({
-    claimId,
+    authority: { kind: 'bearer', claimId, claimKey },
     claim: {
       claimKey,
       controlledRunId: runId,
@@ -121,7 +121,7 @@ describe('verifiedClaimContext', () => {
 
     expect(context).toMatchObject({
       kind: 'verified_claim',
-      claimId,
+      authority: { kind: 'bearer', claimId, claimKey },
       claim: { claimKey, controlledRunId: parentRunId },
     });
     expect('source' in context).toBe(false);

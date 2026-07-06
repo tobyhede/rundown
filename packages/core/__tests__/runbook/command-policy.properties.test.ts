@@ -7,18 +7,23 @@ import {
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
-  claimControllerContext,
+  createRunControlGrants,
   deriveEffectiveRole,
   resolveCommandIntent,
-  trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
+  verifiedClaimContext,
   type ActorContext,
   type CallerEvidence,
   type CommandIntent,
   type DelegationExposure,
   type RunbookState,
 } from '../../src/runbook/index.js';
-import { assertClaimId, type ClaimRecord } from '../../src/runbook/claim-id.js';
+import {
+  assertClaimId,
+  assertClaimLookupKey,
+  assertClaimSecretHash,
+  type ClaimRecord,
+} from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
@@ -26,7 +31,11 @@ import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 // `assertRunId` rejects any char outside a-f0-9, so do not use g-z here.
 const runIdA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const runIdB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const claimId = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
+const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
+const secretHash = assertClaimSecretHash(`sha256:${'b'.repeat(64)}`);
 const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 function baseState(id = runIdA): RunbookState {
@@ -79,27 +88,44 @@ function pendingState(id = runIdA): RunbookState {
 /** Open claimed child of {@link runIdA}, used to arm the open-claims guard. */
 function openClaim(): ClaimRecord {
   return {
-    kind: 'claim-record',
-    claimId,
-    childRunId: runIdB,
-    tokenHash,
-    parentRunId: runIdA,
-    parentStepId: '1',
-    parentStep: '1',
-    parentFrameKey: buildFrameKey('1'),
-    parentEntry: 1,
-    claimedAt: '2026-01-01T00:00:00.000Z',
+    claimKey,
+    secretHash,
+    controlledRunId: runIdB,
+    delegation: {
+      childRunId: runIdB,
+      tokenHash,
+      parentRunId: runIdA,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    },
+    grants: createRunControlGrants(runIdB),
+    issuedAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
 const actorContextArb: fc.Arbitrary<ActorContext> = fc.oneof(
   fc.constant(UNKNOWN_ACTOR_CONTEXT),
-  fc.constantFrom(runIdA, runIdB).map((id) => trustedRunControllerContext(id)),
-  fc
-    .constantFrom(runIdA, runIdB)
-    .map((controlledRunId) => claimControllerContext({ claimId, tokenHash, controlledRunId })),
+  fc.constantFrom(runIdA, runIdB).map((controlledRunId) =>
+    verifiedClaimContext({
+      authority: { kind: 'implicit', claimKey },
+      claim: { claimKey, controlledRunId, grants: createRunControlGrants(controlledRunId) },
+    }),
+  ),
 );
+
+function verifiedRunControlContext(controlledRunId = runIdA): ActorContext {
+  return verifiedClaimContext({
+    authority: { kind: 'implicit', claimKey },
+    claim: {
+      claimKey,
+      controlledRunId,
+      grants: createRunControlGrants(controlledRunId),
+    },
+  });
+}
 
 const intentArb: fc.Arbitrary<CommandIntent> = fc.oneof(
   fc.constant({ kind: 'inspect' } as const),
@@ -207,7 +233,7 @@ describe('resolveCommandIntent properties', () => {
         // could pass vacuously on a state that was never pending in the first place.
         expect(
           resolveCommandIntent({
-            actorContext: trustedRunControllerContext(runIdA),
+            actorContext: verifiedRunControlContext(runIdA),
             intent: { ...intent, targeted: false },
             targetSelector: { kind: 'default' },
             targetState: target,
@@ -217,7 +243,7 @@ describe('resolveCommandIntent properties', () => {
         // the run has an unconsumed reported outcome.
         expect(
           resolveCommandIntent({
-            actorContext: trustedRunControllerContext(runIdA),
+            actorContext: verifiedRunControlContext(runIdA),
             intent,
             targetSelector: { kind: 'explicit-step', step: '1.1' },
             targetState: target,
@@ -246,7 +272,7 @@ describe('resolveCommandIntent properties', () => {
         // blocked, proving the guards genuinely fire for this fixture.
         expect(
           resolveCommandIntent({
-            actorContext: trustedRunControllerContext(runIdA),
+            actorContext: verifiedRunControlContext(runIdA),
             intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
             targetSelector: { kind: 'default' },
             targetState: target,
@@ -255,7 +281,14 @@ describe('resolveCommandIntent properties', () => {
         ).not.toBe('allowed');
         expect(
           resolveCommandIntent({
-            actorContext: trustedRunControllerContext(runIdA),
+            actorContext: verifiedClaimContext({
+              authority: { kind: 'implicit', claimKey },
+              claim: {
+                claimKey,
+                controlledRunId: runIdA,
+                grants: createRunControlGrants(runIdA),
+              },
+            }),
             intent,
             targetSelector: { kind: 'default' },
             targetState: target,
@@ -271,8 +304,7 @@ describe('resolveCommandIntent properties', () => {
       fc.property(actorContextArb, fc.constantFrom(runIdA, runIdB), (actorContext, targetId) => {
         const role = deriveEffectiveRole(actorContext, baseState(targetId));
         const controlsTarget =
-          (actorContext.kind === 'trusted_run_controller' && actorContext.runId === targetId) ||
-          (actorContext.kind === 'claim_controller' && actorContext.controlledRunId === targetId);
+          actorContext.kind === 'verified_claim' && actorContext.claim.controlledRunId === targetId;
         expect(role === 'orchestrator_for_target').toBe(controlsTarget);
       }),
     );

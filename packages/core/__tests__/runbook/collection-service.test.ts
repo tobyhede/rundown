@@ -10,11 +10,13 @@ import {
   RunbookStateManager,
   InvalidRunbookStateError,
   assertClaimId,
+  assertClaimLookupKey,
   assertDelegationTokenHash,
   assertRunId,
   type CallerEvidence,
   type RunbookState,
 } from '../../src/runbook/index.js';
+import type { CommandTargetReader } from '../../src/runbook/command-target-resolver.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -56,12 +58,16 @@ describe('RunbookCollectionService', () => {
   let actorService: RunbookActorService;
   let lifecycleService: ExecutionLifecycleService;
   let completionService: RunbookCompletionService;
+  let sessionService: CommandTargetReader;
   let collectionService: RunbookCollectionService;
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
   const controlledRunId = assertRunId('rd_22222222222222222222222222222222');
   const ancestorRunId = assertRunId('rd_33333333333333333333333333333333');
-  const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+  const claimId = assertClaimId(
+    'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+  );
+  const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
   const tokenHash = assertDelegationTokenHash(
     'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
   );
@@ -72,7 +78,7 @@ describe('RunbookCollectionService', () => {
   // run_controller evidence). The behavioural suites below exercise the
   // collection operation as that named orchestrator; the refusal twin pinning
   // direct_cli on these fixtures lives in the policy-gate describe.
-  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'run_controller', runId };
+  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'claim_bearer', claimId };
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
   // Default runbook: step 1 delegates two substeps (PASS CONTINUE so a full
@@ -132,7 +138,38 @@ describe('RunbookCollectionService', () => {
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    sessionService = {
+      async getActive() {
+        return null;
+      },
+      async resolveRunningStackMember() {
+        return { kind: 'not_on_stack' };
+      },
+      async getActiveForClaimId() {
+        return { status: 'missing', claimId };
+      },
+      async verifyClaimId() {
+        return {
+          status: 'verified',
+          claim: {
+            claimKey,
+            controlledRunId: runId,
+            grants: [
+              { action: 'collect-for-run', runId },
+              { action: 'collect-for-run', runId: controlledRunId },
+            ],
+          },
+        };
+      },
+      async listClaimsAuthorizing() {
+        return [];
+      },
+      async listOpenClaimsForParent() {
+        return [];
+      },
+    };
     collectionService = new RunbookCollectionService({
+      sessionService,
       manager,
       actorService,
       lifecycleService,
@@ -664,7 +701,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: controlled,
         steps,
-        callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'missing_outcomes',
@@ -674,7 +711,7 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('rejects a claim controller collecting into its delegating ancestor', async () => {
+  it('rejects a bearer collecting into an ancestor without collect-for-run on that ancestor', async () => {
     const ancestor = state({ id: ancestorRunId });
     await manager.save(ancestor);
 
@@ -682,12 +719,12 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: ancestor,
         steps,
-        callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toEqual({
-      kind: 'collect_requires_orchestrator',
+      kind: 'claim_grant_required',
+      intent: 'delegation-collection',
       targetRunId: ancestorRunId,
-      message: expect.stringContaining('--run'),
     });
   });
 
@@ -879,7 +916,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -909,7 +946,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -961,7 +998,7 @@ describe('RunbookCollectionService', () => {
       targetState: controlled,
       steps: oneSubstepSteps,
       // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -988,7 +1025,7 @@ describe('RunbookCollectionService', () => {
       targetState: controlled,
       steps: oneSubstepSteps,
       // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1222,7 +1259,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: { ...controlled, lifecycle: 'running' },
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1269,7 +1306,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1298,7 +1335,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1410,7 +1447,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 

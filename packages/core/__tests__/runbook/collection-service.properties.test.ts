@@ -10,6 +10,7 @@ import {
   RunbookCollectionService,
   RunbookCompletionService,
   RunbookStateManager,
+  SessionService,
   activeFrame,
   assertRunId,
   buildFrameKey,
@@ -92,7 +93,9 @@ describe('RunbookCollectionService properties', () => {
     const actorService = new RunbookActorService(manager);
     const lifecycleService = new ExecutionLifecycleService(manager);
     const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const sessionService = new SessionService(manager);
     collectionService = new RunbookCollectionService({
+      sessionService,
       manager,
       actorService,
       lifecycleService,
