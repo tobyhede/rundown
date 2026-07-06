@@ -334,27 +334,55 @@ describe('DelegationTokenHashSchema', () => {
 
 describe('ClaimRecordSchema', () => {
   const validClaim = {
-    kind: 'claim-record',
-    claimId: 'rdclm_abcdefghijklmnopqrstu1',
-    childRunId: CHILD_RUN_ID,
-    tokenHash: `sha256:${'a'.repeat(64)}`,
-    parentRunId: PARENT_RUN_ID,
-    parentStepId: '1.1',
-    parentStep: '1',
-    parentFrameKey: '1|',
-    parentEntry: 1,
-    claimedAt: '2026-05-01T00:00:00.000Z',
+    claimKey: 'rdclk_11111111111111111111111111111111',
+    secretHash: `sha256:${'a'.repeat(64)}`,
+    controlledRunId: CHILD_RUN_ID,
+    delegation: {
+      childRunId: CHILD_RUN_ID,
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1.1',
+      parentStep: 'Process item',
+      parentFrameKey: buildFrameKey('1', 0),
+      parentEntry: 1,
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+    },
+    grants: [
+      { action: 'mutate-run', runId: CHILD_RUN_ID },
+      {
+        action: 'report-delegation-result',
+        childRunId: CHILD_RUN_ID,
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1.1',
+        parentStep: 'Process item',
+        parentFrameKey: buildFrameKey('1', 0),
+        parentEntry: 1,
+        tokenHash: `sha256:${'b'.repeat(64)}`,
+      },
+    ],
+    issuedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:01.000Z',
   };
 
-  it('accepts a complete claim record', () => {
+  it('accepts a complete proof-backed claim record with explicit grants', () => {
     expect(ClaimRecordSchema.safeParse(validClaim).success).toBe(true);
   });
 
-  it('rejects malformed claim ids', () => {
-    expect(ClaimRecordSchema.safeParse({ ...validClaim, claimId: 'rdclm_short' }).success).toBe(
+  it('rejects persisted reusable bearer claim ids', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      claimId: 'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects malformed lookup keys and secret hashes', () => {
+    expect(ClaimRecordSchema.safeParse({ ...validClaim, claimKey: 'rdclm_plain' }).success).toBe(
       false,
     );
+    expect(
+      ClaimRecordSchema.safeParse({ ...validClaim, secretHash: 'sha256:not-hex' }).success,
+    ).toBe(false);
   });
 });
 
@@ -367,56 +395,20 @@ describe('SessionDataSchema claims registry', () => {
     }
   });
 
-  it('rejects claim records whose map key differs from claimId', () => {
+  it('rejects claim records whose map key differs from claimKey', () => {
     const result = SessionDataSchema.safeParse({
       defaultStack: [PARENT_RUN_ID],
       claims: {
-        rdclm_abcdefghijklmnopqrstu1: {
-          kind: 'claim-record',
-          claimId: 'rdclm_1234567890abcdefghijkl',
-          childRunId: CHILD_RUN_ID,
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-          parentRunId: PARENT_RUN_ID,
-          parentStepId: '1.1',
-          parentStep: '1',
-          parentFrameKey: '1|',
-          parentEntry: 1,
-          claimedAt: '2026-05-01T00:00:00.000Z',
+        rdclk_11111111111111111111111111111111: {
+          claimKey: 'rdclk_22222222222222222222222222222222',
+          secretHash: `sha256:${'a'.repeat(64)}`,
+          controlledRunId: CHILD_RUN_ID,
+          grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+          issuedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
         },
       },
     });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects duplicate claim records for the same childRunId', () => {
-    const base = {
-      kind: 'claim-record',
-      childRunId: CHILD_RUN_ID,
-      tokenHash: `sha256:${'b'.repeat(64)}`,
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '1.1',
-      parentStep: '1',
-      parentFrameKey: '1|',
-      parentEntry: 1,
-      claimedAt: '2026-05-01T00:00:00.000Z',
-      updatedAt: '2026-05-01T00:00:01.000Z',
-    };
-
-    const result = SessionDataSchema.safeParse({
-      defaultStack: [PARENT_RUN_ID],
-      claims: {
-        rdclm_abcdefghijklmnopqrstu1: {
-          ...base,
-          claimId: 'rdclm_abcdefghijklmnopqrstu1',
-        },
-        rdclm_1234567890abcdefghijkl: {
-          ...base,
-          claimId: 'rdclm_1234567890abcdefghijkl',
-        },
-      },
-    });
-
     expect(result.success).toBe(false);
   });
 });
