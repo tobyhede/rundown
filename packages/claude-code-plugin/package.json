@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "rdpath": "dist/rdpath.js",
-    "rdx": "dist/rdx.js"
+    "rdx": "dist/rdx.js",
+    "rundown-mcp": "dist/rundown-mcp.js"
   },
   "main": "dist/cli.js",
   "types": "dist/index.d.ts",

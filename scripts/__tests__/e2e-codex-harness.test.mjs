@@ -18,6 +18,16 @@ async function readRepoFile(path) {
   return readFile(join(repoRoot, path), 'utf-8');
 }
 
+function parseLocalPackageList(source) {
+  const match = source.match(/RUNDOWN_LOCAL_PACKAGES=\(([^)]*)\)/);
+  assert.ok(match, 'scripts/lib/local-packages.sh must define RUNDOWN_LOCAL_PACKAGES');
+  return match[1].trim().split(/\s+/).filter(Boolean);
+}
+
+function packageTarballName(pkg) {
+  return `rundown-org-${pkg}`;
+}
+
 /**
  * Run scripts/e2e-shell.sh inside an isolated ROOT_DIR that contains NO
  * credential directories (.claude-docker / .codex-docker), with `docker`
@@ -212,13 +222,23 @@ test('e2e image installs Codex CLI, ships the Codex entrypoint, and the Codex AG
   );
 });
 
-test('E2E local image packs and installs the Rundown MCP server', async () => {
+test('local Docker tarball producers share the Dockerfile package list', async () => {
   const build = await readRepoFile('scripts/build-e2e.sh');
+  const verify = await readRepoFile('scripts/verify-install.sh');
   const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
+  const packageList = parseLocalPackageList(await readRepoFile('scripts/lib/local-packages.sh'));
 
-  assert.match(build, /for pkg in parser core cli claude-code-plugin mcp; do/);
-  assert.match(dockerfile, /COPY dist\/rundown-org-mcp-\*\.tgz \/tmp\/tarballs\//);
-  assert.match(dockerfile, /\/tmp\/tarballs\/rundown-org-mcp-\*\.tgz/);
+  assert.match(build, /\. "\$SCRIPT_DIR\/lib\/local-packages\.sh"/);
+  assert.match(verify, /\. "\$SCRIPT_DIR\/lib\/local-packages\.sh"/);
+  assert.match(build, /pack_rundown_local_packages "\$dist_abs"/);
+  assert.match(verify, /pack_rundown_local_packages "\$dist_abs"/);
+  assert.ok(packageList.includes('mcp'), 'local Docker package list must include mcp');
+
+  for (const pkg of packageList) {
+    const tarball = packageTarballName(pkg);
+    assert.match(dockerfile, new RegExp(`COPY dist/${tarball}-\\*\\.tgz /tmp/tarballs/`));
+    assert.match(dockerfile, new RegExp(`/tmp/tarballs/${tarball}-\\*\\.tgz`));
+  }
 });
 
 test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
@@ -289,6 +309,7 @@ test('Rundown Claude plugin package also ships a Codex plugin surface', async ()
 
   assert.ok(pluginPackage.files.includes('codex-plugin'));
   assert.equal(pluginPackage.dependencies['@rundown-org/mcp'], '*');
+  assert.equal(pluginPackage.bin['rundown-mcp'], 'dist/rundown-mcp.js');
 });
 
 test('Codex plugin bundles Rundown skills without Claude-only syntax', async () => {
