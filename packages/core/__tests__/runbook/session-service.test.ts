@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { assertClaimId } from '../../src/runbook/claim-id.js';
+import { assertClaimId, type DelegationClaimLinkage } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId, RunbookState, ParentLinkage } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
@@ -244,6 +244,96 @@ describe('SessionService', () => {
   });
 
   describe('claim-id runbook targeting', () => {
+    const PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+    const CHILD_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
+
+    it('mints a claim with run-control grants without persisting the bearer claim_id', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+          runId: PARENT_RUN_ID,
+        },
+      );
+
+      const issued = await sessionService.issueRunControlClaim(state.id);
+      const session = await manager.loadSession();
+
+      expect(issued.claimId).toMatch(/^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/);
+      expect(Object.keys(session.claims)).toEqual([issued.claim.claimKey]);
+      expect(JSON.stringify(session)).not.toContain(issued.claimId);
+      expect(issued.claim.grants).toEqual([
+        { action: 'mutate-run', runId: state.id },
+        { action: 'delegate-from-run', runId: state.id },
+        { action: 'collect-for-run', runId: state.id },
+        { action: 'abort-delegation', runId: state.id },
+        { action: 'retry-delegation', runId: state.id },
+      ]);
+    });
+
+    it('verifies a bearer claim_id before returning a verified claim', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+          runId: PARENT_RUN_ID,
+        },
+      );
+      const issued = await sessionService.issueRunControlClaim(state.id);
+
+      await expect(sessionService.verifyClaimId(issued.claimId)).resolves.toEqual({
+        status: 'verified',
+        claim: {
+          claimKey: issued.claim.claimKey,
+          controlledRunId: state.id,
+          grants: issued.claim.grants,
+        },
+      });
+
+      const tampered = issued.claimId.replace(/.$/, issued.claimId.endsWith('A') ? 'B' : 'A');
+      await expect(sessionService.verifyClaimId(assertClaimId(tampered))).resolves.toEqual({
+        status: 'invalid-secret',
+        claimKey: issued.claim.claimKey,
+      });
+    });
+
+    it('mints a claim with child mutation and parent report grants', async () => {
+      const persistedLinkage = linkageFor(PARENT_RUN_ID, 'b');
+      await manager.create({ source: 'project', path: 'parent.runbook.md' }, mockRunbook, {
+        runbookPath: 'parent.runbook.md',
+        runId: PARENT_RUN_ID,
+      });
+      await manager.create({ source: 'project', path: 'child.runbook.md' }, mockRunbook, {
+        runbookPath: 'child.runbook.md',
+        runId: CHILD_RUN_ID,
+        parentLinkage: persistedLinkage,
+      });
+
+      const result = await sessionService.claimRunbook(CHILD_RUN_ID, persistedLinkage);
+      const claimed = assertClaimed(result);
+      const expectedDelegation: DelegationClaimLinkage = {
+        childRunId: CHILD_RUN_ID,
+        tokenHash: persistedLinkage.tokenHash,
+        parentRunId: persistedLinkage.parentRunId,
+        parentStepId: persistedLinkage.parentStepId,
+        parentStep: persistedLinkage.parentStep,
+        parentFrameKey: persistedLinkage.parentFrameKey,
+        parentEntry: persistedLinkage.parentEntry,
+      };
+
+      expect(claimed.claimId).toMatch(/^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/);
+      expect(claimed.claim.delegation).toEqual(expectedDelegation);
+      expect(claimed.claim.grants).toEqual([
+        { action: 'mutate-run', runId: CHILD_RUN_ID },
+        { action: 'report-delegation-result', ...expectedDelegation },
+      ]);
+
+      const session = await manager.loadSession();
+      expect(JSON.stringify(session)).not.toContain(claimed.claimId);
+    });
+
     it('registers a delegated child claim without changing the default stack', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -262,14 +352,14 @@ describe('SessionService', () => {
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([parent.id]);
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('claimed');
       if (resolved.status === 'claimed') {
         expect(resolved.state.id).toBe(child.id);
       }
     });
 
-    it('reuses the same claim id for the same child', async () => {
+    it('refuses token replay for an already-claimed child without minting another bearer', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -280,14 +370,16 @@ describe('SessionService', () => {
       });
 
       const first = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
-      const second = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const second = await sessionService.claimRunbook(child.id, linkage);
 
-      expect(second.claim.claimId).toBe(first.claim.claimId);
-      expect(second.claim.claimedAt).toBe(first.claim.claimedAt);
-      expect(second.claim.updatedAt >= first.claim.updatedAt).toBe(true);
+      expect(second).toEqual({
+        status: 'already-claimed',
+        childRunId: child.id,
+        claimKey: first.claim.claimKey,
+      });
     });
 
-    it('refreshes an existing delegation claim before treating a new child id as claimable', async () => {
+    it('refuses token replay for an existing delegation before treating a new child id as claimable', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -303,21 +395,23 @@ describe('SessionService', () => {
       const first = assertClaimed(await sessionService.claimRunbook(existingChild.id, linkage));
 
       const missingChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
-      const second = assertClaimed(await sessionService.claimRunbook(missingChildId, linkage));
+      const second = await sessionService.claimRunbook(missingChildId, linkage);
 
-      expect(second.claim.claimId).toBe(first.claim.claimId);
-      expect(second.claim.childRunId).toBe(existingChild.id);
-      expect(second.claim.claimedAt).toBe(first.claim.claimedAt);
-      expect(second.claim.updatedAt >= first.claim.updatedAt).toBe(true);
+      expect(second).toEqual({
+        status: 'already-claimed',
+        childRunId: existingChild.id,
+        claimKey: first.claim.claimKey,
+      });
     });
 
     it('returns missing for an unknown claim id', async () => {
-      const resolved = await sessionService.getActiveForClaimId(
-        assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
+      const claimId = assertClaimId(
+        'rdclm_00000000000000000000000000000000_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
       );
+      const resolved = await sessionService.getActiveForClaimId(claimId);
       expect(resolved).toEqual({
         status: 'missing',
-        claimId: 'rdclm_abcdefghijklmnopqrstu1',
+        claimId,
       });
     });
 
@@ -334,7 +428,7 @@ describe('SessionService', () => {
 
       await manager.delete(child.id);
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('stale');
       if (resolved.status === 'stale') {
         expect(resolved.reason).toBe('missing-state');
@@ -354,7 +448,7 @@ describe('SessionService', () => {
 
       await manager.update(child.id, { lifecycle: 'completed' });
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('terminal');
       if (resolved.status === 'terminal') {
         expect(resolved.lifecycle).toBe('completed');
@@ -374,7 +468,7 @@ describe('SessionService', () => {
 
       await manager.update(child.id, { lifecycle: 'stopped' });
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('terminal');
       if (resolved.status === 'terminal') {
         expect(resolved.lifecycle).toBe('stopped');
@@ -399,7 +493,7 @@ describe('SessionService', () => {
         },
       });
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('unlinked');
       if (resolved.status === 'unlinked') {
         expect(resolved.reason).toBe('child-linkage-mismatch');
@@ -419,7 +513,7 @@ describe('SessionService', () => {
 
       await manager.update(parent.id, { lifecycle: 'completed' });
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('unlinked');
       if (resolved.status === 'unlinked') {
         expect(resolved.reason).toBe('parent-ended');
@@ -439,7 +533,7 @@ describe('SessionService', () => {
 
       await manager.delete(parent.id);
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('unlinked');
       if (resolved.status === 'unlinked') {
         expect(resolved.reason).toBe('parent-missing');
@@ -507,12 +601,12 @@ describe('SessionService', () => {
         expect(result.incoming).toBe(incomingLinkage);
         expect(result.persisted).toEqual({
           kind: 'delegation',
-          parentRunId: first.claim.parentRunId,
-          parentStepId: first.claim.parentStepId,
-          parentStep: first.claim.parentStep,
-          parentFrameKey: first.claim.parentFrameKey,
-          parentEntry: first.claim.parentEntry,
-          tokenHash: first.claim.tokenHash,
+          parentRunId: first.claim.delegation?.parentRunId,
+          parentStepId: first.claim.delegation?.parentStepId,
+          parentStep: first.claim.delegation?.parentStep,
+          parentFrameKey: first.claim.delegation?.parentFrameKey,
+          parentEntry: first.claim.delegation?.parentEntry,
+          tokenHash: first.claim.delegation?.tokenHash,
         });
       }
     });
@@ -546,9 +640,7 @@ describe('SessionService', () => {
 
       await sessionService.releaseRunbook(child.id);
 
-      expect((await sessionService.getActiveForClaimId(claimed.claim.claimId)).status).toBe(
-        'missing',
-      );
+      expect((await sessionService.getActiveForClaimId(claimed.claimId)).status).toBe('missing');
     });
 
     /**
@@ -556,12 +648,16 @@ describe('SessionService', () => {
      *
      * @param fill - Unique single char used to derive the linkage token hash.
      * @param childLifecycle - Terminal lifecycle to stamp on the child run.
-     * @returns The claim id and child run id.
+     * @returns The bearer claim id, persisted lookup key, and child run id.
      */
     async function setupClaimedChild(
       fill: string,
       childLifecycle: 'completed' | 'stopped',
-    ): Promise<{ claimId: ReturnType<typeof assertClaimId>; childRunId: RunId }> {
+    ): Promise<{
+      claimId: ReturnType<typeof assertClaimId>;
+      claimKey: string;
+      childRunId: RunId;
+    }> {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -572,7 +668,7 @@ describe('SessionService', () => {
       });
       const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
       await manager.update(child.id, { lifecycle: childLifecycle });
-      return { claimId: claimed.claim.claimId, childRunId: child.id };
+      return { claimId: claimed.claimId, claimKey: claimed.claim.claimKey, childRunId: child.id };
     }
 
     it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps the claim as a terminal tombstone', async () => {
@@ -619,12 +715,12 @@ describe('SessionService', () => {
     });
 
     it('pruneClaimsForChildren removes claims pointing at the given child run ids', async () => {
-      const { claimId, childRunId } = await setupClaimedChild('6', 'completed');
+      const { claimId, claimKey, childRunId } = await setupClaimedChild('6', 'completed');
       await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
 
       const removed = await sessionService.pruneClaimsForChildren([childRunId]);
 
-      expect(removed).toEqual([claimId]);
+      expect(removed).toEqual([claimKey]);
       const resolution = await sessionService.getActiveForClaimId(claimId);
       expect(resolution.status).toBe('missing');
     });
@@ -641,7 +737,7 @@ describe('SessionService', () => {
       const removed = await sessionService.pruneClaimsForChildren([a.childRunId, b.childRunId]);
 
       expect(removed).toHaveLength(2);
-      expect(new Set(removed)).toEqual(new Set([a.claimId, b.claimId]));
+      expect(new Set(removed)).toEqual(new Set([a.claimKey, b.claimKey]));
       expect((await sessionService.getActiveForClaimId(a.claimId)).status).toBe('missing');
       expect((await sessionService.getActiveForClaimId(b.claimId)).status).toBe('missing');
     });
@@ -677,13 +773,13 @@ describe('SessionService', () => {
       await sessionService.stashRunbook(child.id);
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('unlinked');
       if (resolved.status === 'unlinked') {
         expect(resolved.reason).toBe('stashed');
       }
 
-      const restored = await sessionService.unstashForClaimId(claimed.claim.claimId);
+      const restored = await sessionService.unstashForClaimId(claimed.claimId);
       expect(restored.status).toBe('restored');
       if (restored.status === 'restored') {
         expect(restored.state.id).toBe(child.id);
@@ -691,9 +787,7 @@ describe('SessionService', () => {
       expect(await sessionService.getStashedRunbookId()).toBeNull();
 
       // After pop the claim is active again.
-      expect((await sessionService.getActiveForClaimId(claimed.claim.claimId)).status).toBe(
-        'claimed',
-      );
+      expect((await sessionService.getActiveForClaimId(claimed.claimId)).status).toBe('claimed');
     });
 
     it('unstashForClaimId distinguishes absent claim from non-stashed claim', async () => {
@@ -708,14 +802,16 @@ describe('SessionService', () => {
       const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       const absent = await sessionService.unstashForClaimId(
-        assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
+        assertClaimId(
+          'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+        ),
       );
       expect(absent.status).toBe('missing-claim');
 
-      const notStashed = await sessionService.unstashForClaimId(claimed.claim.claimId);
+      const notStashed = await sessionService.unstashForClaimId(claimed.claimId);
       expect(notStashed.status).toBe('not-stashed');
       if (notStashed.status === 'not-stashed') {
-        expect(notStashed.claim.childRunId).toBe(child.id);
+        expect(notStashed.claim.controlledRunId).toBe(child.id);
       }
     });
 
@@ -738,7 +834,7 @@ describe('SessionService', () => {
       await sessionService.stashRunbook(terminalChild.id);
       await manager.update(terminalChild.id, { lifecycle: 'completed' });
 
-      const terminal = await sessionService.unstashForClaimId(terminalClaimed.claim.claimId);
+      const terminal = await sessionService.unstashForClaimId(terminalClaimed.claimId);
       expect(terminal.status).toBe('terminal-child');
       if (terminal.status === 'terminal-child') {
         expect(terminal.lifecycle).toBe('completed');
@@ -761,7 +857,7 @@ describe('SessionService', () => {
       await sessionService.releaseRunbook(terminalChild.id);
       await sessionService.stashRunbook(child.id);
 
-      const parentEnded = await sessionService.unstashForClaimId(endedClaimed.claim.claimId);
+      const parentEnded = await sessionService.unstashForClaimId(endedClaimed.claimId);
       expect(parentEnded.status).toBe('parent-ended');
       if (parentEnded.status === 'parent-ended') {
         expect(parentEnded.lifecycle).toBe('stopped');
@@ -782,7 +878,7 @@ describe('SessionService', () => {
       await sessionService.stashRunbook(child.id);
 
       // Default (write) gate refuses.
-      const gated = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const gated = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(gated.status).toBe('unlinked');
       if (gated.status === 'unlinked') {
         expect(gated.reason).toBe('stashed');
@@ -790,13 +886,13 @@ describe('SessionService', () => {
 
       // includeStashed flips the gate so read-only commands like `rd status
       // --claim-id` can inspect the parked child.
-      const inspected = await sessionService.getActiveForClaimId(claimed.claim.claimId, {
+      const inspected = await sessionService.getActiveForClaimId(claimed.claimId, {
         includeStashed: true,
       });
       expect(inspected.status).toBe('claimed');
       if (inspected.status === 'claimed') {
         expect(inspected.state.id).toBe(child.id);
-        expect(inspected.claim.claimId).toBe(claimed.claim.claimId);
+        expect(inspected.claim.claimKey).toBe(claimed.claim.claimKey);
       }
     });
 
@@ -824,10 +920,10 @@ describe('SessionService', () => {
 
       const session = await manager.loadSession();
       expect(session.defaultStack).not.toContain(child.id);
-      expect(session.claims[claimed.claim.claimId]).toBeUndefined();
+      expect(session.claims[claimed.claim.claimKey]).toBeUndefined();
 
       // The claim id is now `missing` rather than `unlinked`.
-      const after = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      const after = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(after.status).toBe('missing');
     });
 
@@ -847,11 +943,12 @@ describe('SessionService', () => {
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([
         expect.objectContaining({
-          kind: 'claim-record',
-          claimId: claimed.claim.claimId,
-          childRunId: child.id,
-          parentRunId: parent.id,
-          parentStepId: '1.1',
+          claimKey: claimed.claim.claimKey,
+          controlledRunId: child.id,
+          delegation: expect.objectContaining({
+            parentRunId: parent.id,
+            parentStepId: '1.1',
+          }),
         }),
       ]);
     });
@@ -873,7 +970,9 @@ describe('SessionService', () => {
       await sessionService.claimRunbook(childB.id, linkageFor(parent.id, 'b'));
 
       const open = await sessionService.listOpenClaimsForParent(parent.id);
-      expect(open.map((claim) => claim.childRunId).sort()).toEqual([childA.id, childB.id].sort());
+      expect(open.map((claim) => claim.controlledRunId).sort()).toEqual(
+        [childA.id, childB.id].sort(),
+      );
     });
 
     it('returns only the open child when one of two siblings is terminal', async () => {
@@ -894,7 +993,7 @@ describe('SessionService', () => {
       await manager.update(doneChild.id, { lifecycle: 'completed' });
 
       const open = await sessionService.listOpenClaimsForParent(parent.id);
-      expect(open.map((claim) => claim.childRunId)).toEqual([openChild.id]);
+      expect(open.map((claim) => claim.controlledRunId)).toEqual([openChild.id]);
     });
 
     it('does not list a completed claimed child as an open parent claim', async () => {
@@ -1002,8 +1101,8 @@ describe('SessionService', () => {
       await manager.update(parent.id, {
         substepStates: [
           {
-            id: claimed.claim.parentStepId,
-            frameKey: claimed.claim.parentFrameKey,
+            id: claimed.claim.delegation?.parentStepId ?? '',
+            frameKey: claimed.claim.delegation?.parentFrameKey ?? '',
             status: 'done',
             result: 'pass',
           },
@@ -1051,7 +1150,7 @@ describe('SessionService', () => {
       expect(ran).toBe(false);
       expect(result.kind).toBe('open_delegated_children');
       if (result.kind === 'open_delegated_children') {
-        expect(result.claims.map((claim) => claim.childRunId)).toEqual([child.id]);
+        expect(result.claims.map((claim) => claim.controlledRunId)).toEqual([child.id]);
       }
     });
 

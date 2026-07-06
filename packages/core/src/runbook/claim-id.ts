@@ -115,7 +115,12 @@ export interface VerifiedClaim {
  * service task. This task updates the core claim primitives first.
  */
 export type ClaimRunbookResult =
-  | { readonly status: 'claimed'; readonly claim: ClaimRecord }
+  | { readonly status: 'claimed'; readonly claimId: ClaimId; readonly claim: ClaimRecord }
+  | {
+      readonly status: 'already-claimed';
+      readonly childRunId: RunId;
+      readonly claimKey: ClaimLookupKey;
+    }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | {
       readonly status: 'terminal-child';
@@ -131,20 +136,33 @@ export type ClaimRunbookResult =
 
 /** Result of resolving a claim id to a usable child runbook. */
 export type ClaimIdResolution =
-  | { readonly status: 'claimed'; readonly claim: ClaimRecord; readonly state: RunbookState }
+  | {
+      readonly status: 'claimed';
+      readonly claimId: ClaimId;
+      readonly claim: VerifiedClaim;
+      readonly record: ClaimRecord;
+      readonly state: RunbookState;
+    }
   | { readonly status: 'missing'; readonly claimId: ClaimId }
-  | { readonly status: 'stale'; readonly claim: ClaimRecord; readonly reason: 'missing-state' }
+  | { readonly status: 'invalid-secret'; readonly claimId: ClaimId }
+  | { readonly status: 'stale'; readonly claim: VerifiedClaim; readonly reason: 'missing-state' }
   | {
       readonly status: 'terminal';
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
     }
   | {
       readonly status: 'unlinked';
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly reason: 'parent-missing' | 'parent-ended' | 'child-linkage-mismatch' | 'stashed';
     };
+
+/** Result of verifying a bearer claim id against persisted session state. */
+export type ClaimVerificationResult =
+  | { readonly status: 'verified'; readonly claim: VerifiedClaim }
+  | { readonly status: 'missing'; readonly claimKey: ClaimLookupKey }
+  | { readonly status: 'invalid-secret'; readonly claimKey: ClaimLookupKey };
 
 /**
  * Return true when value is a canonical public bearer claim id.
@@ -321,6 +339,42 @@ export function createDelegatedChildGrants(input: {
       ...input.linkage,
     },
   ];
+}
+
+/**
+ * Create a persisted proof-backed claim record.
+ *
+ * @param input - Claim proof, target, grant, and timestamp data.
+ * @returns Persisted claim record.
+ */
+export function createClaimRecord(input: {
+  readonly claimKey: ClaimLookupKey;
+  readonly secretHash: ClaimSecretHash;
+  readonly controlledRunId: RunId;
+  readonly delegation?: DelegationClaimLinkage;
+  readonly grants: readonly ClaimGrant[];
+  readonly now: string;
+}): ClaimRecord {
+  return {
+    claimKey: input.claimKey,
+    secretHash: input.secretHash,
+    controlledRunId: input.controlledRunId,
+    ...(input.delegation ? { delegation: input.delegation } : {}),
+    grants: input.grants,
+    issuedAt: input.now,
+    updatedAt: input.now,
+  };
+}
+
+/**
+ * Return a claim record with only its refresh timestamp changed.
+ *
+ * @param record - Existing persisted claim record.
+ * @param now - ISO timestamp for the refresh.
+ * @returns Refreshed claim record.
+ */
+export function refreshedClaimRecord(record: ClaimRecord, now: string): ClaimRecord {
+  return { ...record, updatedAt: now };
 }
 
 /**
