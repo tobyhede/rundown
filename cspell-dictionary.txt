@@ -406,3 +406,5 @@ chokepoints
 ungated
 remediations
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+linecap
+linejoin
