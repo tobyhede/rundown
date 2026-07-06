@@ -221,6 +221,19 @@ test('E2E local image packs and installs the Rundown MCP server', async () => {
   assert.match(dockerfile, /\/tmp\/tarballs\/rundown-org-mcp-\*\.tgz/);
 });
 
+test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
+  const definitions = await readRepoFile('packages/mcp/src/tool-definitions.ts');
+  const tools = ['validate', 'list', 'status', 'run', 'pass', 'fail', 'goto', 'complete', 'stop'];
+
+  for (const tool of tools) {
+    assert.match(definitions, new RegExp(`${tool}: \\{`));
+  }
+
+  assert.match(definitions, /description: 'Start or enter a runbook'/);
+  assert.match(definitions, /description: 'Mark a step passed'/);
+  assert.match(definitions, /description: 'Mark a step failed'/);
+});
+
 test('E2E image copies the Rundown Codex plugin root', async () => {
   const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
 
