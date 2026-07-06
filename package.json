@@ -101,7 +101,7 @@
     "@stryker-mutator/jest-runner": "^9.6.1",
     "@stryker-mutator/typescript-checker": "^9.6.1",
     "@astrojs/check": "^0.9.9",
-    "@astrojs/react": "^5.0.7",
+    "@astrojs/react": "^6.0.1",
     "cspell": "^10.0.1",
     "eslint": "^10.6.0",
     "eslint-plugin-jsdoc": "^63.0.10",
