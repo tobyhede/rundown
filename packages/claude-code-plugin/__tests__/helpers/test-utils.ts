@@ -285,3 +285,85 @@ export function activeRunIdFromStatus(result: { exitCode: number | null; stdout:
   }
   return match[0];
 }
+
+/**
+ * Extract the orchestrator run capability from a `rundown run` invocation result.
+ *
+ * R4 mutating orchestrator commands require the one-time `rdrc_...` capability
+ * emitted by `rundown run`; the run id visible in `status` is no longer an
+ * authority credential.
+ *
+ * @param result - Exit code and stdout of a `rundown run` invocation
+ * @returns The run capability (`rdrc_` + run id body + secret)
+ * @throws {Error} When the run output carries no run capability
+ */
+export function activeRunCapabilityFromRun(result: {
+  exitCode: number | null;
+  stdout: string;
+}): string {
+  if (result.exitCode !== 0) {
+    throw new Error(`run exited ${String(result.exitCode)}: ${result.stdout}`);
+  }
+
+  const runCapability = latestRunCapabilityFromOutput(result.stdout);
+  if (runCapability !== undefined) {
+    return runCapability;
+  }
+
+  throw new Error(`No run capability in run output: ${result.stdout}`);
+}
+
+/**
+ * Return the latest run capability emitted in CLI stdout.
+ *
+ * Inline launches can emit a new `runbook_started` event for a child runbook
+ * during a parent mutation. The newest capability controls the newly active
+ * run; if no launch happened, callers should keep using their current value.
+ *
+ * @param stdout - CLI stdout containing JSON-line events
+ * @returns The last valid run capability in stdout, if present
+ */
+export function latestRunCapabilityFromOutput(stdout: string): string | undefined {
+  let latest: string | undefined;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(line) as { runCapability?: unknown };
+      if (
+        typeof parsed.runCapability === 'string' &&
+        /^rdrc_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/.test(parsed.runCapability)
+      ) {
+        latest = parsed.runCapability;
+      }
+    } catch {}
+  }
+
+  return latest;
+}
+
+/**
+ * Extract the claim capability returned by `rundown claim`.
+ *
+ * @param stdout - CLI stdout containing JSON-line claim output
+ * @returns The claim capability, if present
+ */
+export function claimCapabilityFromOutput(stdout: string): string | undefined {
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(line) as { claim_capability?: unknown };
+      if (
+        typeof parsed.claim_capability === 'string' &&
+        /^rdcc_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/.test(parsed.claim_capability)
+      ) {
+        return parsed.claim_capability;
+      }
+    } catch {}
+  }
+
+  return undefined;
+}

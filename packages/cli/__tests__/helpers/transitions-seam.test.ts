@@ -262,13 +262,14 @@ describe('emitOpenDelegatedChildrenError', () => {
     const [message, code, details] = output.error.mock.calls[0];
     expect(message).toContain('Cannot run bare rundown pass');
     expect(message).toContain(TEST_CLAIM_ID);
-    expect(message).toContain('--claim-id');
+    expect(message).toContain('--claim-capability');
     expect(code).toBe('OPEN_DELEGATED_CHILDREN');
     expect(details).toEqual({
       command: 'pass',
       parentRunId: PARENT_RUN_ID,
       claimIds: [TEST_CLAIM_ID],
       childRunIds: [CHILD_RUN_ID],
+      idleClaimIds: [],
     });
   });
 });
@@ -572,6 +573,7 @@ describe('runSeamTransition — refusal render table', () => {
       parentRunId: PARENT_RUN_ID,
       claimIds: [TEST_CLAIM_ID],
       childRunIds: [CHILD_RUN_ID],
+      idleClaimIds: [],
     });
     expect(result.exitError).toBe(true);
   });
@@ -608,8 +610,8 @@ describe('runSeamTransition — refusal render table', () => {
     const [message, code, details] = output.error.mock.calls[0];
     expect(code).toBe('ACTOR_CONTEXT_REQUIRED');
     // The remediation names both explicit-authority lanes...
-    expect(message).toContain('--run');
-    expect(message).toContain('--claim-id');
+    expect(message).toContain('--run-capability');
+    expect(message).toContain('--claim-capability');
     expect(message).toContain('rundown fail');
     // ...and never hands the id back: no details object, no run id anywhere
     // in the envelope (accident barrier, decision 4).

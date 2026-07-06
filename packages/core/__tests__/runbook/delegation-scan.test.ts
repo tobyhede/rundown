@@ -20,6 +20,9 @@ describe('DelegationScanService', () => {
   let tmpDir: string;
   let manager: RunbookStateManager;
   let scanner: DelegationScanService;
+  const orchestratorCapabilityHash =
+    `sha256:${'1'.repeat(64)}` as RunbookState['orchestratorCapabilityHash'];
+  const orchestratorCapabilityIssuedAt = '2026-02-27T10:00:00.000Z';
 
   function testRunId(index: number): RunbookState['id'] {
     return `rd_${index.toString(16).padStart(32, '0')}` as RunbookState['id'];
@@ -74,7 +77,9 @@ describe('DelegationScanService', () => {
       startedAt: '2026-02-27T10:00:00.000Z',
       updatedAt: '2026-02-27T10:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: 2,
+      orchestratorCapabilityHash,
+      orchestratorCapabilityIssuedAt,
       ...overrides,
     };
   }

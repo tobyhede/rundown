@@ -582,9 +582,10 @@ describe('abort command - unit tests', () => {
       expect(claim.exitCode).toBe(0);
       const claimOutput = findActionOutput(claim.stdout);
       expect(typeof claimOutput?.claim_id).toBe('string');
+      expect(typeof claimOutput?.claim_capability).toBe('string');
 
       const failed = await runCliInProcess(
-        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        ['fail', '--claim-capability', String(claimOutput!.claim_capability)],
         workspace,
       );
       expect(failed.exitCode).toBe(1);
@@ -602,11 +603,12 @@ describe('abort command - unit tests', () => {
       expect(claim.exitCode).toBe(0);
       const claimOutput = findActionOutput(claim.stdout);
       expect(typeof claimOutput?.claim_id).toBe('string');
+      expect(typeof claimOutput?.claim_capability).toBe('string');
       expect(typeof claimOutput?.run_id).toBe('string');
       const childRunId = String(claimOutput!.run_id);
 
       const failed = await runCliInProcess(
-        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        ['fail', '--claim-capability', String(claimOutput!.claim_capability)],
         workspace,
       );
       expect(failed.exitCode).toBe(1);

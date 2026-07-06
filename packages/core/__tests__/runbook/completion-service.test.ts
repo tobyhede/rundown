@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  assertCapabilityHash,
   assertDelegationTokenHash,
   lifecycleToDelegationOutcome,
   projectDelegationTerminalOutcome,
@@ -36,6 +37,8 @@ describe('RunbookCompletionService', () => {
   let lifecycleService: ExecutionLifecycleService;
   let actorService: RunbookActorService;
   let service: RunbookCompletionService;
+  const orchestratorCapabilityHash = assertCapabilityHash(`sha256:${'1'.repeat(64)}`);
+  const orchestratorCapabilityIssuedAt = '2026-01-01T00:00:00.000Z';
 
   const steps: ResolvedStep[] = [
     {
@@ -87,6 +90,8 @@ describe('RunbookCompletionService', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       lifecycle: 'running',
       schemaVersion: 1,
+      orchestratorCapabilityHash,
+      orchestratorCapabilityIssuedAt,
       frontmatterOutputs: [],
       ...overrides,
     };

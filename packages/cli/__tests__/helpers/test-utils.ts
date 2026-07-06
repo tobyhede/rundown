@@ -21,13 +21,16 @@ import {
   buildFrameKey,
   buildResolvedCompletion,
   exactFrame,
+  generateRunCapability,
+  hashCapabilitySecret,
   isRunId,
+  parseRunCapability,
   runsDir,
   sessionPath as _sessionPath,
   runbooksDir,
   locksDir,
 } from '@rundown-org/core';
-import type { FrameKey, RunbookState } from '@rundown-org/core';
+import type { FrameKey, RunCapability, RunbookState } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -74,6 +77,29 @@ export interface CliResult {
    * calling `process.exit`.
    */
   exitIntercepted?: boolean;
+}
+
+const runCapabilitiesByWorkspace = new Map<string, Map<string, RunCapability>>();
+
+function rememberRunCapability(workspace: TestWorkspace, capability: RunCapability): void {
+  const { runId } = parseRunCapability(capability);
+  const capabilities =
+    runCapabilitiesByWorkspace.get(workspace.cwd) ?? new Map<string, RunCapability>();
+  capabilities.set(runId, capability);
+  runCapabilitiesByWorkspace.set(workspace.cwd, capabilities);
+}
+
+function rememberRunCapabilitiesFromOutput(workspace: TestWorkspace, stdout: string): void {
+  for (const parsed of parseConcatenatedJson(stdout)) {
+    if (!parsed || typeof parsed !== 'object') continue;
+    const capability = (parsed as Record<string, unknown>).runCapability;
+    if (typeof capability !== 'string') continue;
+    try {
+      rememberRunCapability(workspace, capability as RunCapability);
+    } catch {
+      // Ignore non-run JSON payloads; command assertions own malformed output.
+    }
+  }
 }
 
 /**
@@ -166,11 +192,13 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
     },
   });
 
-  return {
+  const cliResult = {
     stdout: result.stdout || '',
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
+  rememberRunCapabilitiesFromOutput(workspace, cliResult.stdout);
+  return cliResult;
 }
 
 export { stripExitArtefact };
@@ -202,7 +230,7 @@ export async function runCliInProcess(
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
-  return runCliInProcessCore({
+  const result = await runCliInProcessCore({
     args: argArray,
     cwd: workspace.cwd,
     env: {
@@ -211,6 +239,8 @@ export async function runCliInProcess(
       ...(options.env ?? {}),
     },
   });
+  rememberRunCapabilitiesFromOutput(workspace, result.stdout);
+  return result;
 }
 
 /**
@@ -383,14 +413,14 @@ export async function getActiveState(workspace: TestWorkspace): Promise<RunbookS
 }
 
 /**
- * Append explicit --run targeting for the workspace's active run.
+ * Append explicit run-capability targeting for the workspace's active run.
  *
  * Post-R1, bare mutations on delegating runs are refused; orchestrator-side
  * tests name their authority the way a real orchestrator does.
  *
  * @param args - CLI argv to extend (e.g. `['pass']`)
  * @param workspace - Test workspace whose active run supplies the id
- * @returns The argv with `--run <activeRunId>` appended
+ * @returns The argv with `--run-capability <activeRunCapability>` appended
  * @throws {Error} When no active run exists to target
  */
 export async function withRunTarget(
@@ -399,7 +429,41 @@ export async function withRunTarget(
 ): Promise<string[]> {
   const state = await getActiveState(workspace);
   if (!state) throw new Error('withRunTarget: no active run to target');
-  return [...args, '--run', state.id];
+  return withRunTargetForRun(args, workspace, state.id);
+}
+
+/**
+ * Append explicit run-capability targeting for a specific run in the workspace.
+ *
+ * @param args - CLI argv to extend
+ * @param workspace - Test workspace containing the run state
+ * @param runId - Run id to target
+ * @returns The argv with `--run-capability <runCapability>` appended
+ * @throws {Error} When the run state does not exist
+ */
+export async function withRunTargetForRun(
+  args: readonly string[],
+  workspace: TestWorkspace,
+  runId: string,
+): Promise<string[]> {
+  const state = await readRunbookState(workspace, runId);
+  if (!state) throw new Error(`withRunTargetForRun: no run state for ${runId}`);
+  const cached = runCapabilitiesByWorkspace.get(workspace.cwd)?.get(state.id);
+  if (cached) return [...args, '--run-capability', cached];
+
+  const capability = generateRunCapability(state.id);
+  const { secret } = parseRunCapability(capability);
+  const updatedState: RunbookState = {
+    ...state,
+    orchestratorCapabilityHash: hashCapabilitySecret(secret),
+    orchestratorCapabilityIssuedAt: new Date().toISOString(),
+  };
+  await writeFile(
+    join(workspace.statePath(), `${state.id}.json`),
+    JSON.stringify(updatedState, null, 2),
+  );
+  rememberRunCapability(workspace, capability);
+  return [...args, '--run-capability', capability];
 }
 
 /**

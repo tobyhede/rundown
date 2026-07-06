@@ -44,7 +44,9 @@ describe('pass command wiring', () => {
     expect(byLong.get('--index')?.description).toBe(
       'FOR loop iteration to target (requires --step)',
     );
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Legacy claim id; mutations require --claim-capability',
+    );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -101,13 +103,11 @@ describe('pass command', () => {
     });
   });
 
-  describe('--run explicit targeting', () => {
-    it('applies pass --run <id> to the named running run', async () => {
+  describe('--run-capability explicit targeting', () => {
+    it('applies pass --run-capability <capability> to the named running run', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
 
-      const result = await runCliInProcess(`pass --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -156,12 +156,13 @@ describe('pass command', () => {
       expect(payload.code).toBe('CLAIM_CAPABILITY_REQUIRED');
     });
 
-    it('drives the named run substep via pass --run <id> --step <n>', async () => {
+    it('drives the named run substep via pass --run-capability <capability> --step <n>', async () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
-      const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
 
-      const result = await runCliInProcess(`pass --run ${active!.id} --step 1.1`, workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['pass', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('step_transitioned');

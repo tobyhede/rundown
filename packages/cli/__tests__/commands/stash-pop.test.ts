@@ -554,7 +554,9 @@ rd echo "hello"
       updatedAt: new Date().toISOString(),
       runbookSrc, // Include runbookSrc so pop can read steps
       lifecycle: 'running',
-      schemaVersion: 1,
+      orchestratorCapabilityHash: `sha256:${'a'.repeat(64)}`,
+      orchestratorCapabilityIssuedAt: new Date().toISOString(),
+      schemaVersion: 2,
     };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
@@ -588,7 +590,9 @@ rd echo "hello"
           updatedAt: new Date().toISOString(),
           runbookSrc: '# Parent\n\n## 1. Parent step\n- PASS CONTINUE\n',
           lifecycle: 'running',
-          schemaVersion: 1,
+          orchestratorCapabilityHash: `sha256:${'b'.repeat(64)}`,
+          orchestratorCapabilityIssuedAt: new Date().toISOString(),
+          schemaVersion: 2,
         },
         null,
         2,
@@ -630,7 +634,9 @@ rd echo "hello"
             tokenHash: `sha256:${'a'.repeat(64)}`,
           },
           lifecycle: 'running',
-          schemaVersion: 1,
+          orchestratorCapabilityHash: `sha256:${'c'.repeat(64)}`,
+          orchestratorCapabilityIssuedAt: new Date().toISOString(),
+          schemaVersion: 2,
         },
         null,
         2,
@@ -653,6 +659,11 @@ rd echo "hello"
           parentEntry: 1,
           claimedAt: '2026-04-28T00:00:00.000Z',
           updatedAt: '2026-04-28T00:00:00.000Z',
+          claimCapabilityHash: `sha256:${'d'.repeat(64)}`,
+          leaseOwnerHash: `sha256:${'d'.repeat(64)}`,
+          leaseAcquiredAt: '2026-04-28T00:00:00.000Z',
+          leaseHeartbeatAt: '2026-04-28T00:00:00.000Z',
+          leaseExpiresAt: '2026-04-28T00:05:00.000Z',
         },
       },
     });

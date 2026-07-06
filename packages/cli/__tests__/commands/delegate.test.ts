@@ -357,13 +357,11 @@ describe('delegate command', () => {
     });
   });
 
-  describe('delegate --run', () => {
-    it('issues delegation against the named run', async () => {
+  describe('delegate --run-capability', () => {
+    it('issues delegation against the named run capability', async () => {
       await setupDelegation();
-      const parent = await getActiveState(workspace);
-      if (!parent) throw new Error('Expected active parent run');
 
-      const result = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+      const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       expect(extractToken(result.stdout)).toBeDefined();

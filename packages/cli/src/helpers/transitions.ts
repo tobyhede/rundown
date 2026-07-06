@@ -193,8 +193,11 @@ export type BaseBuildTransitionContextResult =
  * @param cwd - Current working directory
  * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.claimCapability - Claim capability to resolve instead of the
+ *   default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
  *   stack; mutually exclusive with `claimId` (enforced upstream)
+ * @param options.runCapability - Run capability proof for `options.runId`
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
@@ -292,6 +295,7 @@ export async function buildTransitionContext(
  * @param parentRunId - Active parent runbook id
  * @param claimIds - Open claim ids blocking the advance
  * @param childRunIds - Child run ids for the open claims
+ * @param idleClaimIds - Open claim ids that are currently idle
  */
 export function emitOpenDelegatedChildrenError(
   output: OutputEmitter,

@@ -12,7 +12,7 @@ scenarios:
     commands:
       - rd run defer-mixed-delegation-local.runbook.md
       - rd claim ${TOKEN}
-      - rd collect --run ${RUN_ID}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     expect:
       result: COMPLETE
       steps:

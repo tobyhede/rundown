@@ -106,8 +106,8 @@ describe('renderTerminalOutcome', () => {
     expect(codeOf(calls, 'error')).toBe('ACTOR_CONTEXT_REQUIRED');
     const errorCall = calls.find((c) => c.method === 'error');
     // The remediation names both explicit-authority lanes...
-    expect(errorCall?.args[0]).toContain('--run');
-    expect(errorCall?.args[0]).toContain('--claim-id');
+    expect(errorCall?.args[0]).toContain('--run-capability');
+    expect(errorCall?.args[0]).toContain('--claim-capability');
     // ...and the envelope carries NO details object and never echoes the
     // target run id — that would hand the refused caller a copy-paste bypass
     // of the accident barrier (decision 4).

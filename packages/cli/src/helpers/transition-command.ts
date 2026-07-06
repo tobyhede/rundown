@@ -151,7 +151,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             if (!runCapabilityTarget.ok) return;
             const runTarget = parseRunOption(
               options.run,
-              claimTarget.claimId ?? undefined,
+              claimTarget.claimId,
               output,
               claimCapabilityTarget.claimCapability,
               runCapabilityTarget.runCapability,
@@ -167,7 +167,6 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // seam renders refusals/applied events itself (inside runSeamTransition);
             // here we own the post-transition parent-propagation/exit-code contract.
             const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(claimCapabilityTarget.claimCapability !== undefined
                 ? { claimCapability: claimCapabilityTarget.claimCapability }
                 : {}),

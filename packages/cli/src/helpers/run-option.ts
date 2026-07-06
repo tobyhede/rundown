@@ -19,9 +19,11 @@ import type { OutputEmitter } from '../services/output-emitter.js';
  *
  * @param raw - Raw `--run` value from Commander; `undefined` when absent
  * @param claimId - Parsed `--claim-id` value, for the mutual-exclusion check
+ * @param output - Output emitter used to render validation failures
  * @param claimCapability - Parsed `--claim-capability` value, for the
  * mutual-exclusion check
- * @param output - Output emitter used to render validation failures
+ * @param runCapability - Parsed `--run-capability` value, for the
+ * mutual-exclusion check
  * @returns `{ ok: true }` (no `--run`), `{ ok: true, runId }` (validated), or
  *   `{ ok: false }` after emitting the error
  */

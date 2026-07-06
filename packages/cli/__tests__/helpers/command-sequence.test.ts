@@ -11,6 +11,7 @@ import {
   extractRunbookReferences,
   extractInputFileReferences,
   substituteClaimIds,
+  substituteClaimCapabilities,
   substituteArtifactUris,
   substituteCapturedArtifacts,
   matchErrorAssertions,
@@ -22,7 +23,10 @@ import {
   executeCommandSequence,
   createInProcessCommandExecutor,
   substituteRunIds,
+  substituteRunCapabilities,
   captureRunIdFromJsonObject,
+  captureRunCapabilityFromJsonObject,
+  captureClaimCapabilityFromJsonObject,
 } from '../../src/helpers/command-sequence.js';
 import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
 import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
@@ -988,6 +992,34 @@ describe('substituteClaimIds', () => {
   });
 });
 
+describe('substituteClaimCapabilities', () => {
+  const capabilityA = `rdcc_${'a'.repeat(22)}_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
+  const capabilityB = `rdcc_${'b'.repeat(22)}_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB`;
+
+  it('${CLAIM_CAPABILITY} maps to first captured claim capability', () => {
+    expect(
+      substituteClaimCapabilities('rd pass --claim-capability ${CLAIM_CAPABILITY}', [capabilityA]),
+    ).toBe(`rd pass --claim-capability ${capabilityA}`);
+  });
+
+  it('${CLAIM_CAPABILITY_2} maps to second captured claim capability', () => {
+    expect(
+      substituteClaimCapabilities('rd fail --claim-capability ${CLAIM_CAPABILITY_2}', [
+        capabilityA,
+        capabilityB,
+      ]),
+    ).toBe(`rd fail --claim-capability ${capabilityB}`);
+  });
+
+  it('throws for uncaptured claim capability references', () => {
+    expect(() =>
+      substituteClaimCapabilities('rd pass --claim-capability ${CLAIM_CAPABILITY_2}', [
+        capabilityA,
+      ]),
+    ).toThrow(/Missing captured claim capability/);
+  });
+});
+
 describe('substituteRunIds', () => {
   const runA = `rd_${'a'.repeat(32)}`;
   const runB = `rd_${'b'.repeat(32)}`;
@@ -1018,6 +1050,41 @@ describe('substituteRunIds', () => {
   });
 });
 
+describe('substituteRunCapabilities', () => {
+  const capabilityA = `rdrc_${'a'.repeat(32)}_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
+  const capabilityB = `rdrc_${'b'.repeat(32)}_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB`;
+
+  it('${RUN_CAPABILITY} maps to first captured run capability', () => {
+    expect(
+      substituteRunCapabilities('rd collect --run-capability ${RUN_CAPABILITY}', [capabilityA]),
+    ).toBe(`rd collect --run-capability ${capabilityA}`);
+  });
+
+  it('${RUN_CAPABILITY_2} maps to second captured run capability', () => {
+    expect(
+      substituteRunCapabilities('rd pass --run-capability ${RUN_CAPABILITY_2}', [
+        capabilityA,
+        capabilityB,
+      ]),
+    ).toBe(`rd pass --run-capability ${capabilityB}`);
+  });
+
+  it('throws for uncaptured run capability references (fail closed)', () => {
+    expect(() =>
+      substituteRunCapabilities('rd collect --run-capability ${RUN_CAPABILITY}', []),
+    ).toThrow(/Missing captured run capability/);
+    expect(() =>
+      substituteRunCapabilities('rd pass --run-capability ${RUN_CAPABILITY_2}', [capabilityA]),
+    ).toThrow(/Missing captured run capability/);
+  });
+
+  it('leaves commands without placeholders untouched', () => {
+    expect(substituteRunCapabilities('rd collect --run ${RUN_ID}', [])).toBe(
+      'rd collect --run ${RUN_ID}',
+    );
+  });
+});
+
 describe('captureRunIdFromJsonObject', () => {
   it('captures runbookId from runbook_started events in emission order', () => {
     const captured: string[] = [];
@@ -1026,6 +1093,46 @@ describe('captureRunIdFromJsonObject', () => {
     captureRunIdFromJsonObject({ type: 'runbook_started', runbookId: 'rd_2' }, captured);
     captureRunIdFromJsonObject({ type: 'runbook_started' }, captured);
     expect(captured).toEqual(['rd_1', 'rd_2']);
+  });
+});
+
+describe('captureRunCapabilityFromJsonObject', () => {
+  it('captures runCapability from runbook_started events in emission order', () => {
+    const captured: string[] = [];
+    captureRunCapabilityFromJsonObject(
+      { type: 'runbook_started', runCapability: 'rdrc_a_secret' },
+      captured,
+    );
+    captureRunCapabilityFromJsonObject(
+      { type: 'step_entered', runCapability: 'rdrc_x_secret' },
+      captured,
+    );
+    captureRunCapabilityFromJsonObject(
+      { type: 'runbook_started', runCapability: 'rdrc_b_secret' },
+      captured,
+    );
+    captureRunCapabilityFromJsonObject({ type: 'runbook_started' }, captured);
+    expect(captured).toEqual(['rdrc_a_secret', 'rdrc_b_secret']);
+  });
+});
+
+describe('captureClaimCapabilityFromJsonObject', () => {
+  it('captures claim_capability from claim output in emission order', () => {
+    const captured: string[] = [];
+    captureClaimCapabilityFromJsonObject(
+      { kind: 'claim', claim_capability: 'rdcc_a_secret' },
+      captured,
+    );
+    captureClaimCapabilityFromJsonObject(
+      { kind: 'delegate', claim_capability: 'rdcc_x_secret' },
+      captured,
+    );
+    captureClaimCapabilityFromJsonObject(
+      { kind: 'claim', claim_capability: 'rdcc_b_secret' },
+      captured,
+    );
+    captureClaimCapabilityFromJsonObject({ kind: 'claim' }, captured);
+    expect(captured).toEqual(['rdcc_a_secret', 'rdcc_b_secret']);
   });
 });
 
@@ -1168,6 +1275,30 @@ describe('executeCommandSequence timings', () => {
         quiet: true,
       }),
     ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
+  });
+
+  it('allows default-active rd commands after a claim-capability child completion', async () => {
+    const calls: string[][] = [];
+
+    const result = await executeCommandSequence({
+      commands: ['rd pass --claim-capability rdcc_child_secret', 'rd pass'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          return {
+            stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_any' })}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        },
+      },
+    });
+
+    expect(calls).toEqual([['pass', '--claim-capability', 'rdcc_child_secret'], ['pass']]);
+    expect(result.terminalResult).toBe('COMPLETE');
   });
 
   it('hard-fails when a command references ${CAPTURE_ARTIFACT} but no resolver is provided', async () => {

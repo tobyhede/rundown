@@ -2311,10 +2311,12 @@ describe('startRunbook', () => {
     const mockInitSubsteps =
       mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      id: 'sub-id',
-      title: 'Sub Test',
-    });
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+      createdStateResult({
+        id: 'sub-id',
+        title: 'Sub Test',
+      } as unknown as RunbookState),
+    );
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
@@ -2898,10 +2900,12 @@ describe('claimAndLaunch', () => {
     jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
     jest.mocked(core.reconstituteContextVars).mockReturnValue({});
 
-    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      id: 'new-child-id',
-      title: 'Child',
-    });
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+      createdStateResult({
+        id: 'new-child-id',
+        title: 'Child',
+      } as unknown as RunbookState),
+    );
     const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
 
     const mockManager = {
@@ -3025,10 +3029,12 @@ describe('claimAndLaunch', () => {
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
-      create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-        id: 'new-child-id',
-        title: 'Child',
-      }),
+      create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+        createdStateResult({
+          id: 'new-child-id',
+          title: 'Child',
+        } as unknown as RunbookState),
+      ),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       initializeSubsteps:
         mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -3152,10 +3158,12 @@ describe('claimAndLaunch', () => {
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
-      create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-        id: 'new-child-id',
-        title: 'Child',
-      }),
+      create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+        createdStateResult({
+          id: 'new-child-id',
+          title: 'Child',
+        } as unknown as RunbookState),
+      ),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       initializeSubsteps:
         mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),

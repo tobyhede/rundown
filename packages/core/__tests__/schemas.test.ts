@@ -14,6 +14,8 @@ import {
 import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
 
 const VALID_RUN_ID = `rd_${'a'.repeat(32)}`;
+const ORCHESTRATOR_CAPABILITY_HASH = `sha256:${'1'.repeat(64)}`;
+const ORCHESTRATOR_CAPABILITY_ISSUED_AT = '2025-01-01T00:00:00Z';
 
 /**
  * Creates a valid runbook state object for testing.
@@ -30,6 +32,8 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   steps: [],
   startedAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',
+  orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+  orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
   ...overrides,
 });
 

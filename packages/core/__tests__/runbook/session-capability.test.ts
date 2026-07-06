@@ -178,7 +178,6 @@ async function createClaimedChildFixture(
     loaded.claims[claimed.claim.claimId] = { ...claimed.claim, ...overrides };
     await manager.saveSession(loaded);
     const refreshed = loaded.claims[claimed.claim.claimId];
-    if (!refreshed) throw new Error('expected refreshed claim fixture');
     return {
       cwd,
       manager,

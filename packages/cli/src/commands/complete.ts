@@ -87,11 +87,10 @@ export function registerCompleteCommand(program: Command): void {
 
             try {
               const { exitError } = await runSeamTerminal(output, cwd, 'complete', {
-                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
-                ...(claimCapabilityTarget.claimCapability
+                ...(claimCapabilityTarget.claimCapability !== undefined
                   ? { claimCapability: claimCapabilityTarget.claimCapability }
                   : {}),
-                ...(runCapabilityTarget.runCapability
+                ...(runCapabilityTarget.runCapability !== undefined
                   ? { runCapability: runCapabilityTarget.runCapability }
                   : {}),
                 ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
@@ -100,11 +99,10 @@ export function registerCompleteCommand(program: Command): void {
               if (exitError) process.exitCode = 1;
             } catch (error: unknown) {
               await handleTerminalRecovery('complete', error, output, cwd, {
-                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
-                ...(claimCapabilityTarget.claimCapability
+                ...(claimCapabilityTarget.claimCapability !== undefined
                   ? { claimCapability: claimCapabilityTarget.claimCapability }
                   : {}),
-                ...(runCapabilityTarget.runCapability
+                ...(runCapabilityTarget.runCapability !== undefined
                   ? { runCapability: runCapabilityTarget.runCapability }
                   : {}),
                 ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),

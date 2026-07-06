@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DelegationStatusEntrySchema } from '@rundown-org/core';
+import {
+  DelegationStatusEntrySchema,
+  assertClaimId,
+  generateClaimCapability,
+} from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -93,7 +97,7 @@ describe('status command', () => {
 
     await writeFile(
       join(workspace.statePath(), `${state!.id}.json`),
-      JSON.stringify({ ...state, schemaVersion: 2 }, null, 2),
+      JSON.stringify({ ...state, schemaVersion: 99 }, null, 2),
     );
 
     const result = await runCliInProcess('status', workspace);
@@ -620,10 +624,15 @@ Do work.
     const claimAction = findActionOutput(result.stdout);
     const childRunId = claimAction?.run_id;
     const claimId = claimAction?.claim_id;
+    const claimCapability = claimAction?.claim_capability;
     expect(typeof childRunId).toBe('string');
     expect(typeof claimId).toBe('string');
+    expect(typeof claimCapability).toBe('string');
 
-    result = await runCliInProcess(`complete --claim-id ${String(claimId)} --text`, workspace);
+    result = await runCliInProcess(
+      ['complete', '--claim-capability', String(claimCapability), '--text'],
+      workspace,
+    );
     expect(result.exitCode).toBe(0);
 
     const childState = await readRunbookState(workspace, String(childRunId));
@@ -684,7 +693,7 @@ Do work.
     const stateId = state!.id;
     await writeFile(
       join(workspace.statePath(), `${stateId}.json`),
-      JSON.stringify({ ...state, schemaVersion: 2 }),
+      JSON.stringify({ ...state, schemaVersion: 99 }),
     );
 
     const result = await runCliInProcess('complete', workspace);
@@ -702,15 +711,15 @@ Do work.
     const parentId = sessionBefore.defaultStack.at(-1);
     expect(parentId).toBeDefined();
 
+    const claimId = assertClaimId('rdclm_abcdefghijklmnopQRSTUV');
+    const claimCapability = generateClaimCapability(claimId);
     const result = await runCliInProcess(
-      ['complete', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV', '--text'],
+      ['complete', '--claim-capability', claimCapability, '--text'],
       workspace,
     );
 
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist',
-    );
+    expect(`${result.stdout}${result.stderr}`).toContain(`Claim id ${claimId} does not exist`);
     const sessionAfter = await readSession(workspace);
     expect(sessionAfter.defaultStack).toEqual([parentId]);
   });

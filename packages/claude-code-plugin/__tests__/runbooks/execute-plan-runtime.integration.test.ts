@@ -16,7 +16,12 @@ import { mkdtempSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
+import {
+  runCli,
+  activeRunCapabilityFromRun,
+  claimCapabilityFromOutput,
+  latestRunCapabilityFromOutput,
+} from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,13 +131,10 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
     return JSON.parse(result.stdout) as StatusResponse;
   }
 
-  function activeRunId(): string {
-    return activeRunIdFromStatus(runCli(['status'], tempDir));
-  }
-
   function driveToImplementDelegate(): { token: string } {
     const start = runCli(['run', '--prompted', '--allow-all', 'exec-plan-harness'], tempDir);
     expect(start.exitCode).toBe(0);
+    let runCapability = activeRunCapabilityFromRun(start);
     for (let i = 0; i < 12; i += 1) {
       const current = status();
       const pending = current.delegations?.find(
@@ -145,7 +147,9 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
       ) {
         return { token: pending.token };
       }
-      runCli(['pass', '--run', activeRunId()], tempDir);
+      const advance = runCli(['pass', '--run-capability', runCapability], tempDir);
+      expect(advance.exitCode).toBe(0);
+      runCapability = latestRunCapabilityFromOutput(advance.stdout) ?? runCapability;
     }
     throw new Error('Did not reach execute-plan implement DELEGATE step');
   }
@@ -166,13 +170,17 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
     expect(claimEvent).toBeDefined();
     const claimId = claimEvent?.claim_id;
     expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
+    const claimCapability = claimCapabilityFromOutput(claim.stdout);
+    expect(claimCapability).toEqual(expect.stringMatching(/^rdcc_/));
 
     expect(
       enteredStep(parseJsonEvents(claim.stdout), 'implement-plan.runbook.md', '1'),
     ).toBeDefined();
 
     // Step 2 of implement-plan rehydrates the inherited PlanPath artifact.
-    const advance2 = parseJsonEvents(runCli(['pass', '--claim-id', claimId!], tempDir).stdout);
+    const advance2Result = runCli(['pass', '--claim-capability', claimCapability!], tempDir);
+    expect(advance2Result.exitCode).toBe(0);
+    const advance2 = parseJsonEvents(advance2Result.stdout);
     const step2 = enteredStep(advance2, 'implement-plan.runbook.md', '2');
     expect(step2).toBeDefined();
     const step2Artifacts = step2!.artifacts as Record<string, unknown> | undefined;

@@ -11,6 +11,7 @@ import {
   findActionOutput,
   parseConcatenatedJson,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -39,7 +40,9 @@ describe('complete command wiring', () => {
     expect([...byLong.keys()]).toEqual(
       expect.arrayContaining(['--claim-id', '--claim-capability', '--text']),
     );
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Legacy claim id; mutations require --claim-capability',
+    );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -56,13 +59,13 @@ describe('complete command', () => {
     await workspace.cleanup();
   });
 
-  describe('--run explicit targeting', () => {
-    it('forces the named stack-member run terminal via complete --run <id>', async () => {
+  describe('--run-capability explicit targeting', () => {
+    it('forces the named stack-member run terminal via complete --run-capability <capability>', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).not.toBeNull();
 
-      const result = await runCliInProcess(`complete --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(await withRunTarget(['complete'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await readRunbookState(workspace, active!.id);

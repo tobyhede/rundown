@@ -12,9 +12,9 @@ scenarios:
       - rd run --prompted orchestrator.runbook.md
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
-      - rd pass --claim-id ${CLAIM_ID_2}
-      - rd pass --claim-id ${CLAIM_ID}
-      - rd collect --run ${RUN_ID}
+      - rd pass --claim-capability ${CLAIM_CAPABILITY_2}
+      - rd pass --claim-capability ${CLAIM_CAPABILITY}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     result: COMPLETE
 ---
 

@@ -12,13 +12,13 @@ scenarios:
       - true delegation-child-manual-one-step.runbook.md
       - rd run --prompted delegate-open-children-guard.runbook.md
       - rd claim ${TOKEN}
-      - "! rd pass --run ${RUN_ID}"
+      - "! rd pass --run-capability ${RUN_CAPABILITY}"
     expect:
       errors:
         - code: OPEN_DELEGATED_CHILDREN
           command: pass
   bare-pass-refused-without-named-authority:
-    description: A bare rd pass with no --run/--claim-id is refused with ACTOR_CONTEXT_REQUIRED on a delegating run
+    description: A bare rd pass with no --run-capability/--claim-capability is refused with ACTOR_CONTEXT_REQUIRED on a delegating run
     commands:
       - true delegation-child-manual-one-step.runbook.md
       - rd run --prompted delegate-open-children-guard.runbook.md
@@ -33,7 +33,7 @@ scenarios:
       - true delegation-child-manual-one-step.runbook.md
       - rd run --prompted delegate-open-children-guard.runbook.md
       - rd claim ${TOKEN}
-      - "! rd fail --run ${RUN_ID}"
+      - "! rd fail --run-capability ${RUN_CAPABILITY}"
     expect:
       errors:
         - code: OPEN_DELEGATED_CHILDREN
@@ -44,7 +44,7 @@ scenarios:
 
 A bare `rd pass` / `rd fail` must not advance the parent while a claimed
 delegated child is still open. Core refuses the unsafe parent transition with
-`OPEN_DELEGATED_CHILDREN`; the agent must resolve the child with `--claim-id`
+`OPEN_DELEGATED_CHILDREN`; the agent must resolve the child with `--claim-capability`
 (or collect the delegated children) before advancing the parent.
 
 ## 1. Delegated child

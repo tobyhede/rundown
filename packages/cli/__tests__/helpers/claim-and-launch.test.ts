@@ -54,6 +54,17 @@ const EXISTING_CHILD_RUN_ID = brandRunIdForTest('rd_3333333333333333333333333333
 const ORPHAN_RUN_ID = brandRunIdForTest('rd_44444444444444444444444444444444');
 const EXISTING_SESSION_CHILD_ID = brandRunIdForTest('rd_55555555555555555555555555555555');
 const NEW_CHILD_ID = brandRunIdForTest('rd_66666666666666666666666666666666');
+const TEST_RUN_CAPABILITY =
+  'rdrc_66666666666666666666666666666666_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+function createdStateResult(
+  state: RunbookState,
+): Awaited<ReturnType<RunbookStateManager['create']>> {
+  return Object.defineProperties(state, {
+    state: { value: state, enumerable: false },
+    runCapability: { value: TEST_RUN_CAPABILITY, enumerable: false },
+  }) as Awaited<ReturnType<RunbookStateManager['create']>>;
+}
 
 function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
   return {
@@ -1582,11 +1593,10 @@ describe('claimAndLaunch', () => {
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
-    const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
-    mockCreate.mockResolvedValue({
-      id: NEW_CHILD_ID,
-      title: 'Child',
-    });
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>();
+    mockCreate.mockResolvedValue(
+      createdStateResult({ id: NEW_CHILD_ID, title: 'Child' } as unknown as RunbookState),
+    );
 
     const mockClaimRunbook = mockClaimRunbookSuccess();
 
@@ -1844,9 +1854,9 @@ describe('claimAndLaunch', () => {
         load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
           parentState as unknown as RunbookState,
         ),
-        create: mockFn<
-          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
-        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+          createdStateResult({ id: NEW_CHILD_ID, title: 'Child' } as unknown as RunbookState),
+        ),
         update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -1972,9 +1982,9 @@ describe('claimAndLaunch', () => {
         load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
           parentState as unknown as RunbookState,
         ),
-        create: mockFn<
-          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
-        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+          createdStateResult({ id: NEW_CHILD_ID, title: 'Child' } as unknown as RunbookState),
+        ),
         update: mockUpdate,
         delete: mockDelete,
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
@@ -2119,9 +2129,9 @@ describe('claimAndLaunch', () => {
         load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
           parentState as unknown as RunbookState,
         ),
-        create: mockFn<
-          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
-        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+          createdStateResult({ id: NEW_CHILD_ID, title: 'Child' } as unknown as RunbookState),
+        ),
         update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),

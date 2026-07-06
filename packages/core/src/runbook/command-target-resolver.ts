@@ -712,6 +712,8 @@ export type TerminalTargetResolution =
  * @param options - Terminal command and explicit claim id.
  * @param options.command - The terminal command (`complete` / `stop`) requested.
  * @param options.claimId - Explicit claim id from `--claim-id`.
+ * @param options.claimCapability - Explicit claim capability from
+ *   `--claim-capability`.
  * @returns Live-claim, stale-claim, or terminal confirm/conflict resolution.
  */
 export async function resolveTerminalTarget(

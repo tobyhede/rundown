@@ -40,6 +40,13 @@ import {
 
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
 
+function readClaimRecord(
+  claims: Record<string, ClaimRecord>,
+  claimId: ClaimId,
+): ClaimRecord | undefined {
+  return Object.hasOwn(claims, claimId) ? claims[claimId] : undefined;
+}
+
 function mintClaimCapability(claimId: ClaimId): {
   readonly claimCapability: ClaimCapability;
   readonly claimCapabilityHash: CapabilityHash;
@@ -358,9 +365,12 @@ export class SessionService {
     return this.withLock(async () => {
       const parsed = parseClaimCapability(capability);
       const session = await this.manager.loadSession();
-      const claim = session.claims[parsed.claimId];
-      const expected = claim?.claimCapabilityHash;
-      if (!claim || expected === undefined || !verifyCapabilitySecret(parsed.secret, expected)) {
+      const claim = readClaimRecord(session.claims, parsed.claimId);
+      if (claim === undefined) {
+        return { status: 'missing', claimId: parsed.claimId };
+      }
+      const expected = claim.claimCapabilityHash;
+      if (expected === undefined || !verifyCapabilitySecret(parsed.secret, expected)) {
         return { status: 'missing', claimId: parsed.claimId };
       }
       const now = new Date().toISOString();
@@ -400,8 +410,8 @@ export class SessionService {
   > {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const claim = session.claims[claimId];
-      if (!claim) return { status: 'missing', claimId };
+      const claim = readClaimRecord(session.claims, claimId);
+      if (claim === undefined) return { status: 'missing', claimId };
       delete session.claims[claimId];
       await this.manager.saveSession(session);
       return { status: 'released', claim, reason };

@@ -15,7 +15,6 @@ import {
   parseClaimCapability,
   parseRunCapability,
   type ClaimCapability,
-  type CapabilityHash,
 } from '../../src/runbook/capability.js';
 import {
   assertClaimId,

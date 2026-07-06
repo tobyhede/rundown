@@ -271,6 +271,7 @@ export type ClaimResult =
  * @param emitter - Event emitter for publishing execution events
  * @param runbookState - Current runbook state with title and description
  * @param prompted - Whether the runbook is running in prompted mode
+ * @param runCapability - Capability for controlling the emitted runbook
  */
 function emitRunbookStarted(
   emitter: ExecutionEventEmitter,

@@ -1,4 +1,9 @@
-import { assertRunId, assertClaimId, assertDelegationTokenHash } from '@rundown-org/core';
+import {
+  assertRunCapability,
+  assertRunId,
+  assertClaimId,
+  assertDelegationTokenHash,
+} from '@rundown-org/core';
 import { readLifecycleCallerEvidence } from '../../src/helpers/caller-evidence.js';
 
 describe('readLifecycleCallerEvidence', () => {
@@ -16,10 +21,21 @@ describe('readLifecycleCallerEvidence', () => {
     expect(readLifecycleCallerEvidence({ claim })).toEqual({ kind: 'claim', ...claim });
   });
 
-  it('maps a validated --run id to run_controller evidence naming that run', () => {
+  it('maps a validated --run id to run_identifier evidence naming that run', () => {
     const runId = assertRunId('rd_22222222222222222222222222222222');
 
-    expect(readLifecycleCallerEvidence({ runId })).toEqual({ kind: 'run_controller', runId });
+    expect(readLifecycleCallerEvidence({ runId })).toEqual({ kind: 'run_identifier', runId });
+  });
+
+  it('maps a validated --run-capability to run_capability evidence naming that run', () => {
+    const runCapability = assertRunCapability(
+      `rdrc_${'2'.repeat(32)}_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
+    );
+
+    expect(readLifecycleCallerEvidence({ runCapability })).toEqual({
+      kind: 'run_capability',
+      runId: assertRunId('rd_22222222222222222222222222222222'),
+    });
   });
 
   it('gives claim evidence precedence when both inputs are somehow present', () => {

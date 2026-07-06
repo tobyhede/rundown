@@ -26,6 +26,8 @@ const TEST_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 const OTHER_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
 const PARENT_RUN_ID = `rd_${'1'.repeat(32)}`;
 const CHILD_RUN_ID = `rd_${'2'.repeat(32)}`;
+const ORCHESTRATOR_CAPABILITY_HASH = `sha256:${'1'.repeat(64)}`;
+const ORCHESTRATOR_CAPABILITY_ISSUED_AT = '2026-04-23T00:00:00.000Z';
 
 function runState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
@@ -40,6 +42,9 @@ function runState(overrides: Partial<RunbookState> = {}): RunbookState {
     startedAt: '2026-04-23T00:00:00.000Z',
     updatedAt: '2026-04-23T00:00:00.000Z',
     lifecycle: 'running',
+    schemaVersion: 2,
+    orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+    orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
     ...overrides,
   } as RunbookState;
 }

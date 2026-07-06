@@ -10,8 +10,8 @@ scenarios:
     commands:
       - rd run --prompted delegate-substep-list-child-fails.runbook.md
       - rd claim ${TOKEN}
-      - rd fail --claim-id ${CLAIM_ID}
-      - rd collect --run ${RUN_ID}
+      - rd fail --claim-capability ${CLAIM_CAPABILITY}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     expect:
       result: STOP
       steps:

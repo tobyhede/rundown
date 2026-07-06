@@ -10,6 +10,7 @@ import {
   buildFrameKey,
   deriveActiveFrame,
 } from '../../src/runbook/targeting.js';
+import { assertCapabilityHash } from '../../src/runbook/capability.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
 import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
@@ -17,6 +18,8 @@ import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
 const LOCAL_RUN_ID = brandRunIdForTest(`rd_${'3'.repeat(32)}`);
+const ORCHESTRATOR_CAPABILITY_HASH = assertCapabilityHash(`sha256:${'1'.repeat(64)}`);
+const ORCHESTRATOR_CAPABILITY_ISSUED_AT = '2026-01-01T00:00:00.000Z';
 
 describe('DelegationLinkage extended fields', () => {
   function makeSchemaState(parentLinkage: Record<string, unknown>): Record<string, unknown> {
@@ -32,6 +35,10 @@ describe('DelegationLinkage extended fields', () => {
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      lifecycle: 'running',
+      schemaVersion: 2,
+      orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+      orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
       parentLinkage,
     };
   }
@@ -106,7 +113,7 @@ describe('DelegationLinkage extended fields', () => {
       delete parentLinkage[field];
       const state = {
         ...makeSchemaState(parentLinkage),
-        schemaVersion: 1,
+        schemaVersion: 2,
         lifecycle: 'running',
         frontmatterOutputs: [],
       };
@@ -170,6 +177,10 @@ describe('parentLinkage discriminated union schema', () => {
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      lifecycle: 'running',
+      schemaVersion: 2,
+      orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+      orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
       ...overrides,
     };
   }
@@ -291,6 +302,10 @@ describe('frame identity derivation for propagation', () => {
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      lifecycle: 'running',
+      schemaVersion: 2,
+      orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+      orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
       ...overrides,
     };
   }

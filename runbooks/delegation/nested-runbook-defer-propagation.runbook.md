@@ -11,7 +11,7 @@ scenarios:
     commands:
       - rd run nested-runbook-defer-propagation.runbook.md
       - rd claim ${TOKEN}
-      - rd collect --run ${RUN_ID}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     expect:
       result: COMPLETE
       steps:

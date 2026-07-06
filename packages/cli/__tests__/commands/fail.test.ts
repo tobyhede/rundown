@@ -39,7 +39,9 @@ describe('fail command wiring', () => {
     expect(byLong.get('--index')?.description).toBe(
       'FOR loop iteration to target (requires --step)',
     );
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Legacy claim id; mutations require --claim-capability',
+    );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -94,13 +96,11 @@ describe('fail command', () => {
     });
   });
 
-  describe('--run explicit targeting', () => {
-    it('applies fail --run <id> to the named running run', async () => {
+  describe('--run-capability explicit targeting', () => {
+    it('applies fail --run-capability <capability> to the named running run', async () => {
       await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
-      const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
 
-      const result = await runCliInProcess(`fail --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -304,7 +304,6 @@ Do work.
         throw new Error('Expected claim output to include run_id and claim_id strings');
       }
       const child1Id = child1Output.run_id;
-      const claimId1 = child1Output.claim_id;
       const claimCapability1 = child1Output.claim_capability;
       if (typeof claimCapability1 !== 'string') {
         throw new Error('Expected claim output to include claim_capability string');

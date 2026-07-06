@@ -114,8 +114,11 @@ export async function resolveTerminalReleaseModeForRunbook(
  * @param cwd - Current working directory
  * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.claimCapability - Claim capability to resolve instead of the
+ *   default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
  *   stack; mutually exclusive with `claimId` (enforced upstream)
+ * @param options.runCapability - Run capability proof for `options.runId`
  * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
  *   was resolved and a goto context is available; `{ kind: 'none' }` when no
  *   active runbook exists; `{ kind: 'stale_claim' | 'terminal_claim' }` when

@@ -9,7 +9,7 @@ scenarios:
     commands:
       - rd run delegate-nested.runbook.md
       - rd claim ${TOKEN}
-      - rd collect --run ${RUN_ID}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     result: COMPLETE
 ---
 

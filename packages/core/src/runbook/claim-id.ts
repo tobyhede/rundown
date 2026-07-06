@@ -147,6 +147,8 @@ export function generateClaimId(): ClaimId {
  * @param childRunId - Child runbook state id controlled by the claim
  * @param linkage - Delegation linkage from the child runbook
  * @param now - ISO timestamp for claim creation and update time
+ * @param claimCapabilityHash - Optional stored hash of the claim capability secret
+ * @param leaseExpiresAt - Optional ISO timestamp at which the claim lease expires
  * @returns Persisted claim record
  */
 export function createClaimRecord(

@@ -15,6 +15,8 @@ import { makeRunbookStateSchema } from '../../src/schemas.js';
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'ctx';
 const URI = `rd://artifacts/${CTX}/${RUN_ID}/plan.json`;
+const ORCHESTRATOR_CAPABILITY_HASH = `sha256:${'a'.repeat(64)}`;
+const ORCHESTRATOR_CAPABILITY_ISSUED_AT = '2026-07-05T00:00:00.000Z';
 const RECORD = ArtifactRecordSchema.parse({
   kind: 'artifact-record',
   uri: URI,
@@ -100,6 +102,8 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
       frameEntryCounts: {},
       startedAt: '2026-05-25T00:00:00.000Z',
       updatedAt: '2026-05-25T00:00:00.000Z',
+      orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+      orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
       frontmatterOutputs: [],
       lifecycle: 'running',
       schemaVersion: 1,

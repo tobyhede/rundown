@@ -107,7 +107,7 @@ Commands:
   delegate [options] [runbook]  Create a delegation token for a child runbook
   claim [options] <token>       Claim a delegation token and launch the child
                                 runbook
-  abort [options] <token>       Cancel a delegation token
+  abort [options] [token]       Cancel a delegation token
   collect [options]             Collect delegation results and fire aggregation
                                 transition
   artifact                      Inspect Rundown artifact aliases
@@ -151,13 +151,18 @@ Usage: rundown pass|yes [options]
 Mark current step as passed (triggers PASS transition)
 
 Options:
-  --step <stepId>       Target specific substep
-  --index <number>      FOR loop iteration to target (requires --step)
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --step <stepId>                  Target specific substep
+  --index <number>                 FOR loop iteration to target (requires
+                                   --step)
+  --claim-id <claimId>             Legacy claim id; mutations require
+                                   --claim-capability
+  --claim-capability <capability>  Prove authority over a claimed delegated
+                                   child
+  --run-capability <capability>    Prove orchestrator authority over a run
+  --run <runId>                    Name the run you control (explicit
+                                   orchestrator targeting)
+  --text                           Output as human-readable text
+  -h, --help                       display help for command
 ```
 
 ### `rundown fail`
@@ -168,13 +173,18 @@ Usage: rundown fail|no [options]
 Mark current step as failed (triggers FAIL transition)
 
 Options:
-  --step <stepId>       Target specific substep
-  --index <number>      FOR loop iteration to target (requires --step)
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --step <stepId>                  Target specific substep
+  --index <number>                 FOR loop iteration to target (requires
+                                   --step)
+  --claim-id <claimId>             Legacy claim id; mutations require
+                                   --claim-capability
+  --claim-capability <capability>  Prove authority over a claimed delegated
+                                   child
+  --run-capability <capability>    Prove orchestrator authority over a run
+  --run <runId>                    Name the run you control (explicit
+                                   orchestrator targeting)
+  --text                           Output as human-readable text
+  -h, --help                       display help for command
 ```
 
 ### `rundown complete`
@@ -185,14 +195,18 @@ Usage: rundown complete [options] [message]
 Force early completion of current runbook (runbooks auto-complete on final step)
 
 Arguments:
-  message               Completion message
+  message                          Completion message
 
 Options:
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --claim-id <claimId>             Legacy claim id; mutations require
+                                   --claim-capability
+  --claim-capability <capability>  Prove authority over a claimed delegated
+                                   child
+  --run-capability <capability>    Prove orchestrator authority over a run
+  --run <runId>                    Name the run you control (explicit
+                                   orchestrator targeting)
+  --text                           Output as human-readable text
+  -h, --help                       display help for command
 ```
 
 ### `rundown goto`
@@ -203,12 +217,16 @@ Usage: rundown goto [options] <step>
 Jump to specific step (e.g., "3" or "3.1" for substep)
 
 Options:
-  --index <number>      FOR loop iteration to target
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --index <number>                 FOR loop iteration to target
+  --claim-id <claimId>             Legacy claim id; mutations require
+                                   --claim-capability
+  --claim-capability <capability>  Prove authority over a claimed delegated
+                                   child
+  --run-capability <capability>    Prove orchestrator authority over a run
+  --run <runId>                    Name the run you control (explicit
+                                   orchestrator targeting)
+  --text                           Output as human-readable text
+  -h, --help                       display help for command
 ```
 
 ### `rundown status`
@@ -219,7 +237,7 @@ Usage: rundown status [options]
 Show current runbook state
 
 Options:
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
+  --claim-id <claimId>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -232,14 +250,18 @@ Usage: rundown stop [options] [message]
 Abort current runbook
 
 Arguments:
-  message               Stop message
+  message                          Stop message
 
 Options:
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --claim-id <claimId>             Legacy claim id; mutations require
+                                   --claim-capability
+  --claim-capability <capability>  Prove authority over a claimed delegated
+                                   child
+  --run-capability <capability>    Prove orchestrator authority over a run
+  --run <runId>                    Name the run you control (explicit
+                                   orchestrator targeting)
+  --text                           Output as human-readable text
+  -h, --help                       display help for command
 ```
 
 ### `rundown ls`
@@ -264,7 +286,7 @@ Usage: rundown stash [options]
 Pause runbook enforcement, preserve state
 
 Options:
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
+  --claim-id <claimId>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -277,7 +299,7 @@ Usage: rundown pop [options]
 Resume enforcement from stashed runbook
 
 Options:
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
+  --claim-id <claimId>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -480,27 +502,28 @@ Usage: rundown delegate [options] [runbook]
 Create a delegation token for a child runbook
 
 Options:
-  --step <stepId>              Step to delegate (e.g., 1.1 or 1.2.1 for
-                               step.iteration.substep)
-  --index <number>             FOR loop iteration to target (requires --step)
-  --retry                      Retry an existing delegation: cancel and re-issue
-                               with a fresh token
-  --run <runId>                Name the run you control (explicit orchestrator
-                               targeting)
-  --text                       Output as human-readable text
-  -h, --help                   display help for command
+  --step <stepId>                Step to delegate (e.g., 1.1 or 1.2.1 for
+                                 step.iteration.substep)
+  --index <number>               FOR loop iteration to target (requires --step)
+  --retry                        Retry an existing delegation: cancel and
+                                 re-issue with a fresh token
+  --run-capability <capability>  Prove orchestrator authority over a run
+  --run <runId>                  Name the run you control (explicit orchestrator
+                                 targeting)
+  --text                         Output as human-readable text
+  -h, --help                     display help for command
 
 Input options:
-  --input <key=value>          Set input for child context (repeatable, omit
-                               =value to inherit from env) (default: [])
-  --input-json <key=json>      Set input with JSON value (repeatable) (default:
-                               [])
-  --input-file <path>          Load inputs from YAML file (repeatable) (default:
-                               [])
-  --artifacts <key=uri>        Supply an input artifact by rd:// URI
-                               (repeatable) (default: [])
-  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
-                               URIs (repeatable) (default: [])
+  --input <key=value>            Set input for child context (repeatable, omit
+                                 =value to inherit from env) (default: [])
+  --input-json <key=json>        Set input with JSON value (repeatable)
+                                 (default: [])
+  --input-file <path>            Load inputs from YAML file (repeatable)
+                                 (default: [])
+  --artifacts <key=uri>          Supply an input artifact by rd:// URI
+                                 (repeatable) (default: [])
+  --artifacts-json <key=json>    Supply input artifacts as a JSON array of rd://
+                                 URIs (repeatable) (default: [])
 ```
 
 ### `rundown claim`
@@ -530,14 +553,19 @@ Input options:
 ### `rundown abort`
 
 ```text
-Usage: rundown abort [options] <token>
+Usage: rundown abort [options] [token]
 
 Cancel a delegation token
 
 Options:
-  --force     Force cancel even if delegation is claimed (stops child run)
-  --text      Output as human-readable text
-  -h, --help  display help for command
+  --force                       Force cancel even if delegation is claimed
+                                (stops child run)
+  --claim-id <claimId>          Release an abandoned claimed child during
+                                recovery
+  --operator-override <reason>  Operator recovery override reason (currently:
+                                abandoned-child)
+  --text                        Output as human-readable text
+  -h, --help                    display help for command
 ```
 
 ### `rundown collect`
@@ -548,14 +576,19 @@ Usage: rundown collect [options]
 Collect delegation results and fire aggregation transition
 
 Options:
-  --step <stepId>       Target specific DELEGATE step scope (e.g., "1" or "1.2")
-  --index <number>      FOR loop iteration to target (requires --step on a FOR
-                        step)
-  --claim-capability <claimCapability>  Target a claimed delegated child runbook
-  --run <runId>         Name the run you control (explicit orchestrator
-                        targeting)
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --step <stepId>                  Target specific DELEGATE step scope (e.g.,
+                                   "1" or "1.2")
+  --index <number>                 FOR loop iteration to target (requires --step
+                                   on a FOR step)
+  --claim-id <claimId>             Legacy claim id; mutations require
+                                   --claim-capability
+  --claim-capability <capability>  Prove authority over a claimed delegated
+                                   child
+  --run-capability <capability>    Prove orchestrator authority over a run
+  --run <runId>                    Name the run you control (explicit
+                                   orchestrator targeting)
+  --text                           Output as human-readable text
+  -h, --help                       display help for command
 ```
 
 ### `rundown artifact`

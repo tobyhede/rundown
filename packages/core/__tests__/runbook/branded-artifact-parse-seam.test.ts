@@ -13,6 +13,8 @@ const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'context-a';
 const KEY = 'plan.json';
 const URI = `rd://artifacts/${CTX}/${RUN_ID}/${KEY}`;
+const ORCHESTRATOR_CAPABILITY_HASH = `sha256:${'a'.repeat(64)}`;
+const ORCHESTRATOR_CAPABILITY_ISSUED_AT = '2026-07-05T00:00:00.000Z';
 
 const PLAIN_ARTIFACT = {
   kind: 'artifact-record',
@@ -39,6 +41,8 @@ function validStateWithVariables(variables: Record<string, unknown>): Record<str
     frameEntryCounts: {},
     startedAt: '2026-05-25T00:00:00.000Z',
     updatedAt: '2026-05-25T00:00:00.000Z',
+    orchestratorCapabilityHash: ORCHESTRATOR_CAPABILITY_HASH,
+    orchestratorCapabilityIssuedAt: ORCHESTRATOR_CAPABILITY_ISSUED_AT,
     frontmatterOutputs: [],
     lifecycle: 'running',
     schemaVersion: 1,

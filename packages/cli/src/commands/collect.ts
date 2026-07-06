@@ -12,6 +12,7 @@ import {
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
+  type RunCapability,
   type RunId,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
@@ -102,7 +103,6 @@ export function registerCollectCommand(program: Command): void {
             );
             if (!runTarget.ok) return;
             const contextResult = await buildTransitionContext(output, cwd, {
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(claimCapabilityTarget.claimCapability !== undefined
                 ? { claimCapability: claimCapabilityTarget.claimCapability }
                 : {}),
@@ -167,7 +167,7 @@ interface CollectOptions {
   /** Validated `--run` run id supplying run-controller caller evidence. */
   runId?: RunId;
   /** Validated `--run-capability` supplying run-controller caller evidence. */
-  runCapability?: import('@rundown-org/core').RunCapability;
+  runCapability?: RunCapability;
 }
 
 /**

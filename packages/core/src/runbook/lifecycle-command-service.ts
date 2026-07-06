@@ -1456,21 +1456,6 @@ export class RunbookLifecycleCommandService {
     };
   }
 
-  // Run-targeted terminal: resolve the named session-stack run, then feed it to
-  // the existing inline force-terminal plan as the root anchor. Naming a run
-  // outside the stack (or a terminal one) refuses as `unknown_run` via the
-  // shared stack-member resolution.
-  async #driveTerminalRun(
-    input: LifecycleTerminalInput,
-    runId: RunId,
-  ): Promise<LifecycleTerminalOutcome> {
-    const member = await this.#deps.sessionService.resolveRunningStackMember(runId);
-    if (member.kind !== 'running') {
-      return unknownRunRefusal(runId, member);
-    }
-    return this.#driveTerminalBare(input, member.state);
-  }
-
   async #driveTerminalRunCapability(
     input: LifecycleTerminalInput,
     runCapability: RunCapability,

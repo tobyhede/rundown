@@ -7,13 +7,13 @@ tags:
 
 scenarios:
   pass-after-parent-complete:
-    description: pass --claim-id fails after the parent has completed
+    description: pass --claim-capability fails after the parent has completed
     commands:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
-      - "! rd pass --claim-id ${CLAIM_ID}"
+      - rd complete --run-capability ${RUN_CAPABILITY}
+      - "! rd pass --claim-capability ${CLAIM_CAPABILITY}"
     expect:
       result: COMPLETE
       errors:
@@ -21,13 +21,13 @@ scenarios:
           command: pass
           error: parent-ended
   fail-after-parent-complete:
-    description: fail --claim-id fails after the parent has completed
+    description: fail --claim-capability fails after the parent has completed
     commands:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
-      - "! rd fail --claim-id ${CLAIM_ID}"
+      - rd complete --run-capability ${RUN_CAPABILITY}
+      - "! rd fail --claim-capability ${CLAIM_CAPABILITY}"
     expect:
       result: COMPLETE
       errors:
@@ -35,13 +35,13 @@ scenarios:
           command: fail
           error: parent-ended
   goto-after-parent-complete:
-    description: goto --claim-id fails after the parent has completed
+    description: goto --claim-capability fails after the parent has completed
     commands:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
-      - "! rd goto 3 --claim-id ${CLAIM_ID}"
+      - rd complete --run-capability ${RUN_CAPABILITY}
+      - "! rd goto 3 --claim-capability ${CLAIM_CAPABILITY}"
     expect:
       result: COMPLETE
       errors:
@@ -49,13 +49,13 @@ scenarios:
           command: goto
           error: parent-ended
   stop-after-parent-complete:
-    description: stop --claim-id fails after the parent has completed
+    description: stop --claim-capability fails after the parent has completed
     commands:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
-      - "! rd stop --claim-id ${CLAIM_ID}"
+      - rd complete --run-capability ${RUN_CAPABILITY}
+      - "! rd stop --claim-capability ${CLAIM_CAPABILITY}"
     expect:
       result: COMPLETE
       errors:
@@ -63,13 +63,13 @@ scenarios:
           command: stop
           error: parent-ended
   complete-after-parent-complete:
-    description: complete --claim-id fails after the parent has completed
+    description: complete --claim-capability fails after the parent has completed
     commands:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
-      - "! rd complete --claim-id ${CLAIM_ID}"
+      - rd complete --run-capability ${RUN_CAPABILITY}
+      - "! rd complete --claim-capability ${CLAIM_CAPABILITY}"
     expect:
       result: COMPLETE
       errors:

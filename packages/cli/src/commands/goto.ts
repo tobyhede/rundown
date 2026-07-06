@@ -73,7 +73,6 @@ export function registerGotoCommand(program: Command): void {
             );
             if (!runTarget.ok) return;
             const contextResult = await buildGotoContext(output, cwd, {
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
               ...(claimCapabilityTarget.claimCapability !== undefined
                 ? { claimCapability: claimCapabilityTarget.claimCapability }
                 : {}),

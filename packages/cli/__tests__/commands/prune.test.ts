@@ -554,9 +554,16 @@ rd echo --result pass
       expect(claimResult.exitCode).toBe(0);
       const claimOutput = findActionOutput(claimResult.stdout);
       const claimId = claimOutput?.claim_id;
+      const claimCapability = claimOutput?.claim_capability;
       if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
+      if (typeof claimCapability !== 'string') {
+        throw new Error('expected claim_capability from claim output');
+      }
 
-      const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      const finish = await runCliInProcess(
+        ['pass', '--claim-capability', claimCapability],
+        workspace,
+      );
       expect(finish.exitCode).toBe(0);
       const runId = claimOutput?.run_id;
       if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
@@ -697,6 +704,11 @@ Do the thing.
               parentEntry: 1,
               claimedAt: '2026-07-03T00:00:00.000Z',
               updatedAt: '2026-07-03T00:00:00.000Z',
+              claimCapabilityHash: `sha256:${'b'.repeat(64)}`,
+              leaseOwnerHash: `sha256:${'b'.repeat(64)}`,
+              leaseAcquiredAt: '2026-07-03T00:00:00.000Z',
+              leaseHeartbeatAt: '2026-07-03T00:00:00.000Z',
+              leaseExpiresAt: '2026-07-03T00:05:00.000Z',
             },
           },
         }),

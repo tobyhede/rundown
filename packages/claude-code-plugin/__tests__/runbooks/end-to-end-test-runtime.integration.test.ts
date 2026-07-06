@@ -9,7 +9,7 @@
  * - inline launch of the local `write-file` and `review-and-collate` children,
  * - delegation-token issue at each `DELEGATE` substep,
  * - `rundown claim` launching the delegated `review-file` child,
- * - claim-id-targeted `rundown pass` advancing a prompted claimed child,
+ * - claim-capability-targeted `rundown pass` advancing a prompted claimed child,
  * - report-then-collect aggregation: the child's completion REPORTS its outcome
  *   and the parent only resolves the substep + advances on an explicit `rundown collect`,
  * - artifact alias handoff (the `PlanPath` produced by `write-file` flows into
@@ -26,7 +26,12 @@ import { mkdtempSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
+import {
+  runCli,
+  activeRunCapabilityFromRun,
+  claimCapabilityFromOutput,
+  latestRunCapabilityFromOutput,
+} from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,14 +117,14 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  /** Advance the active runbook with a run-targeted `rundown pass` and collect its events. */
-  function pass(): JsonEvent[] {
-    const result = runCli(['pass', '--run', activeRunId()], tempDir);
-    return parseJsonEvents(result.stdout);
-  }
-
-  function activeRunId(): string {
-    return activeRunIdFromStatus(runCli(['status'], tempDir));
+  /** Advance the active runbook with a capability-targeted `rundown pass` and collect its events. */
+  function pass(runCapability: string): { events: JsonEvent[]; runCapability: string } {
+    const result = runCli(['pass', '--run-capability', runCapability], tempDir);
+    expect(result.exitCode).toBe(0);
+    return {
+      events: parseJsonEvents(result.stdout),
+      runCapability: latestRunCapabilityFromOutput(result.stdout) ?? runCapability,
+    };
   }
 
   function status(): StatusResponse {
@@ -134,9 +139,10 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
    * accumulated events. Bounded so a flow regression fails loudly instead of
    * hanging.
    */
-  function driveToReviewDelegate(): { token: string; events: JsonEvent[] } {
+  function driveToReviewDelegate(): { token: string; events: JsonEvent[]; runCapability: string } {
     const start = runCli(['run', '--prompted', 'rundown:end-to-end-test'], tempDir);
     expect(start.exitCode).toBe(0);
+    let runCapability = activeRunCapabilityFromRun(start);
     const events = parseJsonEvents(start.stdout);
 
     for (let i = 0; i < 12; i += 1) {
@@ -149,9 +155,11 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
         current.file?.endsWith('review-and-collate.runbook.md') &&
         current.position?.current === '1'
       ) {
-        return { token: pending.token, events };
+        return { token: pending.token, events, runCapability };
       }
-      events.push(...pass());
+      const advance = pass(runCapability);
+      events.push(...advance.events);
+      runCapability = advance.runCapability;
     }
     throw new Error('Did not reach review-and-collate DELEGATE step');
   }
@@ -179,13 +187,17 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
       | undefined;
     const claimId = claimResult?.claim_id;
     expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
+    const claimCapability = claimCapabilityFromOutput(claim.stdout);
+    expect(claimCapability).toEqual(expect.stringMatching(/^rdcc_/));
 
     // The claim launches the review-file child at step 1.
     expect(enteredStep(claimEvents, 'review-file.runbook.md', '1')).toBeDefined();
 
     // Step 2 of review-file rehydrates the inherited PlanPath artifact, proving
     // the alias produced by write-file was handed across the delegation.
-    const advance2 = parseJsonEvents(runCli(['pass', '--claim-id', claimId!], tempDir).stdout);
+    const advance2Result = runCli(['pass', '--claim-capability', claimCapability!], tempDir);
+    expect(advance2Result.exitCode).toBe(0);
+    const advance2 = parseJsonEvents(advance2Result.stdout);
     const reviewStep2 = enteredStep(advance2, 'review-file.runbook.md', '2');
     expect(reviewStep2).toBeDefined();
     const step2Artifacts = reviewStep2!.artifacts as Record<string, unknown> | undefined;
@@ -194,7 +206,9 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
 
     // Step 3 writes ReviewPath; its prompt renders `{{ path ReviewPath }}` as a
     // local work-dir path, never an rd:// URI (direct/path alias semantics).
-    const advance3 = parseJsonEvents(runCli(['pass', '--claim-id', claimId!], tempDir).stdout);
+    const advance3Result = runCli(['pass', '--claim-capability', claimCapability!], tempDir);
+    expect(advance3Result.exitCode).toBe(0);
+    const advance3 = parseJsonEvents(advance3Result.stdout);
     const reviewStep3 = enteredStep(advance3, 'review-file.runbook.md', '3');
     expect(reviewStep3).toBeDefined();
     expect(eventPromptText(reviewStep3!)).toMatch(
@@ -204,7 +218,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
   });
 
   it('advances a claimed child only after an explicit collect aggregates into the parent', () => {
-    const { token } = driveToReviewDelegate();
+    const { token, runCapability } = driveToReviewDelegate();
 
     const claim = runCli(['claim', token], tempDir);
     expect(claim.exitCode).toBe(0);
@@ -214,13 +228,15 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
       }
     ).claim_id;
     expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
+    const claimCapability = claimCapabilityFromOutput(claim.stdout);
+    expect(claimCapability).toEqual(expect.stringMatching(/^rdcc_/));
 
-    // review-file has four steps; drive all of them with claim-id transitions.
+    // review-file has four steps; drive all of them with claim-capability transitions.
     // The final pass COMPLETEs the child, which under report-then-collect REPORTS
     // its outcome to the delegating run rather than aggregating into it.
     let lastEvents: JsonEvent[] = [];
     for (let i = 0; i < 4; i += 1) {
-      const result = runCli(['pass', '--claim-id', claimId!], tempDir);
+      const result = runCli(['pass', '--claim-capability', claimCapability!], tempDir);
       expect(result.exitCode).toBe(0);
       lastEvents = parseJsonEvents(result.stdout);
     }
@@ -241,7 +257,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(beforeCollect.position?.current).toBe('1');
 
     // Explicit collect aggregates the reported outcome: PASS ALL → CONTINUE → step 2.
-    const collected = runCli(['collect', '--run', activeRunId()], tempDir);
+    const collected = runCli(['collect', '--run-capability', runCapability], tempDir);
     expect(collected.exitCode).toBe(0);
     const collectEvents = parseJsonEvents(collected.stdout);
     expect(

@@ -10,7 +10,7 @@ scenarios:
     commands:
       - rd run delegate-failure-child-fails.runbook.md
       - rd claim ${TOKEN}
-      - rd collect --run ${RUN_ID}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     result: STOP
 ---
 

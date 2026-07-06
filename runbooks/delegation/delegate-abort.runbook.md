@@ -10,7 +10,7 @@ scenarios:
     commands:
       - rd run --prompted delegate-abort.runbook.md
       - rd abort ${TOKEN}
-      - rd pass --run ${RUN_ID}
+      - rd pass --run-capability ${RUN_CAPABILITY}
     result: COMPLETE
 ---
 

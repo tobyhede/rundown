@@ -16,6 +16,8 @@ import {
   findActionOutput,
   parseFinalCliJsonObject,
   type TestWorkspace,
+  withRunTarget,
+  withRunTargetForRun,
 } from '../helpers/test-utils.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -42,7 +44,9 @@ describe('stop command wiring', () => {
     expect([...byLong.keys()]).toEqual(
       expect.arrayContaining(['--claim-id', '--claim-capability', '--text']),
     );
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Legacy claim id; mutations require --claim-capability',
+    );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -59,13 +63,13 @@ describe('stop command', () => {
     await workspace.cleanup();
   });
 
-  describe('--run explicit targeting', () => {
-    it('forces the named stack-member run terminal via stop --run <id>', async () => {
+  describe('--run-capability explicit targeting', () => {
+    it('forces the named stack-member run terminal via stop --run-capability <capability>', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
 
-      const result = await runCliInProcess(`stop --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(await withRunTarget(['stop'], workspace), workspace);
 
       // A run-targeted stop is still a workflow failure terminal (exit 1).
       expect(result.exitCode).toBe(1);
@@ -900,7 +904,10 @@ Run the child task.
       expect(result.exitCode).toBe(0);
 
       // The orchestrator collects with named authority: FAIL ANY fires STOP.
-      result = await runCliInProcess(['collect', '--run', parentRunId], workspace);
+      result = await runCliInProcess(
+        await withRunTargetForRun(['collect'], workspace, parentRunId),
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -1068,7 +1075,10 @@ Approve the deployment.
 
       // The orchestrator collects the grandparent with named authority:
       // FAIL ANY aggregation fires STOP.
-      result = await runCliInProcess(['collect', '--run', grandparentRunId], workspace);
+      result = await runCliInProcess(
+        await withRunTargetForRun(['collect'], workspace, grandparentRunId),
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
 
       // Verify grandparent is stopped

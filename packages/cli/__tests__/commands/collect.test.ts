@@ -174,7 +174,9 @@ describe('collect command wiring', () => {
     expect(byLong.get('--index')?.description).toBe(
       'FOR loop iteration to target (requires --step on a FOR step)',
     );
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Legacy claim id; mutations require --claim-capability',
+    );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -372,7 +374,7 @@ describe('collect command', () => {
       const bareEnvelope = JSON.parse(bare.stdout) as { code?: string };
       expect(bareEnvelope.code).toBe('ACTOR_CONTEXT_REQUIRED');
 
-      const result = await runCliInProcess(['collect', '--run', childRunId], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string };
       // Pin the full outcome, not just the absence of the two gate refusals:
@@ -384,11 +386,11 @@ describe('collect command', () => {
     }, 30_000);
   });
 
-  describe('--run explicit targeting', () => {
-    it('collects the named delegating parent via collect --run <parentId>', async () => {
-      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+  describe('--run-capability explicit targeting', () => {
+    it('collects the named delegating parent via collect --run-capability <capability>', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect', '--run', runbookId], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -413,7 +415,7 @@ describe('collect command', () => {
       // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at BOTH explicit
       // authority lanes and never echo a run id (decision 4).
       expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--run');
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-id');
+      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-capability');
       expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).not.toMatch(/rd_[a-f0-9]{32}/);
     });
   });

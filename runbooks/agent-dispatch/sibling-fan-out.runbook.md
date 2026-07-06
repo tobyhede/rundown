@@ -12,9 +12,9 @@ scenarios:
       - rd run --prompted sibling-fan-out.runbook.md
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
-      - rd pass --claim-id ${CLAIM_ID}
-      - rd pass --claim-id ${CLAIM_ID_2}
-      - rd collect --run ${RUN_ID}
+      - rd pass --claim-capability ${CLAIM_CAPABILITY}
+      - rd pass --claim-capability ${CLAIM_CAPABILITY_2}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     result: COMPLETE
 ---
 

@@ -72,6 +72,7 @@ interface DelegateActionOptions {
  * flows cannot drift on how named authority reaches the seam.
  *
  * @param runId - Validated `--run` id, or `undefined` for a bare invocation.
+ * @param runCapability - Validated `--run-capability` proof for `runId`.
  * @returns Spreadable `callerEvidence` (+ `targetRunId` when named) fields.
  */
 function runTargetedSeamFields(

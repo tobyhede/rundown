@@ -4,6 +4,7 @@ import {
   runCliInProcess,
   getActiveState,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -24,7 +25,9 @@ describe('goto command wiring', () => {
     const byLong = new Map(goto!.options.map((o) => [o.long, o]));
     expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--index', '--claim-id', '--text']));
     expect(byLong.get('--index')?.description).toBe('FOR loop iteration to target');
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Legacy claim id; mutations require --claim-capability',
+    );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -86,16 +89,16 @@ describe('goto command', () => {
     });
   });
 
-  describe('--run explicit targeting', () => {
+  describe('--run-capability explicit targeting', () => {
     beforeEach(async () => {
       await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
     });
 
-    it('navigates the named run via goto <step> --run <id>', async () => {
-      const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
-
-      const result = await runCliInProcess(`goto 3 --run ${active!.id}`, workspace);
+    it('navigates the named run via goto <step> --run-capability <capability>', async () => {
+      const result = await runCliInProcess(
+        await withRunTarget(['goto', '3'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);

@@ -12,9 +12,9 @@ scenarios:
     commands:
       - rd run delegate-keyword-for-loop.runbook.md
       - rd claim ${TOKEN}
-      - rd collect --run ${RUN_ID}
+      - rd collect --run-capability ${RUN_CAPABILITY}
       - rd claim ${TOKEN_2}
-      - rd collect --run ${RUN_ID}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     expect:
       result: COMPLETE
       steps:

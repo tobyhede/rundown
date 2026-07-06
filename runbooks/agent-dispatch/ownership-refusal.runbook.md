@@ -14,8 +14,8 @@ scenarios:
       - rd stash --claim-id ${CLAIM_ID}
       - "! rd pop"
       - rd pop --claim-id ${CLAIM_ID}
-      - rd pass --claim-id ${CLAIM_ID}
-      - rd collect --run ${RUN_ID}
+      - rd pass --claim-capability ${CLAIM_CAPABILITY}
+      - rd collect --run-capability ${RUN_CAPABILITY}
     result: COMPLETE
 ---
 

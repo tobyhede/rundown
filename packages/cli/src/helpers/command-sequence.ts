@@ -412,7 +412,11 @@ function rdArgsIncludeFlag(args: readonly string[], flag: string): boolean {
 
 function rdCommandRequiresDefaultActiveTarget(args: readonly string[]): boolean {
   const command = rdCommandName(args);
-  if (command === undefined || rdArgsIncludeFlag(args, '--claim-id')) {
+  if (
+    command === undefined ||
+    rdArgsIncludeFlag(args, '--claim-id') ||
+    rdArgsIncludeFlag(args, '--claim-capability')
+  ) {
     return false;
   }
   if (command === 'run') {
@@ -423,7 +427,11 @@ function rdCommandRequiresDefaultActiveTarget(args: readonly string[]): boolean 
 
 function rdTerminalClosesDefaultActiveTarget(args: readonly string[]): boolean {
   const command = rdCommandName(args);
-  if (command === undefined || rdArgsIncludeFlag(args, '--claim-id')) {
+  if (
+    command === undefined ||
+    rdArgsIncludeFlag(args, '--claim-id') ||
+    rdArgsIncludeFlag(args, '--claim-capability')
+  ) {
     return false;
   }
   return DEFAULT_ACTIVE_TERMINAL_COMMANDS.has(command);
@@ -562,15 +570,44 @@ export function substituteClaimIds(command: string, capturedClaimIds: readonly s
 }
 
 /**
+ * Substitute captured claim capability placeholders in a command string.
+ *
+ * `${CLAIM_CAPABILITY}` maps to the first claim capability,
+ * `${CLAIM_CAPABILITY_2}` maps to the second, and so on.
+ *
+ * @param command - Command string with optional claim capability placeholders
+ * @param capturedClaimCapabilities - Claim capabilities captured from earlier
+ *   `rd claim` output
+ * @returns Command string with claim capability placeholders substituted
+ * @throws {Error} If a placeholder references a capability that has not been
+ *   captured
+ */
+export function substituteClaimCapabilities(
+  command: string,
+  capturedClaimCapabilities: readonly string[],
+): string {
+  return command.replace(
+    /\$\{CLAIM_CAPABILITY(?:_(\d+))?\}/g,
+    (_match, index: string | undefined) => {
+      const offset = index === undefined ? 0 : Number(index) - 1;
+      if (offset < 0 || offset >= capturedClaimCapabilities.length) {
+        throw new Error(
+          `Missing captured claim capability for \${CLAIM_CAPABILITY${index ? `_${index}` : ''}}`,
+        );
+      }
+      return capturedClaimCapabilities[offset];
+    },
+  );
+}
+
+/**
  * Substitute captured run id placeholders in a command string.
  *
  * `${RUN_ID}` maps to the first captured run id, `${RUN_ID_2}` maps to the
  * second, and so on. Run ids are captured in emission order from
  * `runbook_started` events (`runbookId`), so a scenario's own `rd run` start
  * output supplies `${RUN_ID}` and later starts (inline children, claimed
- * children) supply the higher indexes. Lets bundled scenario runbooks express
- * orchestrator commands as `rd collect --run ${RUN_ID}` (post-R1 named
- * authority). Mirrors {@link substituteClaimIds}.
+ * children) supply the higher indexes. Mirrors {@link substituteClaimIds}.
  *
  * @param command - Command string with optional run id placeholders
  * @param capturedRunIds - Run ids captured from earlier `runbook_started` events
@@ -585,6 +622,38 @@ export function substituteRunIds(command: string, capturedRunIds: readonly strin
     }
     return capturedRunIds[offset];
   });
+}
+
+/**
+ * Substitute captured run capability placeholders in a command string.
+ *
+ * `${RUN_CAPABILITY}` maps to the first captured run capability,
+ * `${RUN_CAPABILITY_2}` maps to the second, and so on. Run capabilities are
+ * captured in emission order from `runbook_started` events.
+ *
+ * @param command - Command string with optional run capability placeholders
+ * @param capturedRunCapabilities - Run capabilities captured from earlier
+ *   `runbook_started` events
+ * @returns Command string with run capability placeholders substituted
+ * @throws {Error} If a placeholder references a capability that has not been
+ *   captured
+ */
+export function substituteRunCapabilities(
+  command: string,
+  capturedRunCapabilities: readonly string[],
+): string {
+  return command.replace(
+    /\$\{RUN_CAPABILITY(?:_(\d+))?\}/g,
+    (_match, index: string | undefined) => {
+      const offset = index === undefined ? 0 : Number(index) - 1;
+      if (offset < 0 || offset >= capturedRunCapabilities.length) {
+        throw new Error(
+          `Missing captured run capability for \${RUN_CAPABILITY${index ? `_${index}` : ''}}`,
+        );
+      }
+      return capturedRunCapabilities[offset];
+    },
+  );
 }
 
 /**
@@ -605,6 +674,26 @@ export function captureRunIdFromJsonObject(value: unknown, capturedRunIds: strin
 }
 
 /**
+ * Capture a run capability from a parsed `runbook_started` execution event.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedRunCapabilities - Array to append captured capabilities into
+ */
+export function captureRunCapabilityFromJsonObject(
+  value: unknown,
+  capturedRunCapabilities: string[],
+): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as { type?: unknown }).type === 'runbook_started' &&
+    typeof (value as { runCapability?: unknown }).runCapability === 'string'
+  ) {
+    capturedRunCapabilities.push((value as { runCapability: string }).runCapability);
+  }
+}
+
+/**
  * Capture a claim id from a parsed `rd claim` JSON object.
  *
  * @param value - Parsed JSON value to inspect
@@ -620,6 +709,27 @@ export function captureClaimIdFromJsonObject(value: unknown, capturedClaimIds: s
     typeof (value as { claim_id?: unknown }).claim_id === 'string'
   ) {
     capturedClaimIds.push((value as { claim_id: string }).claim_id);
+  }
+}
+
+/**
+ * Capture a claim capability from a parsed `rd claim` JSON object.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedClaimCapabilities - Array to append captured claim
+ *   capabilities into
+ */
+export function captureClaimCapabilityFromJsonObject(
+  value: unknown,
+  capturedClaimCapabilities: string[],
+): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as { kind?: unknown }).kind === 'claim' &&
+    typeof (value as { claim_capability?: unknown }).claim_capability === 'string'
+  ) {
+    capturedClaimCapabilities.push((value as { claim_capability: string }).claim_capability);
   }
 }
 
@@ -720,7 +830,10 @@ async function runCommandWithTee(
  * @param transitions - Array to push extracted transitions into
  * @param tokens - Array to push captured delegation tokens into
  * @param claimIds - Array to push captured claim ids into
+ * @param claimCapabilities - Array to push captured claim capabilities into
  * @param runIds - Array to push captured run ids into (for `${RUN_ID}` substitution)
+ * @param runCapabilities - Array to push captured run capabilities into (for
+ *   `${RUN_CAPABILITY}` substitution)
  * @param errors - Array to push captured JSON error responses into
  * @param warnings - Array to push captured JSON warning responses into
  * @param artifactEntries - Array to push captured artifact working sets into
@@ -732,7 +845,9 @@ function processJsonObject(
   transitions: CapturedTransition[],
   tokens: string[],
   claimIds: string[],
+  claimCapabilities: string[],
   runIds: string[],
+  runCapabilities: string[],
   errors: CapturedError[],
   warnings: CapturedWarning[],
   artifactEntries: CapturedArtifactEntry[],
@@ -770,7 +885,9 @@ function processJsonObject(
     tokens.push(obj.token);
   }
   captureClaimIdFromJsonObject(obj, claimIds);
+  captureClaimCapabilityFromJsonObject(obj, claimCapabilities);
   captureRunIdFromJsonObject(obj, runIds);
+  captureRunCapabilityFromJsonObject(obj, runCapabilities);
 
   if (obj.kind === 'error') {
     errors.push({
@@ -893,7 +1010,9 @@ export function parseJsonLines(stdout: string): {
   terminal: 'COMPLETE' | 'STOP' | null;
   tokens: string[];
   claimIds: string[];
+  claimCapabilities: string[];
   runIds: string[];
+  runCapabilities: string[];
   errors: CapturedError[];
   warnings: CapturedWarning[];
   artifactEntries: CapturedArtifactEntry[];
@@ -902,7 +1021,9 @@ export function parseJsonLines(stdout: string): {
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
   const claimIds: string[] = [];
+  const claimCapabilities: string[] = [];
   const runIds: string[] = [];
+  const runCapabilities: string[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
   const artifactEntries: CapturedArtifactEntry[] = [];
@@ -914,7 +1035,9 @@ export function parseJsonLines(stdout: string): {
       terminal: null,
       tokens,
       claimIds,
+      claimCapabilities,
       runIds,
+      runCapabilities,
       errors,
       warnings,
       artifactEntries,
@@ -935,7 +1058,9 @@ export function parseJsonLines(stdout: string): {
       transitions,
       tokens,
       claimIds,
+      claimCapabilities,
       runIds,
+      runCapabilities,
       errors,
       warnings,
       artifactEntries,
@@ -946,7 +1071,9 @@ export function parseJsonLines(stdout: string): {
       terminal,
       tokens,
       claimIds,
+      claimCapabilities,
       runIds,
+      runCapabilities,
       errors,
       warnings,
       artifactEntries,
@@ -971,7 +1098,9 @@ export function parseJsonLines(stdout: string): {
       transitions,
       tokens,
       claimIds,
+      claimCapabilities,
       runIds,
+      runCapabilities,
       errors,
       warnings,
       artifactEntries,
@@ -987,7 +1116,9 @@ export function parseJsonLines(stdout: string): {
     terminal,
     tokens,
     claimIds,
+    claimCapabilities,
     runIds,
+    runCapabilities,
     errors,
     warnings,
     artifactEntries,
@@ -1464,7 +1595,10 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * @param into.transitions - Step transitions accumulator
  * @param into.capturedTokens - Captured delegation tokens accumulator
  * @param into.capturedClaimIds - Captured claim IDs accumulator
+ * @param into.capturedClaimCapabilities - Captured claim capabilities accumulator
  * @param into.capturedRunIds - Captured run ids accumulator (runbook_started events)
+ * @param into.capturedRunCapabilities - Captured run capabilities accumulator
+ *   (runbook_started events)
  * @param into.errors - Captured JSON error responses accumulator
  * @param into.warnings - Captured JSON warning responses accumulator
  * @param into.artifactEntries - Captured artifact working-set accumulator
@@ -1477,7 +1611,9 @@ function aggregateJsonResult(
     transitions: CapturedTransition[];
     capturedTokens: string[];
     capturedClaimIds: string[];
+    capturedClaimCapabilities: string[];
     capturedRunIds: string[];
+    capturedRunCapabilities: string[];
     errors: CapturedError[];
     warnings: CapturedWarning[];
     artifactEntries: CapturedArtifactEntry[];
@@ -1493,8 +1629,14 @@ function aggregateJsonResult(
   for (const claimId of jsonResult.claimIds) {
     into.capturedClaimIds.push(claimId);
   }
+  for (const claimCapability of jsonResult.claimCapabilities) {
+    into.capturedClaimCapabilities.push(claimCapability);
+  }
   for (const runId of jsonResult.runIds) {
     into.capturedRunIds.push(runId);
+  }
+  for (const runCapability of jsonResult.runCapabilities) {
+    into.capturedRunCapabilities.push(runCapability);
   }
   for (const error of jsonResult.errors) {
     into.errors.push(error);
@@ -1530,7 +1672,9 @@ export async function executeCommandSequence(
 ): Promise<CommandSequenceResult> {
   const capturedTokens: string[] = [];
   const capturedClaimIds: string[] = [];
+  const capturedClaimCapabilities: string[] = [];
   const capturedRunIds: string[] = [];
+  const capturedRunCapabilities: string[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
   const transitions: CapturedTransition[] = [];
@@ -1564,11 +1708,18 @@ export async function executeCommandSequence(
     const trimmedRaw = rawCmd.trimStart();
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
-    // Token substitution — replace ${TOKEN}, ${CLAIM_ID}, ${RUN_ID} (and their
-    // _N indexed forms) with captured values.
-    const tokenSubstituted = substituteRunIds(
-      substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds),
-      capturedRunIds,
+    // Token substitution — replace ${TOKEN}, ${CLAIM_ID},
+    // ${CLAIM_CAPABILITY}, ${RUN_ID}, ${RUN_CAPABILITY} (and their _N indexed
+    // forms) with captured values.
+    const tokenSubstituted = substituteRunCapabilities(
+      substituteRunIds(
+        substituteClaimCapabilities(
+          substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds),
+          capturedClaimCapabilities,
+        ),
+        capturedRunIds,
+      ),
+      capturedRunCapabilities,
     );
     // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
     // the manifest a prior command produced (resolver injected by the harness).
@@ -1617,7 +1768,9 @@ export async function executeCommandSequence(
         transitions,
         capturedTokens,
         capturedClaimIds,
+        capturedClaimCapabilities,
         capturedRunIds,
+        capturedRunCapabilities,
         errors,
         warnings,
         artifactEntries,
@@ -1653,7 +1806,9 @@ export async function executeCommandSequence(
         transitions,
         capturedTokens,
         capturedClaimIds,
+        capturedClaimCapabilities,
         capturedRunIds,
+        capturedRunCapabilities,
         errors,
         warnings,
         artifactEntries,
