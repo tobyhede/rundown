@@ -1,5 +1,10 @@
 import type { ActorContext, EffectiveRole } from './actor-context.js';
-import type { ClaimId, ClaimRecord } from './claim-id.js';
+import {
+  authorizeClaim,
+  type ClaimAuthorizationRequest,
+  type ClaimId,
+  type ClaimRecord,
+} from './claim-id.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -31,6 +36,16 @@ export type CommandIntent =
       readonly command: 'delegate';
       /** True when the caller supplied an explicit step or retry target. */
       readonly targeted: boolean;
+    }
+  | {
+      /** Retry command reissuing a delegation from a run. */
+      readonly kind: 'delegation-issuance';
+      /** Delegation retry command being evaluated. */
+      readonly command: 'retry';
+      /** Retry always targets a concrete delegation step. */
+      readonly targeted: true;
+      /** Concrete delegation step id being retried. */
+      readonly stepId: string;
     }
   | {
       /** Bare or claim-targeted complete/stop forcing a run terminal. */
@@ -132,6 +147,14 @@ export type DelegationPolicyOutcome =
       readonly kind: 'actor_context_required';
       /** Intent that was refused. */
       readonly intent: CommandIntent['kind'];
+    }
+  | {
+      /** Verified claim lacks the exact grant required for the mutation. */
+      readonly kind: 'claim_grant_required';
+      /** Intent that was refused. */
+      readonly intent: CommandIntent['kind'];
+      /** Target run that needed authorization, when known. */
+      readonly targetRunId?: RunId;
     }
   | {
       /** Caller is not the effective orchestrator for the collection target. */
@@ -281,12 +304,39 @@ export function deriveEffectiveRole(
   if (!targetState || actorContext.kind === 'unknown') {
     return 'unknown_for_target';
   }
-  if (actorContext.kind === 'trusted_run_controller') {
-    return actorContext.runId === targetState.id ? 'orchestrator_for_target' : 'unknown_for_target';
-  }
-  return actorContext.controlledRunId === targetState.id
+  return actorContext.claim.controlledRunId === targetState.id
     ? 'orchestrator_for_target'
     : 'delegated_relative_to_target';
+}
+
+function requestForIntent(
+  intent: CommandIntent,
+  targetState: RunbookState | undefined,
+): ClaimAuthorizationRequest | undefined {
+  if (!targetState) return undefined;
+  switch (intent.kind) {
+    case 'delegating-run-advance':
+    case 'terminal-run-force':
+    case 'run-navigation':
+      return { action: 'mutate-run', runId: targetState.id };
+    case 'delegation-issuance':
+      if (intent.command === 'delegate') {
+        return { action: 'delegate-from-run', runId: targetState.id };
+      }
+      return {
+        action: 'retry-delegation',
+        runId: targetState.id,
+        stepId: intent.stepId,
+      };
+    case 'delegation-collection':
+      return { action: 'collect-for-run', runId: targetState.id };
+    case 'inspect':
+      return undefined;
+    default: {
+      const _exhaustive: never = intent;
+      return _exhaustive;
+    }
+  }
 }
 
 function allowed(
@@ -369,25 +419,23 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
     return allowed(role, input.targetState);
   }
 
-  if (input.intent.kind === 'delegation-collection') {
-    // The claim selector itself is NOT a rejection trigger: the frontend
-    // resolves `--claim-id` to its claimed/controlled run and passes that as
-    // `targetState`, so role derivation above already treats the resolved
-    // claimed run as the target. A target run delegating upward does not
-    // disqualify it either (a middle claim-controller may collect delegations
-    // issued by the run it controls). The only gate here is the
-    // orchestrator-for-target check.
-    const orchestratorFailure = requireOrchestratorForCollection(
-      role,
-      input.intent,
-      input.targetState,
-    );
-    if (orchestratorFailure) return orchestratorFailure;
-    return allowed(role, input.targetState);
+  if (!input.targetState) {
+    return { kind: 'actor_context_required', intent: input.intent.kind };
   }
 
-  if (role === 'unknown_for_target') {
-    return { kind: 'actor_context_required', intent: input.intent.kind };
+  const request = requestForIntent(input.intent, input.targetState);
+  if (request !== undefined) {
+    if (input.actorContext.kind !== 'verified_claim') {
+      return { kind: 'actor_context_required', intent: input.intent.kind };
+    }
+    const decision = authorizeClaim(input.actorContext.claim, request);
+    if (decision.kind === 'denied') {
+      return {
+        kind: 'claim_grant_required',
+        intent: input.intent.kind,
+        ...(input.targetState ? { targetRunId: input.targetState.id } : {}),
+      };
+    }
   }
 
   const pendingFailure = rejectBareMutationIfCollectionPending(input);

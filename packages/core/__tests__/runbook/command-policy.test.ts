@@ -1,18 +1,19 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   activeFrame,
-  actorContextFromEvidence,
   assertClaimId,
   assertDelegationTokenHash,
   assertRunId,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
-  claimControllerContext,
+  createRunControlGrants,
   deriveEffectiveRole,
   resolveCommandIntent,
-  trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
+  verifiedClaimContext,
+  type ClaimGrant,
+  type ClaimLookupKey,
   type ClaimRecord,
   type RunbookState,
 } from '../../src/runbook/index.js';
@@ -20,7 +21,10 @@ import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const childRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const claimId = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
+const claimKey = 'rdclk_11111111111111111111111111111111' as ClaimLookupKey;
 const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -49,18 +53,48 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
 
 function claimRecord(): ClaimRecord {
   return {
-    kind: 'claim-record',
-    claimId,
-    childRunId,
-    tokenHash,
-    parentRunId,
-    parentStepId: '1.1',
-    parentStep: '1',
-    parentFrameKey: buildFrameKey('1'),
-    parentEntry: 1,
-    claimedAt: '2026-01-01T00:00:00.000Z',
+    claimKey,
+    secretHash: `sha256:${'b'.repeat(64)}`,
+    controlledRunId: childRunId,
+    delegation: {
+      childRunId,
+      tokenHash,
+      parentRunId,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    },
+    grants: [
+      { action: 'mutate-run', runId: childRunId },
+      {
+        action: 'report-delegation-result',
+        childRunId,
+        tokenHash,
+        parentRunId,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      },
+    ],
+    issuedAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };
+}
+
+function verifiedRunContext(
+  runId: RunId,
+  grants: readonly ClaimGrant[] = createRunControlGrants(runId),
+) {
+  return verifiedClaimContext({
+    claimId,
+    claim: {
+      claimKey,
+      controlledRunId: runId,
+      grants,
+    },
+  });
 }
 
 function stateWithReportedOutcome(): RunbookState {
@@ -79,11 +113,15 @@ function stateWithReportedOutcome(): RunbookState {
   });
 }
 
-describe('trustedRunControllerContext', () => {
-  it('builds a trusted run controller without a source tag', () => {
-    const context = trustedRunControllerContext(parentRunId);
+describe('verifiedClaimContext', () => {
+  it('builds verified claim context without a source tag', () => {
+    const context = verifiedRunContext(parentRunId);
 
-    expect(context).toEqual({ kind: 'trusted_run_controller', runId: parentRunId });
+    expect(context).toMatchObject({
+      kind: 'verified_claim',
+      claimId,
+      claim: { claimKey, controlledRunId: parentRunId },
+    });
     expect('source' in context).toBe(false);
   });
 });
@@ -121,12 +159,49 @@ describe('resolveCommandIntent', () => {
     });
   });
 
+  it('allows a mutation only when a verified claim has the exact grant', () => {
+    const parent = state();
+    const actorContext = verifiedRunContext(parent.id, [
+      { action: 'mutate-run', runId: parent.id },
+    ]);
+
+    expect(
+      resolveCommandIntent({
+        actorContext,
+        intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
+        targetSelector: { kind: 'claim', claimId },
+        targetState: parent,
+        openClaims: [],
+      }),
+    ).toMatchObject({ kind: 'allowed' });
+  });
+
+  it('denies a mutation when a verified claim has no matching grant', () => {
+    const parent = state();
+    const child = state({ id: childRunId });
+    const actorContext = verifiedRunContext(child.id, [{ action: 'mutate-run', runId: child.id }]);
+
+    expect(
+      resolveCommandIntent({
+        actorContext,
+        intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
+        targetSelector: { kind: 'claim', claimId },
+        targetState: parent,
+        openClaims: [],
+      }),
+    ).toEqual({
+      kind: 'claim_grant_required',
+      intent: 'delegating-run-advance',
+      targetRunId: parent.id,
+    });
+  });
+
   it('allows direct CLI compatibility context to collect on the controlled target run', () => {
     const targetState = state();
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id),
+        actorContext: verifiedRunContext(targetState.id),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
         targetState,
@@ -145,7 +220,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(claimedRun.id),
+        actorContext: verifiedRunContext(claimedRun.id),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'claim', claimId },
         targetState: claimedRun,
@@ -175,7 +250,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(delegated.id),
+        actorContext: verifiedRunContext(delegated.id),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
         targetState: delegated,
@@ -217,7 +292,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id),
+        actorContext: verifiedRunContext(targetState.id),
         intent: caseDef.intent,
         targetSelector: { kind: 'default' },
         targetState,
@@ -236,7 +311,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id),
+        actorContext: verifiedRunContext(targetState.id),
         intent: { kind: 'delegating-run-advance', command: 'pass', targeted: true },
         targetSelector: { kind: 'explicit-step', step: '1.1' },
         targetState,
@@ -254,7 +329,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id),
+        actorContext: verifiedRunContext(targetState.id),
         intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
         targetSelector: { kind: 'default' },
         targetState,
@@ -267,26 +342,22 @@ describe('resolveCommandIntent', () => {
     });
   });
 
-  it('rejects a claim controller collecting into its delegating ancestor', () => {
+  it('rejects a verified claim collecting into a run without a matching collect grant', () => {
     const targetState = state();
 
     expect(
       resolveCommandIntent({
-        actorContext: claimControllerContext({
-          claimId,
-          tokenHash,
-          controlledRunId: childRunId,
-        }),
+        actorContext: verifiedRunContext(childRunId, [
+          { action: 'collect-for-run', runId: childRunId },
+        ]),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
         targetState,
       }),
     ).toEqual({
-      kind: 'collect_requires_orchestrator',
+      kind: 'claim_grant_required',
+      intent: 'delegation-collection',
       targetRunId: parentRunId,
-      // The remediation names BOTH explicit-authority lanes and never echoes
-      // the target run id (decision 4 applies to this envelope too).
-      message: expect.stringContaining('--run'),
     });
   });
 
@@ -296,7 +367,7 @@ describe('resolveCommandIntent', () => {
     // collection path when `targetState` is absent.
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(parentRunId),
+        actorContext: verifiedRunContext(parentRunId),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
       }),
@@ -308,30 +379,27 @@ describe('resolveCommandIntent', () => {
 });
 
 describe('post-flip determinations', () => {
-  it('fails closed on a classify/resolve TOCTOU interleave: trust minted for run A is unknown_for_target against run B', () => {
-    // Exposure classification and target resolution are two lock-free reads.
-    // If the stack mutates between them (e.g. an inline child pops), the
-    // context minted against run A meets a resolved target run B — the id
-    // binding in deriveEffectiveRole, not luck, is what makes the double-read
-    // safe.
-    const contextForA = actorContextFromEvidence(
-      { kind: 'direct_cli' },
-      { runId: parentRunId, exposure: 'standalone' },
-    );
-    expect(deriveEffectiveRole(contextForA, state({ id: childRunId }))).toBe('unknown_for_target');
+  it('fails closed when a verified claim lacks the grant for a different target run', () => {
+    const contextForA = verifiedRunContext(parentRunId, [
+      { action: 'mutate-run', runId: parentRunId },
+    ]);
+    expect(
+      resolveCommandIntent({
+        actorContext: contextForA,
+        intent: { kind: 'delegating-run-advance', command: 'pass', targeted: true },
+        targetSelector: { kind: 'default' },
+        targetState: state({ id: childRunId }),
+      }),
+    ).toEqual({
+      kind: 'claim_grant_required',
+      intent: 'delegating-run-advance',
+      targetRunId: childRunId,
+    });
   });
 
   it('refuses a bare collect (direct_cli, unknown role) on a delegating parent with the --run remediation', () => {
-    // Post-flip, direct_cli on a delegating target maps to the unknown
-    // context; the delegation-collection branch routes through the
-    // orchestrator gate, which resolves an unknown role to
-    // actor_context_required (collect_requires_orchestrator is reserved for
-    // the delegated-relative role, whose message names --run — pinned above).
     const outcome = resolveCommandIntent({
-      actorContext: actorContextFromEvidence(
-        { kind: 'direct_cli' },
-        { runId: parentRunId, exposure: 'delegating' },
-      ),
+      actorContext: UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'delegation-collection' },
       targetSelector: { kind: 'default' },
       targetState: state(),
@@ -356,7 +424,7 @@ describe('resolveCommandIntent run-navigation', () => {
 
   it('allows run-navigation for the trusted controller of the target', () => {
     const outcome = resolveCommandIntent({
-      actorContext: trustedRunControllerContext(parentRunId),
+      actorContext: verifiedRunContext(parentRunId),
       intent: { kind: 'run-navigation', command: 'goto', targeted: true },
       targetSelector: { kind: 'default' },
       targetState: state(),
@@ -366,7 +434,7 @@ describe('resolveCommandIntent run-navigation', () => {
 
   it('does not refuse run-navigation for pending collection (navigation is operator control flow, not completion)', () => {
     const outcome = resolveCommandIntent({
-      actorContext: trustedRunControllerContext(parentRunId),
+      actorContext: verifiedRunContext(parentRunId),
       intent: { kind: 'run-navigation', command: 'goto', targeted: false },
       targetSelector: { kind: 'default' },
       targetState: stateWithReportedOutcome(),
@@ -376,7 +444,7 @@ describe('resolveCommandIntent run-navigation', () => {
 
   it('does not refuse run-navigation for open claims (navigation is operator control flow, not completion)', () => {
     const outcome = resolveCommandIntent({
-      actorContext: trustedRunControllerContext(parentRunId),
+      actorContext: verifiedRunContext(parentRunId),
       intent: { kind: 'run-navigation', command: 'goto', targeted: false },
       targetSelector: { kind: 'default' },
       targetState: state(),
@@ -399,7 +467,7 @@ describe('resolveCommandIntent terminal-run-force', () => {
 
   it('refuses a bare terminal force when the delegating run is collection pending', () => {
     const outcome = resolveCommandIntent({
-      actorContext: trustedRunControllerContext(parentRunId),
+      actorContext: verifiedRunContext(parentRunId),
       intent: { kind: 'terminal-run-force', command: 'stop', targeted: false },
       targetSelector: { kind: 'default' },
       targetState: stateWithReportedOutcome(),
@@ -409,7 +477,7 @@ describe('resolveCommandIntent terminal-run-force', () => {
 
   it('allows a bare terminal force through open delegated children (decision #2, force-through)', () => {
     const outcome = resolveCommandIntent({
-      actorContext: trustedRunControllerContext(parentRunId),
+      actorContext: verifiedRunContext(parentRunId),
       intent: { kind: 'terminal-run-force', command: 'complete', targeted: false },
       targetSelector: { kind: 'default' },
       targetState: state(),
@@ -420,7 +488,7 @@ describe('resolveCommandIntent terminal-run-force', () => {
 
   it('allows a targeted terminal force (claim path) unconditionally on the collection sub-gate', () => {
     const outcome = resolveCommandIntent({
-      actorContext: trustedRunControllerContext(parentRunId),
+      actorContext: verifiedRunContext(parentRunId),
       intent: { kind: 'terminal-run-force', command: 'complete', targeted: true },
       targetSelector: { kind: 'default' },
       targetState: stateWithReportedOutcome(),
@@ -432,38 +500,32 @@ describe('resolveCommandIntent terminal-run-force', () => {
 describe('deriveEffectiveRole', () => {
   it('treats a trusted controller of the target run as orchestrator', () => {
     const targetState = state();
-    expect(deriveEffectiveRole(trustedRunControllerContext(targetState.id), targetState)).toBe(
+    expect(deriveEffectiveRole(verifiedRunContext(targetState.id), targetState)).toBe(
       'orchestrator_for_target',
     );
   });
 
   it('treats a trusted controller of a different run as unknown for the target', () => {
     const targetState = state();
-    expect(deriveEffectiveRole(trustedRunControllerContext(childRunId), targetState)).toBe(
-      'unknown_for_target',
+    expect(deriveEffectiveRole(verifiedRunContext(childRunId), targetState)).toBe(
+      'delegated_relative_to_target',
     );
   });
 
   it('treats a claim controller of the target run as orchestrator', () => {
     const claimedRun = state({ id: childRunId });
-    expect(
-      deriveEffectiveRole(
-        claimControllerContext({ claimId, tokenHash, controlledRunId: childRunId }),
-        claimedRun,
-      ),
-    ).toBe('orchestrator_for_target');
+    expect(deriveEffectiveRole(verifiedRunContext(childRunId), claimedRun)).toBe(
+      'orchestrator_for_target',
+    );
   });
 
   it('treats a claim controller of a different run as delegated relative to the target', () => {
     // A claim controller that does not control the target is delegated relative
     // to it — distinct from `unknown_for_target`, which carries no evidence at all.
     const targetState = state();
-    expect(
-      deriveEffectiveRole(
-        claimControllerContext({ claimId, tokenHash, controlledRunId: childRunId }),
-        targetState,
-      ),
-    ).toBe('delegated_relative_to_target');
+    expect(deriveEffectiveRole(verifiedRunContext(childRunId), targetState)).toBe(
+      'delegated_relative_to_target',
+    );
   });
 
   it('treats unknown actor evidence as unknown for the target', () => {
@@ -471,7 +533,7 @@ describe('deriveEffectiveRole', () => {
   });
 
   it('treats an absent target run as unknown for the target', () => {
-    expect(deriveEffectiveRole(trustedRunControllerContext(parentRunId), undefined)).toBe(
+    expect(deriveEffectiveRole(verifiedRunContext(parentRunId), undefined)).toBe(
       'unknown_for_target',
     );
   });

@@ -104,6 +104,7 @@ export {
   actorContextFromEvidence,
   claimControllerContext,
   trustedRunControllerContext,
+  verifiedClaimContext,
   type ActorContext,
   type CallerEvidence,
   type EffectiveRole,
