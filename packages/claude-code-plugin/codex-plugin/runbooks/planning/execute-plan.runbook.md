@@ -1,0 +1,60 @@
+---
+name: execute-plan
+description: Execute a reviewed plan — delegate implementation, then loop code review and verify gates until clean.
+skill: executing-plans
+tags:
+  - planning
+INPUTS:
+  - PlanPath
+REQUIRED:
+  - PlanPath
+OUTPUTS:
+  - CodeReviewPath
+---
+
+# Execute Plan
+
+Execute the plan, then hold the work to the review and verify gates.
+
+## 1. Invoke the Executing Plans skill
+- PASS CONTINUE
+- FAIL STOP
+
+Invoke and read the executing-plans skill. Internalize how implementation, review, and verification fit together.
+
+Skill: `rundown:executing-plans`
+
+
+## 2. Implement the plan
+- ARTIFACTS
+  - PlanPath
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- implement-plan.runbook.md
+
+
+## 3. Code review
+- DELEGATE
+- PASS ALL GOTO 5
+- FAIL ANY CONTINUE
+
+- code-review.runbook.md
+
+
+## 4. Address review findings
+- DELEGATE
+- PASS ALL GOTO 3
+- FAIL ANY STOP
+
+- address-review.runbook.md
+
+
+## 5. Verify
+- PASS COMPLETE
+- FAIL GOTO 4
+
+```bash
+npm run verify
+```

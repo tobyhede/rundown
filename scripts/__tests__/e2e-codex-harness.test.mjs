@@ -237,6 +237,47 @@ test('Rundown Claude plugin package also ships a Codex plugin surface', async ()
   assert.equal(pluginPackage.dependencies['@rundown-org/mcp'], '*');
 });
 
+test('Codex plugin bundles Rundown skills without Claude-only syntax', async () => {
+  const expectedSkills = [
+    'rundown',
+    'running-runbooks',
+    'writing-runbooks',
+    'planning',
+    'executing-plans',
+    'writing-plans',
+    'converting-skills-to-runbooks',
+    'end-to-end-testing',
+  ];
+
+  for (const skill of expectedSkills) {
+    const skillText = await readRepoFile(
+      `packages/claude-code-plugin/codex-plugin/skills/${skill}/SKILL.md`,
+    );
+    assert.match(skillText, /^---\nname:/);
+    assert.doesNotMatch(skillText, /CLAUDE_PLUGIN_ROOT/);
+    assert.doesNotMatch(skillText, /Skill\(skill: "rundown:/);
+    assert.doesNotMatch(skillText, /Claude Code lifecycle|SubagentStop|PreToolUse/);
+    assert.match(skillText, /rundown/);
+  }
+
+  const running = await readRepoFile(
+    'packages/claude-code-plugin/codex-plugin/skills/running-runbooks/SKILL.md',
+  );
+  assert.match(running, /MCP tools are available/);
+  assert.match(running, /rundown run/);
+  assert.match(running, /rundown pass/);
+  assert.match(running, /rundown fail/);
+
+  const delegating = await readRepoFile(
+    'packages/claude-code-plugin/codex-plugin/skills/delegating-runbooks/SKILL.md',
+  ).catch(() => '');
+  assert.equal(
+    delegating,
+    '',
+    'Stage 1 must not ship automatic delegation orchestration as a Codex skill',
+  );
+});
+
 test('e2e shell wrapper selects Claude or Codex entrypoint', async () => {
   const shellScript = await readRepoFile('scripts/e2e-shell.sh');
 

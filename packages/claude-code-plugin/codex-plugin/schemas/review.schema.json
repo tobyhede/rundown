@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rundown.org/schemas/review.schema.json",
+  "title": "Review",
+  "description": "Structured review items for plan and code reviews. A review document records that a review was performed. An empty items array records that the review found no issues.",
+  "type": "object",
+  "required": ["meta", "items"],
+  "properties": {
+    "$schema": {
+      "$ref": "#/$defs/SchemaUri"
+    },
+    "meta": {
+      "$ref": "#/$defs/Meta"
+    },
+    "items": {
+      "$ref": "#/$defs/Items"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "$schema": "https://rundown.org/schemas/review.schema.json",
+      "meta": {
+        "version": "1.0.0"
+      },
+      "items": []
+    },
+    {
+      "$schema": "https://rundown.org/schemas/review.schema.json",
+      "meta": {
+        "version": "1.0.0"
+      },
+      "items": [
+        {
+          "title": "Invalid persisted state migration",
+          "level": "error",
+          "description": "Plan modifies persisted active runbook state and proposes runtime migration or compatibility shims.",
+          "references": [
+            {
+              "uri": "packages/core/src/state.ts",
+              "line": 42
+            }
+          ],
+          "recommendation": "Reject invalid persisted state, surface a prune/restart recovery path, and remove migration code."
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "SchemaUri": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://rundown.org/schemas/review.schema.json",
+      "description": "Schema URI for editor autocomplete and rdx validation dispatch."
+    },
+    "Meta": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Item": {
+      "type": "object",
+      "required": ["title", "level", "description"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "level": {
+          "type": "string",
+          "enum": ["error", "warning", "note"]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Reference"
+          }
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "Items": {
+      "type": "array",
+      "description": "Review findings. An empty array indicates review found no issues.",
+      "items": {
+        "$ref": "#/$defs/Item"
+      }
+    },
+    "Reference": {
+      "type": "object",
+      "description": "A reference to a code location, document, or external resource. Uses uri as the universal identifier — file paths (relative or absolute) and absolute URIs are all valid.",
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File path (relative or absolute) or absolute URI"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Start line number (1-based)"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line number for ranges (1-based, must be >= line)"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical location name (function, class, type)"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Construct type: function, type, class, module, method, member, variable, namespace"
+        }
+      },
+      "additionalProperties": false,
+      "dependentRequired": {
+        "end_line": ["line"]
+      }
+    }
+  }
+}
