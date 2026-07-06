@@ -1330,6 +1330,13 @@ export class RunbookLifecycleCommandService {
             intent: 'delegating-run-advance',
           });
           if (authority.kind === 'refused') {
+            if (authority.policy.kind === 'claim_grant_required') {
+              return {
+                kind: 'claim_grant_required',
+                claimId: input.callerEvidence.claimId,
+                runId: target.state.id,
+              };
+            }
             return { kind: 'actor_context_required' };
           }
           actorContext = authority.actorContext;
@@ -1730,7 +1737,16 @@ export class RunbookLifecycleCommandService {
             intent: 'terminal-run-force',
           })
         : undefined;
-    if (authority?.kind === 'refused') return { kind: 'actor_context_required' };
+    if (authority?.kind === 'refused') {
+      return authority.policy.kind === 'claim_grant_required' &&
+        input.callerEvidence.kind === 'claim_bearer'
+        ? {
+            kind: 'claim_grant_required',
+            claimId: input.callerEvidence.claimId,
+            runId: plan.targetState.id,
+          }
+        : { kind: 'actor_context_required' };
+    }
     const policy = resolveCommandIntent({
       actorContext: authority?.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'terminal-run-force', command: input.command, targeted: false },

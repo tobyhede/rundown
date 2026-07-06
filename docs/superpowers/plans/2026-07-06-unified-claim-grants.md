@@ -79,17 +79,21 @@ and checked; it does not redesign delegation relationship storage.
 
 ## Authority Resolution Decision
 
-Bare mutation is not a separate direct-CLI authority lane. It is syntactic sugar
-for a core-resolved implicit singleton claim.
+Bare mutation is not a separate direct-CLI authority lane, and core must not scan
+persisted claim records to infer a secret bearer from non-secret lookup keys.
+There is one narrow default context: a non-delegated runbook with no delegation
+activity may treat an omitted `--claim-id` as the orchestrator claim minted by
+`rundown run`. In that state only one claim can exist for the run, and no child
+or sibling process authority boundary has been introduced.
 
 For every mutating command:
 
 1. If `--claim-id` is present, core parses and verifies that bearer claim.
-2. If `--claim-id` is omitted, core may use implicit authority only when exactly
-   one active local claim authorizes the resolved mutation target.
-3. If zero claims match, more than one claim matches, or delegation state makes
-   the target ambiguous, core refuses with `ACTOR_CONTEXT_REQUIRED` and asks for
-   `--claim-id`.
+2. If `--claim-id` is omitted and the target run has no delegation activity,
+   core may use the default orchestrator context for that same run.
+3. If `--claim-id` is omitted and delegation state exists, the target is a
+   claimed child, or the operation is delegation/recovery/collection specific,
+   core refuses with `ACTOR_CONTEXT_REQUIRED` and asks for `--claim-id`.
 
 The CLI must not verify claim secrets or construct `VerifiedClaim` values. CLI,
 MCP, and plugin surfaces pass bearer claim evidence to core; core resolves,
@@ -102,7 +106,7 @@ Core claim primitives:
 - Modify `packages/core/src/runbook/claim-id.ts`: replace readable claim id generation with bearer `claim_id` generation/parsing, secret hashing, constant-time verification, `ClaimLookupKey`, `ClaimSecretHash`, `DelegationClaimLinkage`, `ClaimGrant`, `ClaimAuthorizationRequest`, `ClaimRecord`, `VerifiedClaim`, and grant constructors.
 - Modify `packages/core/src/runbook/index.ts`: export new claim types and helpers.
 - Modify `packages/core/src/schemas.ts`: validate claim lookup keys, hashes, grants, and session claim map keyed by lookup key. Remove the current `claimId` mirror requirement.
-- Modify `packages/core/src/runbook/session-service.ts`: mint claims carrying run-control grants for `rundown run`, mint first-claim-only claims carrying child-run/report grants for `rundown claim`, verify bearer claims, resolve implicit singleton claim authority, and resolve active targets from verified grants.
+- Modify `packages/core/src/runbook/session-service.ts`: mint claims carrying run-control grants for `rundown run`, mint first-claim-only claims carrying child-run/report grants for `rundown claim`, verify bearer claims, support the default orchestrator context for non-delegated runs, and resolve active targets from verified grants.
 - Modify `packages/core/src/runbook/actor-context.ts`: replace trusted `run_controller` and shape-only `claim` evidence with core-resolved verified claim evidence.
 - Modify `packages/core/src/runbook/command-policy.ts`: replace role-derived authority checks with `authorize(VerifiedClaim, ClaimAuthorizationRequest)` grant checks.
 - Modify `packages/core/src/runbook/command-target-resolver.ts`: resolve command targets by verified claim and refuse identifier-only mutation authority.
@@ -114,7 +118,7 @@ Core claim primitives:
 Core tests:
 
 - Modify `packages/core/__tests__/runbook/delegation-schemas.test.ts`: new claim record schema, session map key validation, no persisted bearer value.
-- Modify `packages/core/__tests__/runbook/session-service.test.ts`: claim issuance, token replay refusal, secret verification, session secrecy, linkage parity, implicit singleton authority resolution.
+- Modify `packages/core/__tests__/runbook/session-service.test.ts`: claim issuance, token replay refusal, secret verification, session secrecy, linkage parity, and default orchestrator context constraints.
 - Create `packages/core/__tests__/runbook/claim-id.test.ts`: bearer parsing, hashing, verification, grant constructors, grant authorization.
 - Modify `packages/core/__tests__/runbook/actor-context.test.ts`: update caller-evidence tests for verified-claim evidence and remove run-controller authority expectations.
 - Modify `packages/core/__tests__/runbook/command-target-resolver.test.ts`.
@@ -1320,48 +1324,53 @@ it('resolves a verified claim to the run named by its mutate-run grant', async (
 });
 ```
 
-- [ ] **Step 2: Add failing implicit singleton authority tests**
+- [ ] **Step 2: Add failing default orchestrator context tests**
 
 In `packages/core/__tests__/runbook/command-target-resolver.test.ts`, add:
 
 ```typescript
-it('uses implicit authority when exactly one local claim authorizes the target request', async () => {
-  const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
-  const claim = {
+it('uses the default orchestrator context for a non-delegated run', async () => {
+  const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: parent.id };
+  const orchestratorClaim: VerifiedClaim = {
     claimKey: 'rdclk_11111111111111111111111111111111' as ClaimLookupKey,
-    controlledRunId: child.id,
-    grants: [{ action: 'mutate-run', runId: child.id }],
-  };
-
-  const result = await resolveMutationAuthority({
-    targetReader: fakeReader({ authorizingClaims: [{ claimId, claim }] }),
-    targetState: child,
-    request,
-  });
-
-  expect(result).toEqual({ kind: 'verified', claimId, claim });
-});
-
-it('refuses implicit authority when more than one local claim authorizes the request', async () => {
-  const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
-  const claim = {
-    claimKey: 'rdclk_11111111111111111111111111111111' as ClaimLookupKey,
-    controlledRunId: child.id,
-    grants: [{ action: 'mutate-run', runId: child.id }],
+    controlledRunId: parent.id,
+    grants: [{ action: 'mutate-run', runId: parent.id }],
   };
 
   const result = await resolveMutationAuthority({
     targetReader: fakeReader({
-      authorizingClaims: [
-        { claimId, claim },
-        { claimId: otherClaimId, claim: { ...claim, claimKey: otherClaimKey } },
-      ],
+      defaultOrchestratorClaim: orchestratorClaim,
+      hasDelegationActivity: false,
     }),
-    targetState: child,
+    targetState: parent,
     request,
   });
 
-  expect(result).toEqual({ kind: 'refused', reason: 'ambiguous' });
+  expect(result).toEqual({
+    kind: 'verified',
+    authority: { kind: 'default_orchestrator', claimKey: orchestratorClaim.claimKey },
+    claim: orchestratorClaim,
+  });
+});
+
+it('refuses omitted claim authority once delegation activity exists', async () => {
+  const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: parent.id };
+  const orchestratorClaim: VerifiedClaim = {
+    claimKey: 'rdclk_11111111111111111111111111111111' as ClaimLookupKey,
+    controlledRunId: parent.id,
+    grants: [{ action: 'mutate-run', runId: parent.id }],
+  };
+
+  const result = await resolveMutationAuthority({
+    targetReader: fakeReader({
+      defaultOrchestratorClaim: orchestratorClaim,
+      hasDelegationActivity: true,
+    }),
+    targetState: parent,
+    request,
+  });
+
+  expect(result).toEqual({ kind: 'refused', reason: 'claim-required' });
 });
 ```
 
@@ -1373,10 +1382,16 @@ seams:
 
 ```typescript
 export type MutationAuthorityResolution =
-  | { readonly kind: 'verified'; readonly claimId: ClaimId; readonly claim: VerifiedClaim }
+  | {
+      readonly kind: 'verified';
+      readonly authority:
+        | { readonly kind: 'bearer'; readonly claimId: ClaimId; readonly claimKey: ClaimLookupKey }
+        | { readonly kind: 'default_orchestrator'; readonly claimKey: ClaimLookupKey };
+      readonly claim: VerifiedClaim;
+    }
   | {
       readonly kind: 'refused';
-      readonly reason: 'missing' | 'invalid-secret' | 'ambiguous' | 'no-authorizing-claim';
+      readonly reason: 'missing' | 'invalid-secret' | 'claim-required' | 'no-authorizing-claim';
     };
 
 export async function resolveMutationAuthority(input: {
@@ -1394,25 +1409,37 @@ export async function resolveMutationAuthority(input: {
       };
     }
     return authorizeClaim(verified.claim, input.request).kind === 'allowed'
-      ? { kind: 'verified', claimId: input.presentedClaimId, claim: verified.claim }
+      ? {
+          kind: 'verified',
+          authority: {
+            kind: 'bearer',
+            claimId: input.presentedClaimId,
+            claimKey: verified.claim.claimKey,
+          },
+          claim: verified.claim,
+        }
       : { kind: 'refused', reason: 'no-authorizing-claim' };
   }
 
-  const candidates = await input.targetReader.listClaimsAuthorizing(input.request);
-  if (candidates.length === 1) {
-    return { kind: 'verified', claimId: candidates[0].claimId, claim: candidates[0].claim };
+  if (await input.targetReader.hasDelegationActivity(input.targetState.id)) {
+    return { kind: 'refused', reason: 'claim-required' };
   }
-  return {
-    kind: 'refused',
-    reason: candidates.length === 0 ? 'no-authorizing-claim' : 'ambiguous',
-  };
+  const defaultClaim = await input.targetReader.getDefaultOrchestratorClaim(input.targetState.id);
+  return defaultClaim !== undefined && authorizeClaim(defaultClaim, input.request).kind === 'allowed'
+    ? {
+        kind: 'verified',
+        authority: { kind: 'default_orchestrator', claimKey: defaultClaim.claimKey },
+        claim: defaultClaim,
+      }
+    : { kind: 'refused', reason: 'claim-required' };
 }
 ```
 
-`listClaimsAuthorizing` reads persisted records and returns verified local
-claims only when their stored grants authorize the request. This implicit path
-does not reconstruct or expose bearer secrets; it is only available when exactly
-one local active claim authorizes the mutation target.
+`getDefaultOrchestratorClaim` returns only the run-control claim minted by
+`rundown run` for the same non-delegated run. It must not scan arbitrary
+persisted claims looking for a matching grant. Once the run has delegation
+activity, omitted `--claim-id` is refused so sibling processes and delegated
+children must present the bearer credential explicitly.
 
 Add local helper:
 
@@ -1535,7 +1562,7 @@ In `packages/core/src/runbook/command-target-resolver.ts`, keep `runId` only for
 readonly runId?: RunId;
 ```
 
-For `TransitionTargetResolution`, delete the `run` and `unknown_run` variants. Update `resolveTransitionTarget` so only `claimId` and default paths remain. Default path must fail on delegation-exposed mutations unless `resolveMutationAuthority` has produced a verified claim from bearer evidence or the implicit-singleton path.
+For `TransitionTargetResolution`, delete the `run` and `unknown_run` variants. Update `resolveTransitionTarget` so only `claimId` and default paths remain. Default path must fail on delegation-exposed mutations unless `resolveMutationAuthority` has produced a verified claim from bearer evidence or the default orchestrator context for a non-delegated run.
 
 - [ ] **Step 7: Run resolver tests**
 
@@ -2066,9 +2093,9 @@ export function readLifecycleCallerEvidence(input: LifecycleEvidenceInput = {}):
 }
 ```
 
-Core mutation seams decide whether omitted `claimId` can use implicit singleton
-claim authority. CLI must not verify claim secrets, inspect session claims, or
-construct `VerifiedClaim`.
+Core mutation seams decide whether omitted `claimId` can use the default
+orchestrator context for a non-delegated run. CLI must not verify claim secrets,
+inspect session claims, or construct `VerifiedClaim`.
 
 - [ ] **Step 7: Update command actions**
 
@@ -2078,8 +2105,8 @@ For each mutating command listed in this task:
 2. Remove `.option('--run <runId>', ...)` or keep it only to reject with `rejectRunMutationAuthority`.
 3. Parse `--claim-id` with `parseClaimIdOption`.
 4. Build caller evidence with `readLifecycleCallerEvidence({ claimId })`.
-5. Pass bearer evidence to core seams; core resolves explicit or implicit
-   singleton claim authority.
+5. Pass bearer evidence to core seams; core resolves explicit bearer authority
+   or the non-delegated default orchestrator context.
 
 For `packages/cli/src/commands/delegate.ts`, replace `runTargetedSeamFields` with:
 
@@ -2382,8 +2409,8 @@ it.each([
   ['stash', ['stash']],
   ['pop', ['pop']],
   ['abort', ['abort', 'rdtk_invalid']],
-] as const)('requires claim authority for %s when no implicit singleton can authorize it', async (_name, args) => {
-  const workspace = await workspaceWithAmbiguousClaims();
+] as const)('requires claim authority for %s when default orchestrator context is unavailable', async (_name, args) => {
+  const workspace = await workspaceWithDelegationActivity();
   const bare = await runCliInProcess(args, workspace);
   expect(bare.exitCode).toBe(1);
   expect(parseFinalCliJsonObject(bare.stdout).code).toBe('ACTOR_CONTEXT_REQUIRED');
@@ -2394,8 +2421,10 @@ it.each([
 });
 ```
 
-The fixture must create ambiguity with more than one authorizing local claim so
-the test exercises the new implicit-singleton refusal path.
+The fixture must start a parent run, mint the orchestrator claim, and create
+delegation activity such as an issued or claimed child. The test must prove that
+once delegation state exists, omitted `--claim-id` and identifier-only `--run`
+do not use the non-delegated default orchestrator context.
 
 - [ ] **Step 3: Add token replay and terminal claim tests**
 

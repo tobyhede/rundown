@@ -56,6 +56,16 @@ describe('end-to-end-testing skill', () => {
     );
   });
 
+  it('describes report-then-collect instead of child-driven parent aggregation', () => {
+    const skill = readSkill();
+
+    expect(skill).toContain('the child reports its result to the delegation linkage');
+    expect(skill).toContain('stops driving the parent');
+    expect(skill).toContain('rundown collect --claim-id <parent_claim_id>');
+    expect(skill).not.toMatch(/auto-resolves its parent substep/i);
+    expect(skill).not.toMatch(/parent auto-aggregates and advances/i);
+  });
+
   it('uses transition output as the normal agent context', () => {
     const skill = readSkill();
 

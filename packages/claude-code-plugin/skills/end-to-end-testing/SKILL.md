@@ -34,7 +34,7 @@ rundown claim <token>                  # returns claim_id; dispatch the child to
 
 Drive the claimed child like any runbook: advance each step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. On a delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED` regardless of claim state (exposure is sticky). A `--run`-targeted parent advance is additionally refused with `OPEN_DELEGATED_CHILDREN` while a claimed child is open.
 
-When the child's final step completes it auto-resolves its parent substep and the parent auto-aggregates and advances. `rundown pass/fail --claim-id` is idempotent on a resolved child, so it also confirms or overrides a child you stop early.
+When the child's final step completes, the child reports its result to the delegation linkage and stops driving the parent. The parent advances only after the orchestrator runs `rundown collect --claim-id <parent_claim_id>`.
 
 ## Artifacts
 

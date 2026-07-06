@@ -16,6 +16,16 @@ const runIdShape = { runId: z.string().optional() } satisfies z.ZodRawShape;
 // between `stepIndexPair` and the `goto` schema.
 const optionalIndex = z.number().int().nonnegative().optional();
 
+function rejectClaimIdRunIdPair(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
+  if (typeof value.claimId === 'string' && typeof value.runId === 'string') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['runId'],
+      message: 'runId cannot be combined with claimId',
+    });
+  }
+}
+
 /**
  * Build an input schema that pairs optional `step` with optional `index`, where
  * `index` is only valid when `step` is also present. The constraint is encoded
@@ -45,6 +55,7 @@ function stepIndexPair(
         message: 'index requires step',
       });
     }
+    rejectClaimIdRunIdPair(value, ctx);
   });
 }
 
@@ -85,31 +96,37 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   goto: {
     description: 'Jump to a step',
-    inputSchema: z.object({
-      step: z.string(),
-      index: optionalIndex,
-      ...claimIdShape,
-      ...runIdShape,
-    }),
+    inputSchema: z
+      .object({
+        step: z.string(),
+        index: optionalIndex,
+        ...claimIdShape,
+        ...runIdShape,
+      })
+      .superRefine(rejectClaimIdRunIdPair),
   },
   complete: {
     description: 'Force current runbook completion',
-    inputSchema: z.object({
-      message: z.string().optional(),
-      ...claimIdShape,
-      ...runIdShape,
-    }),
+    inputSchema: z
+      .object({
+        message: z.string().optional(),
+        ...claimIdShape,
+        ...runIdShape,
+      })
+      .superRefine(rejectClaimIdRunIdPair),
   },
   stop: {
     description: 'Stop current runbook',
-    inputSchema: z.object({
-      message: z.string().optional(),
-      ...claimIdShape,
-      ...runIdShape,
-    }),
+    inputSchema: z
+      .object({
+        message: z.string().optional(),
+        ...claimIdShape,
+        ...runIdShape,
+      })
+      .superRefine(rejectClaimIdRunIdPair),
   },
   delegate: {
-    description: `Issue or retry a delegation with \`rundown delegate\` for the run you control. Subprocess-spawned mutations require bearer authority; use a claimId grant from \`rundown run\` or delegated work, and optionally supply runId only to select the target run. Bare or runId-only delegate calls are withheld before spawning the CLI.`,
+    description: `Issue or retry a delegation with \`rundown delegate\` for the run you control. Subprocess-spawned mutations require bearer authority; use a claimId grant from \`rundown run\` or delegated work. runId is selector-only and cannot be combined with claimId. Bare or runId-only delegate calls are withheld before spawning the CLI.`,
     inputSchema: stepIndexPair(
       {
         runbook: z.string().optional(),

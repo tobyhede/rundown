@@ -160,7 +160,7 @@ describe('Delegation claim integration', () => {
     expect(claimOutput.runbook).toContain('delegation-child-pass.runbook.md');
   });
 
-  it('idempotent re-claim returns same child run', async () => {
+  it('re-claiming a token is refused after the first claim', async () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
@@ -174,9 +174,15 @@ describe('Delegation claim integration', () => {
     result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    // Second claim — should succeed (idempotent)
+    // Second claim is token replay and must be refused.
     result = runCli(`claim ${token}`, workspace);
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
+    const replay = parseCliJsonObject(result.stdout) as {
+      kind?: string;
+      code?: string;
+    };
+    expect(replay.kind).toBe('error');
+    expect(replay.code).toBe('DELEGATION_ALREADY_CLAIMED');
   });
 
   it('claim with outputs structured data', async () => {

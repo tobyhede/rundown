@@ -419,8 +419,9 @@ for delegated child work.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
-than one possible target.
+`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
+a selector where the command supports run-targeted operation. Do not combine
+`--run` with `--claim-id`.
 
 ### `rundown pass`
 
@@ -471,8 +472,9 @@ by `claim_id` instead of the default stack.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
-than one possible target.
+`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
+a selector where the command supports run-targeted operation. Do not combine
+`--run` with `--claim-id`.
 
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
 for stopping).
@@ -539,8 +541,9 @@ by `claim_id` instead of the default stack.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
-than one possible target. `goto` is additionally gated behind the
+`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
+a selector where the command supports run-targeted operation. Do not combine
+`--run` with `--claim-id`. `goto` is additionally gated behind the
 `run-navigation` policy intent.
 
 ### `rundown goto <step>`
@@ -583,8 +586,9 @@ Step description.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
-than one possible target.
+`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
+a selector where the command supports run-targeted operation. Do not combine
+`--run` with `--claim-id`.
 
 ### `rundown stop [message]`
 
@@ -630,8 +634,9 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>`; add `--run <rd_…>` only when the bearer controls more
-than one possible target.
+`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
+a selector where the command supports run-targeted operation. Do not combine
+`--run` with `--claim-id`.
 
 ### `rundown complete [message]`
 
@@ -1108,7 +1113,7 @@ Error: Runbook file not found: missing.runbook.md
 
 <!--
   RUN_TARGET_MISMATCH is intentionally NOT documented here. It is emitted by
-  `rundown delegate --retry <token> --claim-id <claim_id> --run <rd_…>`
+  `rundown delegate --retry <token> --run <rd_…>`
   (packages/cli/src/commands/delegate.ts, case 'run_target_mismatch') when the
   selected run does not own the token, but it is
   NOT registered in CLISymbolicErrorCodeValues (packages/core/src/output/zod-schemas.ts),
@@ -1203,7 +1208,7 @@ target run id.
 **Text:**
 
 ```text
-Error: rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Add `--run <rd_…>` only when the bearer controls more than one possible target.
+Error: rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Do not combine `--run` with `--claim-id`.
 Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```
 
@@ -1212,7 +1217,7 @@ Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```json
 {
   "kind": "error",
-  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Add `--run <rd_…>` only when the bearer controls more than one possible target.",
+  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Do not combine `--run` with `--claim-id`.",
   "code": "COLLECT_REQUIRES_ORCHESTRATOR",
   "command": "collect"
 }

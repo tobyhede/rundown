@@ -56,6 +56,27 @@ export function renderActorContextRequiredRefusal(
 }
 
 /**
+ * Render a claim-grant refusal (`CLAIM_GRANT_REQUIRED`).
+ *
+ * The caller presented a bearer claim id, but the verified claim does not carry
+ * the specific grant required for the requested command/target pair.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param commandName - The command that needs a stronger claim grant.
+ * @returns `true` — always requests a non-zero exit code.
+ */
+export function renderClaimGrantRequiredRefusal(
+  output: OutputEmitter,
+  commandName: string,
+): boolean {
+  output.error(
+    `The supplied claim id is not authorized to run \`rundown ${commandName}\` for this target.`,
+    'CLAIM_GRANT_REQUIRED',
+  );
+  return true;
+}
+
+/**
  * Render an idempotent terminal-claim confirmation (the claim already resolved
  * to the requested result). Emits the `already-resolved` action payload in JSON
  * mode and a human line otherwise.

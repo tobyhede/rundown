@@ -108,6 +108,23 @@ function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   );
 }
 
+function mockClaimRunbookAlreadyClaimed(): jest.Mock<SessionService['claimRunbook']> {
+  return mockFn<SessionService['claimRunbook']>().mockImplementation(
+    async (childRunId: RunId, linkage: DelegationLinkage) => ({
+      status: 'already-claimed',
+      childRunId,
+      claim: claimRecord(childRunId, {
+        tokenHash: linkage.tokenHash,
+        parentRunId: linkage.parentRunId,
+        parentStepId: linkage.parentStepId,
+        parentStep: linkage.parentStep,
+        parentFrameKey: linkage.parentFrameKey,
+        parentEntry: linkage.parentEntry,
+      }),
+    }),
+  );
+}
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
@@ -2432,7 +2449,7 @@ describe('claimAndLaunch', () => {
     }
   });
 
-  it('returns idempotent result when token already claimed', async () => {
+  it('returns an already-claimed error when token already has a live child', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
@@ -2474,7 +2491,7 @@ describe('claimAndLaunch', () => {
 
     installHappyDelegationLockMock();
 
-    const claimSpy = mockClaimRunbookSuccess();
+    const claimSpy = mockClaimRunbookAlreadyClaimed();
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
@@ -2488,14 +2505,19 @@ describe('claimAndLaunch', () => {
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.childRunId).toBe('existing-child-id');
-      expect(result.loopResult).toBe('waiting');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result).toEqual(
+        expect.objectContaining({
+          reason: 'delegation-already-claimed',
+          childRunId: 'existing-child-id',
+          stepId: '1',
+        }),
+      );
     }
   });
 
-  it('returns substepId (not stepId) on idempotent claim of a delegated substep', async () => {
+  it('returns substepId (not stepId) on already-claimed failure for a delegated substep', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
@@ -2531,7 +2553,7 @@ describe('claimAndLaunch', () => {
 
     installHappyDelegationLockMock();
 
-    const claimSpy = mockClaimRunbookSuccess();
+    const claimSpy = mockClaimRunbookAlreadyClaimed();
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
@@ -2545,8 +2567,12 @@ describe('claimAndLaunch', () => {
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('delegation-already-claimed');
+      if (result.reason !== 'delegation-already-claimed') {
+        throw new Error(`expected delegation-already-claimed, got ${result.reason}`);
+      }
       // ClaimResult.stepId contract: "Step (or substep) ID on the parent that
       // holds the delegation". For a delegated substep, that's substepId, not
       // the outer stepId.

@@ -248,7 +248,16 @@ The session tracks top-level runs and delegated children separately.
       },
       "grants": [
         { "action": "mutate-run", "runId": "rd_22222222222222222222222222222222" },
-        { "action": "collect-for-run", "runId": "rd_22222222222222222222222222222222" }
+        {
+          "action": "report-delegation-result",
+          "childRunId": "rd_22222222222222222222222222222222",
+          "tokenHash": "sha256:...",
+          "parentRunId": "rd_11111111111111111111111111111111",
+          "parentStepId": "1.1",
+          "parentStep": "Process item",
+          "parentFrameKey": "1|",
+          "parentEntry": 1
+        }
       ],
       "issuedAt": "2026-07-06T00:00:00.000Z",
       "updatedAt": "2026-07-06T00:00:00.000Z"
@@ -257,17 +266,17 @@ The session tracks top-level runs and delegated children separately.
 }
 ```
 
-| Field              | Requirement                                                          |
-| ------------------ | -------------------------------------------------------------------- |
-| `defaultStack`     | Tracks active top-level, inline, and unidentified/manual flows.      |
-| `stashedRunbookId` | Stores the default-stack run paused by plain `rundown stash`.        |
-| `claims`           | Maps claim ids to exact delegated child runbooks and parent linkage. |
+| Field              | Requirement                                                     |
+| ------------------ | --------------------------------------------------------------- |
+| `defaultStack`     | Tracks active top-level, inline, and unidentified/manual flows. |
+| `stashedRunbookId` | Stores the default-stack run paused by plain `rundown stash`.   |
+| `claims`           | Maps non-secret claim lookup keys to exact claim records.       |
 
 Claimed delegated children MUST NOT be pushed onto `defaultStack`.
 
 Commands that accept `--claim-id` MUST resolve the exact child run for that
-claim and MUST fail closed if the claim is missing, stale, terminal, or no
-longer linked to a live parent.
+bearer by deriving its non-secret lookup key, then MUST fail closed if the claim
+is missing, stale, terminal, or no longer linked to a live parent.
 
 ### 7.3 Stash Targeting
 

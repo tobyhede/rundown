@@ -13,8 +13,9 @@
 // stop a spawned bare mutation from silently consuming the standalone-run
 // convenience lane, and keep refusals rendered at the front end (a clear typed
 // withhold instead of a downstream policy error). Explicitly-targeted
-// mutations — `--claim-id` (claim evidence) and `--run` (named run-controller
-// evidence) — carry their own authority and pass through.
+// mutations with `--claim-id` carry bearer authority and pass through. `--run`
+// is only a selector, so front ends that cannot supply a bearer still withhold
+// run-id-only mutations before spawning the CLI.
 //
 // This predicate is the single source of truth for "which spawned commands carry
 // only direct-CLI trust and must be withheld at the front end." It is a pure

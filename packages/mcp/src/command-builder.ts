@@ -30,6 +30,12 @@ function pushRunId(cmd: string[], input: Record<string, unknown>): void {
   if (typeof input.runId === 'string') cmd.push('--run', input.runId);
 }
 
+function assertNoClaimIdRunIdPair(input: Record<string, unknown>): void {
+  if (typeof input.claimId === 'string' && typeof input.runId === 'string') {
+    throw new Error('runId cannot be combined with claimId');
+  }
+}
+
 /**
  * Build a Rundown CLI argv array for an MCP tool call.
  *
@@ -69,6 +75,7 @@ export function buildRundownCommand(
     }
     case 'pass':
     case 'fail': {
+      assertNoClaimIdRunIdPair(input);
       const cmd = [tool];
       pushStepIndex(cmd, input);
       pushClaimId(cmd, input);
@@ -76,6 +83,7 @@ export function buildRundownCommand(
       return cmd;
     }
     case 'goto': {
+      assertNoClaimIdRunIdPair(input);
       if (typeof input.step !== 'string') {
         throw new Error('goto.step must be a string');
       }
@@ -87,12 +95,14 @@ export function buildRundownCommand(
     }
     case 'complete':
     case 'stop': {
+      assertNoClaimIdRunIdPair(input);
       const cmd = typeof input.message === 'string' ? [tool, input.message] : [tool];
       pushClaimId(cmd, input);
       pushRunId(cmd, input);
       return cmd;
     }
     case 'delegate': {
+      assertNoClaimIdRunIdPair(input);
       const cmd = ['delegate'];
       if (input.retry === true) cmd.push('--retry');
       if (typeof input.runbook === 'string') cmd.push(input.runbook);
@@ -111,6 +121,7 @@ export function buildRundownCommand(
       return cmd;
     }
     case 'collect': {
+      assertNoClaimIdRunIdPair(input);
       const cmd = ['collect'];
       pushStepIndex(cmd, input);
       pushClaimId(cmd, input);

@@ -141,6 +141,7 @@ export interface AuthorizedClaim {
  */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claimId: ClaimId; readonly claim: ClaimRecord }
+  | { readonly status: 'already-claimed'; readonly childRunId: RunId; readonly claim: ClaimRecord }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | {
       readonly status: 'terminal-child';
@@ -354,7 +355,7 @@ export function createDelegatedChildGrants(input: {
   readonly linkage: DelegationClaimLinkage;
 }): readonly ClaimGrant[] {
   return [
-    ...createRunControlGrants(input.linkage.childRunId),
+    { action: 'mutate-run', runId: input.linkage.childRunId },
     {
       action: 'report-delegation-result',
       ...input.linkage,

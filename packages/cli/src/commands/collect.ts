@@ -25,7 +25,10 @@ import { buildTransitionContext, type TransitionContext } from '../helpers/trans
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
-import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
+import {
+  renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
+} from '../helpers/refusal-renderers.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
 
 /**
@@ -409,7 +412,7 @@ function renderCollectOutcome(
       output.flush();
       return true;
     case 'claim_grant_required':
-      renderActorContextRequiredRefusal(output, 'collect', 'collecting delegated work');
+      renderClaimGrantRequiredRefusal(output, 'collect');
       output.flush();
       return true;
     case 'collect_requires_orchestrator':

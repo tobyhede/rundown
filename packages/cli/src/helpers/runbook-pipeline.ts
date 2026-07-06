@@ -209,6 +209,12 @@ export type ClaimFailure =
       readonly childRunId: string;
     }
   | {
+      readonly reason: 'delegation-already-claimed';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
+  | {
       /**
        * The parent's substep references a `childRunId` that no longer exists
        * on disk. Transient — pruning + restarting the parent typically
@@ -1150,7 +1156,11 @@ type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
   | {
       readonly ok: false;
-      readonly reason: 'child-missing' | 'delegation-resolved' | 'linkage-mismatch';
+      readonly reason:
+        | 'child-missing'
+        | 'delegation-resolved'
+        | 'delegation-already-claimed'
+        | 'linkage-mismatch';
       readonly childRunId: RunId;
     };
 
@@ -1181,6 +1191,12 @@ async function claimChildForPipeline(
         ok: true,
         claimId: claim.claimId,
         childRunId: claim.claim.controlledRunId,
+      };
+    case 'already-claimed':
+      return {
+        ok: false,
+        reason: 'delegation-already-claimed',
+        childRunId: claim.childRunId,
       };
     case 'missing-child':
       return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
@@ -1420,7 +1436,7 @@ export async function claimAndLaunch(
       };
     }
 
-    // 4b. Idempotent return if already claimed
+    // 4b. Refuse replay if already claimed
     if (freshDelegation.childRunId) {
       const delegationFrameKey = freshSubstep.frameKey;
       const freshLinkage: DelegationLinkage = {
@@ -1438,7 +1454,7 @@ export async function claimAndLaunch(
         freshLinkage,
       );
       if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, stepId);
+        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       return emitClaimedSuccess({
         output,

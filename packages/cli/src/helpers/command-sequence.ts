@@ -569,8 +569,8 @@ export function substituteClaimIds(command: string, capturedClaimIds: readonly s
  * `runbook_started` events (`runbookId`), so a scenario's own `rundown run` start
  * output supplies `${RUN_ID}` and later starts (inline children, claimed
  * children) supply the higher indexes. Lets bundled scenario runbooks express
- * target-narrowing commands as `rundown collect --claim-id ${CLAIM_ID} --run
- * ${RUN_ID}`. Mirrors {@link substituteClaimIds}.
+ * run-targeted commands as `rundown collect --run ${RUN_ID}`. Mirrors
+ * {@link substituteClaimIds}.
  *
  * @param command - Command string with optional run id placeholders
  * @param capturedRunIds - Run ids captured from earlier `runbook_started` events

@@ -417,7 +417,7 @@ describe('collect command', () => {
       // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at bearer
       // authority and never echo a run id (decision 4).
       expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-id');
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--run');
+      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('Do not combine `--run`');
       expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).not.toMatch(/rd_[a-f0-9]{32}/);
     });
   });

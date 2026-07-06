@@ -324,7 +324,7 @@ describe('claim command', () => {
       expect(anonymousActive?.id).toBe(parentId);
     });
 
-    it('returns the same child run and a fresh claim_id when re-claiming the same token', async () => {
+    it('refuses re-claiming the same token after the first claim', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -345,17 +345,15 @@ describe('claim command', () => {
 
       result = await runCliInProcess(`claim ${token}`, workspace);
 
-      expect(result.exitCode).toBe(0);
-      const second = findActionOutput(result.stdout);
+      expect(result.exitCode).toBe(1);
+      const second = parseCliJsonObject(result.stdout);
       expect(second).toEqual(
         expect.objectContaining({
-          run_id: expect.any(String),
-          claim_id: expect.any(String),
+          kind: 'error',
+          code: 'DELEGATION_ALREADY_CLAIMED',
+          details: expect.objectContaining({ childRunId: first?.run_id }),
         }),
       );
-      expect(second?.run_id).toBe(first?.run_id);
-      expect(second?.claim_id).toMatch(CLAIM_ID_PATTERN);
-      expect(second?.claim_id).not.toBe(first?.claim_id);
     });
 
     it('does not pop the parent when an identified child auto-completes', async () => {
@@ -400,8 +398,8 @@ describe('claim command', () => {
     });
   });
 
-  describe('idempotent claim behavior', () => {
-    it('allows re-claiming same token multiple times', async () => {
+  describe('claim replay behavior', () => {
+    it('refuses re-claiming same token without issuing a second bearer', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -418,19 +416,21 @@ describe('claim command', () => {
       expect(typeof firstClaim?.run_id).toBe('string');
       expect(typeof firstClaim?.claim_id).toBe('string');
 
-      // Second claim - should return same child with a rotated bearer.
+      // Second claim is a replay and must not rotate the bearer.
       result = await runCliInProcess(`claim ${token}`, workspace);
-      expect(result.exitCode).toBe(0);
-      const secondClaim = findActionOutput(result.stdout);
-      expect(typeof secondClaim?.run_id).toBe('string');
-      expect(typeof secondClaim?.claim_id).toBe('string');
+      expect(result.exitCode).toBe(1);
+      const secondClaim = parseCliJsonObject(result.stdout);
 
-      expect(secondClaim?.run_id).toBe(firstClaim?.run_id);
-      expect(secondClaim?.claim_id).toMatch(CLAIM_ID_PATTERN);
-      expect(secondClaim?.claim_id).not.toBe(firstClaim?.claim_id);
+      expect(secondClaim).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'DELEGATION_ALREADY_CLAIMED',
+          details: expect.objectContaining({ childRunId: firstClaim?.run_id }),
+        }),
+      );
     }, 15_000);
 
-    it('third claim still returns same child', async () => {
+    it('third claim still refuses the replay', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -439,12 +439,18 @@ describe('claim command', () => {
 
       const token = await getAutoIssuedToken();
 
-      // Claim three times
+      // Claim once, then replay twice.
       await runCliInProcess(`claim ${token} --text`, workspace);
       await runCliInProcess(`claim ${token} --text`, workspace);
       result = await runCliInProcess(`claim ${token}`, workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
+      expect(parseCliJsonObject(result.stdout)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'DELEGATION_ALREADY_CLAIMED',
+        }),
+      );
     }, 15_000);
   });
 
@@ -769,7 +775,7 @@ rd echo --result fail
   });
 
   describe('successive claims', () => {
-    it('returns the same child run for concurrent claims of the same token', async () => {
+    it('allows only one concurrent claim of the same token', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -782,7 +788,10 @@ rd echo --result fail
         runCliSubprocess(['claim', token]),
       ]);
 
-      if (first.exitCode !== 0 || second.exitCode !== 0) {
+      const outcomes = [first, second].sort((a, b) => a.exitCode - b.exitCode);
+      const [winner, replay] = outcomes;
+
+      if (winner.exitCode !== 0 || replay.exitCode !== 1) {
         throw new Error(
           [
             `first exit=${String(first.exitCode)}`,
@@ -794,10 +803,8 @@ rd echo --result fail
           ].join('\n'),
         );
       }
-      expect(first.exitCode).toBe(0);
-      expect(second.exitCode).toBe(0);
-      const firstAction = findActionOutput(first.stdout);
-      const secondAction = findActionOutput(second.stdout);
+      const firstAction = findActionOutput(winner.stdout);
+      const secondAction = parseCliJsonObject(replay.stdout);
       expect(firstAction).toEqual(
         expect.objectContaining({
           run_id: expect.any(String),
@@ -806,11 +813,11 @@ rd echo --result fail
       );
       expect(secondAction).toEqual(
         expect.objectContaining({
-          run_id: firstAction?.run_id,
-          claim_id: expect.any(String),
+          kind: 'error',
+          code: 'DELEGATION_ALREADY_CLAIMED',
+          details: expect.objectContaining({ childRunId: firstAction?.run_id }),
         }),
       );
-      expect(secondAction?.claim_id).toMatch(CLAIM_ID_PATTERN);
     }, 15_000);
 
     it('adopts an orphaned child state with matching token hash', async () => {
@@ -895,7 +902,7 @@ rd echo --result fail
       );
     }, 15_000);
 
-    it('handles rapid successive claims of same token', async () => {
+    it('refuses rapid successive replay claims of same token', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -908,10 +915,9 @@ rd echo --result fail
       const result2 = await runCliInProcess(`claim ${token} --text`, workspace);
       const result3 = await runCliInProcess(`claim ${token} --text`, workspace);
 
-      // All should succeed (idempotent)
       expect(result1.exitCode).toBe(0);
-      expect(result2.exitCode).toBe(0);
-      expect(result3.exitCode).toBe(0);
+      expect(result2.exitCode).toBe(1);
+      expect(result3.exitCode).toBe(1);
     }, 15_000);
   });
 

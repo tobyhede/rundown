@@ -3208,6 +3208,36 @@ describe('RunbookLifecycleCommandService', () => {
         runId: claimChildRunId,
       });
     });
+
+    it('returns claim_grant_required when a run-targeted bearer lacks mutate-run grant', async () => {
+      const targetRunId = assertRunId('rd_12121212121212121212121212121212');
+      await manager.save(baseState({ id: targetRunId }));
+      await sessionService.pushRunbook(targetRunId);
+      await issueRunControlClaimFor(targetRunId);
+      const evidence = runControlEvidence(targetRunId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await manager.loadSession();
+      const claim = session.claims[claimKey];
+      session.claims[claimKey] = {
+        ...claim,
+        grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+      };
+      await manager.saveSession(session);
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'run', runId: targetRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({
+        kind: 'claim_grant_required',
+        claimId: evidence.claimId,
+        runId: targetRunId,
+      });
+    });
   });
 
   describe('runTerminal', () => {
@@ -3491,6 +3521,35 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
         expect(out.kind).toBe('delegation_collection_pending');
+      });
+
+      it('bare terminal returns claim_grant_required when the bearer lacks mutate-run on the resolved root', async () => {
+        const root = baseState({ id: ROOT });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        const evidence = runControlEvidence(ROOT);
+        if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+        const claimKey = claimKeyFromBearer(evidence.claimId);
+        const session = await manager.loadSession();
+        const claim = session.claims[claimKey];
+        session.claims[claimKey] = {
+          ...claim,
+          grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+        };
+        await manager.saveSession(session);
+        installResolvedPlan(root, [root]);
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: evidence,
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toEqual({
+          kind: 'claim_grant_required',
+          claimId: evidence.claimId,
+          runId: ROOT,
+        });
       });
 
       it('refuses a bare direct-CLI stop on a collection-pending (delegating) root — ambient trust removed (#460)', async () => {

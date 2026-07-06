@@ -213,23 +213,6 @@ function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {
   };
 }
 
-function rotateClaimBearer(
-  record: ClaimRecord,
-  now: string,
-): {
-  readonly claimId: ClaimId;
-  readonly claim: ClaimRecord;
-} {
-  const parsed = parseClaimBearer(generateClaimBearer());
-  const claim: ClaimRecord = {
-    ...record,
-    claimKey: parsed.claimKey,
-    secretHash: hashClaimSecret(parsed.secret),
-    updatedAt: now,
-  };
-  return { claimId: parsed.claimId, claim };
-}
-
 /**
  * Manages runbook session stacks and stash operations.
  *
@@ -493,11 +476,11 @@ export class SessionService {
             persisted: existingState.parentLinkage,
           };
         }
-        const rotated = rotateClaimBearer(existingForDelegation, now);
-        delete session.claims[existingForDelegation.claimKey];
-        session.claims[rotated.claim.claimKey] = rotated.claim;
-        await this.manager.saveSession(session);
-        return { status: 'claimed', claimId: rotated.claimId, claim: rotated.claim };
+        return {
+          status: 'already-claimed',
+          childRunId: existingForDelegation.controlledRunId,
+          claim: existingForDelegation,
+        };
       }
 
       const childState = await this.manager.load(childRunId);
@@ -527,11 +510,7 @@ export class SessionService {
             persisted: existingLinkage,
           };
         }
-        const rotated = rotateClaimBearer(existing, now);
-        delete session.claims[existing.claimKey];
-        session.claims[rotated.claim.claimKey] = rotated.claim;
-        await this.manager.saveSession(session);
-        return { status: 'claimed', claimId: rotated.claimId, claim: rotated.claim };
+        return { status: 'already-claimed', childRunId, claim: existing };
       }
 
       const parsed = parseClaimBearer(generateClaimBearer());

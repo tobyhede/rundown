@@ -162,10 +162,10 @@ export type DelegationPolicyOutcome =
       /** Target run the caller attempted to collect into. */
       readonly targetRunId: RunId;
       /**
-       * Operator-facing remediation naming both explicit-authority lanes
-       * (`--run` for orchestrators, `--claim-id` for delegated children). Never
-       * echoes the target run id — the refusal is an accident barrier and must
-       * not hand a lingering child a copy-paste bypass.
+       * Operator-facing remediation names bearer authority and warns against
+       * treating `--run` as authority. Never echoes the target run id — the
+       * refusal is an accident barrier and must not hand a lingering child a
+       * copy-paste bypass.
        */
       readonly message: typeof COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE;
     }
@@ -362,7 +362,7 @@ function allowed(
 export const COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE =
   'rundown collect requires an actor that controls the target delegating run. ' +
   'Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. ' +
-  'Add `--run <rd_…>` only when the bearer controls more than one possible target.';
+  'Do not combine `--run` with `--claim-id`.';
 
 function rejectBareMutationIfCollectionPending(
   input: ResolveCommandIntentInput,

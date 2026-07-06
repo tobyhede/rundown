@@ -245,7 +245,6 @@ The session now has two independent claim records:
       },
       "grants": [
         { "action": "mutate-run", "runId": "rd_child" },
-        { "action": "collect-for-run", "runId": "rd_child" },
         {
           "action": "report-delegation-result",
           "childRunId": "rd_child",

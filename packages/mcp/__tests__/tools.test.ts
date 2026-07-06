@@ -103,6 +103,24 @@ describe('buildRundownCommand', () => {
     expect(buildRundownCommand('fail', {})).toEqual(['fail']);
   });
 
+  it.each([
+    'pass',
+    'fail',
+    'goto',
+    'complete',
+    'stop',
+    'delegate',
+    'collect',
+  ] as const)('%s rejects claimId + runId before building CLI argv', (tool) => {
+    expect(() =>
+      buildRundownCommand(tool, {
+        step: '3.1',
+        claimId: 'claim-1',
+        runId: `rd_${'a'.repeat(32)}`,
+      }),
+    ).toThrow(/runId cannot be combined with claimId/);
+  });
+
   it('renders CLI data as MCP text without interpreting runbook state', () => {
     expect(createMcpTextResponse({ data: { action: 'PASS', to: '2' } })).toEqual({
       content: [
@@ -171,8 +189,16 @@ describe('inputSchema enforces index requires step', () => {
   });
 });
 
-describe('inputSchema accepts claimId and runId together', () => {
-  const dualAuthorityTools = ['pass', 'fail', 'goto', 'complete', 'stop', 'collect'] as const;
+describe('inputSchema rejects claimId and runId together', () => {
+  const dualAuthorityTools = [
+    'pass',
+    'fail',
+    'goto',
+    'complete',
+    'stop',
+    'delegate',
+    'collect',
+  ] as const;
   const runId = `rd_${'a'.repeat(32)}`;
   const claimId =
     'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -190,9 +216,16 @@ describe('inputSchema accepts claimId and runId together', () => {
       expect(schema.safeParse({ ...withStep, runId }).success).toBe(true);
     });
 
-    it('accepts claimId + runId together', () => {
+    it('rejects claimId + runId together', () => {
       const result = schema.safeParse({ ...withStep, claimId, runId });
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const issue = result.error.issues.find(
+          (schemaIssue) => schemaIssue.path.length === 1 && schemaIssue.path[0] === 'runId',
+        );
+        expect(issue).toBeDefined();
+        expect(issue?.message).toMatch(/runId cannot be combined with claimId/);
+      }
     });
   });
 });
@@ -371,7 +404,7 @@ describe('registerRundownTools', () => {
     'stop',
     'delegate',
     'collect',
-  ] as const)('%s handler forwards claimId + runId together to the CLI', async (tool) => {
+  ] as const)('%s handler rejects claimId + runId together before invoking the CLI', async (tool) => {
     const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
     const fakeServer = {
       registerTool: jest.fn(
@@ -392,15 +425,15 @@ describe('registerRundownTools', () => {
       claimId: 'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       runId: `rd_${'a'.repeat(32)}`,
     });
-    expect(res).toBeDefined();
-    expect(runCli).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        '--claim-id',
-        'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-        '--run',
-        `rd_${'a'.repeat(32)}`,
-      ]),
-    );
+    expect(res).toMatchObject({
+      content: [
+        {
+          type: 'text',
+          text: expect.stringMatching(/runId cannot be combined with claimId/),
+        },
+      ],
+    });
+    expect(runCli).not.toHaveBeenCalled();
   });
 });
 
@@ -433,7 +466,7 @@ describe('subprocess trust boundary', () => {
     return JSON.parse(text);
   }
 
-  it('advertises delegate as claimId-gated with optional runId targeting', () => {
+  it('advertises delegate as claimId-gated with selector-only runId', () => {
     // Delegate needs bearer authority. runId is target selection only, so bare
     // and runId-only subprocess calls are withheld.
     const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
