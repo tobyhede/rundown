@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../logger.js';
 import { getErrorMessage } from '../errors.js';
+import { pipeCommandOutputToStderr } from '../runbook/command-stream-policy.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -513,14 +514,7 @@ export class LandlockSandbox implements SandboxImplementation {
       const commandStdout = child.stdio[1];
       const commandStderr = child.stdio[2];
 
-      if (options.commandOutput === 'stderr') {
-        commandStdout?.on('data', (chunk: Buffer | string) => {
-          process.stderr.write(chunk);
-        });
-        commandStderr?.on('data', (chunk: Buffer | string) => {
-          process.stderr.write(chunk);
-        });
-      }
+      pipeCommandOutputToStderr(child, options.commandOutput);
 
       // A helper that dies (or is torn down by terminateGroup) with fd-3/fd-4
       // data in flight surfaces EPIPE/ECONNRESET on these streams. A stream

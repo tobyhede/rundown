@@ -194,14 +194,32 @@ describe('LandlockSandbox.execute applied path', () => {
   it('uses fd 1 and fd 2 pipes for stderr command output while preserving fd 3 and fd 4 protocol pipes', async () => {
     let capturedStdio: unknown;
     const stderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const createCommandStream = () => {
+      const emitter = new EventEmitter();
+      return Object.assign(emitter, {
+        destroy: jest.fn(),
+        pipe: jest.fn((dest: NodeJS.WritableStream, _options?: { end?: boolean }) => {
+          emitter.on('data', (chunk: Buffer | string) => {
+            dest.write(chunk);
+          });
+          return dest;
+        }),
+      });
+    };
+    const commandStdout = createCommandStream();
+    const commandStderr = createCommandStream();
     const child = new EventEmitter() as EventEmitter & {
+      stdout: typeof commandStdout;
+      stderr: typeof commandStderr;
       stdio: Array<unknown>;
       unref: jest.Mock;
     };
+    child.stdout = commandStdout;
+    child.stderr = commandStderr;
     child.stdio = [
       null,
-      Object.assign(new EventEmitter(), { destroy: jest.fn() }),
-      Object.assign(new EventEmitter(), { destroy: jest.fn() }),
+      commandStdout,
+      commandStderr,
       Object.assign(new EventEmitter(), { write: jest.fn(), end: jest.fn(), destroy: jest.fn() }),
       Object.assign(new EventEmitter(), { setEncoding: jest.fn(), destroy: jest.fn() }),
     ];
@@ -210,8 +228,8 @@ describe('LandlockSandbox.execute applied path', () => {
     const spawnMock = jest.fn((_command: string, _args: string[], options: SpawnOptions) => {
       capturedStdio = options.stdio;
       process.nextTick(() => {
-        (child.stdio[1] as EventEmitter).emit('data', 'linux-out');
-        (child.stdio[2] as EventEmitter).emit('data', 'linux-err');
+        child.stdout.emit('data', 'linux-out');
+        child.stderr.emit('data', 'linux-err');
         (child.stdio[4] as EventEmitter).emit(
           'data',
           '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}\n',
@@ -235,9 +253,13 @@ describe('LandlockSandbox.execute applied path', () => {
 
       expect(result.success).toBe(true);
       expect(capturedStdio).toEqual(['inherit', 'pipe', 'pipe', 'pipe', 'pipe']);
+      expect(commandStdout.pipe).toHaveBeenCalledWith(process.stderr, { end: false });
+      expect(commandStderr.pipe).toHaveBeenCalledWith(process.stderr, { end: false });
       const stderrChunks = stderrWrite.mock.calls.map(([chunk]) => String(chunk)).join('');
       expect(stderrChunks).toContain('linux-out');
       expect(stderrChunks).toContain('linux-err');
+      expect(() => commandStdout.emit('error', new Error('stdout reset'))).not.toThrow();
+      expect(() => commandStderr.emit('error', new Error('stderr reset'))).not.toThrow();
     } finally {
       stderrWrite.mockRestore();
     }

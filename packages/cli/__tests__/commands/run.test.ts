@@ -425,6 +425,22 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
   }
 
+  /** Write a child that emits command stdout/stderr while passing. */
+  async function writeNoisyPassingChild(): Promise<void> {
+    const content = createRunbook({
+      title: 'Child',
+      steps: [
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          command:
+            "node -e \"process.stdout.write(['INLINE','STDOUT'].join('_')); process.stderr.write(['INLINE','STDERR'].join('_'))\"",
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+  }
+
   /** Write a single-step auto-executing child that fails and stops. */
   async function writeStoppingChild(): Promise<void> {
     const content = createRunbook({
@@ -506,6 +522,19 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
       expect(childState!.lifecycle).toBe('completed');
+    });
+
+    it('routes fresh inline child command output away from JSON stdout', async () => {
+      await startSubstepParent();
+      await writeNoisyPassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain('INLINE_STDOUT');
+      expect(result.stdout).not.toContain('INLINE_STDERR');
+      expect(result.stderr).toContain('INLINE_STDOUT');
+      expect(result.stderr).toContain('INLINE_STDERR');
     });
 
     it('inline child inherits parent template variables', async () => {

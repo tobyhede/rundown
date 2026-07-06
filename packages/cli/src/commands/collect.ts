@@ -13,7 +13,6 @@ import {
   type Frame,
   type FrameKey,
   type RunId,
-  type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
@@ -106,7 +105,6 @@ export function registerCollectCommand(program: Command): void {
               step: options.step,
               index: options.index,
               text: options.text,
-              commandStreamOptions,
               ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
 
@@ -128,8 +126,6 @@ interface CollectOptions {
   index?: string;
   /** True when `--text` is set (human-readable); false/undefined for JSON. */
   text?: boolean;
-  /** Runtime-only routing for command subprocess stdout/stderr. */
-  commandStreamOptions?: CommandExecutionStreamOptions;
   /** Validated `--run` run id supplying run-controller caller evidence. */
   runId?: RunId;
 }
@@ -444,8 +440,16 @@ function renderCollectOutcome(
  * @returns True if the command should set a non-zero exit code
  */
 async function runCollect(ctx: TransitionContext, options: CollectOptions): Promise<boolean> {
-  const { output, manager, actorService, lifecycleService, state, steps, cwd } = ctx;
-  const { commandStreamOptions } = options;
+  const {
+    output,
+    manager,
+    actorService,
+    lifecycleService,
+    state,
+    steps,
+    cwd,
+    commandStreamOptions,
+  } = ctx;
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;

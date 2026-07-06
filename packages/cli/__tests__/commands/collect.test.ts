@@ -998,7 +998,7 @@ describe('collect command', () => {
       expect(collectedParent.step).toBe('2');
     }, 20_000);
 
-    it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
+    async function setupCollectAdvancesIntoCommand(): Promise<{ runId: string }> {
       const parent = [
         '# Parent',
         '',
@@ -1075,6 +1075,12 @@ describe('collect command', () => {
       const passed = runCli(`pass --claim-id ${claimId}`, workspace);
       expect(passed.exitCode).toBe(0);
 
+      return { runId };
+    }
+
+    it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
+      const { runId } = await setupCollectAdvancesIntoCommand();
+
       const collected = runCli(`collect --run ${runId} --allow-run printf --no-sandbox`, workspace);
       expect(collected.exitCode).toBe(0);
       expect(collected.stdout).not.toContain('COMMAND_STDOUT');
@@ -1088,6 +1094,21 @@ describe('collect command', () => {
         action: 'collect',
         status: 'applied',
       });
+    });
+
+    it('routes command stdout and stderr separately when collect text output advances into a command', async () => {
+      const { runId } = await setupCollectAdvancesIntoCommand();
+
+      const collected = runCli(
+        `collect --run ${runId} --text --allow-run printf --no-sandbox`,
+        workspace,
+      );
+
+      expect(collected.exitCode).toBe(0);
+      expect(collected.stdout).toContain('COMMAND_STDOUT');
+      expect(collected.stdout).not.toContain('COMMAND_STDERR');
+      expect(collected.stderr).toContain('COMMAND_STDERR');
+      expect(collected.stderr).not.toContain('COMMAND_STDOUT');
     });
   });
 

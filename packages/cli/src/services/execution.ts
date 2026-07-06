@@ -657,6 +657,7 @@ async function launchInlineChildFromIntent({
         sessionService,
         lifecycleService: new ExecutionLifecycleService(manager),
         cwd,
+        commandStreamOptions,
       },
       prepared.prepared,
       {

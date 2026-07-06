@@ -63,6 +63,17 @@ describe('CLI transition boundary', () => {
     expect(source).not.toMatch(/parseActionType\s*\(/);
   });
 
+  it('passes command stream options into fresh inline child launches', async () => {
+    const source = await readFile(
+      new URL('../../src/services/execution.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toMatch(
+      /const launchResult = await startRunbook\(\s*\{\s*output,\s*manager,\s*actorService,\s*sessionService,\s*lifecycleService: new ExecutionLifecycleService\(manager\),\s*cwd,\s*commandStreamOptions,\s*\}/,
+    );
+  });
+
   it('does not send COMMAND_RESULT or inline command observation payloads from CLI execution code', async () => {
     const source = await readFile(
       new URL('../../src/services/execution.ts', import.meta.url),
