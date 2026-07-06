@@ -6,6 +6,7 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
+import { claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
 import type {
   CommandIntent,
@@ -425,6 +426,7 @@ export type LifecycleTransitionOutcome =
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     }
   | { readonly kind: 'actor_context_required' }
+  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
   | {
       /** The explicit `--run` target is not a running member of the session stack. */
       readonly kind: 'unknown_run';
@@ -525,6 +527,8 @@ export type LifecycleTerminalOutcome =
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
   /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
   | { readonly kind: 'actor_context_required' }
+  /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
+  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
   | {
       /** The explicit `--run` target is not a running member of the session stack. */
       readonly kind: 'unknown_run';
@@ -1553,6 +1557,12 @@ export class RunbookLifecycleCommandService {
           expectedCommand: resolution.expectedCommand,
           requestedCommand: resolution.requestedCommand,
         };
+      case 'claim_grant_required':
+        return {
+          kind: 'claim_grant_required',
+          claimId: resolution.claimId,
+          runId: resolution.runId,
+        };
       case 'claim':
         break;
       default: {
@@ -1598,13 +1608,14 @@ export class RunbookLifecycleCommandService {
       ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
     });
 
-    // Record BEFORE release (decision #4). No explicit `result` → core derives
-    // completed→pass / stopped→fail via lifecycleToDelegationOutcome.
-    // recordChildCompletion self-guards when the child carries no linkage
-    // (returns 'not-applicable').
-    const reported = await completionService.recordChildCompletion({
-      childState: syncResult.state,
-    });
+    // Record BEFORE release (decision #4), but only when the verified claim also
+    // carries the exact parent/child report grant. No explicit `result` → core
+    // derives completed→pass / stopped→fail via lifecycleToDelegationOutcome.
+    const reported = claimCanReportDelegationResult(resolution.claim, syncResult.state)
+      ? await completionService.recordChildCompletion({
+          childState: syncResult.state,
+        })
+      : 'not-applicable';
 
     await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
 
@@ -1881,6 +1892,15 @@ export class RunbookLifecycleCommandService {
         return {
           ready: false,
           outcome: { kind: 'actor_context_required' },
+        };
+      case 'claim_grant_required':
+        return {
+          ready: false,
+          outcome: {
+            kind: 'claim_grant_required',
+            claimId: resolution.claimId,
+            runId: resolution.runId,
+          },
         };
       default: {
         const _exhaustive: never = resolution;

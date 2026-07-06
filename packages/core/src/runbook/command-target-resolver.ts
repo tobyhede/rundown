@@ -129,6 +129,11 @@ export type TransitionTargetResolution =
       readonly kind: 'actor_context_required';
     }
   | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
+    }
+  | {
       /** Ready resolution for an explicit `--run` target on the session stack. */
       readonly kind: 'run';
       /** Run id named by the caller. */
@@ -388,6 +393,10 @@ export async function resolveMutationAuthority(input: {
   };
 }
 
+function claimAuthorizesRunMutation(claim: VerifiedClaim, state: RunbookState): boolean {
+  return authorizeClaim(claim, { action: 'mutate-run', runId: state.id }).kind === 'allowed';
+}
+
 /**
  * Map a refusing {@link RunningStackMemberResolution} to the shared
  * `unknown_run` refusal shape.
@@ -502,6 +511,16 @@ export async function resolveTransitionTarget(
     const claimed = await resolveClaimTarget(targetReader, options.claimId, {
       includeStashed: false,
     });
+    if (claimed.kind === 'stale_claim') {
+      return claimed;
+    }
+    if (!claimAuthorizesRunMutation(claimed.claim, claimed.state)) {
+      return {
+        kind: 'claim_grant_required',
+        claimId: claimed.claimId,
+        runId: claimed.state.id,
+      };
+    }
     if (claimed.kind !== 'terminal_claim') {
       // 'claim' and 'stale_claim' have identical shapes in both unions; TS
       // narrows `claimed` to exactly those two here.
@@ -675,6 +694,11 @@ export type TerminalTargetResolution =
       readonly lifecycle: 'completed' | 'stopped';
       readonly expectedCommand: TerminalCommandName;
       readonly requestedCommand: TerminalCommandName;
+    }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
     };
 
 /**
@@ -698,6 +722,16 @@ export async function resolveTerminalTarget(
   const claimed = await resolveClaimTarget(targetReader, options.claimId, {
     includeStashed: false,
   });
+  if (claimed.kind === 'stale_claim') {
+    return claimed;
+  }
+  if (!claimAuthorizesRunMutation(claimed.claim, claimed.state)) {
+    return {
+      kind: 'claim_grant_required',
+      claimId: claimed.claimId,
+      runId: claimed.state.id,
+    };
+  }
   if (claimed.kind !== 'terminal_claim') {
     // 'claim' and 'stale_claim' share identical shapes across both unions.
     return claimed;

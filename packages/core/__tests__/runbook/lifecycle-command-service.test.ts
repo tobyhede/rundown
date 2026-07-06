@@ -42,6 +42,7 @@ import {
 } from '../../src/runbook/index.js';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
@@ -3149,6 +3150,48 @@ describe('RunbookLifecycleCommandService', () => {
       expect(loadStepsArgs).toHaveLength(1);
       expect(loadStepsArgs[0]?.id).toBe(claimChildRunId);
     });
+
+    it('returns claim_grant_required when a claimed child lacks mutate-run grant', async () => {
+      const parentRunId = assertRunId('rd_44444444444444444444444444444444');
+      const claimChildRunId = assertRunId('rd_33333333333333333333333333333333');
+      await manager.save(baseState({ id: parentRunId }));
+      await sessionService.pushRunbook(parentRunId);
+      await manager.save(
+        baseState({
+          id: claimChildRunId,
+          runbook: { source: 'project', path: 'claim-child.md' },
+          runbookPath: 'claim-child.md',
+          parentLinkage: linkageFor(parentRunId, 'a'),
+        }),
+      );
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(claimChildRunId, linkageFor(parentRunId, 'a')),
+      );
+      const session = await manager.loadSession();
+      const claimKey = claimKeyFromBearer(claimed.claimId);
+      const claim = session.claims[claimKey];
+      session.claims[claimKey] = {
+        ...claim,
+        grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+      };
+      await manager.saveSession(session);
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: {
+          kind: 'claim_bearer',
+          claimId: claimed.claimId,
+        },
+        targetSelector: { kind: 'claim', claimId: claimed.claimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({
+        kind: 'claim_grant_required',
+        claimId: claimed.claimId,
+        runId: claimChildRunId,
+      });
+    });
   });
 
   describe('runTerminal', () => {
@@ -3275,6 +3318,37 @@ describe('RunbookLifecycleCommandService', () => {
         expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
       });
 
+      it('claim stop refuses delegated completion reporting when the claim lacks report grant', async () => {
+        const claimId = await setupClaim('running');
+        const session = await manager.loadSession();
+        const claimKey = claimKeyFromBearer(claimId);
+        const claim = session.claims[claimKey];
+        session.claims[claimKey] = {
+          ...claim,
+          delegation: undefined,
+          grants: claim.grants.filter((grant) => grant.action !== 'report-delegation-result'),
+        };
+        await manager.saveSession(session);
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        expect(out).toMatchObject({ kind: 'applied_claim', reported: 'not-applicable' });
+        expect(recordSpy).not.toHaveBeenCalled();
+      });
+
       it('claim complete on a running child dispatches FORCE_COMPLETE and forwards the message', async () => {
         const claimId = await setupClaim('running');
         loadStepsImpl = () => [
@@ -3310,6 +3384,28 @@ describe('RunbookLifecycleCommandService', () => {
           type: 'FORCE_COMPLETE',
           message: 'wrap up',
         });
+      });
+
+      it('claim complete returns claim_grant_required when the claim lacks mutate-run grant', async () => {
+        const claimId = await setupClaim('running');
+        const session = await manager.loadSession();
+        const claimKey = claimKeyFromBearer(claimId);
+        const claim = session.claims[claimKey];
+        session.claims[claimKey] = {
+          ...claim,
+          grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+        };
+        await manager.saveSession(session);
+        const sendSpy = jest.spyOn(actorService, 'sendAndSync');
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        expect(out).toEqual({ kind: 'claim_grant_required', claimId, runId: claimChildRunId });
+        expect(sendSpy).not.toHaveBeenCalled();
       });
     });
 

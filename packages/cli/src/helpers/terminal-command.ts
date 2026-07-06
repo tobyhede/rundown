@@ -127,6 +127,8 @@ export async function renderTerminalOutcome(
       return renderStaleClaimRefusal(output, outcome.message);
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, command);
+    case 'claim_grant_required':
+      return renderActorContextRequiredRefusal(output, command);
     case 'delegation_collection_pending':
       emitDelegationCollectionPendingError(
         output,

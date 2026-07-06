@@ -157,6 +157,16 @@ describe('RunbookCollectionService', () => {
             grants: [
               { action: 'collect-for-run', runId },
               { action: 'collect-for-run', runId: controlledRunId },
+              {
+                action: 'report-delegation-result',
+                childRunId: controlledRunId,
+                tokenHash,
+                parentRunId: ancestorRunId,
+                parentStepId: '1.1',
+                parentStep: '1',
+                parentFrameKey: buildFrameKey('1'),
+                parentEntry: 1,
+              },
             ],
           },
         };
@@ -960,6 +970,39 @@ describe('RunbookCollectionService', () => {
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
     });
+  });
+
+  it('does not report a terminal child upward when the verified claim lacks report grant', async () => {
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: delegationLinkage,
+    });
+    sessionService.verifyClaimId = async () => ({
+      status: 'verified',
+      claim: {
+        claimKey,
+        controlledRunId: runId,
+        grants: [
+          { action: 'collect-for-run', runId },
+          { action: 'collect-for-run', runId: controlledRunId },
+        ],
+      },
+    });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      reportedTerminalOutcome: false,
+    });
+    const freshAncestor = await manager.load(ancestorRunId);
+    expect(Object.keys(freshAncestor?.resolvedCompletions ?? {})).toHaveLength(0);
   });
 
   it('does not report delegated fail for policy-denied terminal children', async () => {

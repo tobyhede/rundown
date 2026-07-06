@@ -384,6 +384,53 @@ describe('ClaimRecordSchema', () => {
       ClaimRecordSchema.safeParse({ ...validClaim, secretHash: 'sha256:not-hex' }).success,
     ).toBe(false);
   });
+
+  it('rejects run-scoped grants that target a run other than controlledRunId', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      grants: [{ action: 'mutate-run', runId: PARENT_RUN_ID }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects delegated claims without a matching report-delegation-result grant', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects delegated claims whose report grant does not match delegation linkage', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      grants: [
+        { action: 'mutate-run', runId: CHILD_RUN_ID },
+        {
+          action: 'report-delegation-result',
+          childRunId: CHILD_RUN_ID,
+          parentRunId: PARENT_RUN_ID,
+          parentStepId: '1.2',
+          parentStep: 'Process item',
+          parentFrameKey: buildFrameKey('1', 0),
+          parentEntry: 1,
+          tokenHash: `sha256:${'b'.repeat(64)}`,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-delegated claims with delegation report grants', () => {
+    const { delegation: _delegation, ...nonDelegatedClaim } = validClaim;
+
+    const result = ClaimRecordSchema.safeParse(nonDelegatedClaim);
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('SessionDataSchema claims registry', () => {

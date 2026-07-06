@@ -459,3 +459,30 @@ export function authorizeClaim(
     ? { kind: 'allowed' }
     : { kind: 'denied', reason: 'claim_grant_required' };
 }
+
+/**
+ * Test whether a verified claim can report the exact delegated child result.
+ *
+ * @param claim - Verified claim whose report grant should be checked.
+ * @param childState - Child run state carrying delegation parent linkage.
+ * @returns Whether the claim authorizes reporting this child to its linked parent.
+ */
+export function claimCanReportDelegationResult(
+  claim: VerifiedClaim,
+  childState: RunbookState,
+): boolean {
+  const linkage = childState.parentLinkage;
+  if (linkage?.kind !== 'delegation') return false;
+  return (
+    authorizeClaim(claim, {
+      action: 'report-delegation-result',
+      childRunId: childState.id,
+      tokenHash: linkage.tokenHash,
+      parentRunId: linkage.parentRunId,
+      parentStepId: linkage.parentStepId,
+      parentStep: linkage.parentStep,
+      parentFrameKey: linkage.parentFrameKey,
+      parentEntry: linkage.parentEntry,
+    }).kind === 'allowed'
+  );
+}

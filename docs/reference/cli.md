@@ -448,10 +448,11 @@ rundown goto 3 --claim-id <claim_id> # Bearer-authorized jump
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--run <rd_…>` (orchestrator) or
-`--claim-id <claim_id>` (delegated child). `goto` is additionally gated behind
-the `run-navigation` policy intent — the run's policy must grant navigation for
-the jump to be allowed.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` as bearer authority and
+add `--run <rd_…>` only when the bearer controls more than one run and the
+target must be narrowed. `goto` is additionally gated behind the
+`run-navigation` policy intent — the run's policy must grant navigation for the
+jump to be allowed.
 
 **Restrictions:**
 
@@ -980,10 +981,11 @@ rundown pass --claim-id <root_claim_id> # or: rundown collect --claim-id <root_c
 - The delegation token printed by `delegate` is passed to `claim` by the
   subagent
 - The `claim_id` printed by `claim` is passed to every child-targeting command
-- Orchestrator lane: capture the run id from `rundown run` (echoed as
-  `runbookId` on every event) and pass `--run <rd_…>` on every orchestrator
-  mutation (`delegate`, `collect`, `pass`, `fail`, `goto`); the bare form is
-  refused with `ACTOR_CONTEXT_REQUIRED` on a delegation-exposed run
+- Orchestrator lane: capture the root `claim_id` from `rundown run` and pass
+  `--claim-id <claim_id>` on every orchestrator mutation (`delegate`, `collect`,
+  `pass`, `fail`, `goto`); add `--run <rd_…>` only when the bearer controls more
+  than one run and the target must be narrowed. The bare form is refused with
+  `ACTOR_CONTEXT_REQUIRED` on a delegation-exposed run
 - Child uses `rundown pass --claim-id <claim_id>` /
   `rundown fail --claim-id <claim_id>`
 - Completions are validated against frame + entry identity; stale completions

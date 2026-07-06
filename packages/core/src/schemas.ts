@@ -597,6 +597,36 @@ const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
   })
   .strict();
 
+function grantMatchesDelegation(grant: ClaimGrant, delegation: DelegationClaimLinkage): boolean {
+  return (
+    grant.action === 'report-delegation-result' &&
+    grant.childRunId === delegation.childRunId &&
+    grant.parentRunId === delegation.parentRunId &&
+    grant.parentStepId === delegation.parentStepId &&
+    grant.parentStep === delegation.parentStep &&
+    grant.parentFrameKey === delegation.parentFrameKey &&
+    grant.parentEntry === delegation.parentEntry &&
+    grant.tokenHash === delegation.tokenHash
+  );
+}
+
+function grantTargetsRun(grant: ClaimGrant): RunId | undefined {
+  switch (grant.action) {
+    case 'mutate-run':
+    case 'delegate-from-run':
+    case 'collect-for-run':
+    case 'abort-delegation':
+    case 'retry-delegation':
+      return grant.runId;
+    case 'report-delegation-result':
+      return undefined;
+    default: {
+      const _exhaustive: never = grant;
+      return _exhaustive;
+    }
+  }
+}
+
 /** Zod schema for a persisted proof-backed claim record. */
 export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z
   .object({
@@ -608,7 +638,51 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z
     issuedAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((claim, ctx) => {
+    for (const [index, grant] of claim.grants.entries()) {
+      const runId = grantTargetsRun(grant);
+      if (runId !== undefined && runId !== claim.controlledRunId) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['grants', index, 'runId'],
+          message: 'run-scoped claim grants must target controlledRunId',
+        });
+      }
+    }
+
+    const reportGrants = claim.grants.filter(
+      (grant): grant is Extract<ClaimGrant, { readonly action: 'report-delegation-result' }> =>
+        grant.action === 'report-delegation-result',
+    );
+
+    if (claim.delegation === undefined) {
+      if (reportGrants.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['grants'],
+          message: 'non-delegated claims must not carry delegation report grants',
+        });
+      }
+      return;
+    }
+
+    const delegation = claim.delegation;
+    if (delegation.childRunId !== claim.controlledRunId) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['delegation', 'childRunId'],
+        message: 'delegated claim childRunId must match controlledRunId',
+      });
+    }
+    if (!reportGrants.some((grant) => grantMatchesDelegation(grant, delegation))) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['grants'],
+        message: 'delegated claims must carry a matching report-delegation-result grant',
+      });
+    }
+  });
 
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z

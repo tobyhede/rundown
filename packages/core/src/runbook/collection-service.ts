@@ -1,6 +1,7 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { verifiedClaimContext, type CallerEvidence } from './actor-context.js';
-import type { ClaimRecord } from './claim-id.js';
+import { claimCanReportDelegationResult } from './claim-id.js';
+import type { ClaimRecord, VerifiedClaim } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -306,7 +307,7 @@ export async function collectDelegationOutcomes(
     };
   }
 
-  return applyCollection(input, { stepName, frame, frameKey });
+  return applyCollection(input, { stepName, frame, frameKey, claim: authority.claim });
 }
 
 function deriveCollectionTransitionObservations(
@@ -408,7 +409,12 @@ async function projectAndConsumeReEntryFrontier(
 
 async function applyCollection(
   input: CollectDelegationOutcomesOperationInput,
-  scope: { readonly stepName: string; readonly frame: Frame; readonly frameKey?: FrameKey },
+  scope: {
+    readonly stepName: string;
+    readonly frame: Frame;
+    readonly frameKey?: FrameKey;
+    readonly claim: VerifiedClaim;
+  },
 ): Promise<DelegationPolicyOutcome> {
   const drained = await input.completionService.drainResolvedCompletions({
     runbookId: input.targetState.id,
@@ -473,7 +479,11 @@ async function applyCollection(
       applied,
       unresolved: drained.unresolved,
       lifecycle: drained.status === 'done' ? 'completed' : 'stopped',
-      reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(input, fresh),
+      reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(
+        input,
+        fresh,
+        scope.claim,
+      ),
       transitionObservations,
     };
   }
@@ -544,12 +554,14 @@ async function applyCollection(
 async function reportTerminalOutcomeToDelegatingRun(
   input: CollectDelegationOutcomesOperationInput,
   terminalState: RunbookState,
+  claim: VerifiedClaim,
 ): Promise<boolean> {
   // Report-then-collect type-split: only a DELEGATION-linked terminal child
   // reports an outcome upward here. An inline-linked child advances its parent
   // synchronously elsewhere and must not record a delegation outcome; a
   // root run has no linkage. Both are filtered by this guard.
   if (terminalState.parentLinkage?.kind !== 'delegation') return false;
+  if (!claimCanReportDelegationResult(claim, terminalState)) return false;
   const projection = projectDelegationTerminalOutcome(terminalState);
   if (projection.kind !== 'outcome') return false;
   const recorded = await input.completionService.recordChildCompletion({

@@ -50,6 +50,11 @@ const claim = makeClaim(claimId);
 const secondClaim = makeClaim(secondClaimId);
 const verifiedClaim = makeVerifiedClaim(claim);
 const secondVerifiedClaim = makeVerifiedClaim(secondClaim);
+const claimWithoutMutateGrant: ClaimRecord = {
+  ...claim,
+  grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+};
+const verifiedClaimWithoutMutateGrant = makeVerifiedClaim(claimWithoutMutateGrant);
 
 const KNOWN_TRANSITION_KINDS = new Set([
   'claim',
@@ -352,6 +357,28 @@ describe('resolveMutationAuthority', () => {
 });
 
 describe('resolveTransitionTarget', () => {
+  it.each([
+    'pass',
+    'fail',
+  ] as const)('refuses claim-targeted %s when the bearer lacks mutate-run grant', async (command) => {
+    const result = await resolveTransitionTarget(
+      fakeReader({
+        claimResolution: {
+          status: 'claimed',
+          claimId,
+          claim: verifiedClaimWithoutMutateGrant,
+          record: claimWithoutMutateGrant,
+          state: child,
+        },
+        claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+        expectedIncludeStashed: false,
+      }),
+      { command, claimId },
+    );
+
+    expect(result).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
+  });
+
   it.each([
     'pass',
     'fail',
@@ -761,6 +788,27 @@ describe('resolveTerminalTarget', () => {
     });
     const res = await resolveTerminalTarget(reader, { command: 'complete', claimId });
     expect(res.kind).toBe('claim');
+  });
+
+  it.each([
+    'complete',
+    'stop',
+  ] as const)('refuses claim-targeted %s when the bearer lacks mutate-run grant', async (command) => {
+    const reader = fakeReader({
+      claimResolution: {
+        status: 'claimed',
+        claimId,
+        claim: verifiedClaimWithoutMutateGrant,
+        record: claimWithoutMutateGrant,
+        state: child,
+      },
+      claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+      expectedIncludeStashed: false,
+    });
+
+    const res = await resolveTerminalTarget(reader, { command, claimId });
+
+    expect(res).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
   });
 
   it('passes through a stale (missing) claim unchanged', async () => {
