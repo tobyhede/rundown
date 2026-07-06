@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
 // Mock node:fs — control existsSync for sibling discovery
 const mockExistsSync = jest.fn<(path: string) => boolean>();
@@ -10,16 +10,36 @@ jest.unstable_mockModule('node:fs', () => ({
 const { getPluginRoot, _resetPluginRootCache } = await import('../../src/helpers/plugin-root.js');
 
 describe('getPluginRoot()', () => {
-  let originalEnv: string | undefined;
+  let originalClaudePluginRoot: string | undefined;
+  let originalCodexPluginRoot: string | undefined;
+  let originalRundownPluginRoot: string | undefined;
+
+  beforeEach(() => {
+    originalClaudePluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    originalCodexPluginRoot = process.env.CODEX_PLUGIN_ROOT;
+    originalRundownPluginRoot = process.env.RUNDOWN_PLUGIN_ROOT;
+  });
 
   afterEach(() => {
     // Restore env
-    if (originalEnv !== undefined) {
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+    if (originalClaudePluginRoot !== undefined) {
+      process.env.CLAUDE_PLUGIN_ROOT = originalClaudePluginRoot;
     } else {
       delete process.env.CLAUDE_PLUGIN_ROOT;
     }
-    originalEnv = undefined;
+    if (originalCodexPluginRoot !== undefined) {
+      process.env.CODEX_PLUGIN_ROOT = originalCodexPluginRoot;
+    } else {
+      delete process.env.CODEX_PLUGIN_ROOT;
+    }
+    if (originalRundownPluginRoot !== undefined) {
+      process.env.RUNDOWN_PLUGIN_ROOT = originalRundownPluginRoot;
+    } else {
+      delete process.env.RUNDOWN_PLUGIN_ROOT;
+    }
+    originalClaudePluginRoot = undefined;
+    originalCodexPluginRoot = undefined;
+    originalRundownPluginRoot = undefined;
 
     // Reset cache between tests
     _resetPluginRootCache();
@@ -27,14 +47,12 @@ describe('getPluginRoot()', () => {
   });
 
   it('returns CLAUDE_PLUGIN_ROOT env var when set', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
     process.env.CLAUDE_PLUGIN_ROOT = '/custom/plugin/root';
 
     expect(getPluginRoot()).toBe('/custom/plugin/root');
   });
 
   it('env var is not cached — changing it between calls returns new value', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
     process.env.CLAUDE_PLUGIN_ROOT = '/first';
     expect(getPluginRoot()).toBe('/first');
 
@@ -42,9 +60,34 @@ describe('getPluginRoot()', () => {
     expect(getPluginRoot()).toBe('/second');
   });
 
-  it('returns sibling plugin path when existsSync returns true', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+  it('returns CODEX_PLUGIN_ROOT env var when Claude root is unset', () => {
     delete process.env.CLAUDE_PLUGIN_ROOT;
+    process.env.CODEX_PLUGIN_ROOT = '/codex/plugin/root';
+    process.env.RUNDOWN_PLUGIN_ROOT = '/neutral/plugin/root';
+
+    expect(getPluginRoot()).toBe('/codex/plugin/root');
+  });
+
+  it('returns RUNDOWN_PLUGIN_ROOT env var when Claude and Codex roots are unset', () => {
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CODEX_PLUGIN_ROOT;
+    process.env.RUNDOWN_PLUGIN_ROOT = '/neutral/plugin/root';
+
+    expect(getPluginRoot()).toBe('/neutral/plugin/root');
+  });
+
+  it('keeps CLAUDE_PLUGIN_ROOT as highest priority for compatibility', () => {
+    process.env.CLAUDE_PLUGIN_ROOT = '/claude/plugin/root';
+    process.env.CODEX_PLUGIN_ROOT = '/codex/plugin/root';
+    process.env.RUNDOWN_PLUGIN_ROOT = '/neutral/plugin/root';
+
+    expect(getPluginRoot()).toBe('/claude/plugin/root');
+  });
+
+  it('returns sibling plugin path when existsSync returns true', () => {
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CODEX_PLUGIN_ROOT;
+    delete process.env.RUNDOWN_PLUGIN_ROOT;
     mockExistsSync.mockReturnValue(true);
 
     const result = getPluginRoot();
@@ -59,16 +102,18 @@ describe('getPluginRoot()', () => {
   });
 
   it('returns null when existsSync returns false and env var unset', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
     delete process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CODEX_PLUGIN_ROOT;
+    delete process.env.RUNDOWN_PLUGIN_ROOT;
     mockExistsSync.mockReturnValue(false);
 
     expect(getPluginRoot()).toBeNull();
   });
 
   it('caches sibling discovery result — second call skips filesystem', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
     delete process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CODEX_PLUGIN_ROOT;
+    delete process.env.RUNDOWN_PLUGIN_ROOT;
     mockExistsSync.mockReturnValue(true);
 
     getPluginRoot();
@@ -79,8 +124,9 @@ describe('getPluginRoot()', () => {
   });
 
   it('_resetPluginRootCache clears cache so next call re-discovers', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
     delete process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CODEX_PLUGIN_ROOT;
+    delete process.env.RUNDOWN_PLUGIN_ROOT;
     mockExistsSync.mockReturnValue(false);
 
     expect(getPluginRoot()).toBeNull();
@@ -94,8 +140,9 @@ describe('getPluginRoot()', () => {
   });
 
   it('env var takes precedence over cached sibling result', () => {
-    originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
     delete process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CODEX_PLUGIN_ROOT;
+    delete process.env.RUNDOWN_PLUGIN_ROOT;
     mockExistsSync.mockReturnValue(true);
 
     // First call populates cache via sibling discovery

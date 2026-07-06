@@ -12,8 +12,10 @@ let cached: string | null | undefined;
  * Resolve the plugin root directory.
  *
  * Priority:
- * 1. `CLAUDE_PLUGIN_ROOT` environment variable (set by Claude Code during hook dispatch)
- * 2. Sibling package discovery — `@rundown-org/claude-code-plugin` installed alongside the CLI
+ * 1. `CLAUDE_PLUGIN_ROOT` environment variable (set by Claude Code)
+ * 2. `CODEX_PLUGIN_ROOT` environment variable (set by Codex plugin launchers)
+ * 3. `RUNDOWN_PLUGIN_ROOT` environment variable (neutral host-provided plugin root)
+ * 4. Sibling package discovery — `@rundown-org/claude-code-plugin` installed alongside the CLI
  *
  * The sibling discovery works because both `@rundown-org/cli` and
  * `@rundown-org/claude-code-plugin` are installed in the same global
@@ -23,9 +25,14 @@ let cached: string | null | undefined;
  * @returns Absolute path to the plugin root directory, or null if not found
  */
 export function getPluginRoot(): string | null {
-  // Environment variable takes precedence (always re-read, may change)
-  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (envRoot) return envRoot;
+  const claudeRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (claudeRoot) return claudeRoot;
+
+  const codexRoot = process.env.CODEX_PLUGIN_ROOT;
+  if (codexRoot) return codexRoot;
+
+  const rundownRoot = process.env.RUNDOWN_PLUGIN_ROOT;
+  if (rundownRoot) return rundownRoot;
 
   // Return cached sibling discovery result
   if (cached !== undefined) return cached;

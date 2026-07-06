@@ -129,6 +129,7 @@ describe('Plugin manifest surface', () => {
     expect(packageJson.bin).toEqual({
       rdpath: 'dist/rdpath.js',
       rdx: 'dist/rdx.js',
+      'rundown-mcp': 'dist/rundown-mcp.js',
     });
     // Pass keys as single-element arrays so Jest treats '.' / './cli' as literal
     // keys instead of dot-delimited property paths, and pin the resolved targets
@@ -145,6 +146,7 @@ describe('Plugin manifest surface', () => {
       'dist',
       'schemas',
       '.claude-plugin',
+      'codex-plugin',
       'examples',
       'hooks',
       'runbooks',

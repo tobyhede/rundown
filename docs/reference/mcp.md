@@ -612,6 +612,24 @@ Global install:
 }
 ```
 
+### Codex plugin config
+
+The Rundown Codex plugin references the existing stdio server through
+`.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "rundown": {
+      "command": "rundown-mcp"
+    }
+  }
+}
+```
+
+This config does not change MCP semantics. The server remains a local stdio
+front end over the Rundown CLI.
+
 Project-scoped working directory:
 
 ```json

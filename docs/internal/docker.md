@@ -135,8 +135,8 @@ migrate, shim, or rewrite stale runbook state.
 | `docker-compose.e2e.yml`                       | Compose service with volume mounts                                                   |
 | `scripts/e2e-entrypoint.sh`                    | Container entrypoint (6-phase test runner)                                           |
 | `scripts/e2e-shell-entrypoint.sh`              | Container entrypoint (workspace setup + interactive claude)                          |
-| `scripts/e2e-codex-shell-entrypoint.sh`        | Container entrypoint (workspace setup + AGENTS.md install + interactive codex)       |
-| `scripts/e2e-codex-agents.md`                  | Rundown-aware `AGENTS.md` guidance copied into the Codex workspace                   |
+| `scripts/e2e-codex-shell-entrypoint.sh`        | Container entrypoint (workspace setup + Codex plugin install + interactive codex)    |
+| `scripts/e2e-codex-agents.md`                  | Fallback/debug Rundown CLI notes for Codex plugin-loading failures                   |
 | `tests/e2e/fixtures/test-app/`                 | Test fixture (Hono + SQLite REST API)                                                |
 | `scripts/__tests__/e2e-codex-harness.test.mjs` | Behavioral harness tests (run under `pnpm test` / `pnpm run verify` and CI)          |
 
@@ -159,16 +159,28 @@ Codex-authenticated machine never demands Claude auth, and `--bash` debug mode
 `scripts/lib/e2e-auth.sh` (`e2e_prepare_claude_auth`, `e2e_prepare_codex_auth`)
 so it is unit-testable without a Docker build.
 
-### Codex ↔ Rundown integration (AGENTS.md)
+### Codex <-> Rundown integration (plugin + MCP)
 
 The Claude entrypoint wires Rundown into the session with `--plugin-dir`. Codex
-has no plugin mechanism, so the harness uses the simplest explicit path Codex
-already supports: **Codex reads `AGENTS.md` from its working directory on
-startup.** `scripts/e2e-codex-shell-entrypoint.sh` copies the Rundown-aware
-guidance (`scripts/e2e-codex-agents.md`, baked into the image at
-`/usr/local/share/rundown/codex-agents.md`) into the workspace as `AGENTS.md`,
-so each Codex session starts with instructions for driving runbooks via the `rd`
-CLI. An `AGENTS.md` already present in a mounted project is preserved untouched.
+plugins are installed through Codex marketplaces, so the Codex E2E entrypoint
+installs the repository's Codex plugin from the local `rundown-local`
+marketplace rooted at `/usr/local/share/rundown`, using the repo's
+`packages/claude-code-plugin/codex-plugin` layout inside that root.
+
+That plugin root contains:
+
+- `.codex-plugin/plugin.json` for Codex plugin metadata
+- `skills/` for Rundown's Codex-facing skills
+- `.mcp.json` for the `rundown` MCP server
+- `runbooks/`, `templates/`, and `schemas/` used by plugin runbook discovery
+
+The entrypoint exports both `CODEX_PLUGIN_ROOT` and `RUNDOWN_PLUGIN_ROOT` before
+installing the plugin and launching Codex. The CLI still supports
+`CLAUDE_PLUGIN_ROOT` for Claude Code, but Codex no longer depends on Claude
+lifecycle environment variables for plugin runbook discovery.
+
+Stage 1 intentionally does not install Codex hooks. Delegation dispatch and
+closure enforcement parity remain Stage 2 work.
 
 ### E2E Coverage
 

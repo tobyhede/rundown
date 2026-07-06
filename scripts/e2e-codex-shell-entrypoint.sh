@@ -5,10 +5,9 @@
 #   - If /home/testuser/project exists (mounted via -v), use it directly
 #   - Otherwise, copy the built-in test-app fixture to /tmp/test-workspace
 #
-# Rundown integration: Codex reads AGENTS.md from its working directory on
-# startup. The harness copies a Rundown-specific AGENTS.md into the workspace so
-# the Codex session starts with instructions for driving runbooks via the `rd`
-# CLI. This is the Codex equivalent of the Claude entrypoint's --plugin-dir.
+# Rundown integration: the E2E image ships a local Codex marketplace and the
+# Rundown Codex plugin root. The entrypoint installs that plugin through Codex's
+# supported marketplace flow before launching the interactive session.
 #
 # Changes to a mounted project persist back to the host filesystem.
 set -euo pipefail
@@ -16,13 +15,15 @@ set -euo pipefail
 log() { echo "[rundown-codex-shell] $*"; }
 hr()  { echo "----------------------------------------------------------------"; }
 
-# Source guidance baked into the image (see scripts/Dockerfile.verify).
-CODEX_AGENTS_SOURCE="/usr/local/share/rundown/codex-agents.md"
-
 # Required by the rundown CLI's SQLite-backed state on Node's experimental
 # driver. Exported up front so both the mounted-project and built-in-fixture
 # paths inherit it.
 export NODE_OPTIONS="--experimental-sqlite"
+
+PLUGIN_DIR="/usr/local/share/rundown/packages/claude-code-plugin/codex-plugin"
+MARKETPLACE_ROOT="/usr/local/share/rundown"
+export CODEX_PLUGIN_ROOT="$PLUGIN_DIR"
+export RUNDOWN_PLUGIN_ROOT="$PLUGIN_DIR"
 
 # 1. Determine workspace
 
@@ -51,25 +52,7 @@ fi
 
 cd "$WORKSPACE"
 
-# 2. Install Rundown-aware Codex guidance (AGENTS.md)
-#
-# Codex reads AGENTS.md from the working directory. Placing the Rundown guidance
-# here is the explicit Codex<->Rundown integration mechanism. An existing
-# AGENTS.md in a mounted project is preserved (never overwritten); the harness
-# guidance is only written when none is present.
-
-if [ -f "$CODEX_AGENTS_SOURCE" ]; then
-  if [ -f "$WORKSPACE/AGENTS.md" ]; then
-    log "AGENTS.md already present in workspace; leaving it untouched."
-  else
-    cp "$CODEX_AGENTS_SOURCE" "$WORKSPACE/AGENTS.md"
-    log "Installed Rundown-aware AGENTS.md into workspace."
-  fi
-else
-  log "WARNING: Rundown Codex guidance not found at $CODEX_AGENTS_SOURCE"
-fi
-
-# 3. Check credentials
+# 2. Check credentials
 
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
 AUTH_FILE="$CODEX_DIR/auth.json"
@@ -80,13 +63,35 @@ if [ ! -f "$AUTH_FILE" ]; then
   exit 1
 fi
 
-# 4. Launch Codex CLI
+if [ ! -f "$PLUGIN_DIR/.codex-plugin/plugin.json" ]; then
+  log "ERROR: Codex plugin manifest not found at $PLUGIN_DIR/.codex-plugin/plugin.json"
+  exit 1
+fi
+
+if [ ! -f "$MARKETPLACE_ROOT/.agents/plugins/marketplace.json" ]; then
+  log "ERROR: Codex marketplace not found at $MARKETPLACE_ROOT/.agents/plugins/marketplace.json"
+  exit 1
+fi
+
+# The Codex plugin's .mcp.json starts the same stdio MCP server exposed by the
+# @rundown-org/mcp package. The server remains a thin facade over the CLI; this
+# preflight only proves the binary is installed, not that Codex hooks exist.
+if ! command -v rundown-mcp >/dev/null 2>&1; then
+  log "ERROR: rundown-mcp is not available on PATH"
+  exit 1
+fi
+
+codex plugin marketplace add "$MARKETPLACE_ROOT" >/dev/null
+codex plugin add rundown@rundown-local >/dev/null
+
+# 3. Launch Codex CLI
 
 hr
 log "Workspace: $(pwd)"
-log "AGENTS.md: $WORKSPACE/AGENTS.md"
+log "Plugin:    $PLUGIN_DIR"
+log "Marketplace: $MARKETPLACE_ROOT/.agents/plugins/marketplace.json"
+log "MCP:       $(command -v rundown-mcp 2>/dev/null || echo 'missing')"
 log "Codex:     $(codex --version 2>/dev/null || echo 'unknown')"
-log "rd:        $(rd --version 2>/dev/null || echo 'unknown')"
 hr
 log "Starting interactive Codex CLI session..."
 echo ""

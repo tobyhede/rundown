@@ -1,0 +1,36 @@
+{
+  "name": "rundown",
+  "version": "1.0.0",
+  "description": "Run Markdown runbooks through Rundown from Codex using skills and MCP tools.",
+  "author": {
+    "name": "Toby Hede",
+    "email": "toby@rundown.org",
+    "url": "https://github.com/rundown-org"
+  },
+  "homepage": "https://github.com/rundown-org/rundown",
+  "repository": "https://github.com/rundown-org/rundown",
+  "license": "MIT",
+  "keywords": ["rundown", "runbook", "codex", "mcp", "workflow"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Rundown",
+    "shortDescription": "Execute Markdown runbooks from Codex",
+    "longDescription": "Use Rundown to discover, start, inspect, and advance executable Markdown runbooks from Codex. The plugin supplies Codex skills for runbook workflows and the Rundown MCP server as the tool surface; runbook state and transitions remain owned by the Rundown CLI and core state machine.",
+    "developerName": "Rundown",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Run a Rundown runbook.",
+      "List available Rundown runbooks.",
+      "Start a Rundown planning workflow."
+    ],
+    "websiteURL": "https://github.com/rundown-org/rundown",
+    "privacyPolicyURL": "https://github.com/rundown-org/rundown",
+    "termsOfServiceURL": "https://github.com/rundown-org/rundown",
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/rundown.svg",
+    "logo": "./assets/rundown.svg",
+    "screenshots": []
+  }
+}

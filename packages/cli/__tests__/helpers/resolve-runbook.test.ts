@@ -10,22 +10,36 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { runbooksDir } from '@rundown-org/core';
 
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
 describe('resolveRunbookFile', () => {
   let testDir: string;
   let originalPluginRoot: string | undefined;
+  let originalCodexPluginRoot: string | undefined;
+  let originalRundownPluginRoot: string | undefined;
   let originalBundledRunbooksPath: string | undefined;
 
   beforeEach(async () => {
     testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-test-'));
     // Save original env to restore in afterEach
     originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    originalCodexPluginRoot = process.env.CODEX_PLUGIN_ROOT;
+    originalRundownPluginRoot = process.env.RUNDOWN_PLUGIN_ROOT;
     originalBundledRunbooksPath = process.env.BUNDLED_RUNBOOKS_PATH;
   });
 
   afterEach(async () => {
     // Restore env BEFORE cleanup to prevent bleeding into other tests
-    process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
-    process.env.BUNDLED_RUNBOOKS_PATH = originalBundledRunbooksPath;
+    restoreEnv('CLAUDE_PLUGIN_ROOT', originalPluginRoot);
+    restoreEnv('CODEX_PLUGIN_ROOT', originalCodexPluginRoot);
+    restoreEnv('RUNDOWN_PLUGIN_ROOT', originalRundownPluginRoot);
+    restoreEnv('BUNDLED_RUNBOOKS_PATH', originalBundledRunbooksPath);
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
@@ -169,6 +183,32 @@ describe('resolveRunbookFile', () => {
       const result = await resolveRunbookFile(testDir, 'rundown:review-plan');
       expect(result).not.toBeNull();
       expect(result!.path).toBe(path.join(planningDir, 'review-plan.runbook.md'));
+    });
+
+    it('resolves rundown:name from CODEX_PLUGIN_ROOT', async () => {
+      const codexPluginRoot = path.join(testDir, 'codex-plugin');
+      const planningDir = path.join(codexPluginRoot, 'runbooks/planning');
+      await fs.mkdir(planningDir, { recursive: true });
+      await fs.writeFile(
+        path.join(planningDir, 'codex-demo.runbook.md'),
+        `# Codex Demo
+
+## 1. Prompt
+- PASS COMPLETE
+- FAIL STOP
+
+Confirm Codex plugin discovery works.
+`,
+      );
+
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+      process.env.CODEX_PLUGIN_ROOT = codexPluginRoot;
+
+      const result = await resolveRunbookFile(testDir, 'rundown:codex-demo');
+
+      expect(result?.source).toBe('plugin');
+      expect(result?.sourceRoot).toBe(path.join(codexPluginRoot, 'runbooks'));
+      expect(result?.path).toBe(path.join(planningDir, 'codex-demo.runbook.md'));
     });
 
     it('returns null when namespaced runbook not found in target source', async () => {

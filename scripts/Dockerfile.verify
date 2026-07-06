@@ -61,13 +61,15 @@ COPY dist/rundown-org-parser-*.tgz /tmp/tarballs/
 COPY dist/rundown-org-core-*.tgz /tmp/tarballs/
 COPY dist/rundown-org-cli-*.tgz /tmp/tarballs/
 COPY dist/rundown-org-claude-code-plugin-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-mcp-*.tgz /tmp/tarballs/
 
 # Install packages globally from tarballs (dependencies declared in package.json)
 RUN npm install -g \
     /tmp/tarballs/rundown-org-parser-*.tgz \
     /tmp/tarballs/rundown-org-core-*.tgz \
     /tmp/tarballs/rundown-org-cli-*.tgz \
-    /tmp/tarballs/rundown-org-claude-code-plugin-*.tgz && \
+    /tmp/tarballs/rundown-org-claude-code-plugin-*.tgz \
+    /tmp/tarballs/rundown-org-mcp-*.tgz && \
     rm -rf /tmp/tarballs
 
 USER testuser
@@ -92,9 +94,16 @@ COPY --chmod=755 scripts/e2e-entrypoint.sh /usr/local/bin/e2e-entrypoint.sh
 COPY --chmod=755 scripts/e2e-shell-entrypoint.sh /usr/local/bin/e2e-shell-entrypoint.sh
 COPY --chmod=755 scripts/e2e-codex-shell-entrypoint.sh /usr/local/bin/e2e-codex-shell-entrypoint.sh
 
-# Rundown-aware Codex guidance. The Codex entrypoint copies this into the
-# session workspace as AGENTS.md, which Codex reads on startup. This is the
-# Codex equivalent of the Claude entrypoint's --plugin-dir wiring.
+# Rundown Codex plugin root. Stage 1 uses plugin metadata, bundled skills, and
+# MCP config; it intentionally does not install Codex hooks.
+COPY --chown=testuser:testuser packages/claude-code-plugin/codex-plugin /usr/local/share/rundown/packages/claude-code-plugin/codex-plugin
+
+# Local Codex marketplace used by the E2E entrypoint to install the plugin
+# through Codex's supported plugin flow.
+COPY --chown=testuser:testuser .agents/plugins/marketplace.json /usr/local/share/rundown/.agents/plugins/marketplace.json
+
+# Fallback/debug guidance only. The Codex entrypoint does not install this into
+# project workspaces during the normal plugin-based Stage 1 flow.
 COPY --chmod=644 scripts/e2e-codex-agents.md /usr/local/share/rundown/codex-agents.md
 
 # Copy test app fixture

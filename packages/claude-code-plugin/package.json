@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "rdpath": "dist/rdpath.js",
-    "rdx": "dist/rdx.js"
+    "rdx": "dist/rdx.js",
+    "rundown-mcp": "dist/rundown-mcp.js"
   },
   "main": "dist/cli.js",
   "types": "dist/index.d.ts",
@@ -22,6 +23,7 @@
     "dist",
     "schemas",
     ".claude-plugin",
+    "codex-plugin",
     "examples",
     "hooks",
     "runbooks",
@@ -67,6 +69,7 @@
   "dependencies": {
     "@rundown-org/cli": "*",
     "@rundown-org/core": "*",
+    "@rundown-org/mcp": "*",
     "commander": "^15.0.0",
     "js-yaml": "^5.2.0",
     "zod": "^4.4.3"

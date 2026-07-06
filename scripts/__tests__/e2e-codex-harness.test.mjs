@@ -18,6 +18,16 @@ async function readRepoFile(path) {
   return readFile(join(repoRoot, path), 'utf-8');
 }
 
+function parseLocalPackageList(source) {
+  const match = source.match(/RUNDOWN_LOCAL_PACKAGES=\(([^)]*)\)/);
+  assert.ok(match, 'scripts/lib/local-packages.sh must define RUNDOWN_LOCAL_PACKAGES');
+  return match[1].trim().split(/\s+/).filter(Boolean);
+}
+
+function packageTarballName(pkg) {
+  return `rundown-org-${pkg}`;
+}
+
 /**
  * Run scripts/e2e-shell.sh inside an isolated ROOT_DIR that contains NO
  * credential directories (.claude-docker / .codex-docker), with `docker`
@@ -209,6 +219,152 @@ test('e2e image installs Codex CLI, ships the Codex entrypoint, and the Codex AG
   assert.match(
     dockerfile,
     /COPY --chmod=644 scripts\/e2e-codex-agents\.md \/usr\/local\/share\/rundown\/codex-agents\.md/,
+  );
+});
+
+test('local Docker tarball producers share the Dockerfile package list', async () => {
+  const build = await readRepoFile('scripts/build-e2e.sh');
+  const verify = await readRepoFile('scripts/verify-install.sh');
+  const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
+  const packageList = parseLocalPackageList(await readRepoFile('scripts/lib/local-packages.sh'));
+
+  assert.match(build, /\. "\$SCRIPT_DIR\/lib\/local-packages\.sh"/);
+  assert.match(verify, /\. "\$SCRIPT_DIR\/lib\/local-packages\.sh"/);
+  assert.match(build, /pack_rundown_local_packages "\$dist_abs"/);
+  assert.match(verify, /pack_rundown_local_packages "\$dist_abs"/);
+  assert.ok(packageList.includes('mcp'), 'local Docker package list must include mcp');
+
+  for (const pkg of packageList) {
+    const tarball = packageTarballName(pkg);
+    assert.match(dockerfile, new RegExp(`COPY dist/${tarball}-\\*\\.tgz /tmp/tarballs/`));
+    assert.match(dockerfile, new RegExp(`/tmp/tarballs/${tarball}-\\*\\.tgz`));
+  }
+});
+
+test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
+  const definitions = await readRepoFile('packages/mcp/src/tool-definitions.ts');
+  const tools = ['validate', 'list', 'status', 'run', 'pass', 'fail', 'goto', 'complete', 'stop'];
+
+  for (const tool of tools) {
+    assert.match(definitions, new RegExp(`${tool}: \\{`));
+  }
+
+  assert.match(definitions, /description: 'Start or enter a runbook'/);
+  assert.match(definitions, /description: 'Mark a step passed'/);
+  assert.match(definitions, /description: 'Mark a step failed'/);
+});
+
+test('E2E image copies the Rundown Codex plugin root', async () => {
+  const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
+
+  assert.match(
+    dockerfile,
+    /packages\/claude-code-plugin\/codex-plugin \/usr\/local\/share\/rundown\/packages\/claude-code-plugin\/codex-plugin/,
+  );
+  assert.match(
+    dockerfile,
+    /\.agents\/plugins\/marketplace\.json \/usr\/local\/share\/rundown\/\.agents\/plugins\/marketplace\.json/,
+  );
+});
+
+test('repo-local Codex marketplace exposes the Rundown plugin', async () => {
+  const marketplace = JSON.parse(await readRepoFile('.agents/plugins/marketplace.json'));
+
+  assert.equal(marketplace.name, 'rundown-local');
+  assert.equal(marketplace.interface.displayName, 'Rundown Local');
+  assert.deepEqual(marketplace.plugins[0], {
+    name: 'rundown',
+    source: {
+      source: 'local',
+      path: './packages/claude-code-plugin/codex-plugin',
+    },
+    policy: {
+      installation: 'AVAILABLE',
+      authentication: 'ON_INSTALL',
+    },
+    category: 'Developer Tools',
+  });
+});
+
+test('repo-local Codex marketplace source path resolves from the checkout root', async () => {
+  const marketplace = JSON.parse(await readRepoFile('.agents/plugins/marketplace.json'));
+  const sourcePath = marketplace.plugins[0].source.path;
+
+  assert.equal(
+    join(repoRoot, sourcePath),
+    join(repoRoot, 'packages/claude-code-plugin/codex-plugin'),
+  );
+  assert.equal(
+    join(repoRoot, sourcePath, '.codex-plugin', 'plugin.json'),
+    join(repoRoot, 'packages/claude-code-plugin/codex-plugin', '.codex-plugin', 'plugin.json'),
+  );
+});
+
+test('Rundown Claude plugin package also ships a Codex plugin surface', async () => {
+  const manifest = JSON.parse(
+    await readRepoFile('packages/claude-code-plugin/codex-plugin/.codex-plugin/plugin.json'),
+  );
+  const mcp = JSON.parse(await readRepoFile('packages/claude-code-plugin/codex-plugin/.mcp.json'));
+  const pluginPackage = JSON.parse(await readRepoFile('packages/claude-code-plugin/package.json'));
+
+  assert.equal(manifest.name, 'rundown');
+  assert.equal(manifest.skills, './skills/');
+  assert.equal(manifest.mcpServers, './.mcp.json');
+  assert.equal(manifest.interface.displayName, 'Rundown');
+  assert.equal(manifest.interface.category, 'Developer Tools');
+  assert.match(manifest.interface.longDescription, /runbook/i);
+  assert.ok(manifest.interface.capabilities.includes('Interactive'));
+  assert.equal(manifest.interface.logo, './assets/rundown.svg');
+  assert.equal(manifest.interface.composerIcon, './assets/rundown.svg');
+
+  assert.deepEqual(mcp.mcpServers.rundown, {
+    command: 'node',
+    args: ['${CODEX_PLUGIN_ROOT}/../dist/rundown-mcp.js'],
+  });
+
+  assert.ok(pluginPackage.files.includes('codex-plugin'));
+  assert.equal(pluginPackage.dependencies['@rundown-org/mcp'], '*');
+  assert.equal(pluginPackage.bin['rundown-mcp'], 'dist/rundown-mcp.js');
+});
+
+test('Codex plugin bundles Rundown skills without Claude-only syntax', async () => {
+  const expectedSkills = [
+    'rundown',
+    'running-runbooks',
+    'writing-runbooks',
+    'planning',
+    'executing-plans',
+    'writing-plans',
+    'converting-skills-to-runbooks',
+    'end-to-end-testing',
+  ];
+
+  for (const skill of expectedSkills) {
+    const skillText = await readRepoFile(
+      `packages/claude-code-plugin/codex-plugin/skills/${skill}/SKILL.md`,
+    );
+    assert.match(skillText, /^---\nname:/);
+    assert.doesNotMatch(skillText, /CLAUDE_PLUGIN_ROOT/);
+    assert.doesNotMatch(skillText, /Skill\(skill: "rundown:/);
+    assert.doesNotMatch(skillText, /Claude Code lifecycle|SubagentStop|PreToolUse/);
+    assert.match(skillText, /rundown/);
+  }
+
+  const running = await readRepoFile(
+    'packages/claude-code-plugin/codex-plugin/skills/running-runbooks/SKILL.md',
+  );
+  assert.match(running, /MCP tools are available/);
+  assert.match(running, /rundown run/);
+  assert.match(running, /rundown pass/);
+  assert.match(running, /rundown fail/);
+
+  const delegating = await readRepoFile(
+    'packages/claude-code-plugin/codex-plugin/skills/delegating-runbooks/SKILL.md',
+  ).catch(() => '');
+  assert.equal(
+    delegating,
+    '',
+    'Stage 1 must not ship automatic delegation orchestration as a Codex skill',
   );
 });
 
@@ -415,7 +571,7 @@ for (const agent of ['codex', 'claude']) {
   });
 }
 
-// ── Codex entrypoint: auth, launch, AGENTS.md integration, no plugin dir ─────
+// ── Codex entrypoint: auth, launch, plugin marketplace integration ──────────
 
 test('Codex shell entrypoint validates auth and launches Codex in the workspace', async () => {
   const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
@@ -428,27 +584,37 @@ test('Codex shell entrypoint validates auth and launches Codex in the workspace'
   assert.match(entrypoint, /--ask-for-approval never/);
 });
 
-test('Codex shell entrypoint installs Rundown AGENTS.md and drops the unused plugin lookup', async () => {
+test('Codex shell entrypoint installs the local Rundown Codex plugin and exports MCP env', async () => {
   const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
 
-  // Rundown integration: AGENTS.md is copied into the workspace (Codex reads it).
-  assert.match(entrypoint, /CODEX_AGENTS_SOURCE="\/usr\/local\/share\/rundown\/codex-agents\.md"/);
-  assert.match(entrypoint, /cp "\$CODEX_AGENTS_SOURCE" "\$WORKSPACE\/AGENTS\.md"/);
+  assert.match(
+    entrypoint,
+    /PLUGIN_DIR="\/usr\/local\/share\/rundown\/packages\/claude-code-plugin\/codex-plugin"/,
+  );
+  assert.match(entrypoint, /MARKETPLACE_ROOT="\/usr\/local\/share\/rundown"/);
+  assert.match(entrypoint, /export CODEX_PLUGIN_ROOT="\$PLUGIN_DIR"/);
+  assert.match(entrypoint, /export RUNDOWN_PLUGIN_ROOT="\$PLUGIN_DIR"/);
+  assert.match(entrypoint, /codex plugin marketplace add "\$MARKETPLACE_ROOT"/);
+  assert.match(entrypoint, /codex plugin add rundown@rundown-local/);
+  assert.doesNotMatch(entrypoint, /--plugin-dir/);
+  assert.match(entrypoint, /command -v rundown-mcp/);
+  assert.match(entrypoint, /Plugin:    \$PLUGIN_DIR/);
+  assert.match(entrypoint, /Marketplace: \$MARKETPLACE_ROOT\/\.agents\/plugins\/marketplace\.json/);
+  assert.match(entrypoint, /MCP:/);
 
-  // The Claude plugin directory resolution is unused for Codex and must be gone.
-  assert.doesNotMatch(entrypoint, /claude-code-plugin/);
-  assert.doesNotMatch(entrypoint, /PLUGIN_DIR/);
-  assert.doesNotMatch(entrypoint, /npm root -g/);
+  assert.doesNotMatch(entrypoint, /CODEX_AGENTS_SOURCE=/);
+  assert.doesNotMatch(entrypoint, /cp "\$CODEX_AGENTS_SOURCE" "\$WORKSPACE\/AGENTS\.md"/);
 });
 
-test('Codex AGENTS.md guidance teaches the rd runbook loop', async () => {
+test('Codex AGENTS.md guidance is fallback CLI guidance', async () => {
   const agents = await readRepoFile('scripts/e2e-codex-agents.md');
 
-  assert.match(agents, /AGENTS\.md/);
-  assert.match(agents, /rd run/);
-  assert.match(agents, /rd status/);
-  assert.match(agents, /rd pass/);
-  assert.match(agents, /rd fail/);
+  assert.match(agents, /fallback notes/);
+  assert.match(agents, /rundown run/);
+  assert.match(agents, /rundown status/);
+  assert.match(agents, /rundown pass/);
+  assert.match(agents, /rundown fail/);
+  assert.doesNotMatch(agents, /\brd\s/);
 });
 
 test('Codex shell entrypoint exports experimental SQLite for mounted and fixture workspaces', async () => {

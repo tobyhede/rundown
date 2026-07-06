@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "worktree": "bash scripts/worktree.sh",
-    "build": "pnpm --filter @rundown-org/parser build && pnpm --filter @rundown-org/core build && pnpm --filter @rundown-org/cli build && pnpm --filter @rundown-org/claude-code-plugin build && pnpm --filter @rundown-org/mcp build",
+    "build": "pnpm --filter @rundown-org/parser build && pnpm --filter @rundown-org/core build && pnpm --filter @rundown-org/cli build && pnpm --filter @rundown-org/mcp build && pnpm --filter @rundown-org/claude-code-plugin build",
     "build:site": "pnpm --filter site build",
     "build:all": "pnpm run build && pnpm --filter site build",
     "test": "pnpm run test:unit",

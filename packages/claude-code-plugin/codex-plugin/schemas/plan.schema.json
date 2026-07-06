@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rundown.org/schemas/plan.schema.json",
+  "title": "Plan",
+  "description": "Implementation plan for the Rundown planning workflow.",
+  "type": "object",
+  "$defs": {
+    "FileEntry": {
+      "type": "object",
+      "required": ["path", "action"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!\\/)(?![A-Za-z]:[\\/\\\\])(?!.*(?:^|\\/)\\.\\.(?:\\/|$))(?!.*\\\\)",
+          "description": "Relative file path from project root (e.g. src/foo.ts)"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Start line number (1-based)"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line number for ranges (1-based)"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical location name (function, class, type)"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Construct type: function, type, class, module, method, member, variable, namespace"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create", "edit", "delete"]
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "name",
+    "meta",
+    "goal",
+    "architecture_and_approach",
+    "constraints_and_assumptions",
+    "files",
+    "tasks"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://rundown.org/schemas/plan.schema.json",
+      "description": "Schema URI for editor autocomplete and rdx validation dispatch."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "meta": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goal": {
+      "type": "string",
+      "description": "Clear, concise description of the desired outcome"
+    },
+    "architecture_and_approach": {
+      "type": "string",
+      "description": "High-level solution design, critical components, data and integrations"
+    },
+    "constraints_and_assumptions": {
+      "type": "string",
+      "description": "Hard constraints and assumptions"
+    },
+    "dependencies": {
+      "type": "string",
+      "description": "Required services, frameworks, libraries, or upstream changes"
+    },
+    "context": {
+      "type": "string",
+      "description": "Additional context useful for implementation"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/FileEntry" }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "files", "subtasks"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "files": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/FileEntry" },
+            "description": "Files affected by this task. May be empty for research or config-only tasks; commit.files independently enforces staged files."
+          },
+          "subtasks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "description": "What this subtask does and how"
+                },
+                "code": {
+                  "type": "object",
+                  "required": ["language", "content"],
+                  "properties": {
+                    "language": { "type": "string", "minLength": 1 },
+                    "content": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "commit": {
+            "type": "object",
+            "required": ["files", "message"],
+            "properties": {
+              "files": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "File path to stage for commit"
+                }
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
