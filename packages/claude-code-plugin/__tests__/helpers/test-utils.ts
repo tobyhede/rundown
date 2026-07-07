@@ -299,9 +299,10 @@ export function activeRunIdFromStatus(result: { exitCode: number | null; stdout:
  * @returns The argv with `--claim-id <claimId>` appended
  */
 export async function withActiveRunClaim(args: readonly string[], cwd: string): Promise<string[]> {
-  const runId = activeRunIdFromStatus(runCli(['status'], cwd));
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
-  const { claimId } = await sessionService.issueRunControlClaim(runId);
+  const state = await sessionService.getActive();
+  if (!state) throw new Error('withActiveRunClaim: no active run to target');
+  const { claimId } = await sessionService.issueRunControlClaim(state.id);
   return [...args, '--claim-id', claimId];
 }

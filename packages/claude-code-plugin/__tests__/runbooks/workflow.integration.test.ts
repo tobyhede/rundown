@@ -275,7 +275,7 @@ describe('Built-in Runbook Workflow Integration', () => {
             eventPromptText(event).includes('plan.json'),
         );
 
-        for (let index = 0; index < 40 && !reviewEntered; index += 1) {
+        for (let index = 0; index < 20 && !reviewEntered; index += 1) {
           result = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
           expect(result.exitCode).toBe(0);
           combinedOutput += result.stdout + result.stderr;
