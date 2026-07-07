@@ -1911,6 +1911,23 @@ describe('RunbookLifecycleCommandService', () => {
       expect(top?.lifecycle).toBe('running');
     });
 
+    it('refuses runTerminal --run without bearer authority', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+      await activate(baseState({ id: topRunId, runbookPath: 'top.md' }));
+      const sendSpy = jest.spyOn(actorService, 'sendAndSync');
+
+      const outcome = await seam.runTerminal({
+        command: 'stop',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'run', runId: namedRunId },
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect((await manager.load(namedRunId))?.lifecycle).toBe('running');
+    });
+
     it('forces the whole contiguous-inline chain when --run names an inline chain member', async () => {
       // The chain is one orchestrator's composition: naming the inline child
       // carries derived authority over the walked-to root (never ambient —
@@ -3523,6 +3540,23 @@ describe('RunbookLifecycleCommandService', () => {
         expect(out.kind).toBe('delegation_collection_pending');
       });
 
+      it('run-control claim terminal refuses when the resolved root is collection pending', async () => {
+        const root = collectionPendingState(ROOT);
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [root]);
+        const evidence = runControlEvidence(ROOT);
+        if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: evidence,
+          targetSelector: { kind: 'claim', claimId: evidence.claimId },
+        });
+
+        expect(out.kind).toBe('delegation_collection_pending');
+      });
+
       it('bare terminal returns claim_grant_required when the bearer lacks mutate-run on the resolved root', async () => {
         const root = baseState({ id: ROOT });
         await manager.save(root);
@@ -3560,6 +3594,30 @@ describe('RunbookLifecycleCommandService', () => {
           callerEvidence: DIRECT_CLI,
           targetSelector: { kind: 'default' },
         });
+        expect(out).toEqual({ kind: 'actor_context_required' });
+      });
+
+      it('refuses bare direct-CLI terminal force when the resolved root has open delegated claims', async () => {
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        const childRunId = assertRunId('rd_33333333333333333333333333333333');
+        const root = baseState({ id: ROOT });
+        const child = baseState({
+          id: childRunId,
+          parentLinkage: linkageFor(ROOT, 'a'),
+        });
+        await manager.save(root);
+        await manager.save(child);
+        assertClaimed(await sessionService.claimRunbook(childRunId, linkageFor(ROOT, 'a')));
+        installResolvedPlan(root, [root]);
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+
         expect(out).toEqual({ kind: 'actor_context_required' });
       });
 

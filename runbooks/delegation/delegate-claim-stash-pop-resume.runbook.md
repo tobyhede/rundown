@@ -16,7 +16,7 @@ scenarios:
       - "! rd pass --claim-id ${CLAIM_ID}"
       - rd pop --claim-id ${CLAIM_ID}
       - rd complete --claim-id ${CLAIM_ID}
-      - rd collect --run ${RUN_ID}
+      - rd collect --claim-id ${RUN_CLAIM_ID}
     expect:
       result: COMPLETE
       errors:

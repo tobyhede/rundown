@@ -61,12 +61,17 @@ function isSubtreeDenyPattern(pattern: string): boolean {
   return /(?:\/|\\)\*\*$/.test(pattern);
 }
 
+function isSubtreeAllowPattern(pattern: string): boolean {
+  return /(?:\/|\\)\*\*$/.test(pattern);
+}
+
 /**
  * Convert glob patterns to concrete paths for sandbox.
  *
  * The sandbox implementations need concrete paths, not glob patterns.
- * This function resolves placeholders and handles the base directory
- * extraction from glob patterns.
+ * This function resolves placeholders and maps only concrete paths and subtree
+ * globs to OS-level grants. Non-subtree globs cannot be represented precisely
+ * by the sandbox backends, so they are omitted rather than widened.
  *
  * @param patterns - Array of path patterns
  * @param repoRoot - Repository root path
@@ -80,9 +85,7 @@ function resolvePathPatterns(patterns: string[], repoRoot: string, tmpDir: strin
     // Resolve placeholders first
     const resolvedPattern = resolvePlaceholders(pattern, repoRoot, tmpDir);
 
-    // For glob patterns like "{repo}/**", extract the base directory
-    // The sandbox will grant access to the entire subtree
-    const baseDir = extractBasePath(resolvedPattern);
+    const baseDir = concreteSandboxAllowPath(resolvedPattern);
 
     if (baseDir && !resolved.includes(baseDir)) {
       resolved.push(baseDir);
@@ -92,12 +95,21 @@ function resolvePathPatterns(patterns: string[], repoRoot: string, tmpDir: strin
   return resolved;
 }
 
+function concreteSandboxAllowPath(pattern: string): string | undefined {
+  if (!hasGlob(pattern)) {
+    return pattern;
+  }
+  if (isSubtreeAllowPattern(pattern)) {
+    return extractBasePath(pattern);
+  }
+  return undefined;
+}
+
 /**
  * Extract the base path from a glob pattern.
  *
  * Examples:
  * - "/home/user/**" -> "/home/user"
- * - "/home/user/*.txt" -> "/home/user"
  * - "/home/user" -> "/home/user"
  *
  * @param pattern - Glob pattern or path

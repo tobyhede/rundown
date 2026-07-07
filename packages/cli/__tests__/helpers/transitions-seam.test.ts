@@ -622,6 +622,21 @@ describe('runSeamTransition — refusal render table', () => {
     expect(JSON.stringify(output.error.mock.calls[0])).not.toContain(PARENT_RUN_ID);
     expect(result.exitError).toBe(true);
   });
+
+  it('renders the claim-grant-required refusal with the specific error code', async () => {
+    const output = makeOutput();
+    mockRunTransition.mockResolvedValue({
+      kind: 'claim_grant_required',
+      claimId: TEST_CLAIM_ID,
+      runId: PARENT_RUN_ID,
+    });
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+    const [, code] = output.error.mock.calls[0];
+    expect(code).toBe('CLAIM_GRANT_REQUIRED');
+    expect(result.exitError).toBe(true);
+  });
 });
 
 describe('runSeamTransition — applied render (buildActionSink / renderTransitionEvents)', () => {

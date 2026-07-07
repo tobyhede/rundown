@@ -442,6 +442,29 @@ describe('policyToSandboxOptions', () => {
     expect(options.readWritePaths).not.toContain('/repo/schema.json');
   });
 
+  it('does not widen a non-subtree CLI read grant glob to a sandbox directory grant', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { read: ['/repo/*.json'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).not.toContain('/repo');
+    expect(options.readOnlyPaths).not.toContain('/repo/*.json');
+  });
+
   it('includes CLI write grants in sandbox read-write paths', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,
@@ -463,6 +486,29 @@ describe('policyToSandboxOptions', () => {
 
     expect(options.readWritePaths).toContain('/repo/dist');
     expect(options.readOnlyPaths).not.toContain('/repo/dist');
+  });
+
+  it('does not let a non-subtree session write grant glob remove a concrete deny', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: ['/repo/dist/secret.txt'] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/repo' });
+    evaluator.addSessionGrant('write', '/repo/dist/*.txt');
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).not.toContain('/repo/dist');
+    expect(options.readWritePaths).not.toContain('/repo/dist/*.txt');
+    expect(options.denyPaths).toContain('/repo/dist/secret.txt');
+    expect(options.denyPatterns).toContain('/repo/dist/secret.txt');
   });
 
   it('maps allowAll to broad sandbox read and write grants', () => {
@@ -1055,7 +1101,7 @@ describe('extractBasePath behavior', () => {
     expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user'));
   });
 
-  it('extracts base path from glob with *.ext', () => {
+  it('omits non-subtree file globs from sandbox allow paths', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,
       default: {
@@ -1075,7 +1121,8 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user'));
+    expect(options.readOnlyPaths).not.toContain(canonicalPathForTest('/home/user'));
+    expect(options.readOnlyPaths).not.toContain(canonicalPathForTest('/home/user/*.txt'));
   });
 
   it('returns path as-is when no glob characters', () => {
@@ -1101,7 +1148,7 @@ describe('extractBasePath behavior', () => {
     expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home/user/specific-file.txt'));
   });
 
-  it('handles glob in middle of path', () => {
+  it('omits middle-of-path globs from sandbox allow paths', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,
       default: {
@@ -1121,6 +1168,7 @@ describe('extractBasePath behavior', () => {
       cwd: '/test',
     });
 
-    expect(options.readOnlyPaths).toContain(canonicalPathForTest('/home'));
+    expect(options.readOnlyPaths).not.toContain(canonicalPathForTest('/home'));
+    expect(options.readOnlyPaths).not.toContain(canonicalPathForTest('/home/*/documents'));
   });
 });

@@ -34,6 +34,7 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
 import {
   renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
@@ -485,7 +486,7 @@ function renderRefusal(
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, config.commandName);
     case 'claim_grant_required':
-      return renderActorContextRequiredRefusal(output, config.commandName);
+      return renderClaimGrantRequiredRefusal(output, config.commandName);
     case 'unknown_run':
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;

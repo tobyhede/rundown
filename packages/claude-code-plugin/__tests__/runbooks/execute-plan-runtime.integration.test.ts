@@ -16,7 +16,7 @@ import { mkdtempSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
+import { runCli, withActiveRunClaim } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,11 +126,7 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
     return JSON.parse(result.stdout) as StatusResponse;
   }
 
-  function activeRunId(): string {
-    return activeRunIdFromStatus(runCli(['status'], tempDir));
-  }
-
-  function driveToImplementDelegate(): { token: string } {
+  async function driveToImplementDelegate(): Promise<{ token: string }> {
     const start = runCli(['run', '--prompted', '--allow-all', 'exec-plan-harness'], tempDir);
     expect(start.exitCode).toBe(0);
     for (let i = 0; i < 12; i += 1) {
@@ -145,18 +141,18 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
       ) {
         return { token: pending.token };
       }
-      runCli(['pass', '--run', activeRunId()], tempDir);
+      runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
     }
     throw new Error('Did not reach execute-plan implement DELEGATE step');
   }
 
-  it('issues an implement-plan delegation token at execute-plan step 2', () => {
-    const { token } = driveToImplementDelegate();
+  it('issues an implement-plan delegation token at execute-plan step 2', async () => {
+    const { token } = await driveToImplementDelegate();
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
   });
 
-  it('hands PlanPath through to the delegated implement-plan child as a local path', () => {
-    const { token } = driveToImplementDelegate();
+  it('hands PlanPath through to the delegated implement-plan child as a local path', async () => {
+    const { token } = await driveToImplementDelegate();
 
     const claim = runCli(['claim', token], tempDir);
     expect(claim.exitCode).toBe(0);

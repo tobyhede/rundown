@@ -12,7 +12,7 @@ scenarios:
       - rd run delegate-keyword-auto-issue.runbook.md
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
-      - rd collect --run ${RUN_ID}
+      - rd collect --claim-id ${RUN_CLAIM_ID}
     expect:
       result: COMPLETE
       steps:

@@ -8,7 +8,7 @@ import { mkdtempSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
+import { runCli, withActiveRunClaim } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -146,22 +146,18 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
-    function activeRunId(): string {
-      return activeRunIdFromStatus(runCli(['status'], tempDir));
-    }
-
-    function runPromptedUntilStep(
+    async function runPromptedUntilStep(
       runbookPath: string,
       stepId: string,
       args: string[] = [],
-    ): JsonEvent {
+    ): Promise<JsonEvent> {
       let result = runCli(['run', runbookPath, '--prompted', ...args], tempDir);
       expect(result.exitCode).toBe(0);
       const events = parseJsonEvents(result.stdout);
 
       let entered = findEnteredStep(events, stepId);
       for (let index = 0; index < 30 && !entered; index += 1) {
-        result = runCli(['pass', '--run', activeRunId()], tempDir);
+        result = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
         expect(result.exitCode).toBe(0);
         events.push(...parseJsonEvents(result.stdout));
         entered = findEnteredStep(events, stepId);
@@ -195,7 +191,7 @@ describe('Built-in Runbook Workflow Integration', () => {
         key: 'review-plan-structural-integrity.json',
         args: ['--input', 'PlanPath=/tmp/plan.json'],
       },
-    ])('resolves ARTIFACTS for bundled runbook $file', ({
+    ])('resolves ARTIFACTS for bundled runbook $file', async ({
       file,
       step,
       artifactName,
@@ -205,7 +201,7 @@ describe('Built-in Runbook Workflow Integration', () => {
       const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
       process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
       try {
-        const entered = runPromptedUntilStep(join(runbooksDir, ...file), step, args);
+        const entered = await runPromptedUntilStep(join(runbooksDir, ...file), step, args);
         const artifacts = entered.artifacts as
           | Record<string, { key?: unknown; uri?: unknown; path?: unknown }>
           | undefined;
@@ -280,7 +276,7 @@ describe('Built-in Runbook Workflow Integration', () => {
         );
 
         for (let index = 0; index < 40 && !reviewEntered; index += 1) {
-          result = runCli(['pass', '--run', activeRunId()], tempDir);
+          result = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
           expect(result.exitCode).toBe(0);
           combinedOutput += result.stdout + result.stderr;
           events.push(...parseJsonEvents(result.stdout));

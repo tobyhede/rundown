@@ -408,7 +408,9 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
 
   const pendingFailure = rejectBareMutationIfCollectionPending(input);
   const hasOpenClaims =
-    input.intent.kind === 'delegating-run-advance' &&
+    (input.intent.kind === 'delegating-run-advance' ||
+      input.intent.kind === 'terminal-run-force') &&
+    'targeted' in input.intent &&
     !input.intent.targeted &&
     input.openClaims !== undefined &&
     input.openClaims.length > 0;

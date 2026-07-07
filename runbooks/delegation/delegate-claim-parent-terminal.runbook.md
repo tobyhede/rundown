@@ -12,7 +12,7 @@ scenarios:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
+      - rd complete --claim-id ${RUN_CLAIM_ID}
       - "! rd pass --claim-id ${CLAIM_ID}"
     expect:
       result: COMPLETE
@@ -26,7 +26,7 @@ scenarios:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
+      - rd complete --claim-id ${RUN_CLAIM_ID}
       - "! rd fail --claim-id ${CLAIM_ID}"
     expect:
       result: COMPLETE
@@ -40,7 +40,7 @@ scenarios:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
+      - rd complete --claim-id ${RUN_CLAIM_ID}
       - "! rd goto 3 --claim-id ${CLAIM_ID}"
     expect:
       result: COMPLETE
@@ -54,7 +54,7 @@ scenarios:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
+      - rd complete --claim-id ${RUN_CLAIM_ID}
       - "! rd stop --claim-id ${CLAIM_ID}"
     expect:
       result: COMPLETE
@@ -68,7 +68,7 @@ scenarios:
       - true delegation-child-manual-three-step.runbook.md
       - rd run --prompted delegate-claim-parent-terminal.runbook.md
       - rd claim ${TOKEN}
-      - rd complete --run ${RUN_ID}
+      - rd complete --claim-id ${RUN_CLAIM_ID}
       - "! rd complete --claim-id ${CLAIM_ID}"
     expect:
       result: COMPLETE

@@ -6,7 +6,7 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
-import { claimCanReportDelegationResult } from './claim-id.js';
+import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
 import { classifyDelegationExposure } from './delegation-exposure.js';
 import type {
@@ -1621,6 +1621,13 @@ export class RunbookLifecycleCommandService {
     }
 
     const state = resolution.state;
+    const isRunControlClaim = resolution.claim.grants.some(
+      (grant) => grant.action === 'collect-for-run' && grant.runId === state.id,
+    );
+    if (isRunControlClaim) {
+      return this.#driveTerminalBare(input, state);
+    }
+
     const steps = await this.#deps.loadSteps(state);
     const currentStep = this.#findStep(steps, state.step);
     const eventType = terminalForceEvent(input.command);
@@ -1725,11 +1732,26 @@ export class RunbookLifecycleCommandService {
       };
     }
 
-    // Gate the resolved ROOT before forcing. Identifier-only `--run` anchoring
-    // selects the inline chain root, but authority still comes from a verified
-    // claim grant over that root.
+    // Gate the resolved ROOT before forcing. A run-control claim for an inline
+    // descendant may also force the inline chain it is currently executing; that
+    // is the same active inline execution, not authority over an unrelated run.
+    const presentedClaimId =
+      input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
+    const descendantAuthority =
+      presentedClaimId !== undefined
+        ? await (async () => {
+            const verified = await sessionService.verifyClaimId(presentedClaimId);
+            if (verified.status !== 'verified') return false;
+            return plan.forceOrder.some(
+              (state) =>
+                state.id !== plan.targetState.id &&
+                authorizeClaim(verified.claim, { action: 'mutate-run', runId: state.id }).kind ===
+                  'allowed',
+            );
+          })()
+        : false;
     const authority =
-      input.callerEvidence.kind === 'claim_bearer'
+      input.callerEvidence.kind === 'claim_bearer' && !descendantAuthority
         ? await this.#resolveMutationActorContext({
             callerEvidence: input.callerEvidence,
             targetState: plan.targetState,
@@ -1748,10 +1770,14 @@ export class RunbookLifecycleCommandService {
         : { kind: 'actor_context_required' };
     }
     const policy = resolveCommandIntent({
-      actorContext: authority?.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT,
+      actorContext:
+        authority?.kind === 'verified' && !descendantAuthority
+          ? authority.actorContext
+          : UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
-      targetSelector: { kind: 'default' },
+      targetSelector: descendantAuthority ? { kind: 'default' } : input.targetSelector,
       targetState: plan.targetState,
+      openClaims: await sessionService.listOpenClaimsForParent(plan.targetState.id),
     });
     switch (policy.kind) {
       case 'allowed':

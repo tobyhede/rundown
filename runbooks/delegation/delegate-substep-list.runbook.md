@@ -11,7 +11,7 @@ scenarios:
       - rd run --prompted delegate-substep-list.runbook.md
       - rd claim ${TOKEN}
       - rd pass --claim-id ${CLAIM_ID}
-      - rd collect --run ${RUN_ID}
+      - rd collect --claim-id ${RUN_CLAIM_ID}
     expect:
       result: COMPLETE
       steps:
@@ -26,7 +26,7 @@ scenarios:
       - rd run --prompted delegate-substep-list.runbook.md
       - rd claim ${TOKEN}
       - rd pass --claim-id ${CLAIM_ID}
-      - rd collect --run ${RUN_ID}
+      - rd collect --claim-id ${RUN_CLAIM_ID}
     expect:
       result: COMPLETE
       steps:

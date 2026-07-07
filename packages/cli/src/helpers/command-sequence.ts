@@ -562,15 +562,41 @@ export function substituteClaimIds(command: string, capturedClaimIds: readonly s
 }
 
 /**
+ * Substitute captured run-control claim id placeholders in a command string.
+ *
+ * `${RUN_CLAIM_ID}` maps to the first run-control bearer emitted by a
+ * `runbook_started` event, `${RUN_CLAIM_ID_2}` maps to the second, and so on.
+ *
+ * @param command - Command string with optional run-control claim placeholders
+ * @param capturedRunClaimIds - Run-control claim ids captured from earlier starts
+ * @returns Command string with run-control claim placeholders substituted
+ * @throws {Error} If a placeholder references a run-control claim that has not been captured
+ */
+export function substituteRunClaimIds(
+  command: string,
+  capturedRunClaimIds: readonly string[],
+): string {
+  return command.replace(/\$\{RUN_CLAIM_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
+    const offset = index === undefined ? 0 : Number(index) - 1;
+    if (offset < 0 || offset >= capturedRunClaimIds.length) {
+      throw new Error(
+        `Missing captured run-control claim id for \${RUN_CLAIM_ID${index ? `_${index}` : ''}}`,
+      );
+    }
+    return capturedRunClaimIds[offset];
+  });
+}
+
+/**
  * Substitute captured run id placeholders in a command string.
  *
  * `${RUN_ID}` maps to the first captured run id, `${RUN_ID_2}` maps to the
  * second, and so on. Run ids are captured in emission order from
  * `runbook_started` events (`runbookId`), so a scenario's own `rundown run` start
  * output supplies `${RUN_ID}` and later starts (inline children, claimed
- * children) supply the higher indexes. Lets bundled scenario runbooks express
- * run-targeted commands as `rundown collect --run ${RUN_ID}`. Mirrors
- * {@link substituteClaimIds}.
+ * children) supply the higher indexes. Mutating scenario commands should use
+ * `${CLAIM_ID}` for run-control authority; `${RUN_ID}` remains available for
+ * selector/status assertions. Mirrors {@link substituteClaimIds}.
  *
  * @param command - Command string with optional run id placeholders
  * @param capturedRunIds - Run ids captured from earlier `runbook_started` events
@@ -605,7 +631,27 @@ export function captureRunIdFromJsonObject(value: unknown, capturedRunIds: strin
 }
 
 /**
- * Capture a claim id from a parsed `rd claim` JSON object.
+ * Capture a run-control claim id from a parsed `runbook_started` execution event.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedRunClaimIds - Array to append captured run-control claim ids into
+ */
+export function captureRunClaimIdFromJsonObject(
+  value: unknown,
+  capturedRunClaimIds: string[],
+): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as { type?: unknown }).type === 'runbook_started' &&
+    typeof (value as { claim_id?: unknown }).claim_id === 'string'
+  ) {
+    capturedRunClaimIds.push((value as { claim_id: string }).claim_id);
+  }
+}
+
+/**
+ * Capture a delegated child claim id from a parsed `rd claim` JSON object.
  *
  * @param value - Parsed JSON value to inspect
  * @param capturedClaimIds - Array to append captured claim ids into
@@ -720,6 +766,7 @@ async function runCommandWithTee(
  * @param transitions - Array to push extracted transitions into
  * @param tokens - Array to push captured delegation tokens into
  * @param claimIds - Array to push captured claim ids into
+ * @param runClaimIds - Array to push captured run-control claim ids into
  * @param runIds - Array to push captured run ids into (for `${RUN_ID}` substitution)
  * @param errors - Array to push captured JSON error responses into
  * @param warnings - Array to push captured JSON warning responses into
@@ -732,6 +779,7 @@ function processJsonObject(
   transitions: CapturedTransition[],
   tokens: string[],
   claimIds: string[],
+  runClaimIds: string[],
   runIds: string[],
   errors: CapturedError[],
   warnings: CapturedWarning[],
@@ -770,6 +818,7 @@ function processJsonObject(
     tokens.push(obj.token);
   }
   captureClaimIdFromJsonObject(obj, claimIds);
+  captureRunClaimIdFromJsonObject(obj, runClaimIds);
   captureRunIdFromJsonObject(obj, runIds);
 
   if (obj.kind === 'error') {
@@ -893,6 +942,7 @@ export function parseJsonLines(stdout: string): {
   terminal: 'COMPLETE' | 'STOP' | null;
   tokens: string[];
   claimIds: string[];
+  runClaimIds: string[];
   runIds: string[];
   errors: CapturedError[];
   warnings: CapturedWarning[];
@@ -902,6 +952,7 @@ export function parseJsonLines(stdout: string): {
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
   const claimIds: string[] = [];
+  const runClaimIds: string[] = [];
   const runIds: string[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
@@ -914,6 +965,7 @@ export function parseJsonLines(stdout: string): {
       terminal: null,
       tokens,
       claimIds,
+      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -935,6 +987,7 @@ export function parseJsonLines(stdout: string): {
       transitions,
       tokens,
       claimIds,
+      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -946,6 +999,7 @@ export function parseJsonLines(stdout: string): {
       terminal,
       tokens,
       claimIds,
+      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -971,6 +1025,7 @@ export function parseJsonLines(stdout: string): {
       transitions,
       tokens,
       claimIds,
+      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -987,6 +1042,7 @@ export function parseJsonLines(stdout: string): {
     terminal,
     tokens,
     claimIds,
+    runClaimIds,
     runIds,
     errors,
     warnings,
@@ -1464,6 +1520,7 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * @param into.transitions - Step transitions accumulator
  * @param into.capturedTokens - Captured delegation tokens accumulator
  * @param into.capturedClaimIds - Captured claim IDs accumulator
+ * @param into.capturedRunClaimIds - Captured run-control claim IDs accumulator
  * @param into.capturedRunIds - Captured run ids accumulator (runbook_started events)
  * @param into.errors - Captured JSON error responses accumulator
  * @param into.warnings - Captured JSON warning responses accumulator
@@ -1477,6 +1534,7 @@ function aggregateJsonResult(
     transitions: CapturedTransition[];
     capturedTokens: string[];
     capturedClaimIds: string[];
+    capturedRunClaimIds: string[];
     capturedRunIds: string[];
     errors: CapturedError[];
     warnings: CapturedWarning[];
@@ -1492,6 +1550,9 @@ function aggregateJsonResult(
   }
   for (const claimId of jsonResult.claimIds) {
     into.capturedClaimIds.push(claimId);
+  }
+  for (const claimId of jsonResult.runClaimIds) {
+    into.capturedRunClaimIds.push(claimId);
   }
   for (const runId of jsonResult.runIds) {
     into.capturedRunIds.push(runId);
@@ -1530,6 +1591,7 @@ export async function executeCommandSequence(
 ): Promise<CommandSequenceResult> {
   const capturedTokens: string[] = [];
   const capturedClaimIds: string[] = [];
+  const capturedRunClaimIds: string[] = [];
   const capturedRunIds: string[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
@@ -1564,10 +1626,13 @@ export async function executeCommandSequence(
     const trimmedRaw = rawCmd.trimStart();
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
-    // Token substitution — replace ${TOKEN}, ${CLAIM_ID}, ${RUN_ID} (and their
-    // _N indexed forms) with captured values.
+    // Token substitution — replace ${TOKEN}, ${CLAIM_ID}, ${RUN_CLAIM_ID},
+    // ${RUN_ID} (and their _N indexed forms) with captured values.
     const tokenSubstituted = substituteRunIds(
-      substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds),
+      substituteRunClaimIds(
+        substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds),
+        capturedRunClaimIds,
+      ),
       capturedRunIds,
     );
     // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
@@ -1617,6 +1682,7 @@ export async function executeCommandSequence(
         transitions,
         capturedTokens,
         capturedClaimIds,
+        capturedRunClaimIds,
         capturedRunIds,
         errors,
         warnings,
@@ -1653,6 +1719,7 @@ export async function executeCommandSequence(
         transitions,
         capturedTokens,
         capturedClaimIds,
+        capturedRunClaimIds,
         capturedRunIds,
         errors,
         warnings,

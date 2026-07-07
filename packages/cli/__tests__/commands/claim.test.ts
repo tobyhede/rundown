@@ -735,7 +735,7 @@ rd echo --result fail
         await withRunTarget(['stop', '--text'], workspace),
         workspace,
       );
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // Attempt to claim — parent is stopped, delegation cannot be claimed
       result = await runCliInProcess(`claim ${token}`, workspace);

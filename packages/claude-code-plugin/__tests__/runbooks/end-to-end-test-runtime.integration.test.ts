@@ -26,7 +26,7 @@ import { mkdtempSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
+import { runCli, withActiveRunClaim } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,14 +112,10 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  /** Advance the active runbook with a run-targeted `rundown pass` and collect its events. */
-  function pass(): JsonEvent[] {
-    const result = runCli(['pass', '--run', activeRunId()], tempDir);
+  /** Advance the active runbook with bearer authority and collect its events. */
+  async function pass(): Promise<JsonEvent[]> {
+    const result = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
     return parseJsonEvents(result.stdout);
-  }
-
-  function activeRunId(): string {
-    return activeRunIdFromStatus(runCli(['status'], tempDir));
   }
 
   function status(): StatusResponse {
@@ -134,7 +130,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
    * accumulated events. Bounded so a flow regression fails loudly instead of
    * hanging.
    */
-  function driveToReviewDelegate(): { token: string; events: JsonEvent[] } {
+  async function driveToReviewDelegate(): Promise<{ token: string; events: JsonEvent[] }> {
     const start = runCli(['run', '--prompted', 'rundown:end-to-end-test'], tempDir);
     expect(start.exitCode).toBe(0);
     const events = parseJsonEvents(start.stdout);
@@ -151,25 +147,25 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
       ) {
         return { token: pending.token, events };
       }
-      events.push(...pass());
+      events.push(...(await pass()));
     }
     throw new Error('Did not reach review-and-collate DELEGATE step');
   }
 
-  it('inline-launches write-file and review-and-collate from the parent', () => {
-    const { events } = driveToReviewDelegate();
+  it('inline-launches write-file and review-and-collate from the parent', async () => {
+    const { events } = await driveToReviewDelegate();
 
     expect(enteredStep(events, 'end-to-end-test/write-file.runbook.md', '1')).toBeDefined();
     expect(enteredStep(events, 'end-to-end-test/review-and-collate.runbook.md', '1')).toBeDefined();
   });
 
-  it('auto-issues a review-file delegation token at the DELEGATE substep', () => {
-    const { token } = driveToReviewDelegate();
+  it('auto-issues a review-file delegation token at the DELEGATE substep', async () => {
+    const { token } = await driveToReviewDelegate();
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
   });
 
-  it('hands PlanPath through to the delegated review child as a local path', () => {
-    const { token } = driveToReviewDelegate();
+  it('hands PlanPath through to the delegated review child as a local path', async () => {
+    const { token } = await driveToReviewDelegate();
 
     const claim = runCli(['claim', token], tempDir);
     expect(claim.exitCode).toBe(0);
@@ -203,8 +199,8 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(eventPromptText(reviewStep3!)).not.toContain('rd://artifacts/');
   });
 
-  it('advances a claimed child only after an explicit collect aggregates into the parent', () => {
-    const { token } = driveToReviewDelegate();
+  it('advances a claimed child only after an explicit collect aggregates into the parent', async () => {
+    const { token } = await driveToReviewDelegate();
 
     const claim = runCli(['claim', token], tempDir);
     expect(claim.exitCode).toBe(0);
@@ -241,7 +237,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(beforeCollect.position?.current).toBe('1');
 
     // Explicit collect aggregates the reported outcome: PASS ALL → CONTINUE → step 2.
-    const collected = runCli(['collect', '--run', activeRunId()], tempDir);
+    const collected = runCli(await withActiveRunClaim(['collect'], tempDir), tempDir);
     expect(collected.exitCode).toBe(0);
     const collectEvents = parseJsonEvents(collected.stdout);
     expect(

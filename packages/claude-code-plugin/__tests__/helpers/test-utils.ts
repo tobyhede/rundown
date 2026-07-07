@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -283,4 +284,23 @@ export function activeRunIdFromStatus(result: { exitCode: number | null; stdout:
     throw new Error(`No active run id in status: ${result.stdout}`);
   }
   return match[0];
+}
+
+/**
+ * Issue bearer authority for the active run and append it to a mutating command.
+ *
+ * Run ids are selector-only under unified claim grants. Prompted integration
+ * tests that advance the active run need the same run-control bearer that
+ * `rundown run` emits for agents.
+ *
+ * @param args - CLI argv to extend
+ * @param cwd - Workspace whose active run should receive a bearer claim
+ * @returns The argv with `--claim-id <claimId>` appended
+ */
+export async function withActiveRunClaim(args: readonly string[], cwd: string): Promise<string[]> {
+  const runId = activeRunIdFromStatus(runCli(['status'], cwd));
+  const manager = new RunbookStateManager(cwd);
+  const sessionService = new SessionService(manager);
+  const { claimId } = await sessionService.issueRunControlClaim(runId);
+  return [...args, '--claim-id', claimId];
 }

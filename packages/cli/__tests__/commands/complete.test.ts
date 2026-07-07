@@ -54,16 +54,18 @@ describe('complete command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('forces the named stack-member run terminal via complete --run <id>', async () => {
+    it('refuses complete --run <id> without bearer authority', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).not.toBeNull();
 
       const result = await runCliInProcess(`complete --run ${active!.id}`, workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('ACTOR_CONTEXT_REQUIRED');
       const state = await readRunbookState(workspace, active!.id);
-      expect(state?.lifecycle).toBe('completed');
+      expect(state?.lifecycle).toBe('running');
     });
 
     it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {

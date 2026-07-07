@@ -28,6 +28,7 @@ import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { emitDelegationCollectionPendingError } from './transitions.js';
 import {
   renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
@@ -37,6 +38,7 @@ import {
   isRecoverableActiveStackError,
   type OrphanCleanupResult,
 } from './active-runbook-cleanup.js';
+import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
@@ -128,7 +130,7 @@ export async function renderTerminalOutcome(
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, command);
     case 'claim_grant_required':
-      return renderActorContextRequiredRefusal(output, command);
+      return renderClaimGrantRequiredRefusal(output, command);
     case 'delegation_collection_pending':
       emitDelegationCollectionPendingError(
         output,
@@ -264,7 +266,24 @@ export async function runSeamTerminal(
     }
   }
 
-  const exitError = await renderTerminalOutcome(output, command, manager, outcome, options.message);
+  let propagatedInlineTerminal = false;
+  if (outcome.kind === 'applied_claim') {
+    const terminal = await manager.load(outcome.runId);
+    const linkage = terminal ? extractParentLinkage(terminal) : undefined;
+    if (terminal && linkage?.kind === 'inline') {
+      const propagation = await propagateChildTerminal(
+        terminal,
+        outcome.status === 'completed' ? 'pass' : 'fail',
+        cwd,
+        output,
+      );
+      propagatedInlineTerminal = propagation === 'stopped';
+    }
+  }
+
+  const exitError =
+    (await renderTerminalOutcome(output, command, manager, outcome, options.message)) ||
+    propagatedInlineTerminal;
   output.flush();
   return { manager, exitError };
 }

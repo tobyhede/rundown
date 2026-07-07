@@ -116,6 +116,17 @@ describe('renderTerminalOutcome', () => {
     expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
   });
 
+  it('renders claim_grant_required as CLAIM_GRANT_REQUIRED and exits non-zero', async () => {
+    const { exitError, calls } = await render({
+      kind: 'claim_grant_required',
+      claimId: CLAIM_ID,
+      runId: RUN_ID,
+    });
+
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('CLAIM_GRANT_REQUIRED');
+  });
+
   it('renders delegation_collection_pending via DELEGATION_COLLECTION_PENDING and exits non-zero', async () => {
     const { exitError, calls } = await render({
       kind: 'delegation_collection_pending',

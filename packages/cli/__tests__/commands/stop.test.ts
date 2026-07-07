@@ -58,17 +58,18 @@ describe('stop command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('forces the named stack-member run terminal via stop --run <id>', async () => {
+    it('refuses stop --run <id> without bearer authority', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
 
       const result = await runCliInProcess(`stop --run ${active!.id}`, workspace);
 
-      // A run-targeted stop is still a workflow failure terminal (exit 1).
       expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('ACTOR_CONTEXT_REQUIRED');
       const state = await readRunbookState(workspace, active!.id);
-      expect(state?.lifecycle).toBe('stopped');
+      expect(state?.lifecycle).toBe('running');
     });
 
     it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
