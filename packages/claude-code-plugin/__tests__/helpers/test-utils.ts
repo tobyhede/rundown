@@ -7,7 +7,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { assertRunId, RunbookStateManager, SessionService } from '@rundown-org/core';
+import type { RunId } from '@rundown-org/core';
 import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -274,7 +275,7 @@ export function assertDefined<T>(
  * @returns The active run id (`rd_` + 32 hex)
  * @throws {Error} When the status payload carries no run id
  */
-export function activeRunIdFromStatus(result: { exitCode: number | null; stdout: string }): string {
+export function activeRunIdFromStatus(result: { exitCode: number | null; stdout: string }): RunId {
   if (result.exitCode !== 0) {
     throw new Error(`status exited ${String(result.exitCode)}: ${result.stdout}`);
   }
@@ -283,7 +284,7 @@ export function activeRunIdFromStatus(result: { exitCode: number | null; stdout:
   if (!match) {
     throw new Error(`No active run id in status: ${result.stdout}`);
   }
-  return match[0];
+  return assertRunId(match[0]);
 }
 
 /**

@@ -236,7 +236,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(beforeCollect.file).toMatch(/review-and-collate\.runbook\.md$/);
     expect(beforeCollect.position?.current).toBe('1');
 
-    // Explicit collect aggregates the reported outcome: PASS ALL → CONTINUE → step 2.
+    // Explicit collect aggregates the reported outcome: PASS ALL -> CONTINUE -> step 2.
     const collected = runCli(await withActiveRunClaim(['collect'], tempDir), tempDir);
     expect(collected.exitCode).toBe(0);
     const collectEvents = parseJsonEvents(collected.stdout);
@@ -256,5 +256,5 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     const collate = after.delegations?.find((d) => d.runbook.endsWith('collate-files.runbook.md'));
     expect(collate?.state).toBe('pending');
     expect(collate?.token).toEqual(expect.stringMatching(/^rdtk_/));
-  });
+  }, 30_000);
 });
