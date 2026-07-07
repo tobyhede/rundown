@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { RunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -164,7 +165,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
    * substep (1.2) references `childRef2` so callers can wire a failing child.
    */
   async function setupParentWithChildren(childRef2 = 'child.runbook.md'): Promise<{
-    parentRunId: string;
+    parentRunId: RunId;
     token1: string;
     token2: string;
     startStdout: string;
@@ -598,7 +599,7 @@ describe('DELEGATE re-entry and retry', () => {
    * `FAIL ANY RETRY 1 STOP` aggregation. Returns the first-entry tokens.
    */
   async function setupRetryParent(): Promise<{
-    parentRunId: string;
+    parentRunId: RunId;
     token1: string;
     token2: string;
   }> {
