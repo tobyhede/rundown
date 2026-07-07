@@ -148,7 +148,8 @@ describe('RunbookCollectionService', () => {
       async getActiveForClaimId() {
         return { status: 'missing', claimId };
       },
-      async verifyClaimId() {
+      async verifyClaimId(presentedClaimId) {
+        expect(presentedClaimId).toBe(claimId);
         return {
           status: 'verified',
           claim: {

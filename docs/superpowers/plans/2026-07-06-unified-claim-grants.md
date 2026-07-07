@@ -64,8 +64,8 @@ export type ClaimAuthorizationRequest =
   | { readonly action: 'mutate-run'; readonly runId: RunId }
   | { readonly action: 'delegate-from-run'; readonly runId: RunId }
   | { readonly action: 'collect-for-run'; readonly runId: RunId }
-  | { readonly action: 'abort-delegation'; readonly runId: RunId; readonly stepId: string }
-  | { readonly action: 'retry-delegation'; readonly runId: RunId; readonly stepId: string }
+  | { readonly action: 'abort-delegation'; readonly runId: RunId; readonly stepId?: string }
+  | { readonly action: 'retry-delegation'; readonly runId: RunId; readonly stepId?: string }
   | ({ readonly action: 'report-delegation-result' } & DelegationClaimLinkage);
 ```
 

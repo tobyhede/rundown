@@ -150,6 +150,8 @@ export type PassFailValueTakingOptionName = (typeof PASS_FAIL_VALUE_TAKING_OPTIO
 
 const SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
   ...PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
+  '--input',
+  '--input-json',
   '--input-file',
 ]);
 

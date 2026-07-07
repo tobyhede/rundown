@@ -638,7 +638,13 @@ async function evaluateTransitionPolicy(
     case 'actor_context_required':
       return { kind: 'actor_context_required' };
     case 'claim_grant_required':
-      return { kind: 'actor_context_required' };
+      return actorContext.kind === 'verified_claim' && actorContext.authority.kind === 'bearer'
+        ? {
+            kind: 'claim_grant_required',
+            claimId: actorContext.authority.claimId,
+            runId: target.id,
+          }
+        : { kind: 'actor_context_required' };
     case 'collect_requires_orchestrator':
     case 'missing_outcomes':
     case 'already_collected':

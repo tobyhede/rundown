@@ -66,11 +66,20 @@ const PARENT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 const DIFFERENT_PARENT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 const ORPHAN_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
 
-function claimRecord(childRunId: RunId, overrides: Record<string, unknown> = {}): ClaimRecord {
+type ClaimRecordOverride = Partial<Omit<ClaimRecord, 'delegation'>> & {
+  readonly delegation?: Partial<NonNullable<ClaimRecord['delegation']>>;
+};
+
+function claimRecord(childRunId: RunId, overrides: ClaimRecordOverride = {}): ClaimRecord {
+  const { delegation: delegationOverrides, ...recordOverrides } = overrides;
   return {
     claimKey: assertClaimLookupKey('rdclk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
     secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
     controlledRunId: childRunId,
+    grants: [],
+    issuedAt: '2026-02-27T10:00:00.000Z',
+    updatedAt: '2026-02-27T10:00:00.000Z',
+    ...recordOverrides,
     delegation: {
       childRunId,
       tokenHash: MOCK_TOKEN_HASH,
@@ -79,17 +88,14 @@ function claimRecord(childRunId: RunId, overrides: Record<string, unknown> = {})
       parentStep: '1',
       parentFrameKey: brandFrameKeyForTest('1'),
       parentEntry: 1,
+      ...delegationOverrides,
     },
-    grants: [],
-    issuedAt: '2026-02-27T10:00:00.000Z',
-    updatedAt: '2026-02-27T10:00:00.000Z',
-    ...overrides,
   };
 }
 
 function claimedRunbookResult(
   childRunId: RunId,
-  overrides: Record<string, unknown> = {},
+  overrides: ClaimRecordOverride = {},
 ): ClaimRunbookResult {
   return { status: 'claimed', claimId: TEST_CLAIM_ID, claim: claimRecord(childRunId, overrides) };
 }
@@ -98,12 +104,15 @@ function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
     async (childRunId: RunId, linkage: DelegationLinkage) =>
       claimedRunbookResult(childRunId, {
-        tokenHash: linkage.tokenHash,
-        parentRunId: linkage.parentRunId,
-        parentStepId: linkage.parentStepId,
-        parentStep: linkage.parentStep,
-        parentFrameKey: linkage.parentFrameKey,
-        parentEntry: linkage.parentEntry,
+        delegation: {
+          childRunId,
+          tokenHash: linkage.tokenHash,
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: linkage.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        },
       }),
   );
 }
@@ -114,12 +123,15 @@ function mockClaimRunbookAlreadyClaimed(): jest.Mock<SessionService['claimRunboo
       status: 'already-claimed',
       childRunId,
       claim: claimRecord(childRunId, {
-        tokenHash: linkage.tokenHash,
-        parentRunId: linkage.parentRunId,
-        parentStepId: linkage.parentStepId,
-        parentStep: linkage.parentStep,
-        parentFrameKey: linkage.parentFrameKey,
-        parentEntry: linkage.parentEntry,
+        delegation: {
+          childRunId,
+          tokenHash: linkage.tokenHash,
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: linkage.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        },
       }),
     }),
   );

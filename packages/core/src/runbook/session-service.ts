@@ -27,6 +27,7 @@ import {
   type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
+  type ClaimLookupKey,
   type ClaimRecord,
   type ClaimRunbookResult,
   type ClaimVerificationResult,
@@ -845,16 +846,16 @@ export class SessionService {
    * retained claim tombstone is no longer meaningful and is removed alongside it.
    *
    * @param childRunIds - Child run ids being pruned.
-   * @returns The claim ids that were removed.
+   * @returns The claim lookup keys that were removed.
    */
-  async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimId[]> {
+  async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimLookupKey[]> {
     return this.withLock(async () => {
       const targets = new Set<string>(childRunIds);
       const session = await this.manager.loadSession();
-      const removed: ClaimId[] = [];
+      const removed: ClaimLookupKey[] = [];
       for (const [claimKey, claim] of Object.entries(session.claims)) {
         if (targets.has(claim.controlledRunId)) {
-          removed.push(claimKey as ClaimId);
+          removed.push(claim.claimKey);
           delete session.claims[claimKey];
         }
       }

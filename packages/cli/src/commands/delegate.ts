@@ -45,7 +45,7 @@ import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@run
  * Centralised so the Commander action callback and the retry handler share a
  * single declaration; previously the same shape was duplicated inline.
  */
-interface DelegateActionOptions {
+export interface DelegateActionOptions {
   step?: string;
   index?: string;
   claimId?: string;
@@ -124,7 +124,7 @@ function rejectClaimIdValueSmuggling(
   output: OutputEmitter,
   options: DelegateActionOptions,
 ): boolean {
-  const values = [...options.input, ...(options.inputJson ?? []), ...(options.inputFile ?? [])];
+  const values = collectDelegateRequiredArgumentValues(options);
   if (!values.some((value) => value === '--claim-id' || value.startsWith('--claim-id='))) {
     return false;
   }
@@ -133,6 +133,25 @@ function rejectClaimIdValueSmuggling(
     'INVALID_CLAIM_ID',
   );
   return true;
+}
+
+/**
+ * Collect delegate option values whose argv positions can consume required
+ * arguments before command action validation runs.
+ *
+ * @param options - Parsed delegate options.
+ * @returns Values checked for claim-id flag smuggling.
+ */
+export function collectDelegateRequiredArgumentValues(
+  options: DelegateActionOptions,
+): readonly string[] {
+  return [
+    ...options.input,
+    ...(options.inputJson ?? []),
+    ...(options.inputFile ?? []),
+    ...(options.artifacts ?? []),
+    ...(options.artifactsJson ?? []),
+  ];
 }
 
 /**

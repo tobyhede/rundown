@@ -1757,8 +1757,17 @@ export class RunbookLifecycleCommandService {
       case 'allowed':
         break;
       case 'actor_context_required':
-      case 'claim_grant_required':
         return { kind: 'actor_context_required' };
+      case 'claim_grant_required': {
+        const actorContext = authority?.kind === 'verified' ? authority.actorContext : undefined;
+        return actorContext?.kind === 'verified_claim' && actorContext.authority.kind === 'bearer'
+          ? {
+              kind: 'claim_grant_required',
+              claimId: actorContext.authority.claimId,
+              runId: plan.targetState.id,
+            }
+          : { kind: 'actor_context_required' };
+      }
       case 'delegation_collection_pending':
         return {
           kind: 'delegation_collection_pending',

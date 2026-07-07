@@ -692,6 +692,30 @@ describe('resolveTransitionTarget --run targeting', () => {
     );
     expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
   });
+
+  it('preserves claim_grant_required for a run-targeted bearer that lacks mutate-run', async () => {
+    const resolution = await resolveTransitionTarget(
+      fakeReader({
+        runById: { [parent.id]: parent },
+        openClaims: [],
+        failOnDefaultRead: true,
+      }),
+      {
+        command: 'pass',
+        runId: parent.id,
+        actorContext: verifiedClaimContext({
+          authority: { kind: 'bearer', claimId, claimKey: claim.claimKey },
+          claim: {
+            claimKey: claim.claimKey,
+            controlledRunId: parent.id,
+            grants: [],
+          },
+        }),
+      },
+    );
+
+    expect(resolution).toEqual({ kind: 'claim_grant_required', claimId, runId: parent.id });
+  });
 });
 
 describe('resolveCommandTarget --run targeting', () => {

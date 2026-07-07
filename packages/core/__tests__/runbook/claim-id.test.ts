@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   assertClaimBearer,
   claimKeyFromBearer,
+  type ClaimGrant,
   createDelegatedChildGrants,
   createRunControlGrants,
   generateClaimBearer,
@@ -91,5 +92,28 @@ describe('claim bearer credentials', () => {
         tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
       }),
     ).toBe(false);
+  });
+
+  it('treats unscoped recovery grants as step wildcards and scoped recovery grants as exact-step only', () => {
+    const otherStepId = '2.1';
+
+    for (const action of ['abort-delegation', 'retry-delegation'] as const) {
+      const unscopedGrant = { action, runId: parentRunId } satisfies ClaimGrant;
+      const scopedGrant = {
+        action,
+        runId: parentRunId,
+        stepId: linkage.parentStepId,
+      } satisfies ClaimGrant;
+
+      expect(grantAllows(unscopedGrant, { action, runId: parentRunId, stepId: otherStepId })).toBe(
+        true,
+      );
+      expect(
+        grantAllows(scopedGrant, { action, runId: parentRunId, stepId: linkage.parentStepId }),
+      ).toBe(true);
+      expect(grantAllows(scopedGrant, { action, runId: parentRunId, stepId: otherStepId })).toBe(
+        false,
+      );
+    }
   });
 });

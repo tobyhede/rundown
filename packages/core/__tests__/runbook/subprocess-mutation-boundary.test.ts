@@ -204,11 +204,28 @@ describe('bareRoleSpecificMutation', () => {
   });
 
   it('does not withhold delegate when it carries claim-id authority (property)', () => {
+    const delegateFlagPositionArg = fc
+      .string()
+      .filter(
+        (s) =>
+          s !== '--' &&
+          s !== '--claim-id' &&
+          s !== '--step' &&
+          s !== '--index' &&
+          s !== '--input' &&
+          s !== '--input-json' &&
+          s !== '--input-file' &&
+          s !== '--run',
+      );
     fc.assert(
-      fc.property(fc.array(fc.string(), { maxLength: 4 }), fc.string(), (extra, claimId) => {
-        const argv = ['delegate', ...extra, '--claim-id', claimId];
-        expect(bareRoleSpecificMutation(argv)).toBeUndefined();
-      }),
+      fc.property(
+        fc.array(delegateFlagPositionArg, { maxLength: 4 }),
+        fc.string(),
+        (extra, claimId) => {
+          const argv = ['delegate', ...extra, '--claim-id', claimId];
+          expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+        },
+      ),
     );
   });
 

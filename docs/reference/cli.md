@@ -973,7 +973,7 @@ rundown claim <token>
 rundown pass --claim-id <claim_id>    # or: rundown fail --claim-id <claim_id>
 
 # 6. Main agent advances its own run once the child has reported
-rundown pass --claim-id <root_claim_id> # or: rundown collect --claim-id <root_claim_id>
+rundown collect --claim-id <root_claim_id>
 ```
 
 **Key points:**

@@ -36,7 +36,10 @@ function findErrorEnvelope(stdout: string): Record<string, unknown> | undefined 
 // file, so Stryker runs zero tests per mutant and every mutant falsely survives
 // (0.00% score). This static edge links the file into the graph so the covering
 // tests actually run against each mutant.
-import { registerDelegateCommand } from '../../src/commands/delegate.js';
+import {
+  collectDelegateRequiredArgumentValues,
+  registerDelegateCommand,
+} from '../../src/commands/delegate.js';
 
 describe('delegate command wiring', () => {
   it('registers the delegate command with its documented flags, descriptions, and defaults', () => {
@@ -255,6 +258,16 @@ describe('delegate command', () => {
       code: 'INVALID_CLAIM_ID',
       error: expect.stringContaining('Invalid claim id'),
     });
+  });
+
+  it('includes artifact option values in claim-id smuggling validation inputs', () => {
+    expect(
+      collectDelegateRequiredArgumentValues({
+        input: [],
+        artifacts: ['--claim-id=from-artifact'],
+        artifactsJson: ['--claim-id=from-artifact-json'],
+      }),
+    ).toEqual(['--claim-id=from-artifact', '--claim-id=from-artifact-json']);
   });
 
   describe('collection-pending guard', () => {
