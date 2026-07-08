@@ -4,8 +4,11 @@ import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
-import { parseRunOption } from '../helpers/run-option.js';
+import {
+  withTransitionTargetOptions,
+  parseTransitionTarget,
+  transitionTargetFields,
+} from '../helpers/transition-target.js';
 import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
 
 /**
@@ -28,12 +31,14 @@ import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-com
  * @param program - Commander program instance to register the command on
  */
 export function registerCompleteCommand(program: Command): void {
-  program
-    .command('complete')
-    .description('Force early completion of current runbook (runbooks auto-complete on final step)')
-    .argument('[message]', 'Completion message')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
-    .option('--run <runId>', 'Target a runbook by run id')
+  withTransitionTargetOptions(
+    program
+      .command('complete')
+      .description(
+        'Force early completion of current runbook (runbooks auto-complete on final step)',
+      )
+      .argument('[message]', 'Completion message'),
+  )
     .option('--text', 'Output as human-readable text')
     .action(
       async (
@@ -44,25 +49,19 @@ export function registerCompleteCommand(program: Command): void {
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'complete' });
             const cwd = getCwd();
-            if (rejectClaimRunCombination({ claimId: options.claimId, run: options.run, output })) {
-              return;
-            }
-            const claimTarget = parseClaimIdOption(options.claimId, output);
-            if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, output);
-            if (!runTarget.ok) return;
+            const target = parseTransitionTarget(options, output);
+            if (!target) return;
+            const targetFields = transitionTargetFields(target);
 
             try {
               const { exitError } = await runSeamTerminal(output, cwd, 'complete', {
-                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
-                ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+                ...targetFields,
                 ...(message !== undefined ? { message } : {}),
               });
               if (exitError) process.exitCode = 1;
             } catch (error: unknown) {
               await handleTerminalRecovery('complete', error, output, cwd, {
-                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
-                ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+                ...targetFields,
               });
             }
           },
