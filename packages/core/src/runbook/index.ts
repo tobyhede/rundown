@@ -103,14 +103,10 @@ export {
 } from './command-target-resolver.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
-  actorContextFromEvidence,
-  claimControllerContext,
-  trustedRunControllerContext,
   verifiedClaimContext,
   type ActorContext,
   type CallerEvidence,
   type EffectiveRole,
-  type EvidenceTarget,
 } from './actor-context.js';
 export {
   classifyDelegationExposure,

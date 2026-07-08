@@ -1,7 +1,4 @@
 import type { ClaimId, VerifiedClaim, VerifiedClaimAuthority } from './claim-id.js';
-import type { DelegationExposure } from './delegation-exposure.js';
-import type { DelegationTokenHash } from './delegation-token.js';
-import type { RunId } from './run-id.js';
 
 /** Caller context after core has verified bearer claim proof. */
 export type ActorContext =
@@ -47,33 +44,6 @@ export function verifiedClaimContext(input: {
   return { kind: 'verified_claim', authority: input.authority, claim: input.claim };
 }
 
-/**
- * Build trusted run-controller actor context.
- *
- * @param _runId - Run id formerly treated as trusted authority.
- * @returns Unknown actor context; run identifiers no longer prove authority.
- */
-export function trustedRunControllerContext(_runId: RunId): ActorContext {
-  return UNKNOWN_ACTOR_CONTEXT;
-}
-
-/**
- * Build claim-controller actor context.
- *
- * @param _input - Former shape-only claim-controller evidence.
- * @param _input.claimId - Former claim id metadata.
- * @param _input.tokenHash - Former delegation token hash metadata.
- * @param _input.controlledRunId - Former controlled run metadata.
- * @returns Unknown actor context; shape-only claim data no longer proves authority.
- */
-export function claimControllerContext(_input: {
-  readonly claimId: ClaimId;
-  readonly tokenHash: DelegationTokenHash;
-  readonly controlledRunId: RunId;
-}): ActorContext {
-  return UNKNOWN_ACTOR_CONTEXT;
-}
-
 /** Typed caller evidence supplied by a frontend before core verifies claim proof. */
 export type CallerEvidence =
   | {
@@ -83,24 +53,8 @@ export type CallerEvidence =
       readonly claimId: ClaimId;
     }
   | {
-      /** Legacy direct CLI metadata; never sufficient for trust. */
+      /** Bare direct CLI metadata; never sufficient for trust. */
       readonly kind: 'direct_cli';
-    }
-  | {
-      /** Legacy run id metadata; never sufficient for trust. */
-      readonly kind: 'run_controller';
-      /** Run id formerly treated as authority. */
-      readonly runId: RunId;
-    }
-  | {
-      /** Legacy shape-only claim metadata; never sufficient for trust. */
-      readonly kind: 'claim';
-      /** Claim id metadata supplied by an old frontend. */
-      readonly claimId: ClaimId;
-      /** Delegation token hash metadata supplied by an old frontend. */
-      readonly tokenHash: DelegationTokenHash;
-      /** Controlled run id metadata supplied by an old frontend. */
-      readonly controlledRunId: RunId;
     }
   | {
       /** Claude Code plugin subprocess; metadata is descriptive only. */
@@ -120,30 +74,3 @@ export type CallerEvidence =
       /** No trusted evidence was supplied. */
       readonly kind: 'unknown';
     };
-
-/**
- * The resolved target a caller's evidence is mapped against.
- *
- * Frontend evidence no longer maps directly to trusted actor context. Core
- * services verify claim bearers and then call {@link verifiedClaimContext}.
- */
-export interface EvidenceTarget {
-  /** Run the command targets. */
-  readonly runId: RunId;
-  /** The target run's delegation exposure, classified at decision time. */
-  readonly exposure: DelegationExposure;
-}
-
-/**
- * Map frontend evidence to actor context.
- *
- * @param _evidence - Typed caller evidence supplied by a frontend.
- * @param _target - Resolved target run id plus classified exposure.
- * @returns Unknown context. Core services must verify claim bearer evidence.
- */
-export function actorContextFromEvidence(
-  _evidence: CallerEvidence,
-  _target?: EvidenceTarget,
-): ActorContext {
-  return UNKNOWN_ACTOR_CONTEXT;
-}

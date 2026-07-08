@@ -2,7 +2,6 @@ import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
   activeFrame,
-  actorContextFromEvidence,
   assertRunId,
   buildCompletionKey,
   buildFrameKey,
@@ -13,13 +12,10 @@ import {
   UNKNOWN_ACTOR_CONTEXT,
   verifiedClaimContext,
   type ActorContext,
-  type CallerEvidence,
   type CommandIntent,
-  type DelegationExposure,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import {
-  assertClaimId,
   assertClaimLookupKey,
   assertClaimSecretHash,
   type ClaimRecord,
@@ -31,9 +27,6 @@ import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 // `assertRunId` rejects any char outside a-f0-9, so do not use g-z here.
 const runIdA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const runIdB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-const claimId = assertClaimId(
-  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
-);
 const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
 const secretHash = assertClaimSecretHash(`sha256:${'b'.repeat(64)}`);
 const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
@@ -310,40 +303,6 @@ describe('resolveCommandIntent properties', () => {
           actorContext.kind === 'verified_claim' && actorContext.claim.controlledRunId === targetId;
         expect(role === 'orchestrator_for_target').toBe(controlsTarget);
       }),
-    );
-  });
-
-  it('frontend evidence never maps directly to trusted actor context', () => {
-    const evidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
-      fc.constant({ kind: 'direct_cli' } as const),
-      fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
-      fc.constantFrom(runIdA, runIdB).map((controlledRunId) => ({
-        kind: 'claim' as const,
-        claimId,
-        tokenHash,
-        controlledRunId,
-      })),
-      fc.constant({ kind: 'plugin' } as const),
-      fc.constant({ kind: 'mcp' } as const),
-      fc.constant({ kind: 'unknown' } as const),
-    );
-    const exposureArb: fc.Arbitrary<DelegationExposure> = fc.constantFrom(
-      'standalone' as const,
-      'delegating' as const,
-    );
-    fc.assert(
-      fc.property(
-        evidenceArb,
-        fc.constantFrom(runIdA, runIdB),
-        exposureArb,
-        (evidence, targetId, exposure) => {
-          const role = deriveEffectiveRole(
-            actorContextFromEvidence(evidence, { runId: targetId, exposure }),
-            baseState(targetId),
-          );
-          expect(role).toBe('unknown_for_target');
-        },
-      ),
     );
   });
 });

@@ -218,7 +218,8 @@ describe('RunbookCollectionService', () => {
     // The collection target authors DELEGATE substeps, so it classifies
     // `delegating`; bare direct_cli evidence maps to the unknown context and
     // the orchestrator gate refuses before inspecting any outcome state. The
-    // orchestrator lane is `run_controller` (--run); the child lane is claim.
+    // orchestrator authorizes with its run-control bearer claim; the child lane
+    // is its own claim.
     await manager.save(state());
 
     await expect(

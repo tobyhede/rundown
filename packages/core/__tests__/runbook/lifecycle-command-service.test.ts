@@ -3130,8 +3130,8 @@ describe('RunbookLifecycleCommandService', () => {
 
       await seam.runTransition({
         command: 'pass',
-        // Legacy run_controller evidence remains descriptive only; this branch
-        // still pins the drive-side single-resolution property for old callers.
+        // The orchestrator drives with its run-control bearer claim; this branch
+        // pins the drive-side single-resolution property.
         callerEvidence: runControlEvidence(runId),
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,

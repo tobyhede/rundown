@@ -117,9 +117,10 @@ describe('buildNonDelegatingLifecycleSeam', () => {
       await expect(
         seam.issueDelegation({
           mode: 'fresh',
-          // A run id is target selection only, not bearer authority, so the seam
-          // refuses before the resolver stub is ever reached.
-          callerEvidence: { kind: 'run_controller', runId: state!.id },
+          // A bare direct-CLI caller supplies no bearer authority, so the seam
+          // refuses before the resolver stub is ever reached. (A run id is only
+          // target selection and never proves authority.)
+          callerEvidence: { kind: 'direct_cli' },
           explicitStep: '1.1',
         }),
       ).resolves.toEqual({

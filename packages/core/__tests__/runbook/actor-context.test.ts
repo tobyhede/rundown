@@ -1,7 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import fc from 'fast-check';
 import {
-  actorContextFromEvidence,
   assertClaimId,
   assertClaimLookupKey,
   assertRunId,
@@ -9,8 +7,6 @@ import {
   deriveEffectiveRole,
   UNKNOWN_ACTOR_CONTEXT,
   verifiedClaimContext,
-  type CallerEvidence,
-  type DelegationExposure,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
@@ -55,52 +51,6 @@ function verifiedContext(controlledRunId = runIdA) {
     },
   });
 }
-
-const exposureArb: fc.Arbitrary<DelegationExposure> = fc.constantFrom(
-  'standalone' as const,
-  'delegating' as const,
-);
-
-const callerEvidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
-  fc.constant({ kind: 'claim_bearer' as const, claimId }),
-  fc.record({
-    kind: fc.constant('plugin' as const),
-    agentId: fc.option(fc.string(), { nil: undefined }),
-    sessionId: fc.option(fc.string(), { nil: undefined }),
-  }),
-  fc.record({
-    kind: fc.constant('mcp' as const),
-    toolName: fc.option(fc.string(), { nil: undefined }),
-  }),
-  fc.constant({ kind: 'unknown' as const }),
-);
-
-describe('actorContextFromEvidence', () => {
-  it('does not let frontend evidence construct trusted actor context', () => {
-    expect(actorContextFromEvidence({ kind: 'claim_bearer', claimId })).toBe(UNKNOWN_ACTOR_CONTEXT);
-    expect(actorContextFromEvidence({ kind: 'plugin', agentId: 'agent-7' })).toBe(
-      UNKNOWN_ACTOR_CONTEXT,
-    );
-    expect(actorContextFromEvidence({ kind: 'mcp', toolName: 'rd_pass' })).toBe(
-      UNKNOWN_ACTOR_CONTEXT,
-    );
-  });
-
-  it('totality: never throws for any generated caller evidence and exposure', () => {
-    fc.assert(
-      fc.property(
-        callerEvidenceArb,
-        fc.constantFrom(runIdA, runIdB),
-        exposureArb,
-        (evidence, targetRunId, exposure) => {
-          expect(() =>
-            actorContextFromEvidence(evidence, { runId: targetRunId, exposure }),
-          ).not.toThrow();
-        },
-      ),
-    );
-  });
-});
 
 describe('verifiedClaimContext', () => {
   it('carries core-verified claim evidence', () => {
