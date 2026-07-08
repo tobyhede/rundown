@@ -261,10 +261,10 @@ terminal and exits non-zero.
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` for bearer-authorized
-work, or use `--run <rd_…>` only as a selector where the command supports
-run-targeted operation. Do not combine `--run` with `--claim-id`. Standalone
-runs (no delegation activity) still accept the bare form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `--run <rd_…>` selects a target but never satisfies the
+`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+Standalone runs (no delegation activity) still accept the bare form.
 
 <a id="force-terminal-targeting"></a>
 
@@ -312,10 +312,10 @@ rundown complete --claim-id <claim_id>      # Bearer-authorized completion
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` for bearer-authorized
-work, or use `--run <rd_…>` only as a selector where the command supports
-run-targeted operation. Do not combine `--run` with `--claim-id`. Standalone
-runs still accept the bare form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `--run <rd_…>` selects a target but never satisfies the
+`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+Standalone runs still accept the bare form.
 
 **When to use:**
 
@@ -349,14 +349,12 @@ rundown pass --claim-id <claim_id>   # Delegated child reports its result
 
 - `--step <stepId>` — Target a specific substep (not the currently active one).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
-- `--run <runId>` — Target a runbook by run id.
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` for bearer-authorized
-work, or use `--run <rd_…>` only as a selector where the command supports
-run-targeted operation. Do not combine `--run` with `--claim-id`. Standalone
-runs still accept the bare form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `pass` has no `--run` selector. Standalone runs still
+accept the bare form.
 
 **Behavior:**
 
@@ -383,14 +381,12 @@ rundown fail --claim-id <claim_id>   # Delegated child reports its result
 
 - `--step <stepId>` — Target a specific substep (not the currently active one).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
-- `--run <runId>` — Target a runbook by run id.
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` for bearer-authorized
-work, or use `--run <rd_…>` only as a selector where the command supports
-run-targeted operation. Do not combine `--run` with `--claim-id`. Standalone
-runs still accept the bare form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `fail` has no `--run` selector. Standalone runs still
+accept the bare form.
 
 **Behavior:**
 
@@ -452,11 +448,11 @@ rundown goto 3 --claim-id <claim_id> # Bearer-authorized jump
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` as bearer authority and
-use `--run <rd_…>` only as a selector where run-targeted operation is supported.
-Do not combine `--run` with `--claim-id`. `goto` is additionally gated behind
-the `run-navigation` policy intent — the run's policy must grant navigation for
-the jump to be allowed.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `--run <rd_…>` selects a target but never satisfies the
+`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+`goto` is additionally gated behind the `run-navigation` policy intent — the
+run's policy must grant navigation for the jump to be allowed.
 
 **Restrictions:**
 
@@ -988,10 +984,11 @@ rundown collect --claim-id <root_claim_id>
 - The `claim_id` printed by `claim` is passed to every child-targeting command
 - Orchestrator lane: capture the root `claim_id` from `rundown run` and pass
   `--claim-id <claim_id>` on every orchestrator mutation (`delegate`, `collect`,
-  `pass`, `fail`, `goto`). Use `--run <rd_…>` only as an alternate selector for
-  commands that support run-targeted operation; do not combine it with
-  `--claim-id`. The bare form is refused with `ACTOR_CONTEXT_REQUIRED` on a
-  delegation-exposed run
+  `pass`, `fail`, `goto`) — the bearer claim is the only mutation authority.
+  `--run <rd_…>` selects a target but never satisfies the
+  `ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+  The bare form is refused with `ACTOR_CONTEXT_REQUIRED` on a delegation-exposed
+  run
 - Child uses `rundown pass --claim-id <claim_id>` /
   `rundown fail --claim-id <claim_id>`
 - Completions are validated against frame + entry identity; stale completions
@@ -1147,18 +1144,19 @@ JSON output compatibility:
 
 ### Common Errors and Resolutions
 
-| Error                                       | Cause                                                                    | Resolution                                                                                                            |
-| ------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| "No active runbook"                         | No runbook in stack                                                      | Run `rundown run <file>`                                                                                              |
-| "Runbook file not found"                    | Missing runbook                                                          | Check file path                                                                                                       |
-| "Step N does not exist"                     | Invalid GOTO target                                                      | Check step numbers                                                                                                    |
-| "Invalid step target"                       | Bad goto format                                                          | Use "N" or "N.M"                                                                                                      |
-| "FOR loop references undefined data source" | Sourced FOR clause without matching source                               | Define source via --input-json, config.yaml, or --input-file                                                          |
-| "File drift detected"                       | Data file changed during iteration                                       | Ensure file stability or restart runbook                                                                              |
-| `ACTOR_CONTEXT_REQUIRED`                    | Bare mutating command on a delegation-exposed run                        | Name your bearer lane with `--claim-id <claim_id>`; do not combine `--run` with `--claim-id`                          |
-| `RUN_TARGET_UNAVAILABLE`                    | `--run` target is not a running member of this session's stack           | Use a run id from the active session stack (claimed children are never stack members — target them with `--claim-id`) |
-| `INVALID_RUN_ID`                            | Malformed `--run` value                                                  | Supply a valid run id — `rd_<32 hex characters>`                                                                      |
-| `COLLECT_REQUIRES_ORCHESTRATOR`             | `rundown collect` without an actor controlling the target delegating run | Run `collect` with a bearer grant for the delegating run (`--claim-id <claim_id>`)                                    |
+| Error                                       | Cause                                                                          | Resolution                                                                                                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "No active runbook"                         | No runbook in stack                                                            | Run `rundown run <file>`                                                                                                                                          |
+| "Runbook file not found"                    | Missing runbook                                                                | Check file path                                                                                                                                                   |
+| "Step N does not exist"                     | Invalid GOTO target                                                            | Check step numbers                                                                                                                                                |
+| "Invalid step target"                       | Bad goto format                                                                | Use "N" or "N.M"                                                                                                                                                  |
+| "FOR loop references undefined data source" | Sourced FOR clause without matching source                                     | Define source via --input-json, config.yaml, or --input-file                                                                                                      |
+| "File drift detected"                       | Data file changed during iteration                                             | Ensure file stability or restart runbook                                                                                                                          |
+| `ACTOR_CONTEXT_REQUIRED`                    | Bare mutating command, or a `--run`-only mutation, on a delegation-exposed run | Name your bearer lane with `--claim-id <claim_id>` (the only mutation authority); `--run` never satisfies the refusal, and must not be combined with `--claim-id` |
+| `RUN_TARGET_UNAVAILABLE`                    | `--run` target is not a running member of this session's stack                 | Use a run id from the active session stack (claimed children are never stack members — target them with `--claim-id`)                                             |
+| `INVALID_RUN_ID`                            | Malformed `--run` value                                                        | Supply a valid run id — `rd_<32 hex characters>`                                                                                                                  |
+| `COLLECT_REQUIRES_ORCHESTRATOR`             | `rundown collect` without an actor controlling the target delegating run       | Run `collect` with a bearer grant for the delegating run (`--claim-id <claim_id>`)                                                                                |
+| `INVALID_SYNTAX`                            | `--claim-id` and `--run` supplied together on the same command                 | Pass either `--claim-id` or `--run`, not both — they are mutually exclusive                                                                                       |
 
 ### State Recovery
 

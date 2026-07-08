@@ -161,10 +161,15 @@ duplicate or reconstruct it here.** When stepping through a runbook, follow the
 `rundown pass`/`rundown fail`, claim/delegate, JSON vs `--text`) rather than the
 raw flag list.
 
-Post-R1, mutating commands on delegation-exposed runs must name their authority:
-orchestrators pass `--run <rd_…>` (run id from `rundown run` output /
-`runbookId` on events), children pass `--claim-id`; bare forms refuse with
-`ACTOR_CONTEXT_REQUIRED`. Read-only commands stay bare.
+Post-R1, mutating commands on delegation-exposed runs must name their authority
+with `--claim-id`: orchestrators pass the run-control claim minted by
+`rundown run` (the `claim_id` on the `runbook_started` event), children pass the
+bearer claim from `rundown claim`; bare forms refuse with
+`ACTOR_CONTEXT_REQUIRED`. `--run <rd_…>` (run id from `rundown run` output /
+`runbookId` on events) is a read-only target selector only — never mutation
+authority: combining it with `--claim-id` is rejected `INVALID_SYNTAX`, and
+using it to mutate a delegation-exposed run is refused `ACTOR_CONTEXT_REQUIRED`.
+Read-only commands stay bare.
 
 - [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command
   (run, pass/fail, goto, status, stop, complete, stash/pop, ls, check, resolve,

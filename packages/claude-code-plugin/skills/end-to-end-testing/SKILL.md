@@ -32,7 +32,7 @@ The DELEGATE step auto-issues a claim token (`delegations` in `rundown status`).
 rundown claim <token>                  # returns claim_id; dispatch the child to a subagent
 ```
 
-Drive the claimed child like any runbook: advance each step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. On a delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED` regardless of claim state (exposure is sticky). A `--run`-targeted parent advance is additionally refused with `OPEN_DELEGATED_CHILDREN` while a claimed child is open.
+Drive the claimed child like any runbook: advance each step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. On a delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED` regardless of claim state (exposure is sticky). The orchestrator's own `rundown pass --claim-id <claim_id>` parent advance is refused with `OPEN_DELEGATED_CHILDREN` while a claimed child is open — wait for the child to report (or `rundown abort <token> --claim-id <claim_id> --force`) before advancing. (A `--run`-targeted mutation is separately refused with `ACTOR_CONTEXT_REQUIRED`, since `--run` is target selection only, not mutation authority.)
 
 When the child's final step completes, the child reports its result to the delegation linkage and stops driving the parent. The parent advances only after the orchestrator runs `rundown collect --claim-id <parent_claim_id>`.
 

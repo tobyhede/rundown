@@ -380,17 +380,18 @@ it.
    carries runbook-list entries, or at runtime any substep state carries an
    inline launch record (sticky, like d). Only a `standalone` run (all six
    clauses fail) keeps the bare `direct_cli` convenience lane; on any
-   delegation-exposed target the only trust-granting evidence is
-   `run_controller` (`--run <rd_…>`) or `claim` (`--claim-id`) — "everyone names
-   their authority". Two consistency caveats are deliberate: (i) the
-   document-derived clauses (a and f's static signal) are re-parsed at decision
-   time, so a mid-run edit of the runbook document can flip a not-yet-issued
-   run's static exposure — the state-derived clauses are monotone and never
-   decay; (ii) exposure classification and target resolution are two lock-free
-   reads, and the design stays fail-closed because trust is bound to the
-   classified run's id: `deriveEffectiveRole` refuses an id mismatch with the
-   resolved target, so an interleave (e.g. an inline child popping between the
-   reads) can never transfer one run's trust onto another.
+   delegation-exposed target the only trust-granting evidence is a verified
+   bearer claim (`--claim-id`). A `--run <rd_…>` id is a target selector only,
+   never authority — it selects which run a mutation addresses but authorizes
+   nothing. Two consistency caveats are deliberate: (i) the document-derived
+   clauses (a and f's static signal) are re-parsed at decision time, so a
+   mid-run edit of the runbook document can flip a not-yet-issued run's static
+   exposure — the state-derived clauses are monotone and never decay; (ii)
+   exposure classification and target resolution are two lock-free reads, and
+   the design stays fail-closed because trust is bound to the classified run's
+   id: `deriveEffectiveRole` refuses an id mismatch with the resolved target, so
+   an interleave (e.g. an inline child popping between the reads) can never
+   transfer one run's trust onto another.
 2. **Target resolution + policy.** `resolveTransitionTarget` resolves the target
    run and runs strict target-relative policy, returning typed refusals (`none`,
    `stale_claim`, `terminal_claim_confirmed` / `terminal_claim_conflict`,
@@ -438,15 +439,17 @@ work:
 
 - **gathers native caller evidence** — `readLifecycleCallerEvidence`
   (`packages/cli/src/helpers/caller-evidence.ts`) returns
-  `{ kind: 'direct_cli' }` for a bare invocation, `run_controller` evidence for
-  a validated `--run <rd_…>`, or reconstructed `claim` evidence for
-  `--claim-id`. It no longer decides whether a bare invocation grants anything —
-  core does, from the target's delegation exposure;
+  `{ kind: 'claim_bearer', claimId }` for `--claim-id`, and
+  `{ kind: 'direct_cli' }` for everything else. A `--run <rd_…>` id is **not**
+  evidence — it is parsed separately as a target selector, not caller authority.
+  The helper no longer decides whether a bare invocation grants anything — core
+  does, from the target's delegation exposure;
 - **parses `--run`** — `parseRunOption`
   (`packages/cli/src/helpers/run-option.ts`) validates the id format via core's
   `isRunId` and enforces mutual exclusion with `--claim-id` (Category-A flag
-  parsing only; a `--run` id is resolved and policy-checked in core against the
-  session `defaultStack`);
+  parsing only; a `--run` id is threaded through as the target selector and
+  resolved against the session `defaultStack` in core — it never becomes caller
+  evidence);
 - **parses `--step` / `--index`** into a pre-resolved `ManualCompletionCursor`
   via `resolveManualCompletionCursor`
   (`packages/cli/src/helpers/transitions.ts`) — raw-argument input handling on
@@ -464,23 +467,27 @@ The CLI constructs **no** `ActorContext`.
 `ActorContext` has no `source` field. Source tagging is not a trust mechanism:
 there is no `--actor-source` flag and no `RD_ACTOR_SOURCE` env var, and they
 must not be reintroduced. The only trust-granting evidence is a verified bearer
-claim id. `run_controller`, shape-only `claim`, `direct_cli`, `plugin`, and
-`mcp` evidence — and any agent id, session id, run id, or tool name they carry —
-map to `UNKNOWN_ACTOR_CONTEXT`.
+claim id. Everything that is not a verified bearer claim — `direct_cli`
+evidence, the legacy non-authoritative `run_controller` / shape-only `claim`
+shapes, and any `plugin` or `mcp` framing — maps to `UNKNOWN_ACTOR_CONTEXT`,
+along with any agent id, session id, run id, or tool name they carry.
 
-### Run-targeted terminals carry derived authority over contiguous inline chains
+### Terminal authority requires a bearer claim; `--run` only selects the target
 
-A terminal command (`complete` / `stop`) targeted with `--run <rd_…>` at a
-member of a **contiguous inline composition chain** carries derived
-run-controller authority over the root the chain walk reaches. Rationale: a
-contiguous-inline chain is one orchestrator's composition — every member was
-launched, in-session, by whoever launched the root — so naming any member names
-the same authority. Two independent walls keep this from widening into #460: a
-claimed child's run is never a `defaultStack` member (so `--run` cannot resolve
-it), and the chain walk climbs only `parentLinkage.kind === 'inline'`, so a
-**delegation boundary always severs the chain**. Pinned by the seam tests in
-`transitions-seam.test.ts`; names-are-not-capabilities remains the tier-1
-posture (#540 tracks the capability upgrade).
+A terminal command (`complete` / `stop`) mutates only when it carries a verified
+bearer claim (`--claim-id`). `--run <rd_…>` names which run the terminal
+addresses; it grants nothing. A `--run`-only terminal on a delegation-exposed
+run is refused with `ACTOR_CONTEXT_REQUIRED`, exactly like a bare one — a run id
+is an identifier, not authority.
+
+The claim's authority still composes over a **contiguous inline composition
+chain**: the chain walk climbs `parentLinkage.kind === 'inline'` to the root the
+member belongs to, so a claim that controls the root reaches every inline member
+launched under it in-session. Two independent walls keep this bounded: a claimed
+child's run is never a `defaultStack` member (so `--run` cannot resolve it as a
+target), and the chain walk climbs only inline linkage, so a **delegation
+boundary always severs the chain**. Pinned by the seam tests in
+`transitions-seam.test.ts`.
 
 ### Guards do no cross-run IO or policy
 
@@ -504,34 +511,37 @@ mutation from silently consuming the standalone-run convenience lane and to keep
 refusals front-end-rendered (a clear typed withhold instead of a downstream
 policy error). The shared boundary `bareRoleSpecificMutation`
 (`packages/core/src/runbook/subprocess-mutation-boundary.ts`) classifies a bare
-(default-target) `rundown pass` / `rundown fail` / `rundown delegate` /
-`rundown complete` / `rundown stop` / `rundown collect` as the invocations whose
-only available trust is `direct_cli`; the spawning front end withholds those.
+(default-target) `rundown pass` / `rundown fail` / `rundown goto` /
+`rundown delegate` / `rundown complete` / `rundown stop` / `rundown collect` as
+the invocations whose only available trust is `direct_cli`; the spawning front
+end withholds those.
 
-**Two explicit lanes pass through.** `--claim-id` mutations are preserved: their
-`claim_controller` evidence (`claimId`, `tokenHash`, `controlledRunId`) is
-reconstructable CLI-side from the resolved claim record. `--run <rd_…>`
-mutations are preserved on all six commands — including `delegate`, previously
-withheld-always — because explicit run targeting is named evidence, not silent
-trust inheritance (`carriesExplicitRunTarget` mirrors `carriesClaimEvidence`'s
-fail-closed value-slot handling). The MCP mutating tools expose this as an
-optional `runId` parameter mapped to `--run` argv. See
+**Only the claim lane passes through.** `--claim-id` mutations are preserved:
+their `claim_bearer` evidence (`claimId`) is reconstructable CLI-side from the
+resolved claim record, so `carriesClaimEvidence` classifies them as authorized
+and the spawning front end forwards them. A `--run <rd_…>`-only mutation is
+**not** a second lane — because `--run` is a target selector and not authority,
+such an invocation is classified bare and withheld exactly like a flagless one.
+There is no `carriesExplicitRunTarget` counterpart to `carriesClaimEvidence`.
+The MCP mutating tools still expose an optional `runId` parameter mapped to
+`--run` argv for target selection, but a run id alone never authorizes the
+mutation; a bearer claim must accompany it on a delegation-exposed run. See
 [Claude Code Plugin Trust Model](./plugin-trust-model.md) for the plugin's other
 trust boundaries.
 
 ### Refusal messages never echo the target run id
 
 The `ACTOR_CONTEXT_REQUIRED` refusal (and the `COLLECT_REQUIRES_ORCHESTRATOR`
-remediation) tells the caller to pass `--run <rd_…>` "using the run id from your
-orchestration context" and deliberately does **not** echo the target run id in
-the message or the JSON details. Echoing it would convert the accident barrier
-into a copy-paste bypass for exactly the lingering-child agent it exists to
-stop. This is UX-shaped accident-proofing, never a security property: run ids
-are natively present in claim output (`parent_run_id`), on every event
-(`runbookId` — an inline child's id also rides the `inlineLaunch` **payload** on
-the launch event; there is no event type named `inlineLaunch`), and via
-`rundown status`. Names are not capabilities — the real authorization boundary
-is tier-2 capability work (#540 / R4).
+remediation) tells the caller to pass `--claim-id <claimId>` using the bearer
+claim from their orchestration context, and deliberately does **not** echo the
+target run id in the message or the JSON details. A run id is only an identifier
+and would authorize nothing even if echoed, but surfacing it would still hand
+the lingering-child agent a copy-paste target it can pair with a stolen claim,
+so the barrier stays quiet about it. Run ids remain natively present elsewhere —
+in claim output (`parent_run_id`), on every event (`runbookId` — an inline
+child's id also rides the `inlineLaunch` **payload** on the launch event; there
+is no event type named `inlineLaunch`), and via `rundown status` — but a run id
+is a selector, and only a verified bearer claim authorizes a mutation.
 
 ### Residual ambient session-management lane (R1 scope decision)
 

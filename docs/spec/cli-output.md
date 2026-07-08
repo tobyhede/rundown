@@ -419,9 +419,8 @@ for delegated child work.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
-a selector where the command supports run-targeted operation. Do not combine
-`--run` with `--claim-id`.
+`--claim-id <claimId>` — the bearer claim is the only mutation authority. `pass`
+has no `--run` selector.
 
 ### `rundown pass`
 
@@ -472,9 +471,8 @@ by `claim_id` instead of the default stack.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
-a selector where the command supports run-targeted operation. Do not combine
-`--run` with `--claim-id`.
+`--claim-id <claimId>` — the bearer claim is the only mutation authority. `fail`
+has no `--run` selector.
 
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
 for stopping).
@@ -541,10 +539,10 @@ by `claim_id` instead of the default stack.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
-a selector where the command supports run-targeted operation. Do not combine
-`--run` with `--claim-id`. `goto` is additionally gated behind the
-`run-navigation` policy intent.
+`--claim-id <claimId>` — the bearer claim is the only mutation authority.
+`--run <rd_…>` selects a target but never satisfies the `ACTOR_CONTEXT_REQUIRED`
+refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
+`goto` is additionally gated behind the `run-navigation` policy intent.
 
 ### `rundown goto <step>`
 
@@ -586,9 +584,9 @@ Step description.
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
-a selector where the command supports run-targeted operation. Do not combine
-`--run` with `--claim-id`.
+`--claim-id <claimId>` — the bearer claim is the only mutation authority.
+`--run <rd_…>` selects a target but never satisfies the `ACTOR_CONTEXT_REQUIRED`
+refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
 
 ### `rundown stop [message]`
 
@@ -634,9 +632,9 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
 see [Error Output](#actor-context-required). Name your lane with
-`--claim-id <claimId>` for bearer-authorized work, or use `--run <rd_…>` only as
-a selector where the command supports run-targeted operation. Do not combine
-`--run` with `--claim-id`.
+`--claim-id <claimId>` — the bearer claim is the only mutation authority.
+`--run <rd_…>` selects a target but never satisfies the `ACTOR_CONTEXT_REQUIRED`
+refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
 
 ### `rundown complete [message]`
 
@@ -1170,7 +1168,7 @@ Code: RUN_TARGET_UNAVAILABLE
   "kind": "error",
   "error": "Run rd_9e725b142d81dabcefb9e04919568fcd is not part of this session's active stack.",
   "code": "RUN_TARGET_UNAVAILABLE",
-  "command": "pass"
+  "command": "goto"
 }
 ```
 
@@ -1193,7 +1191,7 @@ Code: INVALID_RUN_ID
   "kind": "error",
   "error": "Invalid run id. Expected rd_<32 hex characters>.",
   "code": "INVALID_RUN_ID",
-  "command": "pass"
+  "command": "complete"
 }
 ```
 
