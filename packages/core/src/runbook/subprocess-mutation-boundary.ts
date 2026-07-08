@@ -7,9 +7,10 @@
 // arrives as an ordinary `argv`, indistinguishable from a human invocation.
 //
 // DEFENSE-IN-DEPTH (post-R1): core itself now refuses ambient direct-CLI trust
-// on every delegation-exposed run (`actorContextFromEvidence` grants the
-// `direct_cli` lane only to standalone runs), so this boundary is no longer the
-// primary gate against the #460 takeover class. Its remaining job is narrower:
+// on every delegation-exposed run (only a verified bearer claim authorizes a
+// mutation there; the `direct_cli` convenience lane survives only on standalone
+// runs), so this boundary is no longer the primary gate against the #460
+// takeover class. Its remaining job is narrower:
 // stop a spawned bare mutation from silently consuming the standalone-run
 // convenience lane, and keep refusals rendered at the front end (a clear typed
 // withhold instead of a downstream policy error). Explicitly-targeted
@@ -25,9 +26,9 @@
 
 /**
  * CLI commands that perform role-specific lifecycle mutations whose only
- * available trust is direct-CLI (`trusted_run_controller`). A subprocess front
- * end cannot supply this trust as evidence, so a bare invocation of one of these
- * must be withheld rather than spawned.
+ * available trust is the bare direct-CLI lane. A subprocess front end cannot
+ * supply this trust as evidence, so a bare invocation of one of these must be
+ * withheld rather than spawned.
  */
 export type RoleSpecificMutationCommand =
   | 'pass'
@@ -153,6 +154,14 @@ const SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
   '--input',
   '--input-json',
   '--input-file',
+  // `delegate` (and `claim`) additionally take these value slots. They MUST be
+  // listed so the claim scanner skips their consumed value: without them a
+  // `delegate --artifacts --claim-id=foo` would misread `--claim-id=foo` (the
+  // value of `--artifacts`) as real claim evidence and fail OPEN, letting a bare
+  // delegate slip past the boundary. This set is the superset of every
+  // role-specific mutation command's value-taking options, not just pass/fail's.
+  '--artifacts',
+  '--artifacts-json',
 ]);
 
 /**
@@ -390,7 +399,7 @@ export function subprocessMutationWithheldMessage(command: RoleSpecificMutationC
   return (
     `Refusing to run a bare \`rundown ${command}\` from a subprocess front end: it would ` +
     `silently inherit direct-CLI trust over the active run. Supply bearer authority with ` +
-    `\`rundown ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
+    `\`rundown ${command} --claim-id <claimId>\`, ` +
     `optionally add \`--run <rd_…>\` only to select the target run, or run ` +
     `\`rundown ${command}\` directly.`
   );

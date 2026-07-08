@@ -70,6 +70,27 @@ describe('bareRoleSpecificMutation', () => {
   });
 
   it.each([
+    // `delegate`'s artifact value slots are the completeness gap this fix closes:
+    // a `--claim-id=foo` consumed as an artifact value is NOT real evidence, so
+    // the bare delegate must still be withheld.
+    [['delegate', 'child.md', '--artifacts', '--claim-id=foo']],
+    [['delegate', 'child.md', '--artifacts-json', '--claim-id=foo']],
+    // Interleaved with a real artifact value slot, still no flag-position claim.
+    [['delegate', 'child.md', '--artifacts', 'Plan=rd://a', '--artifacts', '--claim-id=foo']],
+  ])('still withholds delegate when --claim-id is smuggled through an artifact value %j', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBe('delegate');
+  });
+
+  it.each([
+    // Counter-cases: the artifact option consumes its OWN value and a separate
+    // `--claim-id` follows in flag position — genuine evidence, so not withheld.
+    [['delegate', 'child.md', '--artifacts', 'Plan=rd://a', '--claim-id', 'rdclm_x']],
+    [['delegate', 'child.md', '--artifacts-json', 'Plans=["rd://a"]', '--claim-id=rdclm_x']],
+  ])('does not withhold delegate with a real --claim-id after an artifact value %j', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it.each([
     [['status']],
     [['status', '--claim-id', 'claim-1']],
     [['ls', '--all']],

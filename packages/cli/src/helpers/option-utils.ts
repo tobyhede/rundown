@@ -42,13 +42,39 @@ interface VarFlagParseOptions {
 }
 
 /**
+ * Reject a variable/artifact name shaped like a CLI flag (leading `-`).
+ *
+ * A flag-shaped name — `--claim-id`, `--run`, `--step`, … — is never a
+ * legitimate variable or artifact name; it can only arise when a CLI flag token
+ * lands in a `key=value` slot. That is precisely the option-injection shape a
+ * subprocess front end would use to smuggle authority (`--claim-id`) or a target
+ * selector through an artifact/input value slot, so reject it explicitly with a
+ * security-clear message rather than letting the generic identifier check
+ * swallow it. The subprocess mutation boundary (`subprocess-mutation-boundary`)
+ * is the primary defence against that smuggle; this is defence in depth at the
+ * value-parsing seam and applies to every channel that shares this parser.
+ *
+ * @param key - Candidate variable/artifact name (the part before `=`).
+ * @param label - Channel label ("variable" or "artifact") for diagnostics.
+ * @throws {InvalidArgumentError} When the name is shaped like a CLI flag.
+ */
+function rejectFlagShapedName(key: string, label: 'variable' | 'artifact'): void {
+  if (key.startsWith('-')) {
+    throw new InvalidArgumentError(
+      `Invalid ${label} name: "${key}" — names must not be CLI flags or internal identifiers ` +
+        `(a flag such as --claim-id sitting in a value slot is an injection attempt).`,
+    );
+  }
+}
+
+/**
  * Shared `key=value` flag parser for the variable and artifact channels.
  *
  * @param value - Raw flag value (`key=value` or, when allowed, a bare `KEY`)
  * @param previous - Previously accumulated entries
  * @param opts - Channel label and env-inherit policy
  * @returns Updated array with the new `key=value` entry
- * @throws {InvalidArgumentError} On invalid identifier, or a bare `KEY` when env-inherit is disabled
+ * @throws {InvalidArgumentError} On invalid identifier, a flag-shaped name, or a bare `KEY` when env-inherit is disabled
  */
 function parseVarFlagOption(
   value: string,
@@ -57,6 +83,7 @@ function parseVarFlagOption(
 ): string[] {
   const eqIndex = value.indexOf('=');
   if (eqIndex !== -1) {
+    rejectFlagShapedName(value.slice(0, eqIndex), opts.label);
     const parsed = parseVarFlag(value);
     if (!parsed) {
       const key = value.slice(0, eqIndex);
@@ -72,6 +99,7 @@ function parseVarFlagOption(
       `Invalid ${opts.label}: "${value}" — the ${opts.label} channel requires KEY=${opts.valueHint ?? '<value>'}`,
     );
   }
+  rejectFlagShapedName(value, opts.label);
   if (!isValidVariableName(value)) {
     const msg = VALID_IDENTIFIER.test(value)
       ? `Reserved ${opts.label} name: "${value}" — cannot use __proto__, constructor, or prototype`
@@ -106,6 +134,7 @@ function parseVarJsonOption(
     throw new InvalidArgumentError('Expected key=json format');
   }
   const key = value.slice(0, eqIndex);
+  rejectFlagShapedName(key, label);
   if (!isValidVariableName(key)) {
     const msg = VALID_IDENTIFIER.test(key)
       ? `Reserved ${label} name: "${key}" — cannot use __proto__, constructor, or prototype`
