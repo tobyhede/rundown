@@ -73,6 +73,7 @@ const COMMAND_TEST_MODULE_MAP: Readonly<Record<string, readonly string[]>> = {
  * static-import requirement.
  */
 const CROSS_CUTTING_TEST_FILES: ReadonlySet<string> = new Set([
+  'claim-run-combination.test.ts', // --claim-id/--run ambiguity across commands
   'command-test-mutation-linkage.test.ts', // this guard
   'forced-terminal-boundary.test.ts',
   'json-output.test.ts',
