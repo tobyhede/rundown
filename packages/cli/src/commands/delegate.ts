@@ -34,8 +34,11 @@ import {
 } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
-import { parseRunOption } from '../helpers/run-option.js';
-import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
+import {
+  withTransitionTargetOptions,
+  parseTransitionTarget,
+  type TransitionTarget,
+} from '../helpers/transition-target.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
@@ -60,37 +63,28 @@ export interface DelegateActionOptions {
 }
 
 /**
- * Derive the seam-call fields from parsed targeting options.
+ * Derive the delegate seam-call fields from a resolved {@link TransitionTarget}.
  *
- * @param input - Parsed targeting values and output emitter.
- * @param input.claimId - Raw `--claim-id` bearer value, when supplied.
- * @param input.runId - Validated `--run` selector, when supplied.
- * @param input.rawRun - Raw `--run` selector value, when supplied.
- * @param input.output - Output emitter used for claim-id validation failures.
- * @returns Spreadable `callerEvidence` (+ `targetRunId` when named) fields.
+ * `--claim-id` supplies bearer authority (mapped into `callerEvidence`); `--run`
+ * supplies a target-run selector (mapped into `targetRunId`). The union has no
+ * `both` inhabitant, so the previously hand-rolled mutual-exclusion check is
+ * gone — the switch is total.
+ *
+ * @param target - The parsed transition target.
+ * @returns Spreadable `callerEvidence` (+ `targetRunId` when a run is named).
  */
-function targetedSeamFields(input: {
-  readonly claimId?: string;
-  readonly runId?: RunId;
-  readonly rawRun?: string;
-  readonly output: OutputEmitter;
-}):
-  | {
-      readonly callerEvidence: CallerEvidence;
-      readonly targetRunId?: RunId;
-    }
-  | undefined {
-  if (
-    rejectClaimRunCombination({ claimId: input.claimId, run: input.rawRun, output: input.output })
-  ) {
-    return undefined;
+function delegateSeamFields(target: TransitionTarget): {
+  readonly callerEvidence: CallerEvidence;
+  readonly targetRunId?: RunId;
+} {
+  switch (target.kind) {
+    case 'claim':
+      return { callerEvidence: readLifecycleCallerEvidence({ claimId: target.claimId }) };
+    case 'run':
+      return { callerEvidence: readLifecycleCallerEvidence(), targetRunId: target.runId };
+    case 'active':
+      return { callerEvidence: readLifecycleCallerEvidence() };
   }
-  const claimTarget = parseClaimIdOption(input.claimId, input.output);
-  if (!claimTarget.ok) return undefined;
-  return {
-    callerEvidence: readLifecycleCallerEvidence({ claimId: claimTarget.claimId }),
-    ...(input.runId !== undefined ? { targetRunId: input.runId } : {}),
-  };
 }
 
 function pushOptionValues(
@@ -163,14 +157,17 @@ export function collectDelegateRequiredArgumentValues(
  * @param program - Commander program instance to register the command on
  */
 export function registerDelegateCommand(program: Command): void {
-  program
+  const command = program
     .command('delegate [runbook]')
     .description('Create a delegation token for a child runbook')
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
-    .option('--claim-id <claimId>', 'Bearer authority for the run that issues the delegation')
-    .option('--retry', 'Retry an existing delegation: cancel and re-issue with a fresh token')
-    .option('--run <runId>', 'Select the target run; authority still comes from --claim-id')
+    .option('--retry', 'Retry an existing delegation: cancel and re-issue with a fresh token');
+  withTransitionTargetOptions(command, {
+    claimId: 'Bearer authority for the run that issues the delegation',
+    run: 'Select the target run (selector only; authority comes from --claim-id)',
+  });
+  command
     .addOption(
       new Option(
         '--input <key=value>',
@@ -241,15 +238,9 @@ export function registerDelegateCommand(program: Command): void {
 
           const cwd = getCwd();
 
-          const runTarget = parseRunOption(options.run, output);
-          if (!runTarget.ok) return;
-          const seamFields = targetedSeamFields({
-            claimId: options.claimId,
-            rawRun: options.run,
-            runId: runTarget.runId,
-            output,
-          });
-          if (seamFields === undefined) return;
+          const target = parseTransitionTarget(options, output);
+          if (!target) return;
+          const seamFields = delegateSeamFields(target);
 
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);

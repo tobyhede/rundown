@@ -478,12 +478,12 @@ Options:
   --step <stepId>              Step to delegate (e.g., 1.1 or 1.2.1 for
                                step.iteration.substep)
   --index <number>             FOR loop iteration to target (requires --step)
-  --claim-id <claimId>         Bearer authority for the run that issues the
-                               delegation
   --retry                      Retry an existing delegation: cancel and re-issue
                                with a fresh token
-  --run <runId>                Select the target run; authority still comes from
-                               --claim-id
+  --claim-id <claimId>         Bearer authority for the run that issues the
+                               delegation
+  --run <runId>                Select the target run (selector only; authority
+                               comes from --claim-id)
   --text                       Output as human-readable text
   -h, --help                   display help for command
 

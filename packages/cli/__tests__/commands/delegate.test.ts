@@ -409,6 +409,25 @@ describe('delegate command', () => {
       expect(payload.code).toBe('INVALID_RUN_ID');
     });
 
+    it('rejects both --claim-id and a malformed --run with INVALID_SYNTAX (precedence)', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          '--run',
+          'not-a-run-id',
+          '--claim-id',
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_SYNTAX');
+    });
+
     it('refuses a --retry token whose --run names a run that does not own it (RUN_TARGET_MISMATCH)', async () => {
       // Fail-closed: named authority is never silently discarded. A token owned
       // by the active parent combined with a foreign --run id must refuse — and
