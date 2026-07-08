@@ -23,8 +23,11 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
-import { parseClaimIdOption, rejectClaimRunCombination } from '../helpers/claim-id-option.js';
-import { parseRunOption } from '../helpers/run-option.js';
+import {
+  withTransitionTargetOptions,
+  parseTransitionTarget,
+  transitionTargetFields,
+} from '../helpers/transition-target.js';
 import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
@@ -49,13 +52,13 @@ import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegat
  * @param program - Commander program instance to register the command on
  */
 export function registerCollectCommand(program: Command): void {
-  program
-    .command('collect')
-    .description('Collect delegation results and fire aggregation transition')
-    .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
-    .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
-    .option('--run <runId>', 'Target a runbook by run id')
+  withTransitionTargetOptions(
+    program
+      .command('collect')
+      .description('Collect delegation results and fire aggregation transition')
+      .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
+      .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)'),
+  )
     .option('--text', 'Output as human-readable text')
     .action(
       async (options: {
@@ -71,16 +74,11 @@ export function registerCollectCommand(program: Command): void {
             const cwd = getCwd();
             const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
 
-            if (rejectClaimRunCombination({ claimId: options.claimId, run: options.run, output })) {
-              return;
-            }
-            const claimTarget = parseClaimIdOption(options.claimId, output);
-            if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, output);
-            if (!runTarget.ok) return;
+            const target = parseTransitionTarget(options, output);
+            if (!target) return;
+            const targetFields = transitionTargetFields(target);
             const contextResult = await buildTransitionContext(output, cwd, {
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
-              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              ...targetFields,
               commandStreamOptions,
             });
             switch (contextResult.kind) {
@@ -112,8 +110,7 @@ export function registerCollectCommand(program: Command): void {
               step: options.step,
               index: options.index,
               text: options.text,
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
-              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              ...targetFields,
             });
 
             if (shouldExitWithError) {
