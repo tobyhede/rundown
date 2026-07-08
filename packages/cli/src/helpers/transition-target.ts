@@ -31,8 +31,9 @@ export type TransitionTarget =
  * its diagnostic, flushed, and set `process.exitCode`; this returns `undefined`
  * and the caller bails.
  *
- * @param raw - Raw Commander option values (`claimId`, `run`), each `undefined`
- *   when absent.
+ * @param raw - Raw Commander option values, each `undefined` when absent.
+ * @param raw.claimId - Raw `--claim-id` bearer value, when supplied.
+ * @param raw.run - Raw `--run` selector value, when supplied.
  * @param output - Output emitter used by the atomic parsers to render failures.
  * @returns The parsed target, or `undefined` when a diagnostic has been emitted.
  */
