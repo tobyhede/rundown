@@ -340,6 +340,47 @@ describe('resolveMutationAuthority', () => {
 
     expect(result).toEqual({ kind: 'refused', reason: 'missing' });
   });
+
+  it('refuses a verified bearer claim that lacks the requested grant (no-authorizing-claim)', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'no-authorizing-claim' });
+  });
+
+  it('refuses a verified bearer claim whose mutate grant is for a different run (no-authorizing-claim)', async () => {
+    // Pins that authorization is driven by `request.runId`, NOT `targetState`.
+    // The target is `child` (which `verifiedClaim` CAN mutate), but the request
+    // names a different run. authorizeClaim compares the grant's runId to
+    // `request.runId` (command-target-resolver.ts:372), so an implementation that
+    // instead authorized against `targetState.id` would wrongly ALLOW and fail
+    // this test. Keeping `targetState: child` + `request.runId: foreign.id` is
+    // what makes the distinction observable — set both to the same run and the
+    // test would pass even under the buggy `targetState`-based implementation.
+    const foreign = { id: 'foreign', lifecycle: 'running' } as RunbookState;
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: foreign.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'verified', claim: verifiedClaim },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'no-authorizing-claim' });
+  });
 });
 
 describe('resolveTransitionTarget', () => {
