@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { Command } from 'commander';
 import type { ClaimId, RunId } from '@rundown-org/core';
 import {
   parseTransitionTarget,
   transitionTargetFields,
+  withTransitionTargetOptions,
 } from '../../src/helpers/transition-target.js';
 
 // The atomic parsers set `process.exitCode = 1` on failure (their real
@@ -90,5 +92,35 @@ describe('transitionTargetFields', () => {
 
   it('maps active to {}', () => {
     expect(transitionTargetFields({ kind: 'active' })).toEqual({});
+  });
+});
+
+describe('withTransitionTargetOptions', () => {
+  it('registers both --claim-id and --run as a bonded pair', () => {
+    const command = new Command('demo');
+    withTransitionTargetOptions(command);
+    const longs = command.options.map((o) => o.long).sort();
+    expect(longs).toEqual(['--claim-id', '--run']);
+  });
+
+  it('defaults to the standard shared descriptions', () => {
+    const command = new Command('demo');
+    withTransitionTargetOptions(command);
+    const byLong = new Map(command.options.map((o) => [o.long, o]));
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--run')?.description).toBe('Target a runbook by run id');
+  });
+
+  it('accepts per-command description overrides', () => {
+    const command = new Command('demo');
+    withTransitionTargetOptions(command, { claimId: 'Custom claim help', run: 'Custom run help' });
+    const byLong = new Map(command.options.map((o) => [o.long, o]));
+    expect(byLong.get('--claim-id')?.description).toBe('Custom claim help');
+    expect(byLong.get('--run')?.description).toBe('Custom run help');
+  });
+
+  it('returns the command for chaining', () => {
+    const command = new Command('demo');
+    expect(withTransitionTargetOptions(command)).toBe(command);
   });
 });

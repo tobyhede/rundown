@@ -1,3 +1,4 @@
+import type { Command } from 'commander';
 import type { ClaimId, RunId } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { parseClaimIdOption, rejectClaimRunCombination } from './claim-id-option.js';
@@ -73,4 +74,41 @@ export function transitionTargetFields(target: TransitionTarget): {
     case 'active':
       return {};
   }
+}
+
+/** Optional per-command help text for the transition-target flag pair. */
+export interface TransitionTargetDescriptions {
+  /** `--claim-id` help; defaults to the standard shared wording. */
+  readonly claimId?: string;
+  /** `--run` help; defaults to the standard shared wording. */
+  readonly run?: string;
+}
+
+/**
+ * Register `--claim-id` and `--run` on a command as an inseparable pair. This is
+ * the single registrar of the transition-target flag pair: a command opts in
+ * with one call and cannot register one flag of the pair without the other. The
+ * whole-program single-source test asserts that `--run` appears only on commands
+ * that register the pair, so the pair and its parser cannot drift apart.
+ *
+ * The registrar owns the *bonding*, not the copy: descriptions default to the
+ * standard shared wording (matching what `pass`/`fail` and the selector commands
+ * already display) and may be overridden per command where the standard wording
+ * is inaccurate — notably `delegate`, whose `--claim-id` authorizes the issuing
+ * run rather than "a claimed delegated child."
+ *
+ * @param command - The Commander command to register the option pair on.
+ * @param descriptions - Optional per-command help overrides.
+ * @returns The same command, for chaining.
+ */
+export function withTransitionTargetOptions(
+  command: Command,
+  descriptions?: TransitionTargetDescriptions,
+): Command {
+  return command
+    .option(
+      '--claim-id <claimId>',
+      descriptions?.claimId ?? 'Target a claimed delegated child runbook',
+    )
+    .option('--run <runId>', descriptions?.run ?? 'Target a runbook by run id');
 }
