@@ -3168,12 +3168,8 @@ describe('RunbookLifecycleCommandService', () => {
       await seam.runTransition({
         command: 'pass',
         callerEvidence: {
-          kind: 'claim',
+          kind: 'claim_bearer',
           claimId: claimed.claimId,
-          tokenHash:
-            claimed.claim.delegation?.tokenHash ??
-            assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`),
-          controlledRunId: claimChildRunId,
         },
         targetSelector: { kind: 'claim', claimId: claimed.claimId },
         terminalPolicy: RELEASE_POLICY,

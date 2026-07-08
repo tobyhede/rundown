@@ -4,6 +4,7 @@ import { mockFn } from './typed-mocks.js';
 import type {
   ActionType,
   ClaimId,
+  ClaimLookupKey,
   ClaimRecord,
   CommandTargetResolution,
   FrameKey,
@@ -29,7 +30,7 @@ const PARENT_RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId;
 const CHILD_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as RunId;
 const TEST_CLAIM_ID =
   'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_' as ClaimId;
-const TEST_CLAIM_KEY = 'rdclk_11111111111111111111111111111111';
+const TEST_CLAIM_KEY = 'rdclk_11111111111111111111111111111111' as ClaimLookupKey;
 
 const mockRunTransition = mockFn<(args: unknown) => Promise<LifecycleTransitionOutcome>>();
 const mockManagerLoad = mockFn<(id: RunId) => Promise<RunbookState | null>>();
@@ -263,17 +264,17 @@ describe('createFailTransitionConfig', () => {
 describe('emitOpenDelegatedChildrenError', () => {
   it('emits OPEN_DELEGATED_CHILDREN with structured details', () => {
     const output = makeOutput();
-    emitOpenDelegatedChildrenError(output, 'pass', PARENT_RUN_ID, [TEST_CLAIM_ID], [CHILD_RUN_ID]);
+    emitOpenDelegatedChildrenError(output, 'pass', PARENT_RUN_ID, [TEST_CLAIM_KEY], [CHILD_RUN_ID]);
     expect(output.error).toHaveBeenCalledTimes(1);
     const [message, code, details] = output.error.mock.calls[0];
     expect(message).toContain('Cannot run bare rundown pass');
-    expect(message).toContain(TEST_CLAIM_ID);
+    expect(message).toContain(TEST_CLAIM_KEY);
     expect(message).toContain('--claim-id');
     expect(code).toBe('OPEN_DELEGATED_CHILDREN');
     expect(details).toEqual({
       command: 'pass',
       parentRunId: PARENT_RUN_ID,
-      claimIds: [TEST_CLAIM_ID],
+      claimIds: [TEST_CLAIM_KEY],
       childRunIds: [CHILD_RUN_ID],
     });
   });

@@ -51,7 +51,7 @@ interface VarFlagParseOptions {
  * selector through an artifact/input value slot, so reject it explicitly with a
  * security-clear message rather than letting the generic identifier check
  * swallow it. The subprocess mutation boundary (`subprocess-mutation-boundary`)
- * is the primary defence against that smuggle; this is defence in depth at the
+ * is the primary defense against that smuggle; this is defense in depth at the
  * value-parsing seam and applies to every channel that shares this parser.
  *
  * @param key - Candidate variable/artifact name (the part before `=`).
