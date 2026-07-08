@@ -23,8 +23,15 @@ export const CLAIM_ID_PREFIX = 'rdclm_';
 /** Prefix for every persisted non-secret claim lookup key. */
 export const CLAIM_LOOKUP_KEY_PREFIX = 'rdclk_';
 
+/**
+ * Bearer claim id pattern with captured lookup and secret segments. Single
+ * source of truth for the claim-id shape so the public {@link CLAIM_ID_PATTERN}
+ * and {@link parseClaimBearer} cannot diverge on segment length or charset.
+ */
+const CLAIM_ID_CAPTURE_PATTERN = /^rdclm_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/;
+
 /** Canonical public bearer claim id pattern. */
-export const CLAIM_ID_PATTERN = /^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/;
+export const CLAIM_ID_PATTERN = new RegExp(CLAIM_ID_CAPTURE_PATTERN.source);
 
 /** Canonical persisted non-secret lookup key pattern. */
 export const CLAIM_LOOKUP_KEY_PATTERN = /^rdclk_[a-f0-9]{32}$/;
@@ -261,7 +268,7 @@ export function assertClaimSecretHash(value: string): ClaimSecretHash {
  */
 export function parseClaimBearer(value: string): ParsedClaimBearer {
   const claimId = assertClaimBearer(value);
-  const match = /^rdclm_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/.exec(claimId);
+  const match = CLAIM_ID_CAPTURE_PATTERN.exec(claimId);
   if (!match) {
     throw new Error('Invalid claim id');
   }

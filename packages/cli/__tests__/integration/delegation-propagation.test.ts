@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { assertClaimBearer, claimKeyFromBearer } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -71,7 +72,7 @@ describe('Delegation propagation integration', () => {
   }
 
   function claimKeyFromClaimId(claimId: string): string {
-    return claimId.replace(/^rdclm_([a-f0-9]{32})_[A-Za-z0-9_-]{43}$/, 'rdclk_$1');
+    return claimKeyFromBearer(assertClaimBearer(claimId));
   }
 
   /** Helper: read resolvedCompletions from a run state file. */

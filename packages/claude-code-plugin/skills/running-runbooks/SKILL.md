@@ -42,8 +42,8 @@ rundown complete                # Complete the active workflow; inside inline co
 The bare `rundown pass` / `rundown fail` / `rundown stop` / `rundown complete`
 forms above apply to a **standalone run** (one with no delegation activity). On a
 **delegation-exposed run** the bare form is refused with `ACTOR_CONTEXT_REQUIRED`;
-name your lane instead — orchestrators and delegated children both pass their
-bearer with
+present bearer authority instead — orchestrators and delegated children both pass
+their claim bearer with
 `--claim-id <claim_id>`:
 
 ```bash

@@ -1,4 +1,5 @@
 import type { ActorContext, CallerEvidence } from './actor-context.js';
+import { verifiedClaimContext } from './actor-context.js';
 import type {
   ClaimAuthorizationRequest,
   VerifiedClaim,
@@ -108,11 +109,10 @@ export class AbortCommandService {
         authority: authority.authority,
         claim: authority.claim,
         request,
-        actorContext: {
-          kind: 'verified_claim',
+        actorContext: verifiedClaimContext({
           authority: authority.authority,
           claim: authority.claim,
-        },
+        }),
       },
     };
   }

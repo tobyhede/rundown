@@ -24,6 +24,7 @@ import {
   type ResolvedStep,
   type RunbookState,
   type ClaimId,
+  type ClaimLookupKey,
   type RunId,
   type CommandExecutionStreamOptions,
   type LifecycleTransitionOutcome,
@@ -293,14 +294,14 @@ export async function buildTransitionContext(
  * @param output - Output emitter to write the error to
  * @param command - The bare transition that was refused (`pass`/`fail`)
  * @param parentRunId - Active parent runbook id
- * @param claimIds - Open claim ids blocking the advance
+ * @param claimIds - Open claim lookup keys blocking the advance
  * @param childRunIds - Child run ids for the open claims
  */
 export function emitOpenDelegatedChildrenError(
   output: OutputEmitter,
   command: 'pass' | 'fail',
   parentRunId: RunId,
-  claimIds: readonly string[],
+  claimIds: readonly ClaimLookupKey[],
   childRunIds: readonly RunId[],
 ): void {
   output.error(
