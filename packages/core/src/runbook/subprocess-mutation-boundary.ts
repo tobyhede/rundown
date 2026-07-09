@@ -124,12 +124,13 @@ export function mutationCommandAliases(command: RoleSpecificMutationCommand): re
  * a real flag).
  *
  * This list is the *minimal* set required to read flag position correctly. The
- * boundary scanner derives {@link PASS_FAIL_VALUE_TAKING_OPTIONS} from it AND the
- * CLI's `pass` / `fail` registration derives its Commander `.option(...)` calls
- * from it (see `packages/cli/src/helpers/transition-command.ts`), so the gate and
- * the actual CLI option surface can never drift: adding a future value-taking
- * option (e.g. `--note <text>`) without updating this list would either leave the
- * scanner blind to a smuggling slot or fail the CLI single-source invariant test.
+ * boundary scanner derives {@link SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS} from
+ * it AND the CLI's `pass` / `fail` registration derives its Commander
+ * `.option(...)` calls from it (see `packages/cli/src/helpers/transition-command.ts`),
+ * so the gate and the actual CLI option surface can never drift: adding a future
+ * value-taking option (e.g. `--note <text>`) without updating this list would
+ * either leave the scanner blind to a smuggling slot or fail the CLI
+ * single-source invariant test.
  * `--text` is a boolean and consumes nothing, so it is intentionally absent. The
  * equals-forms (`--step=...`, `--index=...`) consume their value inline in a
  * single token and therefore need no skip — only the space-forms advance past the
@@ -149,17 +150,32 @@ export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = [
  */
 export type PassFailValueTakingOptionName = (typeof PASS_FAIL_VALUE_TAKING_OPTION_NAMES)[number];
 
-const SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
+/**
+ * Long names of every space-form value-taking option across all
+ * {@link RoleSpecificMutationCommand}s. **Single source of truth** for the claim
+ * scanner's value-slot skip list.
+ *
+ * MUST remain a superset of the value-taking option surface of every scanned
+ * mutation command — `delegate` contributes the `--input*` / `--artifacts*`
+ * slots that `pass` / `fail` do not have. An option missing from this set leaves
+ * the scanner blind to a smuggling slot: `delegate --artifacts --claim-id=foo`
+ * would misread `--claim-id=foo` (the *value* of `--artifacts`) as real claim
+ * evidence and fail OPEN, letting a bare delegate slip past the boundary.
+ *
+ * Pinned mechanically by the CLI drift guard
+ * `packages/cli/__tests__/helpers/mutation-command-value-option-single-source.test.ts`,
+ * which introspects each mutation command's registered Commander options: a new
+ * value-taking option that this set does not know about fails the build.
+ *
+ * Boolean options (`--text`, `--retry`) consume nothing and are intentionally
+ * absent. Equals-forms (`--step=...`) consume their value inline in a single
+ * token and need no skip — only space-forms advance past the next token.
+ */
+export const SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
   ...PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
   '--input',
   '--input-json',
   '--input-file',
-  // `delegate` (and `claim`) additionally take these value slots. They MUST be
-  // listed so the claim scanner skips their consumed value: without them a
-  // `delegate --artifacts --claim-id=foo` would misread `--claim-id=foo` (the
-  // value of `--artifacts`) as real claim evidence and fail OPEN, letting a bare
-  // delegate slip past the boundary. This set is the superset of every
-  // role-specific mutation command's value-taking options, not just pass/fail's.
   '--artifacts',
   '--artifacts-json',
 ]);
