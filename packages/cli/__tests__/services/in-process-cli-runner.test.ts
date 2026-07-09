@@ -119,4 +119,36 @@ rd echo "{{ marker }}"
       await workspace.cleanup();
     }
   });
+
+  it('never attributes an ambient process.exitCode to the invoked command', async () => {
+    const workspace = await createTestWorkspace();
+    // A unit test that drove a command helper directly (helpers set
+    // `process.exitCode = 1` rather than calling `process.exit`) can leave the
+    // shared process dirty. Jest 30 does not clone `process` per test file, so
+    // under an in-band runner (Stryker) that value survives into the next file.
+    process.exitCode = 1;
+    try {
+      const runbook = `# Ambient
+
+## 1. Done
+- PASS COMPLETE
+`;
+      await mkdir(workspace.runbooksDir(), { recursive: true });
+      await writeFile(join(workspace.runbooksDir(), 'ambient.runbook.md'), runbook);
+
+      const result = await runCliInProcess({
+        args: ['run', '--prompted', 'ambient.runbook.md'],
+        cwd: workspace.cwd,
+        env: {
+          PATH: `${workspace.binPath()}${delimiter}${process.env.PATH ?? ''}`,
+          CLAUDE_PLUGIN_ROOT: `${join(workspace.cwd, 'plugin')}/`,
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+    } finally {
+      process.exitCode = undefined;
+      await workspace.cleanup();
+    }
+  });
 });

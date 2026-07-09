@@ -107,6 +107,10 @@ export async function runCliInProcess(
   try {
     resetPolicyContext();
     resetColorCache();
+    // Commands report failure by assigning `process.exitCode` rather than
+    // calling `process.exit`, and this runner reads it back after `parseAsync`.
+    // Clearing it first means only *this* invocation's assignment is observed.
+    process.exitCode = undefined;
 
     process.chdir(options.cwd);
     process.env.NO_COLOR = '1';
