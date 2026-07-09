@@ -984,11 +984,16 @@ async function launchRunbook(
 
     const sessionActivation = options.sessionActivation ?? { kind: 'default-stack' as const };
     switch (sessionActivation.kind) {
-      case 'default-stack':
-        await sessionService.pushRunbook(state.id);
+      case 'default-stack': {
+        // Push + run-control claim mint as one atomic session mutation: run-start
+        // is never persisted in a pushed-but-unclaimed state, and it takes a
+        // single session-lock cycle instead of two (removing the double-cycle
+        // contention that made run-start flaky under heavy parallel load).
+        const activation = await sessionService.pushRunbookWithRunControlClaim(state.id);
         sessionActivated = true;
-        issuedRunControlClaimId = (await sessionService.issueRunControlClaim(state.id)).claimId;
+        issuedRunControlClaimId = activation.claimId;
         break;
+      }
       case 'none':
         break;
       default: {

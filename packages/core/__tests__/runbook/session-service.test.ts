@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
+import { SessionLock } from '../../src/runbook/session-lock.js';
 import { assertClaimId, type DelegationClaimLinkage } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId, RunbookState, ParentLinkage } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
@@ -327,6 +328,40 @@ describe('SessionService', () => {
       await expect(sessionService.verifyClaimId(first.claimId)).resolves.toEqual({
         status: 'missing',
         claimKey: first.claim.claimKey,
+      });
+    });
+
+    it('pushes and mints the run-control claim under a single session-lock cycle', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+          runId: PARENT_RUN_ID,
+        },
+      );
+
+      // Inject a lock we can observe: run-start (`rundown run`) previously took
+      // TWO lock cycles (pushRunbook + issueRunControlClaim), whose double
+      // acquire/release made the path flaky under heavy parallel load. The atomic
+      // variant MUST take exactly one.
+      const lock = new SessionLock(testDir);
+      const acquireSpy = jest.spyOn(lock, 'acquire');
+      const service = new SessionService(manager, lock);
+
+      const issued = await service.pushRunbookWithRunControlClaim(state.id);
+
+      expect(acquireSpy).toHaveBeenCalledTimes(1);
+
+      // Atomic: the run is on the stack AND controlled by exactly one claim, and
+      // the persisted session is schema-valid (loadSession validates on read).
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toContain(state.id);
+      expect(Object.keys(session.claims)).toEqual([issued.claim.claimKey]);
+      expect(issued.claim.controlledRunId).toBe(state.id);
+      await expect(service.verifyClaimId(issued.claimId)).resolves.toMatchObject({
+        status: 'verified',
+        claim: { controlledRunId: state.id },
       });
     });
 

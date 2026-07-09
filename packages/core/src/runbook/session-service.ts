@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { RunbookStateManager } from './state.js';
+import type { RunbookStateManager, SessionData } from './state.js';
 import type { RunId } from './run-id.js';
 import { SessionLock } from './session-lock.js';
 import {
@@ -281,29 +281,75 @@ export class SessionService {
     runId: RunId,
   ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
     return this.withLock(async () => {
-      const now = new Date().toISOString();
-      const parsed = parseClaimBearer(generateClaimBearer());
-      const claim = createClaimRecord({
-        claimKey: parsed.claimKey,
-        secretHash: hashClaimSecret(parsed.secret),
-        controlledRunId: runId,
-        grants: createRunControlGrants(runId),
-        now,
-      });
       const session = await this.manager.loadSession();
-      // Uphold the SessionDataSchema controlledRunId-uniqueness invariant: a run has
-      // at most one run-control claim. Re-issuing supersedes (rotates) any existing
-      // claim for this run rather than appending a duplicate that would render the
-      // session unreadable. The prior bearer is invalidated by construction.
-      for (const [existingKey, existingClaim] of Object.entries(session.claims)) {
-        if (existingClaim.controlledRunId === runId) {
-          delete session.claims[existingKey];
-        }
-      }
-      session.claims[claim.claimKey] = claim;
+      const minted = this.mintRunControlClaim(session, runId);
       await this.manager.saveSession(session);
-      return { claimId: parsed.claimId, claim };
+      return minted;
     });
+  }
+
+  /**
+   * Push a runbook onto the active stack and mint its run-control bearer claim
+   * as a single atomic session mutation.
+   *
+   * `rundown run` starts a run and hands the orchestrator a run-control bearer.
+   * Doing the push and the mint under one lock (one `loadSession`/`saveSession`)
+   * instead of two sequential {@link withLock} cycles keeps run-start atomic —
+   * there is never a persisted window where the run is on the stack but has no
+   * controlling claim — and halves the run-start lock/IO, removing the
+   * double-cycle contention that made the run-start path flaky under load.
+   *
+   * @param id - The runbook state ID to push and control.
+   * @returns Public bearer claim id and the persisted proof-backed record.
+   */
+  async pushRunbookWithRunControlClaim(
+    id: RunId,
+  ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      session.defaultStack.push(id);
+      const minted = this.mintRunControlClaim(session, id);
+      await this.manager.saveSession(session);
+      return minted;
+    });
+  }
+
+  /**
+   * Mint a run-control bearer claim into an in-memory session (no IO, no lock).
+   *
+   * Shared by {@link issueRunControlClaim} and
+   * {@link pushRunbookWithRunControlClaim}; both persist the mutated session
+   * under the caller's held lock.
+   *
+   * @param session - Session to mutate in place; the new claim is added and any
+   *   prior claim for `runId` is superseded.
+   * @param runId - Run id the minted claim controls.
+   * @returns Public bearer claim id and the persisted-shape record.
+   */
+  private mintRunControlClaim(
+    session: SessionData,
+    runId: RunId,
+  ): { readonly claimId: ClaimId; readonly claim: ClaimRecord } {
+    const now = new Date().toISOString();
+    const parsed = parseClaimBearer(generateClaimBearer());
+    const claim = createClaimRecord({
+      claimKey: parsed.claimKey,
+      secretHash: hashClaimSecret(parsed.secret),
+      controlledRunId: runId,
+      grants: createRunControlGrants(runId),
+      now,
+    });
+    // Uphold the SessionDataSchema controlledRunId-uniqueness invariant: a run has
+    // at most one run-control claim. Re-issuing supersedes (rotates) any existing
+    // claim for this run rather than appending a duplicate that would render the
+    // session unreadable. The prior bearer is invalidated by construction.
+    for (const [existingKey, existingClaim] of Object.entries(session.claims)) {
+      if (existingClaim.controlledRunId === runId) {
+        delete session.claims[existingKey];
+      }
+    }
+    session.claims[claim.claimKey] = claim;
+    return { claimId: parsed.claimId, claim };
   }
 
   /**
