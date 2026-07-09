@@ -117,6 +117,12 @@ describe('abort command - unit tests', () => {
   }
 
   function abortCommand(token: string, suffix = ''): string {
+    // Fail fast: an empty claim id here means setupDelegation() was not run, which
+    // would silently emit `--claim-id ` and make the abort fail for an unrelated
+    // reason — masking the setup gap behind a green negative-path assertion.
+    if (!orchestratorClaimId) {
+      throw new Error('orchestratorClaimId is unset; call setupDelegation() before abortCommand()');
+    }
     return `abort ${token} --claim-id ${orchestratorClaimId}${suffix ? ` ${suffix}` : ''}`;
   }
 
@@ -222,9 +228,16 @@ describe('abort command - unit tests', () => {
 
       expect(result.exitCode).toBe(1);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      // Envelope is single-sourced through renderActorContextRequiredRefusal, so
+      // the wording matches the other mutating commands and names the abort lane.
       expect(envelope).toEqual(
-        expect.objectContaining({ kind: 'error', code: 'ACTOR_CONTEXT_REQUIRED' }),
+        expect.objectContaining({
+          kind: 'error',
+          code: 'ACTOR_CONTEXT_REQUIRED',
+          error: expect.stringContaining('bare `rundown abort` is refused'),
+        }),
       );
+      expect(String((envelope as { error?: unknown }).error)).toContain('aborting delegated work');
     });
 
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {

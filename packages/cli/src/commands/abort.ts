@@ -16,6 +16,10 @@ import { getCwd } from '../helpers/context.js';
 import { buildNonDelegatingLifecycleSeam } from '../helpers/lifecycle-seam-factory.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
+import {
+  renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
+} from '../helpers/refusal-renderers.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
@@ -127,20 +131,20 @@ export function registerAbortCommand(program: Command): void {
                 stepId: targetSubstepId,
               });
               if (authorization.kind === 'refused') {
+                // Single-source the refusal envelopes through the shared renderers
+                // so abort's codes and wording cannot drift from the other
+                // mutating commands (pass/fail/stop/complete/goto/collect).
                 switch (authorization.policy.kind) {
                   case 'actor_context_required':
-                    output.error(
-                      'Aborting a delegation requires bearer authority for the parent run. Pass `--claim-id <claimId>` from `rundown run`.',
-                      'ACTOR_CONTEXT_REQUIRED',
-                    );
+                    renderActorContextRequiredRefusal(output, 'abort', 'aborting delegated work');
                     output.flush();
                     process.exitCode = 1;
                     return;
                   case 'claim_grant_required':
-                    output.error(
-                      'Claim id lacks the abort-delegation grant for this parent delegation.',
-                      'CLAIM_GRANT_REQUIRED',
-                      authorization.policy.targetRunId
+                    renderClaimGrantRequiredRefusal(
+                      output,
+                      'abort',
+                      authorization.policy.targetRunId !== undefined
                         ? { targetRunId: authorization.policy.targetRunId }
                         : undefined,
                     );
@@ -148,7 +152,7 @@ export function registerAbortCommand(program: Command): void {
                     process.exitCode = 1;
                     return;
                   default:
-                    output.error('Abort refused by delegation policy.', 'ACTOR_CONTEXT_REQUIRED');
+                    renderActorContextRequiredRefusal(output, 'abort', 'aborting delegated work');
                     output.flush();
                     process.exitCode = 1;
                     return;
