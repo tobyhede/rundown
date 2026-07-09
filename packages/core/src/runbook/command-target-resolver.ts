@@ -2,7 +2,6 @@ import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
 import {
   authorizeClaim,
   redactClaimId,
-  type AuthorizedClaim,
   type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
@@ -244,14 +243,6 @@ export interface CommandTargetReader {
    * @returns Verification status.
    */
   verifyClaimId(claimId: ClaimId): Promise<ClaimVerificationResult>;
-
-  /**
-   * List active local claims that authorize a mutation request.
-   *
-   * @param request - Grant authorization request.
-   * @returns Authorizing claims with non-bearer implicit authority evidence.
-   */
-  listClaimsAuthorizing(request: ClaimAuthorizationRequest): Promise<readonly AuthorizedClaim[]>;
 
   /**
    * List unresolved delegated child claims for a parent runbook.
@@ -644,7 +635,9 @@ async function evaluateTransitionPolicy(
     case 'actor_context_required':
       return { kind: 'actor_context_required' };
     case 'claim_grant_required':
-      return actorContext.kind === 'verified_claim' && actorContext.authority.kind === 'bearer'
+      // Verified-claim authority is bearer-only, so the bearer claimId is always
+      // present once narrowed; an unknown actor context has no bearer to name.
+      return actorContext.kind === 'verified_claim'
         ? {
             kind: 'claim_grant_required',
             claimId: actorContext.authority.claimId,

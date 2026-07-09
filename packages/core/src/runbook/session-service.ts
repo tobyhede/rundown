@@ -17,14 +17,11 @@ import {
   createDelegatedChildGrants,
   createClaimRecord,
   createRunControlGrants,
-  authorizeClaim,
   hashClaimSecret,
   parseClaimBearer,
   generateClaimBearer,
   refreshedClaimRecord,
   verifyClaimSecret,
-  type AuthorizedClaim,
-  type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
   type ClaimLookupKey,
@@ -317,41 +314,6 @@ export class SessionService {
       return { status: 'invalid-secret', claimKey: parsed.claimKey };
     }
     return { status: 'verified', claim: verifiedClaimFromRecord(record) };
-  }
-
-  /**
-   * List active local claims whose grants authorize a request.
-   *
-   * This is retained for diagnostics and tests that need to inspect persisted
-   * grants. It is not mutation authority: callers must present the bearer
-   * `claim_id` and use {@link verifyClaimId} for command authorization.
-   *
-   * @param request - Authorization request to check against persisted grants.
-   * @returns Active authorizing claims, annotated with their persisted lookup key.
-   */
-  async listClaimsAuthorizing(
-    request: ClaimAuthorizationRequest,
-  ): Promise<readonly AuthorizedClaim[]> {
-    const session = await this.manager.loadSession();
-    const candidates: AuthorizedClaim[] = [];
-    for (const record of Object.values(session.claims)) {
-      const claim = verifiedClaimFromRecord(record);
-      if (authorizeClaim(claim, request).kind !== 'allowed') {
-        continue;
-      }
-      if (session.stashedRunbookId === record.controlledRunId) {
-        continue;
-      }
-      const state = await this.manager.load(record.controlledRunId);
-      if (!state || state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
-        continue;
-      }
-      candidates.push({
-        authority: { kind: 'implicit', claimKey: record.claimKey },
-        claim,
-      });
-    }
-    return candidates;
   }
 
   /**

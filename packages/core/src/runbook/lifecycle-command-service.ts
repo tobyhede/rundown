@@ -8,7 +8,7 @@ import {
 import type { RunbookActorService } from './actor-service.js';
 import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
-import { classifyDelegationExposure } from './delegation-exposure.js';
+import { classifyDelegationExposureDetail } from './delegation-exposure.js';
 import type {
   CommandIntent,
   CommandTargetSelector,
@@ -1358,15 +1358,8 @@ export class RunbookLifecycleCommandService {
     if (actorContext.kind === 'unknown' && claimId === undefined && runId === undefined) {
       const target = await resolveCommandTarget(sessionService);
       if (target.kind === 'default') {
-        const openClaims = await sessionService.listOpenClaimsForParent(target.state.id);
-        const exposure = classifyDelegationExposure({
-          state: target.state,
-          steps: await this.#deps.loadSteps(target.state),
-          openClaims,
-        });
-        if (exposure === 'delegating') {
-          return { kind: 'actor_context_required' };
-        }
+        const refusal = await this.#refuseBareMutationOnExposedTarget(target.state, 'any');
+        if (refusal) return refusal;
       }
     }
 
@@ -1422,6 +1415,22 @@ export class RunbookLifecycleCommandService {
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
   async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    // Bare (no `--claim-id` / `--run`) complete/stop on a *delegation*-exposed
+    // run requires named authority. resolveCommandIntent only forces a bearer for
+    // the open-claims / collection-pending clauses; the authored-DELEGATE,
+    // delegation-linkage, and sticky-delegation-record clauses would otherwise
+    // let a bare direct-CLI force a delegation-exposed run terminal without a
+    // `--claim-id`. The gate uses the `delegation` axis alone (not the full
+    // classifyDelegationExposure union) so a purely inline-composed chain can
+    // still be forced terminal bare — that contiguous-inline force is exactly
+    // what #driveTerminalBare exists to do.
+    if (input.callerEvidence.kind !== 'claim_bearer' && input.targetSelector.kind === 'default') {
+      const target = await resolveCommandTarget(this.#deps.sessionService);
+      if (target.kind === 'default') {
+        const refusal = await this.#refuseBareMutationOnExposedTarget(target.state, 'delegation');
+        if (refusal) return refusal;
+      }
+    }
     switch (input.targetSelector.kind) {
       case 'claim':
         return this.#driveTerminalClaim(input, input.targetSelector.claimId);
@@ -1436,6 +1445,40 @@ export class RunbookLifecycleCommandService {
         throw new Error(`Unsupported terminal target selector: ${String(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * Refuse a bare (no `--claim-id` / `--run`) mutation whose resolved default
+   * target run requires named authority.
+   *
+   * Bare `direct_cli` / `plugin` callers may only mutate a run with no exposure
+   * on the gated axes. pass/fail/goto gate on *any* exposure (`mode: 'any'`);
+   * terminal-force (`complete`/`stop`) gates on the `delegation` axis alone
+   * (`mode: 'delegation'`) so it can still force a purely inline-composed chain
+   * terminal with a bare command — the contiguous-inline force is the terminal
+   * path's designed job, whereas a delegation-exposed run (open/collected
+   * children, authored DELEGATE, delegation linkage) always needs a `--claim-id`.
+   * Single-sources the exposure gate across every mutation surface so the rule
+   * cannot drift.
+   *
+   * @param state - The resolved default target run to classify.
+   * @param mode - `'any'` refuses on delegation or inline-composition exposure;
+   *   `'delegation'` refuses on delegation exposure alone.
+   * @returns An `actor_context_required` refusal when the run is exposed on a
+   *   gated axis, otherwise `undefined`.
+   */
+  async #refuseBareMutationOnExposedTarget(
+    state: RunbookState,
+    mode: 'any' | 'delegation',
+  ): Promise<{ readonly kind: 'actor_context_required' } | undefined> {
+    const detail = classifyDelegationExposureDetail({
+      state,
+      steps: await this.#deps.loadSteps(state),
+      openClaims: await this.#deps.sessionService.listOpenClaimsForParent(state.id),
+    });
+    const exposed =
+      mode === 'delegation' ? detail.delegation : detail.delegation || detail.inlineComposition;
+    return exposed ? { kind: 'actor_context_required' } : undefined;
   }
 
   /**
@@ -1500,16 +1543,9 @@ export class RunbookLifecycleCommandService {
 
     const state = resolution.state;
 
-    if (
-      input.callerEvidence.kind !== 'claim_bearer' &&
-      selector.kind === 'default' &&
-      classifyDelegationExposure({
-        state,
-        steps: await this.#deps.loadSteps(state),
-        openClaims: await this.#deps.sessionService.listOpenClaimsForParent(state.id),
-      }) === 'delegating'
-    ) {
-      return { kind: 'actor_context_required' };
+    if (input.callerEvidence.kind !== 'claim_bearer' && selector.kind === 'default') {
+      const refusal = await this.#refuseBareMutationOnExposedTarget(state, 'any');
+      if (refusal) return refusal;
     }
 
     const actorContext =
@@ -1790,8 +1826,10 @@ export class RunbookLifecycleCommandService {
       case 'actor_context_required':
         return { kind: 'actor_context_required' };
       case 'claim_grant_required': {
+        // Verified-claim authority is bearer-only, so the bearer claimId is always
+        // present once narrowed to verified_claim.
         const actorContext = authority?.kind === 'verified' ? authority.actorContext : undefined;
-        return actorContext?.kind === 'verified_claim' && actorContext.authority.kind === 'bearer'
+        return actorContext?.kind === 'verified_claim'
           ? {
               kind: 'claim_grant_required',
               claimId: actorContext.authority.claimId,

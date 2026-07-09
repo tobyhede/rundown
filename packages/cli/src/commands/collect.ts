@@ -465,10 +465,9 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
 
-  // On the claim-targeted path the resolved claim record supplies
-  // reconstructable claim-controller evidence; a bare invocation is the
-  // direct-CLI lane. The CLI never constructs an actor context — core maps
-  // evidence to trust (actorContextFromEvidence) behind the collection seam.
+  // On the claim-targeted path the caller presents a bearer `--claim-id`; a bare
+  // invocation is the direct-CLI lane. The CLI never constructs an actor context
+  // — core verifies the bearer and derives authority behind the collection seam.
   const callerEvidence = readLifecycleCallerEvidence(
     options.claimId !== undefined ? { claimId: options.claimId } : {},
   );

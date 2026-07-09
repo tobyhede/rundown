@@ -15,7 +15,6 @@ import {
   assertClaimSecretHash,
   claimKeyFromBearer,
   parseClaimBearer,
-  type AuthorizedClaim,
   type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
@@ -129,7 +128,6 @@ function fakeReader(options: {
   readonly openClaims?: readonly ClaimRecord[];
   readonly claimResolution?: ClaimIdResolution;
   readonly claimVerification?: ClaimVerificationResult;
-  readonly authorizingClaims?: readonly AuthorizedClaim[];
   readonly expectedClaimId?: ClaimId;
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
@@ -161,9 +159,6 @@ function fakeReader(options: {
     async verifyClaimId(_claimId) {
       expect(_claimId).toBe(options.expectedClaimId ?? claimId);
       return options.claimVerification ?? { status: 'missing', claimKey: claim.claimKey };
-    },
-    async listClaimsAuthorizing() {
-      return options.authorizingClaims ?? [];
     },
     async listOpenClaimsForParent(parentRunId) {
       if (options.failOnOpenClaimRead) {
@@ -361,18 +356,14 @@ describe('resolveMutationAuthority', () => {
     expect(result).toEqual({ kind: 'refused', reason: 'invalid-secret' });
   });
 
-  it('refuses mutation authority when no bearer is presented, even if a local claim authorizes the request', async () => {
+  it('refuses mutation authority when no bearer is presented, even though persisted grants authorize the request', async () => {
+    // Authority is bearer-only: without a presented claim id the request is
+    // refused `missing` regardless of what persisted grants would allow. There is
+    // no non-secret / ambient authority path to fall back to.
     const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
 
     const result = await resolveMutationAuthority({
-      targetReader: fakeReader({
-        authorizingClaims: [
-          {
-            authority: { kind: 'implicit', claimKey: verifiedClaim.claimKey },
-            claim: verifiedClaim,
-          },
-        ],
-      }),
+      targetReader: fakeReader({}),
       targetState: child,
       request,
     });

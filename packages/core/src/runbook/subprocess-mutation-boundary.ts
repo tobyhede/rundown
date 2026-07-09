@@ -272,8 +272,8 @@ function locateCommandIndex(argv: readonly string[]): number {
  * `--claim-id` flag in *flag position* (either `--claim-id <value>` or
  * `--claim-id=<value>`).
  *
- * A `--claim-id` mutation is a `claim_controller` mutation whose evidence is
- * reconstructable CLI-side from the resolved claim record; it does not rely on
+ * A `--claim-id` mutation carries an explicit bearer claim whose authority is
+ * proven in core (against the persisted secret hash); it does not rely on
  * direct-CLI trust and so is never bare. The scan walks argv left-to-right and
  * skips the value token consumed by each space-form value-taking option, so a
  * `--claim-id` token appearing as another option's *value* is correctly NOT
@@ -284,9 +284,10 @@ function locateCommandIndex(argv: readonly string[]): number {
  * bare (withheld).
  *
  * @param argv - CLI argument vector. The command may be preceded by program-level
- *   global options, so its position is supplied via `commandIndex`. Every
- *   non-`delegate` guarded command (`pass` / `fail` / `complete` / `stop` /
- *   `collect`) reaches this function; `delegate` is claim-less and never exempted.
+ *   global options, so its position is supplied via `commandIndex`. Every guarded
+ *   command (`pass` / `fail` / `delegate` / `complete` / `stop` / `collect`)
+ *   reaches this function; `delegate` now accepts bearer `--claim-id` authority
+ *   and is exempted like the others when it carries one.
  * @param commandIndex - Index of the command token in `argv` (from
  *   {@link locateCommandIndex}). Scanning starts after it; options before it are
  *   program-level globals, not the command's own flags.

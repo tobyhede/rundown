@@ -161,9 +161,9 @@ export interface TransitionContext {
   guardOpenChildren: boolean;
   /**
    * Resolved claim record when the target was selected via `--claim-id`;
-   * undefined for the default-stack target. Carries `claimId` and `tokenHash`
-   * needed to build a claim-controller actor context for core policy. Surfaced
-   * on the base (collect) path only — see {@link buildTransitionContext}.
+   * undefined for the default-stack target. Identifies the bearer-verified claim
+   * whose authority core evaluates for policy. Surfaced on the base (collect)
+   * path only — see {@link buildTransitionContext}.
    */
   claim?: VerifiedClaim;
 }
@@ -220,8 +220,9 @@ export async function buildTransitionContext(
 
   let resolvedKind: 'claim' | 'default' | 'run';
   let state: RunbookState;
-  // Resolved claim record, surfaced so the collect command can build a
-  // claim-controller actor context; undefined for the default-stack target.
+  // Resolved claim record, surfaced so the collect command can name the
+  // bearer-verified claim for core authorization; undefined for the
+  // default-stack target.
   let claim: VerifiedClaim | undefined;
 
   const active = await resolveCommandTarget(sessionService, {

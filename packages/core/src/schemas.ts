@@ -560,7 +560,9 @@ const ReportDelegationResultGrantSchema = z
     parentStepId: z.string().min(1),
     parentStep: z.string().min(1),
     parentFrameKey: FrameKeySchema,
-    parentEntry: z.number().int().nonnegative(),
+    // Positive to match the canonical RunbookState.parentLinkage.parentEntry; a
+    // real child linkage never carries entry 0.
+    parentEntry: z.number().int().positive(),
   })
   .strict();
 
@@ -593,7 +595,8 @@ const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
     parentStepId: z.string().min(1),
     parentStep: z.string().min(1),
     parentFrameKey: FrameKeySchema,
-    parentEntry: z.number().int().nonnegative(),
+    // Positive to match the canonical RunbookState.parentLinkage.parentEntry.
+    parentEntry: z.number().int().positive(),
   })
   .strict();
 
@@ -692,6 +695,9 @@ export const SessionDataSchema = z
     claims: z.record(z.string(), ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
+    // Tracks the first claim key seen controlling each run so a second record
+    // sharing that controlledRunId can be reported against the duplicate.
+    const controllersByRun = new Map<string, string>();
     for (const [claimKey, claim] of Object.entries(session.claims)) {
       if (!CLAIM_LOOKUP_KEY_PATTERN.test(claimKey)) {
         ctx.addIssue({
@@ -709,6 +715,20 @@ export const SessionDataSchema = z
           path: ['claims', claimKey, 'claimKey'],
           message: 'claims key must match claim.claimKey',
         });
+      }
+
+      // Minting guarantees at most one claim record per run; two distinct bearer
+      // secrets controlling the same run can only arise from tampered persisted
+      // state, and the schema is the boundary that rejects it.
+      const existing = controllersByRun.get(claim.controlledRunId);
+      if (existing !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['claims', claimKey, 'controlledRunId'],
+          message: `controlledRunId must be unique across claim records; duplicate at claims.${existing}.controlledRunId`,
+        });
+      } else {
+        controllersByRun.set(claim.controlledRunId, claimKey);
       }
     }
   });

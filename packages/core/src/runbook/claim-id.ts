@@ -115,30 +115,23 @@ export interface VerifiedClaim {
   readonly grants: readonly ClaimGrant[];
 }
 
-/** Authority source for a verified claim. */
-export type VerifiedClaimAuthority =
-  | {
-      /** Authority came from a bearer value presented by the caller. */
-      readonly kind: 'bearer';
-      /** Presented bearer claim id. */
-      readonly claimId: ClaimId;
-      /** Non-secret lookup key derived from the bearer. */
-      readonly claimKey: ClaimLookupKey;
-    }
-  | {
-      /** Legacy diagnostic authority from a persisted non-secret lookup key. */
-      readonly kind: 'implicit';
-      /** Non-secret persisted lookup key. */
-      readonly claimKey: ClaimLookupKey;
-    };
-
-/** Verified claim paired with how authority was established. */
-export interface AuthorizedClaim {
-  /** Authority evidence source. */
-  readonly authority: VerifiedClaimAuthority;
-  /** Shared verified claim payload. */
-  readonly claim: VerifiedClaim;
-}
+/**
+ * Authority source for a verified claim.
+ *
+ * Only `bearer` exists: authority is established solely by presenting the bearer
+ * secret and proving it against the persisted secret hash. There is deliberately
+ * no non-secret / ambient authority kind — a mutation actor context can never be
+ * minted from persisted grant data alone, so ambient authority is unrepresentable
+ * by construction.
+ */
+export type VerifiedClaimAuthority = {
+  /** Authority came from a bearer value presented by the caller. */
+  readonly kind: 'bearer';
+  /** Presented bearer claim id. */
+  readonly claimId: ClaimId;
+  /** Non-secret lookup key derived from the bearer. */
+  readonly claimKey: ClaimLookupKey;
+};
 
 /**
  * Result of creating or refreshing a claim record for a child runbook.

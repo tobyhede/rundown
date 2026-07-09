@@ -172,9 +172,6 @@ describe('RunbookCollectionService', () => {
           },
         };
       },
-      async listClaimsAuthorizing() {
-        return [];
-      },
       async listOpenClaimsForParent() {
         return [];
       },

@@ -431,6 +431,20 @@ describe('ClaimRecordSchema', () => {
 
     expect(result.success).toBe(false);
   });
+
+  it('rejects a delegation linkage / report grant with a non-positive parentEntry', () => {
+    // The canonical RunbookState.parentLinkage requires parentEntry.positive();
+    // a claim's linkage and report grant must agree, so parentEntry 0 (which no
+    // real child linkage ever carries) is rejected rather than persisted as a
+    // permanently-dead report grant.
+    const zeroEntry = {
+      ...validClaim,
+      delegation: { ...validClaim.delegation, parentEntry: 0 },
+      grants: [validClaim.grants[0], { ...validClaim.grants[1], parentEntry: 0 }],
+    };
+
+    expect(ClaimRecordSchema.safeParse(zeroEntry).success).toBe(false);
+  });
 });
 
 describe('SessionDataSchema claims registry', () => {
@@ -454,6 +468,29 @@ describe('SessionDataSchema claims registry', () => {
           issuedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
         },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects two claim records controlling the same run', () => {
+    // Minting guarantees at most one claim per run (issueRunControlClaim runs
+    // once per run; claimRunbook dedupes on controlledRunId). Two distinct bearer
+    // secrets sharing a controlledRunId can only arise from tampered persisted
+    // state, so the schema is the boundary that rejects it.
+    const record = (claimKey: string) => ({
+      claimKey,
+      secretHash: `sha256:${'a'.repeat(64)}`,
+      controlledRunId: CHILD_RUN_ID,
+      grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+      issuedAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:01.000Z',
+    });
+    const result = SessionDataSchema.safeParse({
+      defaultStack: [PARENT_RUN_ID],
+      claims: {
+        rdclk_11111111111111111111111111111111: record('rdclk_11111111111111111111111111111111'),
+        rdclk_22222222222222222222222222222222: record('rdclk_22222222222222222222222222222222'),
       },
     });
     expect(result.success).toBe(false);

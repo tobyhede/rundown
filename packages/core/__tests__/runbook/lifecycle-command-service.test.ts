@@ -3264,6 +3264,52 @@ describe('RunbookLifecycleCommandService', () => {
       ).rejects.toThrow(/do not support --step/);
     });
 
+    it('refuses a bare complete/stop on a delegation-exposed run', async () => {
+      // A run carrying a *delegation* parent linkage is delegation-exposed even
+      // with zero open child claims and no pending outcomes, so bare `complete`/
+      // `stop` MUST refuse without named authority. Regression guard: the terminal
+      // path previously skipped the delegation-exposure gate, so a bare direct-CLI
+      // `complete`/`stop` could force a delegation-exposed run terminal without a
+      // `--claim-id`. The gate consults the delegation axis of
+      // classifyDelegationExposureDetail (covered exhaustively, including the
+      // inline-composition axis that must NOT gate terminal-force, in
+      // delegation-exposure.test.ts; the bare inline-chain force stays allowed —
+      // see the complete/stop inline-ancestor CLI integration tests).
+      // A valid single-step graph so the pre-fix drive reaches (and mutates) the
+      // run rather than throwing on step lookup — isolating the missing gate.
+      loadStepsImpl = () => [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      ];
+      const parentRunId = assertRunId('rd_77777777777777777777777777777777');
+      await activate(baseState({ parentLinkage: linkageFor(parentRunId, 'a') }));
+
+      // Twin (pass) pins that the state is genuinely delegation-exposed.
+      const bareAdvance = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+      expect(bareAdvance).toEqual({ kind: 'actor_context_required' });
+
+      const bareComplete = await seam.runTerminal({
+        command: 'complete',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+      });
+      expect(bareComplete).toEqual({ kind: 'actor_context_required' });
+
+      const bareStop = await seam.runTerminal({
+        command: 'stop',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+      });
+      expect(bareStop).toEqual({ kind: 'actor_context_required' });
+
+      // The run stays running — neither terminal command mutated it.
+      expect((await manager.load(runId))?.lifecycle).toBe('running');
+    });
+
     describe('claim path', () => {
       const claimParentRunId = assertRunId('rd_55555555555555555555555555555555');
       const claimChildRunId = assertRunId('rd_66666666666666666666666666666666');

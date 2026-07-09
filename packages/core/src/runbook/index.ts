@@ -110,7 +110,9 @@ export {
 } from './actor-context.js';
 export {
   classifyDelegationExposure,
+  classifyDelegationExposureDetail,
   type DelegationExposure,
+  type DelegationExposureDetail,
   type DelegationExposureInput,
 } from './delegation-exposure.js';
 export {

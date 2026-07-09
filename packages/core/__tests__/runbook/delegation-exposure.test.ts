@@ -1,6 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import type { ResolvedStep } from '@rundown-org/parser';
-import { classifyDelegationExposure } from '../../src/runbook/delegation-exposure.js';
+import {
+  classifyDelegationExposure,
+  classifyDelegationExposureDetail,
+} from '../../src/runbook/delegation-exposure.js';
 import type { ClaimRecord } from '../../src/runbook/claim-id.js';
 import {
   assertClaimLookupKey,
@@ -273,5 +276,112 @@ describe('classifyDelegationExposure', () => {
         openClaims: [],
       }),
     ).toBe('delegating');
+  });
+});
+
+describe('classifyDelegationExposureDetail', () => {
+  // Separates *delegation* exposure (requires named authority for every mutation,
+  // including terminal-force) from *inline composition* exposure (which the
+  // terminal path is designed to force as a contiguous chain via a bare command).
+  // The union of the two flags must equal classifyDelegationExposure's verdict.
+
+  it('reports neither for a linear standalone run', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for an authored DELEGATE substep', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: stepsWithDelegateSubstep(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for open claims', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: plainSteps(),
+        openClaims: [openClaim()],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for reported-but-uncollected outcomes', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithPendingOutcome(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for a sticky delegation substep record', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDoneDelegationSubstep(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for a delegation parent linkage', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDelegationParentLinkage(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports inline composition (not delegation) for an inline parent linkage', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithInlineParentLinkage(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: true });
+  });
+
+  it('reports inline composition (not delegation) for a sticky inline substep record', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDoneInlineSubstep(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: true });
+  });
+
+  it('reports inline composition (not delegation) for an authored inline runbook-list substep', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: stepsWithInlineRunbookListSubstep(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: true });
+  });
+
+  it('reports both when a run is delegation-exposed and inline-composed at once', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDelegationParentLinkage(),
+        steps: stepsWithInlineRunbookListSubstep(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: true });
   });
 });

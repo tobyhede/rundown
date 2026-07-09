@@ -8,7 +8,7 @@ import {
   buildFrameKey,
 } from '../../src/runbook/index.js';
 import type { CommandTargetReader } from '../../src/runbook/command-target-resolver.js';
-import type { AuthorizedClaim, ClaimVerificationResult } from '../../src/runbook/claim-id.js';
+import type { ClaimVerificationResult } from '../../src/runbook/claim-id.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
@@ -42,7 +42,6 @@ function state(): RunbookState {
 
 function targetReader(options: {
   readonly verification?: ClaimVerificationResult;
-  readonly authorizingClaims?: readonly AuthorizedClaim[];
 }): CommandTargetReader {
   return {
     async getActive() {
@@ -65,9 +64,6 @@ function targetReader(options: {
           },
         }
       );
-    },
-    async listClaimsAuthorizing() {
-      return options.authorizingClaims ?? [];
     },
     async listOpenClaimsForParent() {
       return [];

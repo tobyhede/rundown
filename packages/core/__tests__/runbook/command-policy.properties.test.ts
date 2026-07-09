@@ -16,6 +16,7 @@ import {
   type RunbookState,
 } from '../../src/runbook/index.js';
 import {
+  assertClaimId,
   assertClaimLookupKey,
   assertClaimSecretHash,
   type ClaimRecord,
@@ -28,6 +29,9 @@ import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 const runIdA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const runIdB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
+const claimId = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
 const secretHash = assertClaimSecretHash(`sha256:${'b'.repeat(64)}`);
 const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
@@ -103,7 +107,7 @@ const actorContextArb: fc.Arbitrary<ActorContext> = fc.oneof(
   fc.constant(UNKNOWN_ACTOR_CONTEXT),
   fc.constantFrom(runIdA, runIdB).map((controlledRunId) =>
     verifiedClaimContext({
-      authority: { kind: 'implicit', claimKey },
+      authority: { kind: 'bearer', claimId, claimKey },
       claim: { claimKey, controlledRunId, grants: createRunControlGrants(controlledRunId) },
     }),
   ),
@@ -111,7 +115,7 @@ const actorContextArb: fc.Arbitrary<ActorContext> = fc.oneof(
 
 function verifiedRunControlContext(controlledRunId = runIdA): ActorContext {
   return verifiedClaimContext({
-    authority: { kind: 'implicit', claimKey },
+    authority: { kind: 'bearer', claimId, claimKey },
     claim: {
       claimKey,
       controlledRunId,
@@ -278,7 +282,7 @@ describe('resolveCommandIntent properties', () => {
         expect(
           resolveCommandIntent({
             actorContext: verifiedClaimContext({
-              authority: { kind: 'implicit', claimKey },
+              authority: { kind: 'bearer', claimId, claimKey },
               claim: {
                 claimKey,
                 controlledRunId: runIdA,
