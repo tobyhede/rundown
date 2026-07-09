@@ -1621,9 +1621,14 @@ export class RunbookLifecycleCommandService {
     }
 
     const state = resolution.state;
-    const isRunControlClaim = resolution.claim.grants.some(
-      (grant) => grant.action === 'collect-for-run' && grant.runId === state.id,
-    );
+    // Route by claim SHAPE, not by grant presence: a run-control claim has no
+    // delegation linkage and drives the inline force-terminal cascade; a
+    // delegated-child claim carries a linkage and forces its single child while
+    // reporting the outcome to the parent. Keying off a `collect-for-run` grant
+    // would conflate collection authority with claim identity — the schema
+    // permits a delegated claim to also hold that grant — and silently route
+    // the child's delegation report through the bare cascade instead.
+    const isRunControlClaim = resolution.claim.delegation === undefined;
     if (isRunControlClaim) {
       return this.#driveTerminalBare(input, state);
     }

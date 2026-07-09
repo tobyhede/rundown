@@ -3377,11 +3377,19 @@ describe('RunbookLifecycleCommandService', () => {
         expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
       });
 
-      it('claim stop refuses delegated completion reporting when the claim lacks report grant', async () => {
+      it('routes a claim without a delegation linkage through the bare inline cascade', async () => {
+        // A claim carrying no delegation linkage is a run-control-shaped claim: the
+        // terminal dispatch must drive the inline force-terminal cascade
+        // (#driveTerminalBare), never the delegated child-report path. This is the
+        // complement of the delegated-child routing test — together they pin that
+        // routing keys off the claim's delegation SHAPE, not its grants. (The
+        // report-gate itself is unit-tested in claim-id.test.ts.)
         const claimId = await setupClaim('running');
         const session = await manager.loadSession();
         const claimKey = claimKeyFromBearer(claimId);
         const claim = session.claims[claimKey];
+        // Drop the delegation linkage (run-control shape) and its now-forbidden
+        // report grant to keep the persisted claim schema-valid.
         session.claims[claimKey] = {
           ...claim,
           delegation: undefined,
@@ -3396,7 +3404,7 @@ describe('RunbookLifecycleCommandService', () => {
             transitions: tx('COMPLETE', 'STOP'),
           },
         ];
-        const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+        const barePlanSpy = jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan');
 
         const out = await seam.runTerminal({
           command: 'stop',
@@ -3404,8 +3412,8 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        expect(out).toMatchObject({ kind: 'applied_claim', reported: 'not-applicable' });
-        expect(recordSpy).not.toHaveBeenCalled();
+        expect(out.kind).toBe('applied_bare');
+        expect(barePlanSpy).toHaveBeenCalled();
       });
 
       it('claim complete on a running child dispatches FORCE_COMPLETE and forwards the message', async () => {
@@ -3442,6 +3450,59 @@ describe('RunbookLifecycleCommandService', () => {
         expect(sendSpy).toHaveBeenCalledWith(claimChildRunId, expect.anything(), {
           type: 'FORCE_COMPLETE',
           message: 'wrap up',
+        });
+      });
+
+      it('routes a delegated child to the report path even when it also holds a collect-for-run grant', async () => {
+        // Routing between the report path and the bare inline-cascade must be
+        // decided by claim SHAPE (a delegation linkage), not by the presence of a
+        // run-control `collect-for-run` grant. The schema permits a delegated
+        // claim to also carry a collect-for-run grant for its own run, so keying
+        // the dispatch off that grant would route the child through the bare
+        // cascade instead and silently skip its delegation report. Guards the
+        // type-driven dispatch.
+        const claimId = await setupClaim('running');
+        const session = await manager.loadSession();
+        const claimKey = claimKeyFromBearer(claimId);
+        const claim = session.claims[claimKey];
+        session.claims[claimKey] = {
+          ...claim,
+          grants: [...claim.grants, { action: 'collect-for-run', runId: claimChildRunId }],
+        };
+        await manager.saveSession(session);
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        const recordSpy = jest
+          .spyOn(completionService, 'recordChildCompletion')
+          .mockResolvedValue('recorded');
+        jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
+          status: 'released',
+          runbookId: claimChildRunId,
+          removedFromDefaultStack: false,
+          nextDefaultRunbookId: null,
+        });
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        // Report path taken (child completion recorded to the parent), NOT the
+        // bare inline cascade — which never calls recordChildCompletion.
+        expect(out).toMatchObject({
+          kind: 'applied_claim',
+          status: 'stopped',
+          reported: 'recorded',
+        });
+        expect(recordSpy).toHaveBeenCalledWith({
+          childState: expect.objectContaining({ id: claimChildRunId }),
         });
       });
 
