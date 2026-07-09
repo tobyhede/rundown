@@ -53,6 +53,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   CompletionLock: jest.fn(),
   resolveCommandTarget: mockResolveCommandTarget,
   resolveTransitionTarget: mockResolveTransitionTarget,
+  // `refusal-renderers.ts` (via transitions.ts) redacts claim ids for output
+  // through this seam; the confirmed-claim outcome carries TEST_CLAIM_ID.
+  redactClaimId: mockFn<(id: ClaimId) => ClaimLookupKey>().mockReturnValue(TEST_CLAIM_KEY),
   // `formatTransitionAction` is echoed into the buffered action object; the mock
   // returns a sentinel so we can assert the sink forwards the derived label.
   formatTransitionAction: mockFn<(action: ActionType) => string>().mockReturnValue('ACTION_LABEL'),
@@ -519,7 +522,8 @@ describe('runSeamTransition — refusal render table', () => {
       kind: 'action',
       action: 'pass',
       status: 'already-resolved',
-      claimId: TEST_CLAIM_ID,
+      // Identity is the non-secret lookup key, never the bearer (credential leak).
+      claimKey: TEST_CLAIM_KEY,
       lifecycle: 'completed',
     });
     expect(result.exitError).toBe(false);

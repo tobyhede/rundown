@@ -1,19 +1,24 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   assertClaimBearer,
+  assertClaimLookupKey,
+  claimCanReportDelegationResult,
   claimKeyFromBearer,
   type ClaimGrant,
+  type VerifiedClaim,
   createDelegatedChildGrants,
   createRunControlGrants,
   generateClaimBearer,
   grantAllows,
   hashClaimSecret,
   parseClaimBearer,
+  redactClaimId,
   verifyClaimSecret,
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import type { RunbookState } from '../../src/runbook/types.js';
 
 describe('claim bearer credentials', () => {
   const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -46,6 +51,18 @@ describe('claim bearer credentials', () => {
     );
 
     expect(claimKeyFromBearer(claimId)).toBe('rdclk_11111111111111111111111111111111');
+  });
+
+  it('redactClaimId renders a bearer as its non-secret lookup key, never the secret', () => {
+    const claimId = assertClaimBearer(
+      'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+    );
+    const secret = parseClaimBearer(claimId).secret;
+
+    const redacted = redactClaimId(claimId);
+
+    expect(redacted).toBe('rdclk_11111111111111111111111111111111');
+    expect(redacted).not.toContain(secret);
   });
 
   it('hashes and verifies only the secret segment using constant-time comparison', () => {
@@ -115,5 +132,52 @@ describe('claim bearer credentials', () => {
         false,
       );
     }
+  });
+});
+
+describe('claimCanReportDelegationResult', () => {
+  const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  const childRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  const linkage = {
+    childRunId,
+    tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
+    parentRunId,
+    parentStepId: '1.1',
+    parentStep: 'Process item',
+    parentFrameKey: buildFrameKey('1', 0),
+    parentEntry: 1,
+  };
+  const reportingClaim: VerifiedClaim = {
+    claimKey: assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`),
+    controlledRunId: childRunId,
+    delegation: linkage,
+    grants: createDelegatedChildGrants({ linkage }),
+  };
+  const delegationChild = {
+    id: childRunId,
+    parentLinkage: { kind: 'delegation', ...linkage },
+  } as RunbookState;
+
+  it('allows reporting when the child is delegation-linked and the claim holds the matching grant', () => {
+    expect(claimCanReportDelegationResult(reportingClaim, delegationChild)).toBe(true);
+  });
+
+  it('refuses reporting when the child carries no delegation parent linkage', () => {
+    const inlineChild = { id: childRunId, parentLinkage: undefined } as RunbookState;
+
+    expect(claimCanReportDelegationResult(reportingClaim, inlineChild)).toBe(false);
+  });
+
+  it('refuses reporting when the claim grant does not match the child linkage', () => {
+    const mismatchedChild = {
+      id: childRunId,
+      parentLinkage: {
+        kind: 'delegation',
+        ...linkage,
+        tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+      },
+    } as RunbookState;
+
+    expect(claimCanReportDelegationResult(reportingClaim, mismatchedChild)).toBe(false);
   });
 });

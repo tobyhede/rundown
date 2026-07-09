@@ -20,6 +20,7 @@ import {
   type RunbookEventInput,
   type RunbookEventV1,
   type RunbookRef,
+  type RunbookState,
   type RunId,
   type TerminalCommandName,
 } from '@rundown-org/core';
@@ -112,6 +113,9 @@ export interface SeamTerminalOptions {
  * @param outcome - Typed terminal outcome returned by the seam.
  * @param message - Optional operator-supplied terminal message for the applied
  *   complete/stopped summary; falls back to the default summary when absent.
+ * @param preloadedRoot - Already-loaded resolved root for the `applied_claim`
+ *   path; supplied by {@link finalizeAppliedClaimTerminal} so the run is not
+ *   reloaded a second time in the same command.
  * @returns `true` when the outcome requests a non-zero exit code.
  */
 export async function renderTerminalOutcome(
@@ -120,6 +124,7 @@ export async function renderTerminalOutcome(
   manager: RunbookStateManager,
   outcome: LifecycleTerminalOutcome,
   message?: string,
+  preloadedRoot?: RunbookState,
 ): Promise<boolean> {
   switch (outcome.kind) {
     case 'none':
@@ -161,9 +166,10 @@ export async function renderTerminalOutcome(
       output.error(outcome.message, outcome.code);
       return true;
     case 'applied_claim': {
-      // Single forced run (the claimed child). Load it for metadata + attribution
-      // and stream its events stamped with the child's own id/ref.
-      const rootState = await manager.load(outcome.runId);
+      // Single forced run (the claimed child). Reuse the caller's already-loaded
+      // root when supplied (no second disk read), else load it for metadata +
+      // attribution, and stream its events stamped with the child's own id/ref.
+      const rootState = preloadedRoot ?? (await manager.load(outcome.runId));
       if (rootState) output.metadata(buildMetadata(rootState));
       if (outcome.events.length > 0 && rootState) {
         const bridge = new ForceTerminalEventBridge(output);
@@ -266,26 +272,88 @@ export async function runSeamTerminal(
     }
   }
 
-  let propagatedInlineTerminal = false;
-  if (outcome.kind === 'applied_claim') {
-    const terminal = await manager.load(outcome.runId);
-    const linkage = terminal ? extractParentLinkage(terminal) : undefined;
-    if (terminal && linkage?.kind === 'inline') {
-      const propagation = await propagateChildTerminal(
-        terminal,
-        outcome.status === 'completed' ? 'pass' : 'fail',
-        cwd,
-        output,
-      );
-      propagatedInlineTerminal = propagation === 'stopped';
-    }
-  }
-
   const exitError =
-    (await renderTerminalOutcome(output, command, manager, outcome, options.message)) ||
-    propagatedInlineTerminal;
+    outcome.kind === 'applied_claim'
+      ? await finalizeAppliedClaimTerminal(output, command, manager, outcome, cwd, options.message)
+      : await renderTerminalOutcome(output, command, manager, outcome, options.message);
   output.flush();
   return { manager, exitError };
+}
+
+/** The `applied_claim` variant of a terminal outcome (single forced child). */
+type AppliedClaimOutcome = Extract<LifecycleTerminalOutcome, { kind: 'applied_claim' }>;
+
+/**
+ * Signature of {@link propagateChildTerminal}, injectable so the finalize
+ * orchestration can be unit-tested without real inline-parent state on disk.
+ */
+export type ChildTerminalPropagator = typeof propagateChildTerminal;
+
+/**
+ * Finalize an `applied_claim` terminal: render the claimed child's own outcome,
+ * then propagate an inline-linked child's terminal to its parent.
+ *
+ * A single reload of the just-terminated child feeds both steps (the render
+ * reuses it rather than re-reading disk). The child's own complete/stopped
+ * output is emitted BEFORE the parent is advanced, so a streaming consumer never
+ * sees the inline parent's continuation interleaved ahead of the child's
+ * completion. A failed reload — after the seam already applied the terminal — is
+ * surfaced as an error and non-zero exit rather than silently skipping
+ * propagation and reporting success.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param command - The terminal command being finalized (`complete` / `stop`).
+ * @param manager - State manager used to reload the just-terminated child.
+ * @param outcome - The `applied_claim` outcome from the seam.
+ * @param cwd - Current working directory (for inline parent propagation).
+ * @param message - Optional operator-supplied terminal message.
+ * @param propagate - Inline/delegation propagator (injected in tests).
+ * @returns `true` when the command requests a non-zero exit code.
+ */
+export async function finalizeAppliedClaimTerminal(
+  output: OutputEmitter,
+  command: TerminalCommandName,
+  manager: RunbookStateManager,
+  outcome: AppliedClaimOutcome,
+  cwd: string,
+  message: string | undefined,
+  propagate: ChildTerminalPropagator = propagateChildTerminal,
+): Promise<boolean> {
+  const terminal = await manager.load(outcome.runId);
+  if (!terminal) {
+    // The seam just applied a terminal to this run, so a failed reload signals
+    // unexpected state loss (prune race / on-disk corruption). Surface it instead
+    // of silently skipping inline propagation and rendering command success.
+    output.error(
+      `Claimed run ${outcome.runId} could not be reloaded after its terminal was applied`,
+      'RUN_TARGET_UNAVAILABLE',
+    );
+    return true;
+  }
+
+  // Render the child's own terminal outcome BEFORE propagating to the inline
+  // parent (ordering: the child completes on stream before the parent advances).
+  const renderRequestedExit = await renderTerminalOutcome(
+    output,
+    command,
+    manager,
+    outcome,
+    message,
+    terminal,
+  );
+
+  let propagatedInlineTerminal = false;
+  if (extractParentLinkage(terminal)?.kind === 'inline') {
+    const propagation = await propagate(
+      terminal,
+      outcome.status === 'completed' ? 'pass' : 'fail',
+      cwd,
+      output,
+    );
+    propagatedInlineTerminal = propagation === 'stopped';
+  }
+
+  return renderRequestedExit || propagatedInlineTerminal;
 }
 
 /** Explicit target the failed terminal command was invoked with. */

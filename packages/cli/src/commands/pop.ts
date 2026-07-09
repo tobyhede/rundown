@@ -5,6 +5,7 @@ import {
   RunbookStateManager,
   SessionService,
   countNumberedSteps,
+  redactClaimId,
   type ActionBlockData,
   type ClaimId,
   type RunbookState,
@@ -21,21 +22,24 @@ function claimPopUnavailableMessage(
   claimId: ClaimId,
   result: Exclude<UnstashForClaimIdResult, { status: 'restored' }>,
 ): string {
+  // User- and log-facing refusal: identify the claim by its non-secret lookup
+  // key, never the bearer `claimId` (which carries the live secret segment).
+  const claimKey = redactClaimId(claimId);
   switch (result.status) {
     case 'missing-claim':
-      return `Claim id ${claimId} does not exist.`;
+      return `Claim id ${claimKey} does not exist.`;
     case 'not-stashed':
-      return `Claim id ${claimId} is not currently stashed.`;
+      return `Claim id ${claimKey} is not currently stashed.`;
     case 'missing-child':
-      return `Claim id ${claimId} points at missing child state.`;
+      return `Claim id ${claimKey} points at missing child state.`;
     case 'terminal-child':
-      return `Claim id ${claimId} points at a ${result.lifecycle} child runbook.`;
+      return `Claim id ${claimKey} points at a ${result.lifecycle} child runbook.`;
     case 'child-linkage-mismatch':
-      return `Claim id ${claimId} is no longer linked to its child runbook.`;
+      return `Claim id ${claimKey} is no longer linked to its child runbook.`;
     case 'parent-missing':
-      return `Claim id ${claimId} parent runbook is missing.`;
+      return `Claim id ${claimKey} parent runbook is missing.`;
     case 'parent-ended':
-      return `Claim id ${claimId} parent runbook has ${result.lifecycle}.`;
+      return `Claim id ${claimKey} parent runbook has ${result.lifecycle}.`;
     default: {
       const _exhaustive: never = result;
       return _exhaustive;

@@ -717,8 +717,12 @@ Do work.
     );
 
     expect(result.exitCode).not.toBe(0);
+    // Refusal identifies the claim by its non-secret lookup key, never the bearer secret.
     expect(`${result.stdout}${result.stderr}`).toContain(
-      'Claim id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA does not exist',
+      'Claim id rdclk_00000000000000000000000000000000 does not exist',
+    );
+    expect(`${result.stdout}${result.stderr}`).not.toContain(
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     );
     const sessionAfter = await readSession(workspace);
     expect(sessionAfter.defaultStack).toEqual([parentId]);

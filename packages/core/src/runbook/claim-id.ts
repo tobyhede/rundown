@@ -291,6 +291,30 @@ export function claimKeyFromBearer(value: ClaimId): ClaimLookupKey {
 }
 
 /**
+ * Render a bearer claim id safely for output — the single seam through which a
+ * claim id may reach any identification, refusal, status, error, or log surface.
+ *
+ * A {@link ClaimId} is a bearer credential: its trailing 43-char segment is the
+ * live secret (only its hash is persisted). Interpolating a raw `ClaimId` into a
+ * message or a structured output field writes that secret into transcripts and
+ * logs — a credential leak, since Rundown output is JSON-by-default and
+ * agent-facing. This function returns the non-secret {@link ClaimLookupKey}
+ * instead, which still uniquely identifies the claim for correlation.
+ *
+ * Every output path that names a claim MUST route through here rather than
+ * emitting the bearer. The ONLY exceptions are the one-time credential-delivery
+ * points that must hand the caller its capability: the `claim_id` emitted by
+ * `rundown run` (the `runbook_started` event's run-control claim) and by
+ * `rundown claim`. Those, and only those, emit the raw bearer.
+ *
+ * @param claimId - Bearer claim id to render for output.
+ * @returns The non-secret lookup key safe to display, log, or serialize.
+ */
+export function redactClaimId(claimId: ClaimId): ClaimLookupKey {
+  return claimKeyFromBearer(claimId);
+}
+
+/**
  * Generate a cryptographically random bearer claim id.
  *
  * @returns New branded bearer claim id.

@@ -13,6 +13,8 @@ import {
   assertClaimLookupKey,
   assertClaimId,
   assertClaimSecretHash,
+  claimKeyFromBearer,
+  parseClaimBearer,
   type AuthorizedClaim,
   type ClaimAuthorizationRequest,
   type ClaimId,
@@ -214,7 +216,7 @@ describe('resolveCommandTarget', () => {
     expect(result).toEqual({
       kind: 'stale_claim',
       claimId,
-      message: `Claim id ${claimId} does not exist.`,
+      message: `Claim id ${claimKeyFromBearer(claimId)} does not exist.`,
     });
   });
 
@@ -230,7 +232,7 @@ describe('resolveCommandTarget', () => {
     expect(result).toEqual({
       kind: 'stale_claim',
       claimId,
-      message: `Claim id ${claimId} is not valid for this session.`,
+      message: `Claim id ${claimKeyFromBearer(claimId)} is not valid for this session.`,
     });
   });
 
@@ -254,7 +256,7 @@ describe('resolveCommandTarget', () => {
       claim,
       state: terminalCompletedChild,
       lifecycle: 'completed',
-      message: `Claim id ${claimId} points at a completed child runbook.`,
+      message: `Claim id ${claimKeyFromBearer(claimId)} points at a completed child runbook.`,
     });
   });
 
@@ -269,6 +271,57 @@ describe('resolveCommandTarget', () => {
 
     expect(result).toEqual({ kind: 'none' });
   });
+});
+
+describe('resolveCommandTarget claim-id message redaction', () => {
+  const secret = parseClaimBearer(claimId).secret;
+  const claimKey = claimKeyFromBearer(claimId);
+
+  function messageOf(result: Awaited<ReturnType<typeof resolveCommandTarget>>): string {
+    if (result.kind !== 'stale_claim' && result.kind !== 'terminal_claim') {
+      throw new Error(`expected a claim-refusal outcome, got ${result.kind}`);
+    }
+    return result.message;
+  }
+
+  const cases: ReadonlyArray<{ readonly name: string; readonly resolution: ClaimIdResolution }> = [
+    { name: 'missing', resolution: { status: 'missing', claimId } },
+    { name: 'invalid-secret', resolution: { status: 'invalid-secret', claimId } },
+    {
+      name: 'terminal',
+      resolution: {
+        status: 'terminal',
+        claim: verifiedClaim,
+        state: terminalCompletedChild,
+        lifecycle: 'completed',
+      },
+    },
+    {
+      name: 'stale',
+      resolution: { status: 'stale', claim: verifiedClaim, reason: 'missing-state' },
+    },
+    {
+      name: 'unlinked/stashed',
+      resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'stashed' },
+    },
+    {
+      name: 'unlinked/parent-missing',
+      resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'parent-missing' },
+    },
+  ];
+
+  for (const { name, resolution } of cases) {
+    it(`never leaks the bearer secret in the ${name} refusal message`, async () => {
+      const result = await resolveCommandTarget(
+        fakeReader({ claimResolution: resolution, failOnDefaultRead: true }),
+        { claimId },
+      );
+
+      const message = messageOf(result);
+      expect(message).not.toContain(secret);
+      expect(message).toContain(claimKey);
+    });
+  }
 });
 
 describe('resolveMutationAuthority', () => {
@@ -573,17 +626,17 @@ describe('resolveTransitionTarget', () => {
     {
       label: 'missing',
       resolution: { status: 'missing' as const, claimId },
-      expectedMessage: `Claim id ${claimId} does not exist.`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} does not exist.`,
     },
     {
       label: 'stale',
       resolution: { status: 'stale' as const, claim, reason: 'missing-state' as const },
-      expectedMessage: `Claim id ${claimId} points at missing child state (missing-state).`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} points at missing child state (missing-state).`,
     },
     {
       label: 'unlinked stashed',
       resolution: { status: 'unlinked' as const, claim, reason: 'stashed' as const },
-      expectedMessage: `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
     },
     {
       label: 'unlinked non-stashed',
@@ -592,7 +645,7 @@ describe('resolveTransitionTarget', () => {
         claim,
         reason: 'child-linkage-mismatch' as const,
       },
-      expectedMessage: `Claim id ${claimId} is no longer linked to an active delegation (child-linkage-mismatch).`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is no longer linked to an active delegation (child-linkage-mismatch).`,
     },
   ])('reports stale_claim for $label claim resolution', async (caseDef) => {
     await expect(

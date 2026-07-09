@@ -1,6 +1,7 @@
 import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
 import {
   authorizeClaim,
+  redactClaimId,
   type AuthorizedClaim,
   type ClaimAuthorizationRequest,
   type ClaimId,
@@ -283,6 +284,11 @@ async function resolveClaimTarget(
   const claimed = await targetReader.getActiveForClaimId(claimId, {
     includeStashed: options.includeStashed,
   });
+  // Refusal messages are user- and log-facing, so they must never echo the
+  // bearer `claimId` (it carries the live secret segment). Route it through the
+  // single redaction seam; the returned `claimId` discriminant stays the bearer
+  // for any follow-up mutation the caller may re-issue.
+  const claimKey = redactClaimId(claimId);
   switch (claimed.status) {
     case 'claimed':
       return { kind: 'claim', claimId, claim: claimed.claim, state: claimed.state };
@@ -293,21 +299,21 @@ async function resolveClaimTarget(
         claim: claimed.claim,
         state: claimed.state,
         lifecycle: claimed.lifecycle,
-        message: `Claim id ${claimId} points at a ${claimed.lifecycle} child runbook.`,
+        message: `Claim id ${claimKey} points at a ${claimed.lifecycle} child runbook.`,
       };
     case 'missing':
-      return { kind: 'stale_claim', claimId, message: `Claim id ${claimId} does not exist.` };
+      return { kind: 'stale_claim', claimId, message: `Claim id ${claimKey} does not exist.` };
     case 'invalid-secret':
       return {
         kind: 'stale_claim',
         claimId,
-        message: `Claim id ${claimId} is not valid for this session.`,
+        message: `Claim id ${claimKey} is not valid for this session.`,
       };
     case 'stale':
       return {
         kind: 'stale_claim',
         claimId,
-        message: `Claim id ${claimId} points at missing child state (${claimed.reason}).`,
+        message: `Claim id ${claimKey} points at missing child state (${claimed.reason}).`,
       };
     case 'unlinked':
       return {
@@ -315,8 +321,8 @@ async function resolveClaimTarget(
         claimId,
         message:
           claimed.reason === 'stashed'
-            ? `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`
-            : `Claim id ${claimId} is no longer linked to an active delegation (${claimed.reason}).`,
+            ? `Claim id ${claimKey} is currently stashed. Run \`rundown pop\` with its claim id to resume.`
+            : `Claim id ${claimKey} is no longer linked to an active delegation (${claimed.reason}).`,
       };
     default: {
       const _exhaustive: never = claimed;

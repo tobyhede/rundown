@@ -5,6 +5,9 @@ import {
   RunbookActorService,
   RunbookStateManager,
   InvalidRunbookStateError,
+  assertClaimId,
+  claimKeyFromBearer,
+  parseClaimBearer,
   readDelegationOutcomeReportedFacts,
 } from '@rundown-org/core';
 import {
@@ -519,7 +522,11 @@ Do work.
           command: 'stop',
         }),
       );
-      expect(String(errorResponse.error)).toContain(String(claimId));
+      // Refusal identifies the claim by its non-secret lookup key, never the bearer secret.
+      expect(String(errorResponse.error)).toContain(
+        claimKeyFromBearer(assertClaimId(String(claimId))),
+      );
+      expect(String(errorResponse.error)).not.toContain(parseClaimBearer(String(claimId)).secret);
       expect(String(errorResponse.error)).toContain('missing child state');
 
       const session = await readSession(workspace);
@@ -690,8 +697,12 @@ Do work.
           command: 'stop',
         }),
       );
+      // Refusal identifies the claim by its non-secret lookup key, never the bearer secret.
       expect(String(errorResponse.error)).toContain(
-        'Claim id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA does not exist',
+        'Claim id rdclk_00000000000000000000000000000000 does not exist',
+      );
+      expect(String(errorResponse.error)).not.toContain(
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       );
 
       const sessionAfter = await readSession(workspace);

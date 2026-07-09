@@ -441,6 +441,10 @@ describe('stash command', () => {
         error: expect.stringContaining('parent runbook has completed'),
       }),
     );
+    // The refusal must identify the claim by its non-secret lookup key and must
+    // never echo the bearer secret segment (credential leak).
+    expect(result.stdout).toContain(claimKeyFromBearer(assertClaimId(claimId)));
+    expect(result.stdout).not.toContain(parseClaimBearer(claimId).secret);
 
     const session = await readSession(workspace);
     expect(session.stashed).toBe(childRunId);

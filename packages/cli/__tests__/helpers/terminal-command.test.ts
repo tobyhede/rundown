@@ -2,12 +2,18 @@ import { describe, it, expect } from '@jest/globals';
 import {
   assertClaimId,
   assertRunId,
+  parseClaimBearer,
+  redactClaimId,
   type LifecycleTerminalOutcome,
   type RunbookState,
   type RunbookStateManager,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
-import { renderTerminalOutcome } from '../../src/helpers/terminal-command.js';
+import {
+  finalizeAppliedClaimTerminal,
+  renderTerminalOutcome,
+  type ChildTerminalPropagator,
+} from '../../src/helpers/terminal-command.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 // Renderer contract coverage for the terminal (complete/stop) seam front end.
@@ -148,13 +154,15 @@ describe('renderTerminalOutcome', () => {
     });
     expect(exitError).toBe(false);
     const jsonCall = calls.find((c) => c.method === 'json');
+    // Identity is the non-secret lookup key, never the bearer (credential leak).
     expect(jsonCall?.args[0]).toMatchObject({
       kind: 'action',
       action: 'complete',
       status: 'already-resolved',
-      claimId: CLAIM_ID,
+      claimKey: redactClaimId(CLAIM_ID),
       lifecycle: 'completed',
     });
+    expect(JSON.stringify(jsonCall?.args[0])).not.toContain(parseClaimBearer(CLAIM_ID).secret);
   });
 
   it('renders terminal_claim_confirmed as a human message when not JSON, exit 0', async () => {
@@ -301,5 +309,119 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'metadata')).toBe(true);
     expect(calls.some((c) => c.method === 'executionEvent')).toBe(true);
     expect(calls.some((c) => c.method === 'stopped')).toBe(true);
+  });
+});
+
+describe('finalizeAppliedClaimTerminal', () => {
+  const APPLIED_STOP = {
+    kind: 'applied_claim' as const,
+    runId: RUN_ID,
+    status: 'stopped' as const,
+    events: [],
+    reported: 'not-applicable' as const,
+  };
+  const APPLIED_COMPLETE = { ...APPLIED_STOP, status: 'completed' as const };
+
+  /** Root state carrying an inline parent linkage (drives the propagate branch). */
+  function inlineChildState(): RunbookState {
+    return { ...fakeRootState(), parentLinkage: { kind: 'inline' } } as unknown as RunbookState;
+  }
+
+  /** Manager double counting loads and returning the supplied state. */
+  function countingManager(state: RunbookState | null): {
+    manager: RunbookStateManager;
+    loads: () => number;
+  } {
+    let loads = 0;
+    const manager = {
+      load: async () => {
+        loads++;
+        return state;
+      },
+    } as unknown as RunbookStateManager;
+    return { manager, loads: () => loads };
+  }
+
+  it('surfaces an error and non-zero exit when the terminated child fails to reload', async () => {
+    const { output, calls } = recordingEmitter(true);
+    let propagateCalled = false;
+    const propagate: ChildTerminalPropagator = async () => {
+      propagateCalled = true;
+      return 'handled';
+    };
+
+    const exitError = await finalizeAppliedClaimTerminal(
+      output,
+      'stop',
+      NO_MANAGER,
+      APPLIED_STOP,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('RUN_TARGET_UNAVAILABLE');
+    // Must NOT silently render a success envelope or propagate when the run vanished.
+    expect(propagateCalled).toBe(false);
+    expect(calls.some((c) => c.method === 'complete' || c.method === 'stopped')).toBe(false);
+  });
+
+  it('renders the child terminal before propagating to the inline parent', async () => {
+    const { output, calls } = recordingEmitter(true);
+    let childRenderedBeforePropagate = false;
+    const propagate: ChildTerminalPropagator = async () => {
+      childRenderedBeforePropagate = calls.some(
+        (c) => c.method === 'stopped' || c.method === 'complete',
+      );
+      return 'handled';
+    };
+
+    await finalizeAppliedClaimTerminal(
+      output,
+      'stop',
+      managerReturning(inlineChildState()),
+      APPLIED_STOP,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(childRenderedBeforePropagate).toBe(true);
+  });
+
+  it('reloads the terminated child exactly once for both render and propagation', async () => {
+    const { output } = recordingEmitter(true);
+    const { manager, loads } = countingManager(inlineChildState());
+    const propagate: ChildTerminalPropagator = async () => 'handled';
+
+    await finalizeAppliedClaimTerminal(
+      output,
+      'complete',
+      manager,
+      APPLIED_COMPLETE,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(loads()).toBe(1);
+  });
+
+  it('propagates a stopped inline parent into a non-zero exit', async () => {
+    const { output } = recordingEmitter(true);
+    const propagate: ChildTerminalPropagator = async () => 'stopped';
+
+    const exitError = await finalizeAppliedClaimTerminal(
+      output,
+      'complete',
+      managerReturning(inlineChildState()),
+      APPLIED_COMPLETE,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(exitError).toBe(true);
   });
 });
