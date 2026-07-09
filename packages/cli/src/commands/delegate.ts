@@ -39,7 +39,10 @@ import {
   parseTransitionTarget,
   type TransitionTarget,
 } from '../helpers/transition-target.js';
-import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
+import {
+  renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
+} from '../helpers/refusal-renderers.js';
 import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
 /**
@@ -343,6 +346,9 @@ export function registerDelegateCommand(program: Command): void {
                   // authority. No run-id echo (decision 4).
                   renderActorContextRequiredRefusal(output, 'delegate');
                   process.exitCode = 1;
+                } else if (outcome.policy.kind === 'claim_grant_required') {
+                  renderClaimGrantRequiredRefusal(output, 'delegate');
+                  process.exitCode = 1;
                 } else {
                   throw new Error(`Unexpected delegate policy outcome: ${outcome.policy.kind}`);
                 }
@@ -443,6 +449,9 @@ export function registerDelegateCommand(program: Command): void {
                 // A bare delegate on a delegation-exposed run needs bearer
                 // authority. No run-id echo (decision 4).
                 renderActorContextRequiredRefusal(output, 'delegate');
+                process.exitCode = 1;
+              } else if (outcome.policy.kind === 'claim_grant_required') {
+                renderClaimGrantRequiredRefusal(output, 'delegate');
                 process.exitCode = 1;
               } else {
                 throw new Error(`Unexpected delegate policy outcome: ${outcome.policy.kind}`);

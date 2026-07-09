@@ -10,6 +10,7 @@ import {
   issueRunControlClaim,
   runCliInProcess,
   getActiveState,
+  findActionOutput,
   type TestWorkspace,
   createRunbook,
   parseCliJsonObject,
@@ -376,6 +377,38 @@ describe('delegate command', () => {
   });
 
   describe('delegate --run', () => {
+    it('renders CLAIM_GRANT_REQUIRED when a child claim tries to issue a parent delegation', async () => {
+      await setupDelegation();
+      const issued = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
+        workspace,
+      );
+      expect(issued.exitCode).toBe(0);
+      const token = extractToken(issued.stdout);
+
+      const claimed = await runCliInProcess(['claim', token], workspace);
+      expect(claimed.exitCode).toBe(0);
+      const childClaimId = findActionOutput<{ claim_id: string }>(claimed.stdout)?.claim_id;
+      if (childClaimId === undefined)
+        throw new Error(`Expected child claim id:\n${claimed.stdout}`);
+
+      const closed = await runCliInProcess(['pass', '--claim-id', childClaimId], workspace);
+      expect(closed.exitCode).toBe(0);
+
+      const result = await runCliInProcess(['delegate', '--claim-id', childClaimId], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIM_GRANT_REQUIRED',
+          error: expect.stringContaining('rundown delegate'),
+        }),
+      );
+    });
+
     it('issues delegation against the claimed parent run', async () => {
       await setupDelegation();
       const parent = await getActiveState(workspace);
@@ -1574,6 +1607,39 @@ describe('delegate command', () => {
         | undefined;
       expect(delegation?.tokenHash).toBe(firstOutput.token_hash);
       expect(delegation?.childRunId).not.toBeNull();
+    });
+
+    it('renders CLAIM_GRANT_REQUIRED when a child claim tries to retry the parent delegation', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const token = extractToken(first.stdout);
+
+      const claimed = await runCliInProcess(['claim', token], workspace);
+      expect(claimed.exitCode).toBe(0);
+      const childClaimId = findActionOutput<{ claim_id: string }>(claimed.stdout)?.claim_id;
+      if (childClaimId === undefined)
+        throw new Error(`Expected child claim id:\n${claimed.stdout}`);
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', token, '--claim-id', childClaimId],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(retry.stdout || retry.stderr);
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIM_GRANT_REQUIRED',
+          error: expect.stringContaining('rundown delegate'),
+        }),
+      );
     });
 
     it('rejects ambiguity: token + --step both provided', async () => {
