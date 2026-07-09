@@ -48,7 +48,7 @@ their claim bearer with
 
 ```bash
 rundown pass --claim-id <claim_id>   # Orchestrator advances the run it controls
-rundown pass --claim-id <claim_id>   # Delegated child reports its result
+rundown fail --claim-id <claim_id>   # Delegated child reports a failing result
 ```
 
 Inside inline-composed runbooks, use `rundown pass` or `rundown fail` to finish the

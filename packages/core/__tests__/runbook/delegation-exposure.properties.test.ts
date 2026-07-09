@@ -10,8 +10,9 @@ import {
   assertClaimLookupKey,
   assertClaimSecretHash,
   assertRunId,
-  createRunControlGrants,
+  createDelegatedChildGrants,
 } from '../../src/runbook/index.js';
+import { ClaimRecordSchema } from '../../src/schemas.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import {
   activeFrame,
@@ -96,20 +97,24 @@ function anyClauseFires(clauses: ExposureClauses): boolean {
 }
 
 function makeOpenClaim(index: number): ClaimRecord {
+  // A delegated (open-child) claim carries its parent report linkage, so its
+  // grants must include the matching report-delegation-result grant — the
+  // run-control grant set alone is rejected by ClaimRecordSchema.
+  const linkage = {
+    childRunId,
+    tokenHash,
+    parentRunId: runId,
+    parentStepId: '1',
+    parentStep: '1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+  };
   return {
     claimKey: index === 0 ? claimKeyA : claimKeyB,
     secretHash,
     controlledRunId: childRunId,
-    delegation: {
-      childRunId,
-      tokenHash,
-      parentRunId: runId,
-      parentStepId: '1',
-      parentStep: '1',
-      parentFrameKey: buildFrameKey('1'),
-      parentEntry: 1,
-    },
-    grants: createRunControlGrants(childRunId),
+    delegation: linkage,
+    grants: createDelegatedChildGrants({ linkage }),
     issuedAt: '2026-07-03T00:00:00.000Z',
     updatedAt: '2026-07-03T00:00:00.000Z',
   };
@@ -304,6 +309,14 @@ function augmentInput(
 }
 
 describe('classifyDelegationExposure properties', () => {
+  it('exercises the open-claims clause with a persistable (schema-valid) claim record', () => {
+    // Guards the fixture: an open delegated claim must be a shape the session can
+    // actually persist, so the clause-(b) coverage reflects a real claim.
+    for (const index of [0, 1]) {
+      expect(ClaimRecordSchema.safeParse(makeOpenClaim(index)).success).toBe(true);
+    }
+  });
+
   it('OR-composition: delegating iff at least one clause fires, standalone iff none', () => {
     fc.assert(
       fc.property(clausesArb, noiseArb, (clauses, noise) => {

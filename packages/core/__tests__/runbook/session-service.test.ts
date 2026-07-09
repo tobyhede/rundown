@@ -611,15 +611,11 @@ describe('SessionService', () => {
       if (result.status === 'linkage-mismatch') {
         expect(result.childRunId).toBe(child.id);
         expect(result.incoming).toBe(incomingLinkage);
-        expect(result.persisted).toEqual({
-          kind: 'delegation',
-          parentRunId: first.claim.delegation?.parentRunId,
-          parentStepId: first.claim.delegation?.parentStepId,
-          parentStep: first.claim.delegation?.parentStep,
-          parentFrameKey: first.claim.delegation?.parentFrameKey,
-          parentEntry: first.claim.delegation?.parentEntry,
-          tokenHash: first.claim.delegation?.tokenHash,
-        });
+        // Assert against the independently-constructed original linkage rather
+        // than reconstructing the expectation from the claim under test — the
+        // latter passes tautologically if the persisted delegation is dropped.
+        expect(first.claim.delegation).toBeDefined();
+        expect(result.persisted).toEqual(originalLinkage);
       }
     });
 

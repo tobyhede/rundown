@@ -1042,6 +1042,12 @@ describe('substituteRunClaimIds', () => {
       /Missing captured run-control claim id/,
     );
   });
+
+  it('fails closed for ${RUN_CLAIM_ID_2} when only one run-control claim id was captured', () => {
+    expect(() =>
+      substituteRunClaimIds('rd pass --claim-id ${RUN_CLAIM_ID_2}', ['rdclm_parent']),
+    ).toThrow(/Missing captured run-control claim id/);
+  });
 });
 
 describe('captureClaimIdFromJsonObject', () => {

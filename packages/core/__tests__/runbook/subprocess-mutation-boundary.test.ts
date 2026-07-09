@@ -225,19 +225,22 @@ describe('bareRoleSpecificMutation', () => {
   });
 
   it('does not withhold delegate when it carries claim-id authority (property)', () => {
-    const delegateFlagPositionArg = fc
-      .string()
-      .filter(
-        (s) =>
-          s !== '--' &&
-          s !== '--claim-id' &&
-          s !== '--step' &&
-          s !== '--index' &&
-          s !== '--input' &&
-          s !== '--input-json' &&
-          s !== '--input-file' &&
-          s !== '--run',
-      );
+    const delegateFlagPositionArg = fc.string().filter(
+      (s) =>
+        s !== '--' &&
+        s !== '--claim-id' &&
+        s !== '--step' &&
+        s !== '--index' &&
+        s !== '--input' &&
+        s !== '--input-json' &&
+        s !== '--input-file' &&
+        // Exclude the value-taking artifact options too: a trailing one would
+        // swallow the appended `--claim-id` as its value, so the claim flag
+        // would no longer sit in flag position and the property would be moot.
+        s !== '--artifacts' &&
+        s !== '--artifacts-json' &&
+        s !== '--run',
+    );
     fc.assert(
       fc.property(
         fc.array(delegateFlagPositionArg, { maxLength: 4 }),
