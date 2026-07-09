@@ -23,18 +23,18 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## 2. Terminology
 
-| Term             | Meaning                                                                           |
-| ---------------- | --------------------------------------------------------------------------------- |
-| Runtime          | The CLI-managed execution process for one or more runbooks.                       |
-| Run              | One active or persisted execution of a runbook.                                   |
-| State file       | JSON file under `.rundown/runs/` storing one run's state.                         |
-| Session          | `.rundown/session.json`, which tracks active top-level runs, stashes, and claims. |
-| Frame            | Internal execution scope key: `step\|iteration`.                                  |
-| Entry            | Monotonic re-entry counter for a frame.                                           |
-| Claim            | `rdclm_...` handle that targets one delegated child run.                          |
-| Data source      | Runtime value used by `FOR ... IN {{ source }}` iteration.                        |
-| Static variable  | Variable resolved once at run startup.                                            |
-| Dynamic variable | Variable derived from the current step, substep, or iteration frame.              |
+| Term             | Meaning                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime          | The CLI-managed execution process for one or more runbooks.                                                                                        |
+| Run              | One active or persisted execution of a runbook.                                                                                                    |
+| State file       | JSON file under `.rundown/runs/` storing one run's state.                                                                                          |
+| Session          | `.rundown/session.json`, which tracks active top-level runs, stashes, and claims.                                                                  |
+| Frame            | Internal execution scope key: `step\|iteration`.                                                                                                   |
+| Entry            | Monotonic re-entry counter for a frame.                                                                                                            |
+| Claim            | `rdclm_...` bearer credential authorizing mutations on one run — the run `rundown run` controls, or a delegated child claimed via `rundown claim`. |
+| Data source      | Runtime value used by `FOR ... IN {{ source }}` iteration.                                                                                         |
+| Static variable  | Variable resolved once at run startup.                                                                                                             |
+| Dynamic variable | Variable derived from the current step, substep, or iteration frame.                                                                               |
 
 <a id="execution-model"></a>
 

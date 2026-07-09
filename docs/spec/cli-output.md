@@ -401,7 +401,7 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
   "kind": "claim",
   "action": "claimed",
   "token": "rdtk_abcd...",
-  "claim_id": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
+  "claim_id": "rdclm_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
   "run_id": "rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "runbook": "child.runbook.md",
   "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
