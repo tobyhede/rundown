@@ -14,6 +14,7 @@ import {
   getErrorMessage,
   isError,
   logger,
+  redactClaimId,
   type ClaimId,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
@@ -358,8 +359,8 @@ export async function finalizeAppliedClaimTerminal(
 
 /** Explicit target the failed terminal command was invoked with. */
 export interface TerminalRecoveryTarget {
-  /** Explicit claim id when the command targeted a claimed child (`--claim-id`). */
-  readonly claimId?: string;
+  /** Explicit claim bearer when the command targeted a claimed child (`--claim-id`). */
+  readonly claimId?: ClaimId;
   /** Explicit run id when the command named its target (`--run`). */
   readonly runId?: RunId;
 }
@@ -395,7 +396,7 @@ export async function handleTerminalRecovery(
     if (error instanceof InvalidRunbookStateError) {
       if (command === 'complete') {
         output.error(
-          `Claimed runbook ${target.claimId} is unavailable`,
+          `Claimed runbook ${redactClaimId(target.claimId)} is unavailable`,
           'CLAIMED_RUNBOOK_UNAVAILABLE',
         );
         output.flush();

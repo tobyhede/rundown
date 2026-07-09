@@ -46,7 +46,9 @@ const CLISymbolicErrorCodeValues = [
   'OPEN_DELEGATED_CHILDREN',
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
+  'CLAIM_GRANT_REQUIRED',
   'RUN_TARGET_UNAVAILABLE',
+  'RUN_TARGET_MISMATCH',
   'COLLECT_ALREADY_APPLIED',
   'COLLECT_OPERATION_FAILED',
   'CHILD_RUN_MISSING',
@@ -115,8 +117,12 @@ export const CLIErrorCodes = {
   DELEGATION_COLLECTION_PENDING: 'DELEGATION_COLLECTION_PENDING',
   /** Actor context is required for the requested role-specific command */
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
+  /** A verified bearer claim lacks the grant required for the requested command */
+  CLAIM_GRANT_REQUIRED: 'CLAIM_GRANT_REQUIRED',
   /** The explicit --run target is not a running member of this session's stack */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
+  /** The explicit --run target does not own the delegation retry token (delegate --retry) */
+  RUN_TARGET_MISMATCH: 'RUN_TARGET_MISMATCH',
   /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */
   COLLECT_ALREADY_APPLIED: 'COLLECT_ALREADY_APPLIED',
   /** Core collection failed while applying delegation outcomes. */

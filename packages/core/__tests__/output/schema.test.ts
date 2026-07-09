@@ -293,6 +293,8 @@ describe('ErrorCodeSchema code registry', () => {
 
   it.each([
     'ACTOR_CONTEXT_REQUIRED',
+    'CLAIM_GRANT_REQUIRED',
+    'RUN_TARGET_MISMATCH',
   ] as const)('accepts %s for command policy rendering', (code) => {
     expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
     expect(

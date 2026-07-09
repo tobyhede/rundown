@@ -2,6 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   assertClaimId,
   assertRunId,
+  InvalidRunbookStateError,
   parseClaimBearer,
   redactClaimId,
   type LifecycleTerminalOutcome,
@@ -11,6 +12,7 @@ import {
 } from '@rundown-org/core';
 import {
   finalizeAppliedClaimTerminal,
+  handleTerminalRecovery,
   renderTerminalOutcome,
   type ChildTerminalPropagator,
 } from '../../src/helpers/terminal-command.js';
@@ -49,6 +51,7 @@ function recordingEmitter(json = true): { output: OutputEmitter; calls: Recorded
     executionEvent: rec('executionEvent'),
     complete: rec('complete'),
     stopped: rec('stopped'),
+    flush: rec('flush'),
     isJson: () => json,
   } as unknown as OutputEmitter;
   return { output, calls };
@@ -423,5 +426,30 @@ describe('finalizeAppliedClaimTerminal', () => {
     );
 
     expect(exitError).toBe(true);
+  });
+});
+
+describe('handleTerminalRecovery', () => {
+  it('redacts the claim bearer in the complete recovery message (never leaks the secret)', async () => {
+    const { output, calls } = recordingEmitter();
+
+    await handleTerminalRecovery(
+      'complete',
+      new InvalidRunbookStateError('snapshot incompatible'),
+      output,
+      '/test',
+      { claimId: CLAIM_ID },
+    );
+
+    const errorCall = calls.find((c) => c.method === 'error');
+    expect(errorCall?.args[1]).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
+
+    // The recovery message must name only the non-secret lookup key, never the
+    // raw bearer whose 43-char secret would otherwise land in JSON output/logs.
+    const message = String(errorCall?.args[0]);
+    expect(message).toContain(redactClaimId(CLAIM_ID));
+    expect(message).not.toContain(parseClaimBearer(CLAIM_ID).secret);
+    // Defense in depth: nothing the recovery path emits carries the secret.
+    expect(JSON.stringify(calls)).not.toContain(parseClaimBearer(CLAIM_ID).secret);
   });
 });
