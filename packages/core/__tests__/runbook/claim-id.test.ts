@@ -156,7 +156,7 @@ describe('claimCanReportDelegationResult', () => {
   const delegationChild = {
     id: childRunId,
     parentLinkage: { kind: 'delegation', ...linkage },
-  } as RunbookState;
+  } as unknown as RunbookState;
 
   it('allows reporting when the child is delegation-linked and the claim holds the matching grant', () => {
     expect(claimCanReportDelegationResult(reportingClaim, delegationChild)).toBe(true);
@@ -176,7 +176,7 @@ describe('claimCanReportDelegationResult', () => {
         ...linkage,
         tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
       },
-    } as RunbookState;
+    } as unknown as RunbookState;
 
     expect(claimCanReportDelegationResult(reportingClaim, mismatchedChild)).toBe(false);
   });
