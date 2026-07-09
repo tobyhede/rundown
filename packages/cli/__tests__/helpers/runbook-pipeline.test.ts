@@ -2602,7 +2602,7 @@ describe('claimAndLaunch', () => {
     findClaimForDelegation?: unknown;
     childState?: unknown;
     claimSpy?: jest.Mock<SessionService['claimRunbook']>;
-  }): Promise<ClaimResult> => {
+  }) => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
