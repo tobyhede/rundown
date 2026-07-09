@@ -299,6 +299,37 @@ describe('SessionService', () => {
       });
     });
 
+    it('rotates the run-control claim when re-issued for the same run rather than duplicating it', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+          runId: PARENT_RUN_ID,
+        },
+      );
+
+      const first = await sessionService.issueRunControlClaim(state.id);
+      const second = await sessionService.issueRunControlClaim(state.id);
+
+      // Exactly one run-control claim persists per run: re-issuing MUST NOT append a
+      // duplicate that violates the SessionDataSchema controlledRunId uniqueness
+      // invariant (which would render the session unreadable).
+      const session = await manager.loadSession();
+      expect(Object.keys(session.claims)).toEqual([second.claim.claimKey]);
+      expect(second.claim.claimKey).not.toBe(first.claim.claimKey);
+
+      // The freshly issued bearer verifies; the superseded bearer no longer resolves.
+      await expect(sessionService.verifyClaimId(second.claimId)).resolves.toMatchObject({
+        status: 'verified',
+        claim: { controlledRunId: state.id },
+      });
+      await expect(sessionService.verifyClaimId(first.claimId)).resolves.toEqual({
+        status: 'missing',
+        claimKey: first.claim.claimKey,
+      });
+    });
+
     it('mints a claim with child mutation and parent report grants', async () => {
       const persistedLinkage = linkageFor(PARENT_RUN_ID, 'b');
       await manager.create({ source: 'project', path: 'parent.runbook.md' }, mockRunbook, {

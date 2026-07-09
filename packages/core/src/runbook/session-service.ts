@@ -291,6 +291,15 @@ export class SessionService {
         now,
       });
       const session = await this.manager.loadSession();
+      // Uphold the SessionDataSchema controlledRunId-uniqueness invariant: a run has
+      // at most one run-control claim. Re-issuing supersedes (rotates) any existing
+      // claim for this run rather than appending a duplicate that would render the
+      // session unreadable. The prior bearer is invalidated by construction.
+      for (const [existingKey, existingClaim] of Object.entries(session.claims)) {
+        if (existingClaim.controlledRunId === runId) {
+          delete session.claims[existingKey];
+        }
+      }
       session.claims[claim.claimKey] = claim;
       await this.manager.saveSession(session);
       return { claimId: parsed.claimId, claim };

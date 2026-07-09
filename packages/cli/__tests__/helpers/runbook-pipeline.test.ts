@@ -2592,6 +2592,126 @@ describe('claimAndLaunch', () => {
     }
   });
 
+  // O15 regression: every failure return in the delegation-claim block must
+  // report the substep id that owns the delegation, not the bare outer step id.
+  // Each case scans a delegation living on substep `2.1` (stepId '2',
+  // substepId '1') and asserts the failure carries stepId '1'.
+  const runSubstepClaimFailure = async (opts: {
+    cancelledAt?: string | null;
+    findOrphanedChild?: unknown;
+    findClaimForDelegation?: unknown;
+    childState?: unknown;
+    claimSpy?: jest.Mock<SessionService['claimRunbook']>;
+  }): Promise<ClaimResult> => {
+    const delegation = {
+      tokenHash: MOCK_TOKEN_HASH,
+      childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: opts.cancelledAt ?? null,
+    };
+    const parentState = makeState(PARENT_RUN_ID, {
+      substepStates: [{ id: '1', status: 'pending', delegation }],
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '2', // outer step id
+        substepId: '1', // delegation lives on substep 2.1
+        delegation,
+      }),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
+        opts.findOrphanedChild ?? null,
+      ),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockImplementation(
+        async (id: unknown) => (id === PARENT_RUN_ID ? parentState : (opts.childState ?? null)),
+      ),
+      update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    installHappyDelegationLockMock();
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: {
+        claimRunbook: opts.claimSpy ?? mockClaimRunbookSuccess(),
+        findClaimForDelegation: mockFn<
+          (...args: unknown[]) => Promise<unknown>
+        >().mockResolvedValue(opts.findClaimForDelegation ?? null),
+      } as unknown as SessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    // cspell:disable-next-line
+    return claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+  };
+
+  it('reports substepId (not stepId) on a substep delegation-cancelled failure', async () => {
+    const result = await runSubstepClaimFailure({ cancelledAt: new Date().toISOString() });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ reason: 'delegation-cancelled', stepId: '1' });
+  });
+
+  it('reports substepId (not stepId) on an orphan-branch claim failure', async () => {
+    const orphanState = makeState(ORPHAN_RUN_ID, {
+      delegation: { parentRunId: PARENT_RUN_ID, parentStepId: '1', tokenHash: MOCK_TOKEN_HASH },
+    });
+    const result = await runSubstepClaimFailure({
+      findOrphanedChild: orphanState,
+      claimSpy: mockClaimRunbookAlreadyClaimed(),
+    });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ stepId: '1' });
+  });
+
+  it('reports substepId (not stepId) on an existing-claim child-missing failure', async () => {
+    const result = await runSubstepClaimFailure({
+      findClaimForDelegation: { controlledRunId: 'existing-child-id' },
+      childState: null,
+    });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ reason: 'child-missing', stepId: '1' });
+  });
+
+  it('reports substepId (not stepId) on an existing-claim delegation-resolved failure', async () => {
+    const resolvedChild = makeState(brandRunIdForTest(`rd_${'e'.repeat(32)}`), {
+      lifecycle: 'completed',
+    });
+    const result = await runSubstepClaimFailure({
+      findClaimForDelegation: { controlledRunId: 'existing-child-id' },
+      childState: resolvedChild,
+    });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ reason: 'delegation-resolved', stepId: '1' });
+  });
+
+  it('reports substepId (not stepId) on an existing-claim claim failure', async () => {
+    const liveChild = makeState(brandRunIdForTest(`rd_${'e'.repeat(32)}`), {});
+    const result = await runSubstepClaimFailure({
+      findClaimForDelegation: { controlledRunId: 'existing-child-id' },
+      childState: liveChild,
+      claimSpy: mockClaimRunbookAlreadyClaimed(),
+    });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ stepId: '1' });
+  });
+
   it('returns error when delegation was cancelled', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,

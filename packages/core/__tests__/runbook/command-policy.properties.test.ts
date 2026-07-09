@@ -281,14 +281,7 @@ describe('resolveCommandIntent properties', () => {
         ).not.toBe('allowed');
         expect(
           resolveCommandIntent({
-            actorContext: verifiedClaimContext({
-              authority: { kind: 'bearer', claimId, claimKey },
-              claim: {
-                claimKey,
-                controlledRunId: runIdA,
-                grants: createRunControlGrants(runIdA),
-              },
-            }),
+            actorContext: verifiedRunControlContext(runIdA),
             intent,
             targetSelector: { kind: 'default' },
             targetState: target,

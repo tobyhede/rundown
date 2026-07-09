@@ -1475,7 +1475,7 @@ export async function claimAndLaunch(
         ok: false,
         reason: 'delegation-cancelled',
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
         cancelledAt: freshDelegation.cancelledAt,
       };
     }
@@ -1494,7 +1494,7 @@ export async function claimAndLaunch(
       };
       const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
       if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, stepId);
+        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       const adoptedChildRunId = claimResult.childRunId;
       // Adopt the orphan only after claim validation confirms its persisted
@@ -1541,7 +1541,7 @@ export async function claimAndLaunch(
           ok: false,
           reason: 'child-missing',
           parentRunId: freshParent.id,
-          stepId,
+          stepId: substepId ?? stepId,
           childRunId: existingClaim.controlledRunId,
         };
       }
@@ -1550,7 +1550,7 @@ export async function claimAndLaunch(
           ok: false,
           reason: 'delegation-resolved',
           parentRunId: freshParent.id,
-          stepId,
+          stepId: substepId ?? stepId,
           childRunId: existingClaim.controlledRunId,
         };
       }
@@ -1560,7 +1560,7 @@ export async function claimAndLaunch(
         delegationLinkage,
       );
       if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, stepId);
+        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       await updateStepDelegationChildRunId(
         manager,

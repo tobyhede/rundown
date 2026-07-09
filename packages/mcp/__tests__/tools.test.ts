@@ -8,6 +8,19 @@ import {
   type RundownToolName,
 } from '../src/tools.js';
 
+/**
+ * Parse the MCP text block back into its JSON payload so assertions pin the
+ * structured envelope (e.g. `{ error }` / the success payload), not just a
+ * substring of the rendered text.
+ */
+function parseToolResponse(res: unknown): unknown {
+  const text = (res as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text;
+  if (typeof text !== 'string') {
+    throw new Error('expected an MCP text response with a JSON text block');
+  }
+  return JSON.parse(text);
+}
+
 describe('buildRundownCommand', () => {
   it.each([
     ['validate', { file: 'workflow.md' }, ['check', 'workflow.md']],
@@ -425,13 +438,8 @@ describe('registerRundownTools', () => {
       claimId: 'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       runId: `rd_${'a'.repeat(32)}`,
     });
-    expect(res).toMatchObject({
-      content: [
-        {
-          type: 'text',
-          text: expect.stringMatching(/runId cannot be combined with claimId/),
-        },
-      ],
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('runId cannot be combined with claimId'),
     });
     expect(runCli).not.toHaveBeenCalled();
   });
@@ -453,17 +461,6 @@ describe('subprocess trust boundary', () => {
     };
     registerRundownTools(fakeServer, runCli);
     return handlers;
-  }
-
-  // Parse the MCP text block back into its JSON payload so assertions pin the
-  // structured envelope (e.g. `{ error }` / the success payload), not just a
-  // substring of the rendered text.
-  function parseToolResponse(res: unknown): unknown {
-    const text = (res as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text;
-    if (typeof text !== 'string') {
-      throw new Error('expected an MCP text response with a JSON text block');
-    }
-    return JSON.parse(text);
   }
 
   it('advertises delegate as claimId-gated with selector-only runId', () => {

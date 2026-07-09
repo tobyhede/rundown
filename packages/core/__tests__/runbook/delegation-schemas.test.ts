@@ -705,7 +705,21 @@ describe('DelegationStatusEntrySchema', () => {
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
   });
 
-  it('validates a claimed entry with childRunId', () => {
+  const CLAIM_KEY = 'rdclk_11111111111111111111111111111111';
+
+  it('validates a claimed entry with childRunId and claimKey', () => {
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'claimed',
+      childRunId: 'run_abc123',
+      claimKey: CLAIM_KEY,
+      tokenHash: TOKEN_HASH,
+    };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+  });
+
+  it('rejects a claimed entry missing claimKey', () => {
     const entry = {
       substep: '1.1',
       runbook: 'child.md',
@@ -713,7 +727,7 @@ describe('DelegationStatusEntrySchema', () => {
       childRunId: 'run_abc123',
       tokenHash: TOKEN_HASH,
     };
-    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });
 
   it('validates a cancelled entry', () => {
@@ -785,6 +799,7 @@ describe('StatusResponseSchema with delegations', () => {
           runbook: 'test.md',
           state: 'claimed',
           childRunId: 'run_xyz',
+          claimKey: 'rdclk_22222222222222222222222222222222',
           tokenHash: TOKEN_HASH_B,
         },
       ],

@@ -424,6 +424,10 @@ export const DelegationStatusEntrySchema = z
     message: 'claimKey is only available when state is claimed',
     path: ['claimKey'],
   })
+  .refine((entry) => entry.state !== 'claimed' || entry.claimKey !== undefined, {
+    message: 'claimKey is required when state is claimed',
+    path: ['claimKey'],
+  })
   .describe('Delegation status entry');
 
 // ============================================================================

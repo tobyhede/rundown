@@ -60,6 +60,19 @@ function stepIndexPair(
 }
 
 /**
+ * Object schema over `extra` fields plus the shared claimId/runId shapes, with
+ * the claimId/runId mutual-exclusion refinement applied. Mirrors
+ * {@link stepIndexPair} for mutating commands that take `--claim-id`/`--run`
+ * but no `--step`/`--index` pair (goto/complete/stop).
+ *
+ * @param extra - Additional tool-specific fields folded into the object schema.
+ * @returns A schema that rejects a call carrying both `claimId` and `runId`.
+ */
+function claimIdRunIdSchema(extra: z.ZodRawShape): z.ZodType<Record<string, unknown>> {
+  return z.object({ ...extra, ...claimIdShape, ...runIdShape }).superRefine(rejectClaimIdRunIdPair);
+}
+
+/**
  * Tool descriptions and input schemas for the CLI-facade MCP surface.
  */
 export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefinition> = {
@@ -96,34 +109,15 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   goto: {
     description: 'Jump to a step',
-    inputSchema: z
-      .object({
-        step: z.string(),
-        index: optionalIndex,
-        ...claimIdShape,
-        ...runIdShape,
-      })
-      .superRefine(rejectClaimIdRunIdPair),
+    inputSchema: claimIdRunIdSchema({ step: z.string(), index: optionalIndex }),
   },
   complete: {
     description: 'Force current runbook completion',
-    inputSchema: z
-      .object({
-        message: z.string().optional(),
-        ...claimIdShape,
-        ...runIdShape,
-      })
-      .superRefine(rejectClaimIdRunIdPair),
+    inputSchema: claimIdRunIdSchema({ message: z.string().optional() }),
   },
   stop: {
     description: 'Stop current runbook',
-    inputSchema: z
-      .object({
-        message: z.string().optional(),
-        ...claimIdShape,
-        ...runIdShape,
-      })
-      .superRefine(rejectClaimIdRunIdPair),
+    inputSchema: claimIdRunIdSchema({ message: z.string().optional() }),
   },
   delegate: {
     description: `Issue or retry a delegation with \`rundown delegate\` for the run you control. Subprocess-spawned mutations require bearer authority; use a claimId grant from \`rundown run\` or delegated work. runId is selector-only and cannot be combined with claimId. Bare or runId-only delegate calls are withheld before spawning the CLI.`,

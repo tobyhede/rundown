@@ -881,8 +881,10 @@ describe('claim ids on claimed delegations (#531)', () => {
       'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
     const childRunId = `rd_${'a'.repeat(32)}`;
 
+    const claimKey = `rdclk_${'b'.repeat(32)}`;
     expect(
-      DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId }).success,
+      DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId, claimKey })
+        .success,
     ).toBe(true);
     expect(
       DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId, claimId })

@@ -339,8 +339,7 @@ Signal successful step completion.
 rundown pass
 rundown pass --step 2.1              # Target a specific substep
 rundown pass --step 2.1 --index 3    # Target substep at FOR iteration 3
-rundown pass --claim-id <claim_id>   # Bearer-authorized advance
-rundown pass --claim-id <claim_id>   # Delegated child reports its result
+rundown pass --claim-id <claim_id>   # Bearer-authorized advance / delegated child reports PASS
 ```
 
 **Aliases:** `rundown yes`, `rundown ok`
@@ -371,8 +370,7 @@ Signal step failure.
 rundown fail
 rundown fail --step 2.1              # Target a specific substep
 rundown fail --step 2.1 --index 3    # Target substep at FOR iteration 3
-rundown fail --claim-id <claim_id>   # Bearer-authorized advance
-rundown fail --claim-id <claim_id>   # Delegated child reports its result
+rundown fail --claim-id <claim_id>   # Bearer-authorized failing advance / delegated child reports FAIL
 ```
 
 **Alias:** `rundown no`
@@ -749,22 +747,16 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
 | `rundown claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
 | `rundown claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
-| `rundown pass --claim-id <claim_id>`                       | Complete a claimed child with PASS                                                |
-| `rundown fail --claim-id <claim_id>`                       | Complete a claimed child with FAIL                                                |
+| `rundown pass --claim-id <claim_id>`                       | Bearer-authorized PASS: advance a run or report a claimed child's result          |
+| `rundown fail --claim-id <claim_id>`                       | Bearer-authorized FAIL: advance a run or report a claimed child's result          |
 | `rundown status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
-| `rundown collect --claim-id <claim_id>`                    | Collect delegated results for a claimed child scope                               |
-| `rundown goto <step> --claim-id <claim_id>`                | Jump within a claimed child runbook                                               |
+| `rundown collect --claim-id <claim_id>`                    | Bearer-authorized aggregation of delegated results                                |
+| `rundown goto <step> --claim-id <claim_id>`                | Bearer-authorized jump within a claimed run (run-navigation policy gate)          |
 | `rundown stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
 | `rundown pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
-| `rundown stop --claim-id <claim_id>`                       | Stop a claimed child runbook                                                      |
-| `rundown complete --claim-id <claim_id>`                   | Complete a claimed child runbook                                                  |
+| `rundown stop --claim-id <claim_id>`                       | Bearer-authorized stop of a claimed run                                           |
+| `rundown complete --claim-id <claim_id>`                   | Bearer-authorized completion of a claimed run                                     |
 | `rundown delegate --step <id> --claim-id <claim_id>`       | Bearer-authorized delegation on a delegation-exposed run                          |
-| `rundown collect --claim-id <claim_id>`                    | Bearer-authorized aggregation of delegated results                                |
-| `rundown pass --claim-id <claim_id>`                       | Bearer-authorized advance                                                         |
-| `rundown fail --claim-id <claim_id>`                       | Bearer-authorized failing advance                                                 |
-| `rundown goto <step> --claim-id <claim_id>`                | Bearer-authorized jump (run-navigation policy gate)                               |
-| `rundown complete --claim-id <claim_id>`                   | Bearer-authorized completion                                                      |
-| `rundown stop --claim-id <claim_id>`                       | Bearer-authorized stop                                                            |
 | `rundown abort <token> --claim-id <claim_id>`              | Cancel a delegation token                                                         |
 | `rundown abort <token> --claim-id <claim_id> --force`      | Cancel or clean up a claimed delegation                                           |
 
@@ -1238,7 +1230,6 @@ rundown fail --claim-id <claim_id>      # Complete claimed child with FAIL
 rundown goto <step> --claim-id <claim_id> # Jump within claimed child
 rundown stash --claim-id <claim_id>     # Stash claimed child
 rundown pop --claim-id <claim_id>       # Restore stashed claimed child
-rundown collect --claim-id <claim_id>   # Collect delegated child results
 rundown stop --claim-id <claim_id>      # Stop claimed child
 rundown complete --claim-id <claim_id>  # Complete claimed child
 rundown abort <token> --claim-id <claim_id> # Cancel delegation token

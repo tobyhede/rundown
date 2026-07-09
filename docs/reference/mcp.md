@@ -96,12 +96,13 @@ Because the MCP server reaches the CLI by spawning a subprocess, typed caller
 evidence cannot cross the process boundary: a spawned `rundown pass` /
 `rundown fail` / `rundown delegate` arrives as an ordinary `argv`,
 indistinguishable from a human at the terminal, and a **bare** one would
-silently inherit direct-CLI trust (`trusted_run_controller`) over the active
-run. The boundary therefore requires spawned mutating calls to present bearer
-authority explicitly:
+silently inherit direct-CLI trust over the active run. The boundary therefore
+requires spawned mutating calls to present bearer authority explicitly:
 
-- **Claim lane** — a real `claimId`, mapped to `--claim-id <claim_id>`
-  (independent claim-controller evidence for a delegated child).
+- **Claim lane** — a real `claimId`, mapped to `--claim-id <claim_id>` (the
+  bearer claim minted by `rundown run` or `rundown claim`; it carries the grants
+  that authorize the mutation, for standalone runs and delegated children
+  alike).
 - **Run selector** — a real `runId`, mapped to `--run <rd_…>`, names the target
   run but is not authority by itself.
 
@@ -167,9 +168,9 @@ defines that semantics.
 
 Return current runbook state.
 
-| Parameter | Type   | Required | Behavior                                                                                       |
-| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope the query to a specific delegation claim. |
+| Parameter | Type   | Required | Behavior                                                                                                                               |
+| --------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) identifying the run to inspect. |
 
 <a id="run"></a>
 
@@ -198,12 +199,12 @@ and apply unchanged when variables are supplied through MCP.
 
 Mark a step as passed.
 
-| Parameter | Type        | Required | Behavior                                                                                              |
-| --------- | ----------- | -------- | ----------------------------------------------------------------------------------------------------- |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                                 |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.             |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                           |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself. |
+| Parameter | Type        | Required | Behavior                                                                                                                                    |
+| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                                                                       |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.                                                   |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
+| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself.                                       |
 
 Over MCP, `pass` REQUIRES bearer authority: a `pass` without a real `claimId` is
 classified as a subprocess lifecycle mutation and withheld in-process — the
@@ -219,12 +220,12 @@ standalone step passed, run `rundown pass` directly in a trusted terminal.
 
 Mark a step as failed.
 
-| Parameter | Type        | Required | Behavior                                                                                              |
-| --------- | ----------- | -------- | ----------------------------------------------------------------------------------------------------- |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                                 |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.             |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                           |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself. |
+| Parameter | Type        | Required | Behavior                                                                                                                                    |
+| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                                                                       |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.                                                   |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
+| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself.                                       |
 
 Over MCP, `fail` REQUIRES explicit targeting, exactly as [`pass`](#pass): a bare
 `fail` without a real `claimId` is classified as a subprocess lifecycle mutation
@@ -240,12 +241,12 @@ trusted terminal.
 
 Jump to a step.
 
-| Parameter | Type        | Required | Behavior                                                                                                   |
-| --------- | ----------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`.                          |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.                                   |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
+| Parameter | Type        | Required | Behavior                                                                                                                                    |
+| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`.                                                           |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.                                                                    |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
+| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
 
 Over MCP, `goto` follows the same two-lane rule as [`pass`](#pass): a bare jump
 (no `claimId`) on a delegation-exposed run is withheld in-process; name the
@@ -258,11 +259,11 @@ combined with `runId`.
 
 Force early completion of the active runbook.
 
-| Parameter | Type   | Required | Behavior                                                                                                   |
-| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`.                              |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
-| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
+| Parameter | Type   | Required | Behavior                                                                                                                                    |
+| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`.                                                               |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
+| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
 
 Without `claimId` or `runId`, this mirrors bare `rundown complete`, which is
 withheld at the boundary (and, since R1, refused by core on any
@@ -279,11 +280,11 @@ targeting semantics.
 
 Abort the active runbook.
 
-| Parameter | Type   | Required | Behavior                                                                                                   |
-| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.                                  |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
-| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
+| Parameter | Type   | Required | Behavior                                                                                                                                    |
+| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.                                                                   |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
+| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
 
 Without `claimId` or `runId`, this mirrors bare `rundown stop`, which is
 withheld at the boundary (and, since R1, refused by core on any
@@ -343,12 +344,12 @@ Claim a delegation token and launch the child runbook.
 
 Aggregate a delegated step and advance the parent runbook through core.
 
-| Parameter | Type        | Required | Behavior                                                                                                   |
-| --------- | ----------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to scope the collection to a specific substep.                     |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.                          |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.                                |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself. |
+| Parameter | Type        | Required | Behavior                                                                                                                                    |
+| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to scope the collection to a specific substep.                                                      |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.                                                           |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
+| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
 
 Over MCP, `collect` REQUIRES bearer authority: a `collect` without a real
 `claimId` is classified as a subprocess lifecycle mutation and withheld
@@ -435,12 +436,11 @@ Not every `error` payload originates from the CLI. Some errors are generated
 **in-process** and never involve a CLI invocation, yet MUST be returned in the
 same `{ "error": ... }` envelope shape:
 
-- **Withheld-mutation errors** — a bare `pass` / `fail` (no claim evidence) or
-  any `delegate` call (see [§5.6](#pass), [§5.7](#fail), [§5.11](#delegate)) is
-  refused by the subprocess mutation boundary before the CLI is spawned.
-- **`delegate` claim-id validation errors** — a `delegate` call carrying
-  `--claim-id` is rejected in-process, since delegation has no claim-controller
-  form.
+- **Withheld-mutation errors** — a `pass` / `fail` / `delegate` without claim
+  evidence (see [§5.6](#pass), [§5.7](#fail), [§5.11](#delegate)) is refused by
+  the subprocess mutation boundary before the CLI is spawned. Presenting a valid
+  `--claim-id` bearer exempts the call: `delegate` now accepts `--claim-id` as
+  bearer authority on a delegation-exposed run.
 - **Schema-validation and argv-build failures** — inputs that fail the tool's
   declared schema, or that cannot be mapped to a valid CLI `argv`, are formatted
   in-process without invoking the CLI.
