@@ -1195,19 +1195,21 @@ Code: INVALID_RUN_ID
 }
 ```
 
-### Collect requires orchestrator
+### Collect not authorized for this target
 
-`rundown collect` was issued by an actor that does not control the target
-delegating run. Collection requires a bearer grant that controls the delegating
-run; a claimant may collect only delegations issued by its own claimed run. Like
-the other refusals, the message names bearer authority and never echoes the
-target run id.
+`rundown collect` was issued with a bearer claim that does not control the
+target delegating run — collection requires a `collect-for-run` grant for that
+run, so a claimant may collect only delegations issued by its own claimed run.
+The verified bearer lacks the exact grant, so the command is refused with the
+shared `CLAIM_GRANT_REQUIRED` claim-grant refusal. (A `collect` with no bearer
+at all on a delegation-exposed run is refused with `ACTOR_CONTEXT_REQUIRED`
+instead.)
 
 **Text:**
 
 ```text
-Error: rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Do not combine `--run` with `--claim-id`.
-Code: COLLECT_REQUIRES_ORCHESTRATOR
+Error: The supplied claim id is not authorized to run `rundown collect` for this target.
+Code: CLAIM_GRANT_REQUIRED
 ```
 
 **JSON:**
@@ -1215,8 +1217,8 @@ Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```json
 {
   "kind": "error",
-  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. Do not combine `--run` with `--claim-id`.",
-  "code": "COLLECT_REQUIRES_ORCHESTRATOR",
+  "error": "The supplied claim id is not authorized to run `rundown collect` for this target.",
+  "code": "CLAIM_GRANT_REQUIRED",
   "command": "collect"
 }
 ```

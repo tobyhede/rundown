@@ -153,7 +153,6 @@ const KNOWN_KINDS = new Set([
   'allowed',
   'actor_context_required',
   'claim_grant_required',
-  'collect_requires_orchestrator',
   'delegation_collection_pending',
   'open_claims',
 ]);

@@ -47,7 +47,6 @@ const CLISymbolicErrorCodeValues = [
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
   'RUN_TARGET_UNAVAILABLE',
-  'COLLECT_REQUIRES_ORCHESTRATOR',
   'COLLECT_ALREADY_APPLIED',
   'COLLECT_OPERATION_FAILED',
   'CHILD_RUN_MISSING',
@@ -118,8 +117,6 @@ export const CLIErrorCodes = {
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
   /** The explicit --run target is not a running member of this session's stack */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
-  /** Collection requires an actor that controls the target delegating run */
-  COLLECT_REQUIRES_ORCHESTRATOR: 'COLLECT_REQUIRES_ORCHESTRATOR',
   /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */
   COLLECT_ALREADY_APPLIED: 'COLLECT_ALREADY_APPLIED',
   /** Core collection failed while applying delegation outcomes. */

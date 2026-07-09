@@ -412,13 +412,6 @@ function renderCollectOutcome(
       renderClaimGrantRequiredRefusal(output, 'collect');
       output.flush();
       return true;
-    case 'collect_requires_orchestrator':
-      // Core owns the remediation text (names both --run and --claim-id). The
-      // details deliberately do NOT echo the target run id (decision 4): the
-      // refusal is an accident barrier, not a lookup service.
-      output.error(outcome.message, 'COLLECT_REQUIRES_ORCHESTRATOR');
-      output.flush();
-      return true;
     case 'collection_failed':
       // Flat passthrough: core attached the user-facing `code` on the outcome
       // (no CLI reason→code ternary — keeps "no CLI lifecycle decisions" and

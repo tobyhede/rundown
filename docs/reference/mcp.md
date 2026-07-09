@@ -359,8 +359,8 @@ without bearer proof. A `collect` carrying a real `claimId` presents bearer
 evidence; `runId` alone is withheld. Collection still requires an actor
 controlling the target delegating run, and `claimId` cannot be combined with
 `runId`: collecting into an ancestor the caller does not control remains refused
-by core policy (`COLLECT_REQUIRES_ORCHESTRATOR`). To aggregate a delegated step
-on the parent from a plain terminal, run `rundown collect` directly.
+by core policy (`CLAIM_GRANT_REQUIRED`). To aggregate a delegated step on the
+parent from a plain terminal, run `rundown collect` directly.
 
 <a id="unsupported-cli-operations"></a>
 

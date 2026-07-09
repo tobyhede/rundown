@@ -293,7 +293,6 @@ describe('ErrorCodeSchema code registry', () => {
 
   it.each([
     'ACTOR_CONTEXT_REQUIRED',
-    'COLLECT_REQUIRES_ORCHESTRATOR',
   ] as const)('accepts %s for command policy rendering', (code) => {
     expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
     expect(

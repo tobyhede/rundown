@@ -7,7 +7,6 @@ import {
   assertRunId,
   buildFrameKey,
   buildCompletionKey,
-  COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   type FrameKey,
 } from '@rundown-org/core';
 // Static import of the command module under test. The behavioural tests below
@@ -307,18 +306,15 @@ describe('collect command', () => {
       const claimId = String(claimPayload?.claim_id);
       expect(claimId).toMatch(/^rdclm_/);
 
-      // `rd collect --claim-id` must NOT be rejected by the orchestrator gate:
-      // the direct-CLI adapter resolves the claim to its controlled run and is
-      // the trusted controller of that run. The command therefore proceeds past
-      // the policy gate (it must not emit ACTOR_CONTEXT_REQUIRED or
-      // COLLECT_REQUIRES_ORCHESTRATOR). Whether outcomes exist to aggregate is
-      // the collection operation's concern (Plan 4), so this test asserts only
-      // that the policy gate did not refuse the command.
+      // `rd collect --claim-id` presents bearer evidence, so it is never refused
+      // with ACTOR_CONTEXT_REQUIRED (the bare/no-bearer refusal). Whether the
+      // claim carries the exact grant, or outcomes exist to aggregate, is the
+      // collection operation's concern (Plan 4); this test asserts only that the
+      // no-actor-context gate did not refuse the command.
       const result = await runCliInProcess(['collect', '--claim-id', claimId], workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string };
       expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
-      expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
     }, 30_000);
 
     it('allows collection on a run that itself delegates upward', async () => {
@@ -411,14 +407,6 @@ describe('collect command', () => {
       // The refusal collected nothing.
       const state = await getActiveState(workspace);
       expect(state?.step).toBe('1');
-    });
-
-    it('names claim bearer authority in the orchestrator-gate refusal message', () => {
-      // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at bearer
-      // authority and never echo a run id (decision 4).
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-id');
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('Do not combine `--run`');
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).not.toMatch(/rd_[a-f0-9]{32}/);
     });
   });
 

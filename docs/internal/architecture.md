@@ -531,17 +531,17 @@ trust boundaries.
 
 ### Refusal messages never echo the target run id
 
-The `ACTOR_CONTEXT_REQUIRED` refusal (and the `COLLECT_REQUIRES_ORCHESTRATOR`
-remediation) tells the caller to pass `--claim-id <claimId>` using the bearer
-claim from their orchestration context, and deliberately does **not** echo the
-target run id in the message or the JSON details. A run id is only an identifier
-and would authorize nothing even if echoed, but surfacing it would still hand
-the lingering-child agent a copy-paste target it can pair with a stolen claim,
-so the barrier stays quiet about it. Run ids remain natively present elsewhere —
-in claim output (`parent_run_id`), on every event (`runbookId` — an inline
-child's id also rides the `inlineLaunch` **payload** on the launch event; there
-is no event type named `inlineLaunch`), and via `rundown status` — but a run id
-is a selector, and only a verified bearer claim authorizes a mutation.
+The `ACTOR_CONTEXT_REQUIRED` refusal tells the caller to pass
+`--claim-id <claimId>` using the bearer claim from their orchestration context,
+and deliberately does **not** echo the target run id in the message or the JSON
+details. A run id is only an identifier and would authorize nothing even if
+echoed, but surfacing it would still hand the lingering-child agent a copy-paste
+target it can pair with a stolen claim, so the barrier stays quiet about it. Run
+ids remain natively present elsewhere — in claim output (`parent_run_id`), on
+every event (`runbookId` — an inline child's id also rides the `inlineLaunch`
+**payload** on the launch event; there is no event type named `inlineLaunch`),
+and via `rundown status` — but a run id is a selector, and only a verified
+bearer claim authorizes a mutation.
 
 ### Residual ambient session-management lane (R1 scope decision)
 

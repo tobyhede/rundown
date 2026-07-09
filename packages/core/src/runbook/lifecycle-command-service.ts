@@ -1845,7 +1845,6 @@ export class RunbookLifecycleCommandService {
           message: policy.message,
         };
       case 'open_claims':
-      case 'collect_requires_orchestrator':
       case 'missing_outcomes':
       case 'already_collected':
       case 'collection_frame_not_active':

@@ -135,7 +135,7 @@ describe('bareRoleSpecificMutation', () => {
   ])('does not withhold the claim-evidence collect %j', (argv) => {
     // A claimed child collecting delegations issued by its OWN controlled run
     // carries reconstructable claim-controller evidence; ancestor collection is
-    // still refused downstream by core policy (collect_requires_orchestrator).
+    // still refused downstream by core policy (claim_grant_required).
     expect(bareRoleSpecificMutation(argv)).toBeUndefined();
   });
 

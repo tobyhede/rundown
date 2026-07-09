@@ -118,7 +118,7 @@ export interface ResolveCommandIntentInput {
  * This is NOT a pure subset of the spec's `DelegationPolicyOutcome` union (spec
  * lines 403-416): it is a subset of the spec's claim/terminal members AND a
  * superset on collection-operation members. Implemented: `allowed`,
- * `actor_context_required`, `collect_requires_orchestrator`,
+ * `actor_context_required`, `claim_grant_required`,
  * `delegation_collection_pending`, `open_claims`, plus the collection-operation
  * members added by Plan 4 (Core Collection Operation) that the spec union does
  * not list: `missing_outcomes`, `already_collected`, `collection_frame_not_active`,
@@ -155,19 +155,6 @@ export type DelegationPolicyOutcome =
       readonly intent: CommandIntent['kind'];
       /** Target run that needed authorization, when known. */
       readonly targetRunId?: RunId;
-    }
-  | {
-      /** Caller is not the effective orchestrator for the collection target. */
-      readonly kind: 'collect_requires_orchestrator';
-      /** Target run the caller attempted to collect into. */
-      readonly targetRunId: RunId;
-      /**
-       * Operator-facing remediation names bearer authority and warns against
-       * treating `--run` as authority. Never echoes the target run id — the
-       * refusal is an accident barrier and must not hand a lingering child a
-       * copy-paste bypass.
-       */
-      readonly message: typeof COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE;
     }
   | {
       /** Bare mutation is blocked by unconsumed reported delegation outcomes. */
@@ -349,20 +336,6 @@ function allowed(
     ...(targetState ? { targetRunId: targetState.id } : {}),
   };
 }
-
-/**
- * Remediation message for the `collect_requires_orchestrator` refusal.
- *
- * Names bearer claim authority with wording consistent with the
- * `RUN_TARGET_UNAVAILABLE` / `ACTOR_CONTEXT_REQUIRED` remediations. `--run` is
- * only target selection, and the message never echoes the target run id
- * (decision 4 — accident-proofing, not secrecy: run ids are natively available
- * from `rundown run` output and every event's `runbookId`).
- */
-export const COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE =
-  'rundown collect requires an actor that controls the target delegating run. ' +
-  'Pass `--claim-id <claimId>` with a bearer grant that controls the delegating run. ' +
-  'Do not combine `--run` with `--claim-id`.';
 
 function rejectBareMutationIfCollectionPending(
   input: ResolveCommandIntentInput,

@@ -644,7 +644,6 @@ async function evaluateTransitionPolicy(
             runId: target.id,
           }
         : { kind: 'actor_context_required' };
-    case 'collect_requires_orchestrator':
     case 'missing_outcomes':
     case 'already_collected':
     case 'collection_frame_not_active':
