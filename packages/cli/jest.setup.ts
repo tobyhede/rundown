@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { afterEach } from '@jest/globals';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
