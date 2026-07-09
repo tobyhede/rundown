@@ -387,10 +387,11 @@ these capabilities MUST drive the CLI directly.
 
 Tool inputs MUST conform to the schema declared in [§5](#mcp-tools-reference).
 Unknown properties MAY be ignored, EXCEPT for [`delegate`](#delegate), whose
-schema is strict — unknown keys are rejected. (Because `delegate` is withheld
-regardless (see [§5.11](#delegate)), this strictness is moot in practice.)
-Type-incorrect properties MUST cause the server to reject the invocation without
-spawning the CLI.
+schema is strict — unknown keys are rejected. Because a claim-evidenced
+`delegate` is forwarded to the CLI (see [§5.11](#delegate)), this strictness
+bounds the argv the server will construct on the caller's behalf. Type-incorrect
+properties MUST cause the server to reject the invocation without spawning the
+CLI.
 
 ### 6.2 Response Envelope
 
@@ -479,19 +480,21 @@ inheritance.
 
 ## 8. Delegation
 
-The MCP server exposes the delegation lifecycle through the [`claim`](#claim)
-and [`collect`](#collect) tools. Issuing a delegation via
-[`delegate`](#delegate) is NOT available over MCP: every `delegate` call is
-withheld in-process by the subprocess mutation boundary (see
-[§5.11](#delegate)), because delegation carries no claim evidence and a
-subprocess-spawned `delegate` would silently inherit direct-CLI trust over the
-active run. To issue or retry a delegation, run `rundown delegate` directly in a
-trusted terminal. For the claim tool, claim lifecycle is inherited unchanged
-from the CLI; the MCP server adds no policy or state of its own. A bare
-`collect` (no `claimId`) is likewise withheld in-process by the subprocess
-mutation boundary ([§5.13](#collect)) — a claim-evidenced `collect` carrying a
-real `claimId` is unaffected, and its result aggregation is inherited unchanged
-from the CLI. Token abort likewise remains CLI-only (see
+The MCP server exposes the delegation lifecycle through the
+[`delegate`](#delegate), [`claim`](#claim), and [`collect`](#collect) tools.
+Issuing a delegation via [`delegate`](#delegate) requires bearer authority: a
+`delegate` call presenting a real `claimId` is forwarded to the CLI, while a
+bare or `runId`-only `delegate` is withheld in-process by the subprocess
+mutation boundary (see [§5.11](#delegate)), because a subprocess-spawned bare
+`delegate` would silently inherit direct-CLI trust over the active run. `runId`
+is target selection only and never exempts the withhold. To issue or retry a
+delegation without a bearer claim, run `rundown delegate` directly in a trusted
+terminal. For the claim tool, claim lifecycle is inherited unchanged from the
+CLI; the MCP server adds no policy or state of its own. A bare `collect` (no
+`claimId`) is likewise withheld in-process by the subprocess mutation boundary
+([§5.13](#collect)) — a claim-evidenced `collect` carrying a real `claimId` is
+unaffected, and its result aggregation is inherited unchanged from the CLI.
+Token abort likewise remains CLI-only (see
 [§5.14](#unsupported-cli-operations)). See
 [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
 [docs/reference/runtime.md State Persistence](runtime.md#state-persistence).
