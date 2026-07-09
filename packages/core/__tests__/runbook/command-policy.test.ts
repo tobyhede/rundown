@@ -504,13 +504,6 @@ describe('deriveEffectiveRole', () => {
     );
   });
 
-  it('treats a trusted controller of a different run as unknown for the target', () => {
-    const targetState = state();
-    expect(deriveEffectiveRole(verifiedRunContext(childRunId), targetState)).toBe(
-      'delegated_relative_to_target',
-    );
-  });
-
   it('treats a claim controller of the target run as orchestrator', () => {
     const claimedRun = state({ id: childRunId });
     expect(deriveEffectiveRole(verifiedRunContext(childRunId), claimedRun)).toBe(

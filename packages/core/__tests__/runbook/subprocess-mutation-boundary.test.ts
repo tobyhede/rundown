@@ -63,10 +63,12 @@ describe('bareRoleSpecificMutation', () => {
     expect(bareRoleSpecificMutation(argv)).toBeUndefined();
   });
 
-  it('still withholds delegate when --claim-id is a consumed option value', () => {
-    expect(
-      bareRoleSpecificMutation(['delegate', 'child.md', '--input-file', '--claim-id=foo']),
-    ).toBe('delegate');
+  it.each([
+    [['delegate', 'child.md', '--input-file', '--claim-id=foo']],
+    [['delegate', 'child.md', '--input', '--claim-id=foo']],
+    [['delegate', 'child.md', '--input-json', '--claim-id=foo']],
+  ])('still withholds delegate when --claim-id is a consumed input value %j', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBe('delegate');
   });
 
   it.each([
