@@ -9,14 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { runbooksDir } from '@rundown-org/core';
-
-function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
-}
+import { restoreEnvVar } from './process-state.js';
 
 describe('resolveRunbookFile', () => {
   let testDir: string;
@@ -36,10 +29,10 @@ describe('resolveRunbookFile', () => {
 
   afterEach(async () => {
     // Restore env BEFORE cleanup to prevent bleeding into other tests
-    restoreEnv('CLAUDE_PLUGIN_ROOT', originalPluginRoot);
-    restoreEnv('CODEX_PLUGIN_ROOT', originalCodexPluginRoot);
-    restoreEnv('RUNDOWN_PLUGIN_ROOT', originalRundownPluginRoot);
-    restoreEnv('BUNDLED_RUNBOOKS_PATH', originalBundledRunbooksPath);
+    restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalPluginRoot);
+    restoreEnvVar('CODEX_PLUGIN_ROOT', originalCodexPluginRoot);
+    restoreEnvVar('RUNDOWN_PLUGIN_ROOT', originalRundownPluginRoot);
+    restoreEnvVar('BUNDLED_RUNBOOKS_PATH', originalBundledRunbooksPath);
     await fs.rm(testDir, { recursive: true, force: true });
   });
 

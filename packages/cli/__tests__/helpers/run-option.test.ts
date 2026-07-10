@@ -9,6 +9,7 @@ import { registerStopCommand } from '../../src/commands/stop.js';
 import { registerCollectCommand } from '../../src/commands/collect.js';
 import { registerDelegateCommand } from '../../src/commands/delegate.js';
 import { registerGotoCommand } from '../../src/commands/goto.js';
+import { takeExitCode } from './exit-code.js';
 
 function makeOutput(): {
   output: OutputEmitter;
@@ -21,10 +22,7 @@ function makeOutput(): {
 }
 
 describe('parseRunOption', () => {
-  const previousExitCode = process.exitCode;
-
   afterEach(() => {
-    process.exitCode = previousExitCode;
     jest.restoreAllMocks();
   });
 
@@ -44,6 +42,8 @@ describe('parseRunOption', () => {
     const result = parseRunOption('not-a-run-id', output);
     expect(result.ok).toBe(false);
     expect(errorSpy).toHaveBeenCalledWith(expect.any(String), 'INVALID_RUN_ID');
+    // Signalling failure via `process.exitCode` is the parser's contract; consume it.
+    expect(takeExitCode()).toBe(1);
   });
 });
 

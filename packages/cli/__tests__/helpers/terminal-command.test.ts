@@ -17,6 +17,7 @@ import {
   type ChildTerminalPropagator,
 } from '../../src/helpers/terminal-command.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { takeExitCode } from './exit-code.js';
 
 // Renderer contract coverage for the terminal (complete/stop) seam front end.
 // Each LifecycleTerminalOutcome kind must map to the correct CLI envelope / error
@@ -451,5 +452,9 @@ describe('handleTerminalRecovery', () => {
     expect(message).not.toContain(parseClaimBearer(CLAIM_ID).secret);
     // Defense in depth: nothing the recovery path emits carries the secret.
     expect(JSON.stringify(calls)).not.toContain(parseClaimBearer(CLAIM_ID).secret);
+
+    // Recovery signals failure through `process.exitCode` rather than `process.exit`.
+    // Assert it, and consume it so the value cannot leak into the next test file.
+    expect(takeExitCode()).toBe(1);
   });
 });

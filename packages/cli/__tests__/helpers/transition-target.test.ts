@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { Command } from 'commander';
 import type { ClaimId, RunId } from '@rundown-org/core';
 import {
@@ -6,13 +6,7 @@ import {
   transitionTargetFields,
   withTransitionTargetOptions,
 } from '../../src/helpers/transition-target.js';
-
-// The atomic parsers set `process.exitCode = 1` on failure (their real
-// side-effect contract). Reset it after each test so a rejection case cannot
-// make the Jest process itself exit non-zero.
-afterEach(() => {
-  process.exitCode = 0;
-});
+import { takeExitCode } from './exit-code.js';
 
 const CLAIM_ID =
   'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -48,11 +42,16 @@ describe('parseTransitionTarget', () => {
     expect(target).toEqual({ kind: 'run', runId: RUN_ID as RunId });
   });
 
+  // The rejection cases below assert `takeExitCode()` because signalling failure
+  // through `process.exitCode` is part of the parser's contract, not incidental
+  // bookkeeping. Consuming it here also leaves the process clean for the next test.
+
   it('rejects both flags with INVALID_SYNTAX and returns undefined', () => {
     const output = fakeOutput();
     const target = parseTransitionTarget({ claimId: CLAIM_ID, run: RUN_ID }, output as never);
     expect(target).toBeUndefined();
     expect(output.errors).toEqual([expect.objectContaining({ code: 'INVALID_SYNTAX' })]);
+    expect(takeExitCode()).toBe(1);
   });
 
   it('rejects a malformed claim with INVALID_CLAIM_ID', () => {
@@ -60,6 +59,7 @@ describe('parseTransitionTarget', () => {
     const target = parseTransitionTarget({ claimId: 'not-a-claim' }, output as never);
     expect(target).toBeUndefined();
     expect(output.errors).toEqual([expect.objectContaining({ code: 'INVALID_CLAIM_ID' })]);
+    expect(takeExitCode()).toBe(1);
   });
 
   it('rejects a malformed run with INVALID_RUN_ID', () => {
@@ -67,6 +67,7 @@ describe('parseTransitionTarget', () => {
     const target = parseTransitionTarget({ run: 'not-a-run' }, output as never);
     expect(target).toBeUndefined();
     expect(output.errors).toEqual([expect.objectContaining({ code: 'INVALID_RUN_ID' })]);
+    expect(takeExitCode()).toBe(1);
   });
 
   it('applies precedence: both + malformed run yields INVALID_SYNTAX (not INVALID_RUN_ID)', () => {
@@ -74,6 +75,7 @@ describe('parseTransitionTarget', () => {
     const target = parseTransitionTarget({ claimId: CLAIM_ID, run: 'not-a-run' }, output as never);
     expect(target).toBeUndefined();
     expect(output.errors).toEqual([expect.objectContaining({ code: 'INVALID_SYNTAX' })]);
+    expect(takeExitCode()).toBe(1);
   });
 });
 
