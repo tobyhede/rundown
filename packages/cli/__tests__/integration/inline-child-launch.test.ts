@@ -317,7 +317,12 @@ Child prompt.
     const childRunId = inlineState.childRunId;
     if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
 
-    await writeSession(workspace, { defaultStack: [parentRunId] });
+    const sessionBeforeRewind = await readSession(workspace);
+    await writeSession(workspace, {
+      defaultStack: [parentRunId],
+      claims: sessionBeforeRewind.claims,
+      ...(sessionBeforeRewind.stashed ? { stashed: sessionBeforeRewind.stashed } : {}),
+    });
 
     const snapshot = parentState.snapshot as {
       context?: Record<string, unknown>;
@@ -395,9 +400,12 @@ Child prompt.
     expect(parentState).not.toBeNull();
     if (!parentState) throw new Error('expected parent runbook state');
 
+    const sessionBeforePassRecovery = await readSession(workspace);
     await writeSession(workspace, {
       active: parentRunId,
       defaultStack: [parentRunId],
+      claims: sessionBeforePassRecovery.claims,
+      ...(sessionBeforePassRecovery.stashed ? { stashed: sessionBeforePassRecovery.stashed } : {}),
     });
 
     const passRecoveredParent = await runCliInProcess(
@@ -439,9 +447,12 @@ Child prompt.
     );
     expect(passParentStep.exitCode).toBe(0);
 
+    const sessionBeforeFailRecovery = await readSession(workspace);
     await writeSession(workspace, {
       active: parentRunId,
       defaultStack: [parentRunId],
+      claims: sessionBeforeFailRecovery.claims,
+      ...(sessionBeforeFailRecovery.stashed ? { stashed: sessionBeforeFailRecovery.stashed } : {}),
     });
 
     const failRecoveredParent = await runCliInProcess(

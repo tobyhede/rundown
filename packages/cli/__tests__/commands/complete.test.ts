@@ -54,16 +54,18 @@ describe('complete command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('forces the named stack-member run terminal via complete --run <id>', async () => {
+    it('refuses complete --run <id> without bearer authority', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).not.toBeNull();
 
       const result = await runCliInProcess(`complete --run ${active!.id}`, workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('ACTOR_CONTEXT_REQUIRED');
       const state = await readRunbookState(workspace, active!.id);
-      expect(state?.lifecycle).toBe('completed');
+      expect(state?.lifecycle).toBe('running');
     });
 
     it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
@@ -428,7 +430,9 @@ Do work.
       const session = await readSession(workspace);
       // Item 4: the terminal claim is RETAINED as a tombstone (release with
       // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
       expect(session.defaultStack).toContain(parentState!.id);
     });
 
@@ -484,7 +488,9 @@ Do work.
       expect(result.exitCode).not.toBe(0);
       // Still retained as a tombstone (conflict path releases with retain too).
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
     });
   });
 

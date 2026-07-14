@@ -5,7 +5,7 @@ description: Use when running the Rundown end-to-end test runbook and reporting 
 
 # End-to-End Testing
 
-Run the end-to-end test through Rundown state. Do not improvise. Start:
+Run the end-to-end test through Rundown state; do not improvise:
 
 ```bash
 rundown run rundown:end-to-end-test
@@ -20,10 +20,10 @@ Only nested review and collation runbooks are delegated. If the wrapper complete
 
 ## Operating Rules
 
-- Follow the active prompt. Use default JSON output; never add `--text` (it is human-only output, not part of the agent protocol).
-- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context. Parent-side pass/fail/collect carry `--run <rd_…>` (capture the run id from `rundown run` output, echoed as `runbookId` on every event); child-side commands carry `--claim-id <claim_id>`.
+- Follow the active prompt. Use default JSON output; never add `--text` (human-only, not part of the agent protocol).
+- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context. Parent-side pass/fail/collect carry `--claim-id <claim_id>` (from `rundown run`'s `runbook_started` event); child-side commands carry the `claim_id` from `rundown claim`.
 - Use `rundown status` only to recover orientation after an error or interruption.
-- Pass only after the current step is complete; fail when it cannot be completed as written.
+- Pass only after the step is complete; fail when it cannot be completed as written.
 - Preserve state on errors. Do not prune, clear, or delete `.rundown`.
 
 The DELEGATE step auto-issues a claim token (`delegations` in `rundown status`). Claim it:
@@ -32,9 +32,9 @@ The DELEGATE step auto-issues a claim token (`delegations` in `rundown status`).
 rundown claim <token>                  # returns claim_id; dispatch the child to a subagent
 ```
 
-Drive the claimed child like any runbook: advance each step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. On a delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED` regardless of claim state (exposure is sticky). A `--run`-targeted parent advance is additionally refused with `OPEN_DELEGATED_CHILDREN` while a claimed child is open.
+Advance each claimed-child step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`; prompted child steps need this claim-id transition. On a delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED` even after claiming (exposure is sticky). The orchestrator's own `rundown pass --claim-id <claim_id>` parent advance is refused `OPEN_DELEGATED_CHILDREN` while a claimed child is open — wait for the child to report (or `rundown abort <token> --claim-id <claim_id> --force`). (A `--run`-targeted mutation is separately refused `ACTOR_CONTEXT_REQUIRED`: `--run` is target selection only, not mutation authority.)
 
-When the child's final step completes it auto-resolves its parent substep and the parent auto-aggregates and advances. `rundown pass/fail --claim-id` is idempotent on a resolved child, so it also confirms or overrides a child you stop early.
+On its final step, the child reports its result to the delegation linkage and stops driving the parent. The parent advances only after the orchestrator runs `rundown collect --claim-id <parent_claim_id>`.
 
 ## Artifacts
 
@@ -53,6 +53,6 @@ Do not rediscover paths or add artifact-only steps. Missing/wrong variables and 
 
 ## Feedback
 
-Feedback must be JSON matching `review.schema.json`. Use empty `items` when there are no findings.
+Feedback must be JSON matching `review.schema.json`. Use empty `items` for no findings.
 
-Capture only concrete issues: unclear prompts, wrong delegation boundary, missing/wrong artifact variables, schema mismatches, required manual inference, failed commands with observed output.
+Capture only concrete issues: unclear prompts, wrong delegation boundary, missing/wrong artifact variables, schema mismatches, required manual inference, failed commands with output.

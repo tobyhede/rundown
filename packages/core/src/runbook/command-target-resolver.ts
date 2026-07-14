@@ -1,5 +1,15 @@
 import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
-import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
+import {
+  authorizeClaim,
+  redactClaimId,
+  type ClaimAuthorizationRequest,
+  type ClaimId,
+  type ClaimIdResolution,
+  type ClaimRecord,
+  type ClaimVerificationResult,
+  type VerifiedClaim,
+  type VerifiedClaimAuthority,
+} from './claim-id.js';
 import { resolveCommandIntent, type CommandTargetSelector } from './command-policy.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
@@ -20,13 +30,13 @@ export type CommandTargetResolution =
   | {
       readonly kind: 'claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
   | {
       readonly kind: 'terminal_claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly message: string;
@@ -71,7 +81,7 @@ export type TransitionTargetResolution =
   | {
       readonly kind: 'claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
   | { readonly kind: 'default'; readonly state: RunbookState }
@@ -80,7 +90,7 @@ export type TransitionTargetResolution =
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly result: TransitionCommandName;
@@ -88,7 +98,7 @@ export type TransitionTargetResolution =
   | {
       readonly kind: 'terminal_claim_conflict';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly expectedResult: TransitionCommandName;
@@ -117,6 +127,11 @@ export type TransitionTargetResolution =
        * error consistently.
        */
       readonly kind: 'actor_context_required';
+    }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
     }
   | {
       /** Ready resolution for an explicit `--run` target on the session stack. */
@@ -222,6 +237,14 @@ export interface CommandTargetReader {
   ): Promise<ClaimIdResolution>;
 
   /**
+   * Verify an explicit bearer claim id against session proof data.
+   *
+   * @param claimId - Bearer claim id presented by the caller.
+   * @returns Verification status.
+   */
+  verifyClaimId(claimId: ClaimId): Promise<ClaimVerificationResult>;
+
+  /**
    * List unresolved delegated child claims for a parent runbook.
    *
    * @param parentRunId - Parent runbook id to inspect
@@ -252,6 +275,11 @@ async function resolveClaimTarget(
   const claimed = await targetReader.getActiveForClaimId(claimId, {
     includeStashed: options.includeStashed,
   });
+  // Refusal messages are user- and log-facing, so they must never echo the
+  // bearer `claimId` (it carries the live secret segment). Route it through the
+  // single redaction seam; the returned `claimId` discriminant stays the bearer
+  // for any follow-up mutation the caller may re-issue.
+  const claimKey = redactClaimId(claimId);
   switch (claimed.status) {
     case 'claimed':
       return { kind: 'claim', claimId, claim: claimed.claim, state: claimed.state };
@@ -262,15 +290,21 @@ async function resolveClaimTarget(
         claim: claimed.claim,
         state: claimed.state,
         lifecycle: claimed.lifecycle,
-        message: `Claim id ${claimId} points at a ${claimed.lifecycle} child runbook.`,
+        message: `Claim id ${claimKey} points at a ${claimed.lifecycle} child runbook.`,
       };
     case 'missing':
-      return { kind: 'stale_claim', claimId, message: `Claim id ${claimId} does not exist.` };
+      return { kind: 'stale_claim', claimId, message: `Claim id ${claimKey} does not exist.` };
+    case 'invalid-secret':
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message: `Claim id ${claimKey} is not valid for this session.`,
+      };
     case 'stale':
       return {
         kind: 'stale_claim',
         claimId,
-        message: `Claim id ${claimId} points at missing child state (${claimed.reason}).`,
+        message: `Claim id ${claimKey} points at missing child state (${claimed.reason}).`,
       };
     case 'unlinked':
       return {
@@ -278,14 +312,75 @@ async function resolveClaimTarget(
         claimId,
         message:
           claimed.reason === 'stashed'
-            ? `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`
-            : `Claim id ${claimId} is no longer linked to an active delegation (${claimed.reason}).`,
+            ? `Claim id ${claimKey} is currently stashed. Run \`rundown pop\` with its claim id to resume.`
+            : `Claim id ${claimKey} is no longer linked to an active delegation (${claimed.reason}).`,
       };
     default: {
       const _exhaustive: never = claimed;
       return _exhaustive;
     }
   }
+}
+
+/** Mutation authority verified from an explicit bearer claim id. */
+export type MutationAuthorityResolution =
+  | {
+      /** Mutation authority was verified. */
+      readonly kind: 'verified';
+      /** How authority was proven, without changing the verified claim payload. */
+      readonly authority: VerifiedClaimAuthority;
+      /** Shared verified claim data for both explicit and implicit authority. */
+      readonly claim: VerifiedClaim;
+    }
+  | {
+      /** Mutation authority was refused. */
+      readonly kind: 'refused';
+      /** Refusal reason. */
+      readonly reason: 'missing' | 'invalid-secret' | 'ambiguous' | 'no-authorizing-claim';
+    };
+
+/**
+ * Resolve mutation authority from a presented bearer claim id.
+ *
+ * @param input - Reader, optional presented bearer, target, and authorization request.
+ * @param input.targetReader - Read-side dependency for claim proof.
+ * @param input.presentedClaimId - Optional explicit bearer claim id.
+ * @param input.targetState - Mutation target state.
+ * @param input.request - Exact grant authorization request.
+ * @returns Verified authority or a typed refusal.
+ */
+export async function resolveMutationAuthority(input: {
+  readonly targetReader: CommandTargetReader;
+  readonly presentedClaimId?: ClaimId;
+  readonly targetState: RunbookState;
+  readonly request: ClaimAuthorizationRequest;
+}): Promise<MutationAuthorityResolution> {
+  if (input.presentedClaimId === undefined) {
+    return { kind: 'refused', reason: 'missing' };
+  }
+
+  const verified = await input.targetReader.verifyClaimId(input.presentedClaimId);
+  if (verified.status !== 'verified') {
+    return {
+      kind: 'refused',
+      reason: verified.status === 'invalid-secret' ? 'invalid-secret' : 'missing',
+    };
+  }
+  return authorizeClaim(verified.claim, input.request).kind === 'allowed'
+    ? {
+        kind: 'verified',
+        authority: {
+          kind: 'bearer',
+          claimId: input.presentedClaimId,
+          claimKey: verified.claim.claimKey,
+        },
+        claim: verified.claim,
+      }
+    : { kind: 'refused', reason: 'no-authorizing-claim' };
+}
+
+function claimAuthorizesRunMutation(claim: VerifiedClaim, state: RunbookState): boolean {
+  return authorizeClaim(claim, { action: 'mutate-run', runId: state.id }).kind === 'allowed';
 }
 
 /**
@@ -402,9 +497,28 @@ export async function resolveTransitionTarget(
     const claimed = await resolveClaimTarget(targetReader, options.claimId, {
       includeStashed: false,
     });
+    if (claimed.kind === 'stale_claim') {
+      return claimed;
+    }
+    if (!claimAuthorizesRunMutation(claimed.claim, claimed.state)) {
+      return {
+        kind: 'claim_grant_required',
+        claimId: claimed.claimId,
+        runId: claimed.state.id,
+      };
+    }
     if (claimed.kind !== 'terminal_claim') {
-      // 'claim' and 'stale_claim' have identical shapes in both unions; TS
-      // narrows `claimed` to exactly those two here.
+      const refusal = await evaluateTransitionPolicy(
+        targetReader,
+        options,
+        claimed.state,
+        {
+          kind: 'claim',
+          claimId: claimed.claimId,
+        },
+        { skipOpenClaims: claimed.claim.delegation !== undefined },
+      );
+      if (refusal) return refusal;
       return claimed;
     }
     // Split the base terminal_claim into confirm vs conflict. `claimed.lifecycle`
@@ -439,7 +553,7 @@ export async function resolveTransitionTarget(
       return run;
     }
     // A run-shaped target flows through the SAME policy block as the default
-    // path — `--run` names authority, it does not bypass the collection guards.
+    // path — `--run` selects a target, but never authorizes mutation.
     const refusal = await evaluateTransitionPolicy(targetReader, options, run.state, {
       kind: 'run',
       runId: run.runId,
@@ -478,6 +592,8 @@ export async function resolveTransitionTarget(
  * @param options - Transition options carrying command, targeting, and actor context
  * @param target - Resolved target run state (default active or `--run`-named)
  * @param targetSelector - Selector shape describing how the target was named
+ * @param policyOptions - Extra policy switches for claim-targeted transitions
+ * @param policyOptions.skipOpenClaims - Skip parent open-claim reads for delegated child claims
  * @returns A refusing resolution, or `undefined` when allowed
  * @throws {Error} On policy outcomes unreachable for a transition intent
  */
@@ -486,12 +602,16 @@ async function evaluateTransitionPolicy(
   options: ResolveTransitionTargetOptions,
   target: RunbookState,
   targetSelector: CommandTargetSelector,
+  policyOptions: { readonly skipOpenClaims?: boolean } = {},
 ): Promise<TransitionTargetResolution | undefined> {
   const targeted = options.targeted === true;
   // Open claims feed only the bare-shaped open-children guard; a targeted
   // transition is exempt from it, so the read is skipped (and reader fakes
   // asserting "no open-claim read for targeted" stay valid).
-  const openClaims = targeted ? [] : await targetReader.listOpenClaimsForParent(target.id);
+  const openClaims =
+    targeted || policyOptions.skipOpenClaims === true
+      ? []
+      : await targetReader.listOpenClaimsForParent(target.id);
   const actorContext = options.actorContext ?? UNKNOWN_ACTOR_CONTEXT;
   const policy = resolveCommandIntent({
     actorContext,
@@ -514,7 +634,16 @@ async function evaluateTransitionPolicy(
       return { kind: 'open_delegated_children', parentRunId: target.id, claims: policy.claims };
     case 'actor_context_required':
       return { kind: 'actor_context_required' };
-    case 'collect_requires_orchestrator':
+    case 'claim_grant_required':
+      // Verified-claim authority is bearer-only, so the bearer claimId is always
+      // present once narrowed; an unknown actor context has no bearer to name.
+      return actorContext.kind === 'verified_claim'
+        ? {
+            kind: 'claim_grant_required',
+            claimId: actorContext.authority.claimId,
+            runId: target.id,
+          }
+        : { kind: 'actor_context_required' };
     case 'missing_outcomes':
     case 'already_collected':
     case 'collection_frame_not_active':
@@ -553,14 +682,14 @@ export type TerminalTargetResolution =
   | {
       readonly kind: 'claim';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly command: TerminalCommandName;
@@ -568,11 +697,16 @@ export type TerminalTargetResolution =
   | {
       readonly kind: 'terminal_claim_conflict';
       readonly claimId: ClaimId;
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
       readonly expectedCommand: TerminalCommandName;
       readonly requestedCommand: TerminalCommandName;
+    }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
     };
 
 /**
@@ -596,6 +730,16 @@ export async function resolveTerminalTarget(
   const claimed = await resolveClaimTarget(targetReader, options.claimId, {
     includeStashed: false,
   });
+  if (claimed.kind === 'stale_claim') {
+    return claimed;
+  }
+  if (!claimAuthorizesRunMutation(claimed.claim, claimed.state)) {
+    return {
+      kind: 'claim_grant_required',
+      claimId: claimed.claimId,
+      runId: claimed.state.id,
+    };
+  }
   if (claimed.kind !== 'terminal_claim') {
     // 'claim' and 'stale_claim' share identical shapes across both unions.
     return claimed;

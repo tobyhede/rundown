@@ -41,7 +41,7 @@ export const HOOK_REFUSAL_EXIT_CODE = 2;
  * @param text - Text to write
  * @returns Number of bytes written, when returned by the underlying writer
  */
-export type StderrSyncWriter = (fd: number, text: string) => number | void;
+export type StderrSyncWriter = (fd: number, text: string) => number | undefined;
 
 /**
  * Process exit function used by the hook CLI fail-closed path.

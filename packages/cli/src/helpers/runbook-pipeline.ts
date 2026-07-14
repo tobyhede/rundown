@@ -175,7 +175,12 @@ export interface RunbookStartFailure {
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: RunId }
+  | {
+      ok: true;
+      loopResult: 'done' | 'stopped' | 'waiting';
+      stateId: RunId;
+      claimId?: ClaimId;
+    }
   | RunbookStartFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
@@ -199,6 +204,12 @@ export type ClaimFailure =
     }
   | {
       readonly reason: 'delegation-resolved';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
+  | {
+      readonly reason: 'delegation-already-claimed';
       readonly parentRunId: string;
       readonly stepId: string;
       readonly childRunId: string;
@@ -251,7 +262,7 @@ export type ClaimResult =
       ok: true;
       /** Unique identifier of the launched (or idempotently returned) child run. */
       childRunId: RunId;
-      /** Claim id for explicit child targeting. */
+      /** Bearer claim id for newly claimed children. */
       claimId: ClaimId;
       /** Unique identifier of the parent run that owns the delegation. */
       parentRunId: RunId;
@@ -267,11 +278,13 @@ export type ClaimResult =
  * @param emitter - Event emitter for publishing execution events
  * @param runbookState - Current runbook state with title and description
  * @param prompted - Whether the runbook is running in prompted mode
+ * @param claimId - Optional run-control bearer minted for the orchestrator
  */
 function emitRunbookStarted(
   emitter: ExecutionEventEmitter,
   runbookState: RunbookState,
   prompted: boolean,
+  claimId?: ClaimId,
 ): void {
   emitter.emit({
     type: 'RUNBOOK_STARTED',
@@ -279,6 +292,7 @@ function emitRunbookStarted(
       title: runbookState.title,
       description: runbookState.description,
       prompted,
+      ...(claimId !== undefined ? { claimId } : {}),
       statePath: `${RUNS_DIR}/${runbookState.id}.json`,
     },
   });
@@ -914,6 +928,7 @@ async function launchRunbook(
   };
   let sessionActivated = false;
   let afterCreateAttempted = false;
+  let issuedRunControlClaimId: ClaimId | undefined;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
     if (afterCreateAttempted && options.afterCreateRollback) {
@@ -969,10 +984,16 @@ async function launchRunbook(
 
     const sessionActivation = options.sessionActivation ?? { kind: 'default-stack' as const };
     switch (sessionActivation.kind) {
-      case 'default-stack':
-        await sessionService.pushRunbook(state.id);
+      case 'default-stack': {
+        // Push + run-control claim mint as one atomic session mutation: run-start
+        // is never persisted in a pushed-but-unclaimed state, and it takes a
+        // single session-lock cycle instead of two (removing the double-cycle
+        // contention that made run-start flaky under heavy parallel load).
+        const activation = await sessionService.pushRunbookWithRunControlClaim(state.id);
         sessionActivated = true;
+        issuedRunControlClaimId = activation.claimId;
         break;
+      }
       case 'none':
         break;
       default: {
@@ -987,7 +1008,7 @@ async function launchRunbook(
     const emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
-    emitRunbookStarted(emitter, initializedState, options.prompted);
+    emitRunbookStarted(emitter, initializedState, options.prompted, issuedRunControlClaimId);
 
     launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {
@@ -1035,7 +1056,12 @@ async function launchRunbook(
     },
   );
 
-  return { ok: true, loopResult, stateId: launchedStateId };
+  return {
+    ok: true,
+    loopResult,
+    stateId: launchedStateId,
+    ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
+  };
 }
 
 /**
@@ -1135,7 +1161,11 @@ type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
   | {
       readonly ok: false;
-      readonly reason: 'child-missing' | 'delegation-resolved' | 'linkage-mismatch';
+      readonly reason:
+        | 'child-missing'
+        | 'delegation-resolved'
+        | 'delegation-already-claimed'
+        | 'linkage-mismatch';
       readonly childRunId: RunId;
     };
 
@@ -1164,8 +1194,14 @@ async function claimChildForPipeline(
     case 'claimed':
       return {
         ok: true,
-        claimId: claim.claim.claimId,
-        childRunId: claim.claim.childRunId,
+        claimId: claim.claimId,
+        childRunId: claim.claim.controlledRunId,
+      };
+    case 'already-claimed':
+      return {
+        ok: false,
+        reason: 'delegation-already-claimed',
+        childRunId: claim.childRunId,
       };
     case 'missing-child':
       return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
@@ -1216,7 +1252,7 @@ export interface ClaimedOutputPayload {
   readonly action: 'claimed';
   /** Redacted display form of the delegation token (safe to log). */
   readonly token: string;
-  /** Branded claim id for subsequent `--claim-id` commands. */
+  /** Branded claim id for subsequent `--claim-id` commands, when freshly minted. */
   readonly claim_id: ClaimId;
   /** Run id of the launched (or idempotently returned) child runbook. */
   readonly run_id: string;
@@ -1282,10 +1318,11 @@ function emitClaimedSuccess(args: {
   readonly parentStepAt: string | undefined;
   readonly loopResult: 'done' | 'stopped' | 'waiting';
 }): Extract<ClaimResult, { ok: true }> {
+  const payload = buildClaimedPayload(args);
   emitClaimedOutput(
     args.output,
     `Claimed ${args.truncatedToken} -> ${args.childRunbookPath}`,
-    buildClaimedPayload(args),
+    payload,
   );
 
   return {
@@ -1404,7 +1441,7 @@ export async function claimAndLaunch(
       };
     }
 
-    // 4b. Idempotent return if already claimed
+    // 4b. Refuse replay if already claimed
     if (freshDelegation.childRunId) {
       const delegationFrameKey = freshSubstep.frameKey;
       const freshLinkage: DelegationLinkage = {
@@ -1422,7 +1459,7 @@ export async function claimAndLaunch(
         freshLinkage,
       );
       if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, stepId);
+        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       return emitClaimedSuccess({
         output,
@@ -1443,7 +1480,7 @@ export async function claimAndLaunch(
         ok: false,
         reason: 'delegation-cancelled',
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
         cancelledAt: freshDelegation.cancelledAt,
       };
     }
@@ -1462,7 +1499,7 @@ export async function claimAndLaunch(
       };
       const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
       if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, stepId);
+        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       const adoptedChildRunId = claimResult.childRunId;
       // Adopt the orphan only after claim validation confirms its persisted
@@ -1503,14 +1540,14 @@ export async function claimAndLaunch(
 
     const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);
     if (existingClaim !== null) {
-      const existingChild = await manager.load(existingClaim.childRunId);
+      const existingChild = await manager.load(existingClaim.controlledRunId);
       if (!existingChild) {
         return {
           ok: false,
           reason: 'child-missing',
           parentRunId: freshParent.id,
-          stepId,
-          childRunId: existingClaim.childRunId,
+          stepId: substepId ?? stepId,
+          childRunId: existingClaim.controlledRunId,
         };
       }
       if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
@@ -1518,17 +1555,17 @@ export async function claimAndLaunch(
           ok: false,
           reason: 'delegation-resolved',
           parentRunId: freshParent.id,
-          stepId,
-          childRunId: existingClaim.childRunId,
+          stepId: substepId ?? stepId,
+          childRunId: existingClaim.controlledRunId,
         };
       }
       const claimResult = await claimChildForPipeline(
         ctx,
-        existingClaim.childRunId,
+        existingClaim.controlledRunId,
         delegationLinkage,
       );
       if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, stepId);
+        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       await updateStepDelegationChildRunId(
         manager,
@@ -1649,7 +1686,7 @@ export async function claimAndLaunch(
           claimResult.childRunId,
           tokenHash,
         );
-        capturedClaimId = claimResult.claimId;
+        capturedClaimId = 'claimId' in claimResult ? claimResult.claimId : undefined;
         capturedChildRunId = claimResult.childRunId;
       },
       afterCreateRollback: async (childStateId) => {

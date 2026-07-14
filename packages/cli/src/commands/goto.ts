@@ -6,8 +6,11 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
-import { parseClaimIdOption } from '../helpers/claim-id-option.js';
-import { parseRunOption } from '../helpers/run-option.js';
+import {
+  withTransitionTargetOptions,
+  parseTransitionTarget,
+  transitionTargetFields,
+} from '../helpers/transition-target.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 
 /**
@@ -15,12 +18,12 @@ import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.
  * @param program - Commander program instance to register the command on
  */
 export function registerGotoCommand(program: Command): void {
-  program
-    .command('goto <step>')
-    .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
-    .option('--index <number>', 'FOR loop iteration to target')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
-    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
+  withTransitionTargetOptions(
+    program
+      .command('goto <step>')
+      .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
+      .option('--index <number>', 'FOR loop iteration to target'),
+  )
     .option('--text', 'Output as human-readable text')
     .action(
       async (
@@ -32,13 +35,10 @@ export function registerGotoCommand(program: Command): void {
             const output = new OutputEmitter({ text: options.text, command: 'goto' });
             const cwd = getCwd();
 
-            const claimTarget = parseClaimIdOption(options.claimId, output);
-            if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
-            if (!runTarget.ok) return;
+            const target = parseTransitionTarget(options, output);
+            if (!target) return;
             const contextResult = await buildGotoContext(output, cwd, {
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
-              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              ...transitionTargetFields(target),
               commandStreamOptions: commandStreamOptionsForOutputMode(options.text),
             });
             switch (contextResult.kind) {

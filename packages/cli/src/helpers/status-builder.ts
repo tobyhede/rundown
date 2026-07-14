@@ -79,8 +79,8 @@ export interface StatusOutputData {
     runbook: string;
     state: 'pending' | 'claimed' | 'cancelled';
     childRunId?: string;
-    /** Claim id for a claimed delegation; drive or recover the child with `--claim-id`. */
-    claimId?: string;
+    /** Non-secret claim lookup key for claimed delegation correlation. */
+    claimKey?: string;
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash: string;
     /** Raw claim token, present only while the delegation is pending. */
@@ -274,12 +274,12 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
  */
 export interface ActiveStatusOptions {
   /**
-   * Session claim join map: childRunId → claimId (#531). When provided, a
+   * Session claim join map: childRunId → claimKey (#531). When provided, a
    * delegation whose COMPUTED state is `claimed` and whose childRunId has a
-   * matching entry is surfaced with its `claimId` so orphaned claims are
+   * matching entry is surfaced with its `claimKey` so orphaned claims are
    * recoverable from `rd status` without hand-reading `.rundown/session.json`.
    */
-  readonly claimIdByChildRunId?: ReadonlyMap<string, string>;
+  readonly claimKeyByChildRunId?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -368,18 +368,18 @@ export function buildActiveStatus(
             : ('pending' as const);
       // Gate on the COMPUTED state, never childRunId presence: a cancelled-
       // after-claim delegation retains childRunId with state 'cancelled', and
-      // attaching claimId there would fail the DelegationStatusEntrySchema
+      // attaching claimKey there would fail the DelegationStatusEntrySchema
       // refine (#531).
-      const claimId =
+      const claimKey =
         entryState === 'claimed' && childRunId != null
-          ? options.claimIdByChildRunId?.get(childRunId)
+          ? options.claimKeyByChildRunId?.get(childRunId)
           : undefined;
       return {
         substep: ss.id,
         runbook: delegation.childRunbookPath,
         state: entryState,
         ...(childRunId != null ? { childRunId } : {}),
-        ...(claimId != null ? { claimId } : {}),
+        ...(claimKey != null ? { claimKey } : {}),
         tokenHash: delegation.tokenHash,
         ...(childRunId == null && delegation.cancelledAt == null && delegation.token != null
           ? { token: delegation.token }

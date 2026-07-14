@@ -22,6 +22,9 @@ import {
   executeCommandSequence,
   createInProcessCommandExecutor,
   substituteRunIds,
+  substituteRunClaimIds,
+  captureClaimIdFromJsonObject,
+  captureRunClaimIdFromJsonObject,
   captureRunIdFromJsonObject,
 } from '../../src/helpers/command-sequence.js';
 import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
@@ -993,20 +996,20 @@ describe('substituteRunIds', () => {
   const runB = `rd_${'b'.repeat(32)}`;
 
   it('${RUN_ID} maps to first captured run id', () => {
-    expect(substituteRunIds('rd collect --run ${RUN_ID}', [runA])).toBe(`rd collect --run ${runA}`);
+    expect(substituteRunIds('rd status --run ${RUN_ID}', [runA])).toBe(`rd status --run ${runA}`);
   });
 
   it('${RUN_ID_2} maps to second captured run id', () => {
-    expect(substituteRunIds('rd pass --run ${RUN_ID_2}', [runA, runB])).toBe(
-      `rd pass --run ${runB}`,
+    expect(substituteRunIds('rd status --run ${RUN_ID_2}', [runA, runB])).toBe(
+      `rd status --run ${runB}`,
     );
   });
 
   it('throws for uncaptured run id references (fail closed)', () => {
-    expect(() => substituteRunIds('rd collect --run ${RUN_ID}', [])).toThrow(
+    expect(() => substituteRunIds('rd status --run ${RUN_ID}', [])).toThrow(
       /Missing captured run id/,
     );
-    expect(() => substituteRunIds('rd pass --run ${RUN_ID_2}', [runA])).toThrow(
+    expect(() => substituteRunIds('rd status --run ${RUN_ID_2}', [runA])).toThrow(
       /Missing captured run id/,
     );
   });
@@ -1015,6 +1018,62 @@ describe('substituteRunIds', () => {
     expect(substituteRunIds('rd pass --claim-id ${CLAIM_ID}', [])).toBe(
       'rd pass --claim-id ${CLAIM_ID}',
     );
+  });
+});
+
+describe('substituteRunClaimIds', () => {
+  it('${RUN_CLAIM_ID} maps to first captured run-control claim id', () => {
+    expect(substituteRunClaimIds('rd collect --claim-id ${RUN_CLAIM_ID}', ['rdclm_run'])).toBe(
+      'rd collect --claim-id rdclm_run',
+    );
+  });
+
+  it('${RUN_CLAIM_ID_2} maps to second captured run-control claim id', () => {
+    expect(
+      substituteRunClaimIds('rd pass --claim-id ${RUN_CLAIM_ID_2}', [
+        'rdclm_parent',
+        'rdclm_child_run',
+      ]),
+    ).toBe('rd pass --claim-id rdclm_child_run');
+  });
+
+  it('throws for uncaptured run-control claim id references', () => {
+    expect(() => substituteRunClaimIds('rd collect --claim-id ${RUN_CLAIM_ID}', [])).toThrow(
+      /Missing captured run-control claim id/,
+    );
+  });
+
+  it('fails closed for ${RUN_CLAIM_ID_2} when only one run-control claim id was captured', () => {
+    expect(() =>
+      substituteRunClaimIds('rd pass --claim-id ${RUN_CLAIM_ID_2}', ['rdclm_parent']),
+    ).toThrow(/Missing captured run-control claim id/);
+  });
+});
+
+describe('captureClaimIdFromJsonObject', () => {
+  it('captures delegated child claim ids only', () => {
+    const captured: string[] = [];
+    captureClaimIdFromJsonObject({ type: 'runbook_started', claim_id: 'rdclm_ignored' }, captured);
+    captureClaimIdFromJsonObject({ type: 'step_entered', claim_id: 'rdclm_ignored' }, captured);
+    captureClaimIdFromJsonObject({ action: 'claimed', claim_id: 'rdclm_child' }, captured);
+    captureClaimIdFromJsonObject({ action: 'delegated', claim_id: 'rdclm_ignored' }, captured);
+    expect(captured).toEqual(['rdclm_child']);
+  });
+});
+
+describe('captureRunClaimIdFromJsonObject', () => {
+  it('captures run-control claim ids from runbook_started events in emission order', () => {
+    const captured: string[] = [];
+    captureRunClaimIdFromJsonObject(
+      { type: 'runbook_started', claim_id: 'rdclm_parent' },
+      captured,
+    );
+    captureRunClaimIdFromJsonObject({ action: 'claimed', claim_id: 'rdclm_ignored' }, captured);
+    captureRunClaimIdFromJsonObject(
+      { type: 'runbook_started', claim_id: 'rdclm_child_run' },
+      captured,
+    );
+    expect(captured).toEqual(['rdclm_parent', 'rdclm_child_run']);
   });
 });
 

@@ -65,6 +65,17 @@ describe('parseInputOption', () => {
     expect(() => parseInputOption('=value', [])).toThrow(/invalid variable/i);
   });
 
+  it('explicitly rejects a flag-shaped variable name as an injection attempt', () => {
+    // The shared parser guards the input channel too: a flag-shaped key such as
+    // --claim-id (key=value form or bare env-inherit form) is an injection shape.
+    expect(() => parseInputOption('--claim-id=rdclm_x', [])).toThrow(
+      /must not be CLI flags or internal identifiers/,
+    );
+    expect(() => parseInputOption('--run', [])).toThrow(
+      /must not be CLI flags or internal identifiers/,
+    );
+  });
+
   it('inherits value from env var when no = present', () => {
     process.env.MY_VAR = 'env-value';
 
@@ -210,6 +221,21 @@ describe('parseArtifactOption', () => {
   it('rejects an invalid identifier with the artifact noun', () => {
     expect(() => parseArtifactOption('1bad=rd://x', [])).toThrow(/Invalid artifact/i);
   });
+
+  it.each([
+    // The subprocess-boundary smuggle lands a CLI flag in the artifact value
+    // slot; the key then parses as `--claim-id` (etc.). Reject flag-shaped names
+    // explicitly, naming the injection class rather than a generic identifier
+    // failure. Covers the authority flag and its target-selector siblings.
+    ['--claim-id=rdclm_x'],
+    ['--run=rd_x'],
+    ['--step=1.1'],
+    ['--index=0'],
+  ])('explicitly rejects a flag-shaped artifact name %s as an injection attempt', (raw) => {
+    expect(() => parseArtifactOption(raw, [])).toThrow(
+      /must not be CLI flags or internal identifiers/,
+    );
+  });
 });
 
 describe('parseArtifactJsonOption', () => {
@@ -233,5 +259,11 @@ describe('parseArtifactJsonOption', () => {
 
   it('rejects a value with no = as a format error', () => {
     expect(() => parseArtifactJsonOption('Plans', [])).toThrow(/Expected key=json format/);
+  });
+
+  it('explicitly rejects a flag-shaped artifact name as an injection attempt', () => {
+    expect(() => parseArtifactJsonOption('--claim-id=["rd://a"]', [])).toThrow(
+      /must not be CLI flags or internal identifiers/,
+    );
   });
 });

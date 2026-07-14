@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runbooksDir } from '@rundown-org/core';
+import { restoreEnvVar } from '../helpers/process-state.js';
 
 // Mock plugin-root — passthrough for env var, controlled sibling discovery
 const mockGetPluginRoot = jest.fn<() => string | null>().mockImplementation(() => {
@@ -82,7 +83,7 @@ describe('discovery service', () => {
         expect(paths[1].path).toBe(join(pluginRunbooksDir, 'runbooks'));
         expect(paths[2].source).toBe('bundled');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -100,7 +101,7 @@ describe('discovery service', () => {
         expect(paths[1].path).toBe(join(pluginRunbooksDir, 'runbooks'));
         expect(paths[2].source).toBe('bundled');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -115,7 +116,7 @@ describe('discovery service', () => {
         expect(paths[0].source).toBe('project');
         expect(paths[1].source).toBe('bundled');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
   });
@@ -362,7 +363,7 @@ description: Plugin version
         expect(runbooks[0].source).toBe('project');
         expect(runbooks[0].description).toBe('Project version');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -400,7 +401,7 @@ name: plugin-runbook
         expect(names).toContain('project-runbook');
         expect(names).toContain('plugin-runbook');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -443,7 +444,7 @@ description: Plugin version
         expect(writePlanRunbooks[0].source).toBe('project');
         expect(writePlanRunbooks[0].description).toBe('Project version');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -595,7 +596,7 @@ description: Plugin version
         expect(runbook?.source).toBe('project');
         expect(runbook?.description).toBe('Project version');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -624,7 +625,7 @@ description: Only in plugin
         expect(runbook?.source).toBe('plugin');
         expect(runbook?.description).toBe('Only in plugin');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -861,7 +862,7 @@ description: Plugin version
         expect(projectResult?.source).toBe('project');
         expect(projectResult?.description).toBe('Project version');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -886,7 +887,7 @@ name: project-only
         const result = await findRunbookByNameInSource(tempDir, 'project-only', 'plugin');
         expect(result).toBeNull();
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
 
@@ -916,7 +917,7 @@ description: From plugin planning subdirectory
         expect(result?.name).toBe('write-plan');
         expect(result?.source).toBe('plugin');
       } finally {
-        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+        restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalEnv);
       }
     });
   });

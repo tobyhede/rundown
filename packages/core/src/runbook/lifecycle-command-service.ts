@@ -1,16 +1,19 @@
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import {
   UNKNOWN_ACTOR_CONTEXT,
-  actorContextFromEvidence,
-  trustedRunControllerContext,
+  verifiedClaimContext,
   type ActorContext,
   type CallerEvidence,
-  type EvidenceTarget,
 } from './actor-context.js';
-import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { ClaimId, ClaimRecord } from './claim-id.js';
-import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
+import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
+import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
+import { classifyDelegationExposureDetail } from './delegation-exposure.js';
+import type {
+  CommandIntent,
+  CommandTargetSelector,
+  DelegationPolicyOutcome,
+} from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { createDelegation, retryDelegation } from './delegation-service.js';
 import { DelegationLockTimeoutError, type DelegationLockLike } from './delegation-lock.js';
@@ -22,6 +25,7 @@ import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
   resolveCommandTarget,
+  resolveMutationAuthority,
   resolveTerminalTarget,
   resolveTransitionTarget,
   unknownRunRefusal,
@@ -423,6 +427,7 @@ export type LifecycleTransitionOutcome =
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     }
   | { readonly kind: 'actor_context_required' }
+  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
   | {
       /** The explicit `--run` target is not a running member of the session stack. */
       readonly kind: 'unknown_run';
@@ -523,6 +528,8 @@ export type LifecycleTerminalOutcome =
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
   /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
   | { readonly kind: 'actor_context_required' }
+  /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
+  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
   | {
       /** The explicit `--run` target is not a running member of the session stack. */
       readonly kind: 'unknown_run';
@@ -771,6 +778,45 @@ export class RunbookLifecycleCommandService {
     this.#deps = deps;
   }
 
+  async #resolveMutationActorContext(input: {
+    readonly callerEvidence: CallerEvidence;
+    readonly targetState: RunbookState;
+    readonly request: ClaimAuthorizationRequest;
+    readonly intent: CommandIntent['kind'];
+  }): Promise<
+    | { readonly kind: 'verified'; readonly actorContext: ActorContext }
+    | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+  > {
+    const presentedClaimId =
+      input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
+    const authority = await resolveMutationAuthority({
+      targetReader: this.#deps.sessionService,
+      ...(presentedClaimId !== undefined ? { presentedClaimId } : {}),
+      targetState: input.targetState,
+      request: input.request,
+    });
+    if (authority.kind === 'verified') {
+      return {
+        kind: 'verified',
+        actorContext: verifiedClaimContext({
+          authority: authority.authority,
+          claim: authority.claim,
+        }),
+      };
+    }
+    return {
+      kind: 'refused',
+      policy:
+        presentedClaimId !== undefined && authority.reason === 'no-authorizing-claim'
+          ? {
+              kind: 'claim_grant_required',
+              intent: input.intent,
+              targetRunId: input.targetState.id,
+            }
+          : { kind: 'actor_context_required', intent: input.intent },
+    };
+  }
+
   /**
    * Issue, echo, or retry a delegation for an authored DELEGATE substep.
    *
@@ -844,12 +890,17 @@ export class RunbookLifecycleCommandService {
     // Classification is from the locked re-read (`state`) — the same instance
     // the issuance resolution below decides from.
     const targeted = input.explicitStep !== undefined;
-    const actorContext = actorContextFromEvidence(
-      input.callerEvidence,
-      await this.#evidenceTargetFor(input.callerEvidence, state, steps),
-    );
+    const authority = await this.#resolveMutationActorContext({
+      callerEvidence: input.callerEvidence,
+      targetState: state,
+      request: { action: 'delegate-from-run', runId: state.id },
+      intent: 'delegation-issuance',
+    });
+    if (authority.kind === 'refused') {
+      return { kind: 'refused', policy: authority.policy };
+    }
     const policy = resolveCommandIntent({
-      actorContext,
+      actorContext: authority.actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
       targetSelector: { kind: 'default' },
       targetState: state,
@@ -1098,13 +1149,23 @@ export class RunbookLifecycleCommandService {
     // so a pending collection does not refuse it. Classification is from the
     // locked re-read (`freshState`) — the same instance retryDelegation
     // decides from.
-    const actorContext = actorContextFromEvidence(
-      input.callerEvidence,
-      await this.#evidenceTargetFor(input.callerEvidence, freshState, steps),
-    );
+    const authority = await this.#resolveMutationActorContext({
+      callerEvidence: input.callerEvidence,
+      targetState: freshState,
+      request: { action: 'retry-delegation', runId: freshState.id, stepId: substepId },
+      intent: 'delegation-issuance',
+    });
+    if (authority.kind === 'refused') {
+      return { kind: 'refused', policy: authority.policy };
+    }
     const policy = resolveCommandIntent({
-      actorContext,
-      intent: { kind: 'delegation-issuance', command: 'delegate', targeted: true },
+      actorContext: authority.actorContext,
+      intent: {
+        kind: 'delegation-issuance',
+        command: 'retry',
+        targeted: true,
+        stepId: substepId,
+      },
       targetSelector: { kind: 'default' },
       targetState: freshState,
     });
@@ -1232,15 +1293,75 @@ export class RunbookLifecycleCommandService {
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
     // `targeted` derives from the presence of an explicit step target, never
-    // from the selector kind alone (decision 3): `pass --run <id> --step <n>`
-    // is targeted (the sanctioned operator recovery, exempt from the collection
-    // guards) while a bare-shaped `--run` advance is not and stays guarded.
+    // from the selector kind alone (decision 3): `pass --claim-id <id> --step
+    // <n>` is targeted (the sanctioned operator recovery, exempt from the
+    // collection guards) while a bare-shaped advance with only target selection
+    // is not and stays guarded.
     const targeted = input.explicitTarget !== undefined;
     const claimId =
       input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
-    const actorContext = await this.#resolveActorContext(input.callerEvidence, claimId);
+    let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      const target = await resolveCommandTarget(sessionService, {
+        ...(claimId ? { claimId } : {}),
+        ...(runId ? { runId } : {}),
+      });
+      switch (target.kind) {
+        case 'claim':
+        case 'terminal_claim': {
+          actorContext = verifiedClaimContext({
+            authority: {
+              kind: 'bearer',
+              claimId: target.claimId,
+              claimKey: target.claim.claimKey,
+            },
+            claim: target.claim,
+          });
+          break;
+        }
+        case 'default':
+        case 'run': {
+          const authority = await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: target.state,
+            request: { action: 'mutate-run', runId: target.state.id },
+            intent: 'delegating-run-advance',
+          });
+          if (authority.kind === 'refused') {
+            if (authority.policy.kind === 'claim_grant_required') {
+              return {
+                kind: 'claim_grant_required',
+                claimId: input.callerEvidence.claimId,
+                runId: target.state.id,
+              };
+            }
+            return { kind: 'actor_context_required' };
+          }
+          actorContext = authority.actorContext;
+          break;
+        }
+        case 'none':
+          break;
+        case 'unknown_run':
+          return { kind: 'unknown_run', runId: target.runId, message: target.message };
+        case 'stale_claim':
+          break;
+        default: {
+          const _exhaustive: never = target;
+          return _exhaustive;
+        }
+      }
+    }
+
+    if (actorContext.kind === 'unknown' && claimId === undefined && runId === undefined) {
+      const target = await resolveCommandTarget(sessionService);
+      if (target.kind === 'default') {
+        const refusal = await this.#refuseBareMutationOnExposedTarget(target.state, 'any');
+        if (refusal) return refusal;
+      }
+    }
 
     const resolution = await resolveTransitionTarget(sessionService, {
       command: input.command,
@@ -1294,6 +1415,22 @@ export class RunbookLifecycleCommandService {
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
   async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    // Bare (no `--claim-id` / `--run`) complete/stop on a *delegation*-exposed
+    // run requires named authority. resolveCommandIntent only forces a bearer for
+    // the open-claims / collection-pending clauses; the authored-DELEGATE,
+    // delegation-linkage, and sticky-delegation-record clauses would otherwise
+    // let a bare direct-CLI force a delegation-exposed run terminal without a
+    // `--claim-id`. The gate uses the `delegation` axis alone (not the full
+    // classifyDelegationExposure union) so a purely inline-composed chain can
+    // still be forced terminal bare — that contiguous-inline force is exactly
+    // what #driveTerminalBare exists to do.
+    if (input.callerEvidence.kind !== 'claim_bearer' && input.targetSelector.kind === 'default') {
+      const target = await resolveCommandTarget(this.#deps.sessionService);
+      if (target.kind === 'default') {
+        const refusal = await this.#refuseBareMutationOnExposedTarget(target.state, 'delegation');
+        if (refusal) return refusal;
+      }
+    }
     switch (input.targetSelector.kind) {
       case 'claim':
         return this.#driveTerminalClaim(input, input.targetSelector.claimId);
@@ -1308,6 +1445,40 @@ export class RunbookLifecycleCommandService {
         throw new Error(`Unsupported terminal target selector: ${String(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * Refuse a bare (no `--claim-id` / `--run`) mutation whose resolved default
+   * target run requires named authority.
+   *
+   * Bare `direct_cli` / `plugin` callers may only mutate a run with no exposure
+   * on the gated axes. pass/fail/goto gate on *any* exposure (`mode: 'any'`);
+   * terminal-force (`complete`/`stop`) gates on the `delegation` axis alone
+   * (`mode: 'delegation'`) so it can still force a purely inline-composed chain
+   * terminal with a bare command — the contiguous-inline force is the terminal
+   * path's designed job, whereas a delegation-exposed run (open/collected
+   * children, authored DELEGATE, delegation linkage) always needs a `--claim-id`.
+   * Single-sources the exposure gate across every mutation surface so the rule
+   * cannot drift.
+   *
+   * @param state - The resolved default target run to classify.
+   * @param mode - `'any'` refuses on delegation or inline-composition exposure;
+   *   `'delegation'` refuses on delegation exposure alone.
+   * @returns An `actor_context_required` refusal when the run is exposed on a
+   *   gated axis, otherwise `undefined`.
+   */
+  async #refuseBareMutationOnExposedTarget(
+    state: RunbookState,
+    mode: 'any' | 'delegation',
+  ): Promise<{ readonly kind: 'actor_context_required' } | undefined> {
+    const detail = classifyDelegationExposureDetail({
+      state,
+      steps: await this.#deps.loadSteps(state),
+      openClaims: await this.#deps.sessionService.listOpenClaimsForParent(state.id),
+    });
+    const exposed =
+      mode === 'delegation' ? detail.delegation : detail.delegation || detail.inlineComposition;
+    return exposed ? { kind: 'actor_context_required' } : undefined;
   }
 
   /**
@@ -1371,26 +1542,34 @@ export class RunbookLifecycleCommandService {
     }
 
     const state = resolution.state;
-    const steps = await this.#deps.loadSteps(state);
 
-    // A claim-resolved target carries its own claim evidence: the resolved
-    // claim record IS the caller's proof of control over the claimed child.
-    // Every other resolution evaluates the caller-supplied evidence against
-    // the resolved target (direct_cli consults exposure via the shared
-    // evidence-target derivation; run_controller binds to its named run).
-    const evidence: CallerEvidence =
+    if (input.callerEvidence.kind !== 'claim_bearer' && selector.kind === 'default') {
+      const refusal = await this.#refuseBareMutationOnExposedTarget(state, 'any');
+      if (refusal) return refusal;
+    }
+
+    const actorContext =
       resolution.kind === 'claim'
-        ? {
-            kind: 'claim',
-            claimId: resolution.claimId,
-            tokenHash: resolution.claim.tokenHash,
-            controlledRunId: resolution.claim.childRunId,
-          }
-        : input.callerEvidence;
-    const actorContext = actorContextFromEvidence(
-      evidence,
-      await this.#evidenceTargetFor(evidence, state, steps),
-    );
+        ? verifiedClaimContext({
+            authority: {
+              kind: 'bearer',
+              claimId: resolution.claimId,
+              claimKey: resolution.claim.claimKey,
+            },
+            claim: resolution.claim,
+          })
+        : await (async (): Promise<ActorContext> => {
+            if (input.callerEvidence.kind !== 'claim_bearer') {
+              return UNKNOWN_ACTOR_CONTEXT;
+            }
+            const authority = await this.#resolveMutationActorContext({
+              callerEvidence: input.callerEvidence,
+              targetState: state,
+              request: { action: 'mutate-run', runId: state.id },
+              intent: 'run-navigation',
+            });
+            return authority.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT;
+          })();
 
     const policy = resolveCommandIntent({
       actorContext,
@@ -1409,7 +1588,7 @@ export class RunbookLifecycleCommandService {
       kind: 'allowed',
       runId: state.id,
       state,
-      steps,
+      steps: await this.#deps.loadSteps(state),
       terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
     };
   }
@@ -1463,6 +1642,12 @@ export class RunbookLifecycleCommandService {
           expectedCommand: resolution.expectedCommand,
           requestedCommand: resolution.requestedCommand,
         };
+      case 'claim_grant_required':
+        return {
+          kind: 'claim_grant_required',
+          claimId: resolution.claimId,
+          runId: resolution.runId,
+        };
       case 'claim':
         break;
       default: {
@@ -1472,6 +1657,18 @@ export class RunbookLifecycleCommandService {
     }
 
     const state = resolution.state;
+    // Route by claim SHAPE, not by grant presence: a run-control claim has no
+    // delegation linkage and drives the inline force-terminal cascade; a
+    // delegated-child claim carries a linkage and forces its single child while
+    // reporting the outcome to the parent. Keying off a `collect-for-run` grant
+    // would conflate collection authority with claim identity — the schema
+    // permits a delegated claim to also hold that grant — and silently route
+    // the child's delegation report through the bare cascade instead.
+    const isRunControlClaim = resolution.claim.delegation === undefined;
+    if (isRunControlClaim) {
+      return this.#driveTerminalBare(input, state);
+    }
+
     const steps = await this.#deps.loadSteps(state);
     const currentStep = this.#findStep(steps, state.step);
     const eventType = terminalForceEvent(input.command);
@@ -1508,13 +1705,14 @@ export class RunbookLifecycleCommandService {
       ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
     });
 
-    // Record BEFORE release (decision #4). No explicit `result` → core derives
-    // completed→pass / stopped→fail via lifecycleToDelegationOutcome.
-    // recordChildCompletion self-guards when the child carries no linkage
-    // (returns 'not-applicable').
-    const reported = await completionService.recordChildCompletion({
-      childState: syncResult.state,
-    });
+    // Record BEFORE release (decision #4), but only when the verified claim also
+    // carries the exact parent/child report grant. No explicit `result` → core
+    // derives completed→pass / stopped→fail via lifecycleToDelegationOutcome.
+    const reported = claimCanReportDelegationResult(resolution.claim, syncResult.state)
+      ? await completionService.recordChildCompletion({
+          childState: syncResult.state,
+        })
+      : 'not-applicable';
 
     await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
 
@@ -1575,38 +1773,70 @@ export class RunbookLifecycleCommandService {
       };
     }
 
-    // Gate the resolved ROOT before forcing (items 8 + 2-core). Root linkage is
-    // delegation-or-none, so `terminal-run-force` targeted:false runs the
-    // actor-context + collection-pending gates on it. Classification is from
-    // plan.targetState with the steps this gate already needs in scope.
-    //
-    // A contiguous-inline chain is one orchestrator's composition by
-    // construction (inline children run in the same agent session as their
-    // composer), so `run_controller` evidence naming ANY member of the walked
-    // chain names that composition: it is evaluated as controller of the
-    // walked-to root. This is explicit, derived authority — the chain was
-    // reached by climbing inline linkage from the named run — never ambient.
-    const rootSteps = await this.#deps.loadSteps(plan.targetState);
-    const evidence = input.callerEvidence;
-    const actorContext =
-      evidence.kind === 'run_controller' &&
-      plan.forceOrder.some((member) => member.id === evidence.runId)
-        ? trustedRunControllerContext(plan.targetState.id)
-        : actorContextFromEvidence(
-            evidence,
-            await this.#evidenceTargetFor(evidence, plan.targetState, rootSteps),
-          );
+    // Gate the resolved ROOT before forcing. A run-control claim for an inline
+    // descendant may also force the inline chain it is currently executing; that
+    // is the same active inline execution, not authority over an unrelated run.
+    const presentedClaimId =
+      input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
+    const descendantAuthority =
+      presentedClaimId !== undefined
+        ? await (async () => {
+            const verified = await sessionService.verifyClaimId(presentedClaimId);
+            if (verified.status !== 'verified') return false;
+            return plan.forceOrder.some(
+              (state) =>
+                state.id !== plan.targetState.id &&
+                authorizeClaim(verified.claim, { action: 'mutate-run', runId: state.id }).kind ===
+                  'allowed',
+            );
+          })()
+        : false;
+    const authority =
+      input.callerEvidence.kind === 'claim_bearer' && !descendantAuthority
+        ? await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: plan.targetState,
+            request: { action: 'mutate-run', runId: plan.targetState.id },
+            intent: 'terminal-run-force',
+          })
+        : undefined;
+    if (authority?.kind === 'refused') {
+      return authority.policy.kind === 'claim_grant_required' &&
+        input.callerEvidence.kind === 'claim_bearer'
+        ? {
+            kind: 'claim_grant_required',
+            claimId: input.callerEvidence.claimId,
+            runId: plan.targetState.id,
+          }
+        : { kind: 'actor_context_required' };
+    }
     const policy = resolveCommandIntent({
-      actorContext,
+      actorContext:
+        authority?.kind === 'verified' && !descendantAuthority
+          ? authority.actorContext
+          : UNKNOWN_ACTOR_CONTEXT,
       intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
-      targetSelector: { kind: 'default' },
+      targetSelector: descendantAuthority ? { kind: 'default' } : input.targetSelector,
       targetState: plan.targetState,
+      openClaims: await sessionService.listOpenClaimsForParent(plan.targetState.id),
     });
     switch (policy.kind) {
       case 'allowed':
         break;
       case 'actor_context_required':
         return { kind: 'actor_context_required' };
+      case 'claim_grant_required': {
+        // Verified-claim authority is bearer-only, so the bearer claimId is always
+        // present once narrowed to verified_claim.
+        const actorContext = authority?.kind === 'verified' ? authority.actorContext : undefined;
+        return actorContext?.kind === 'verified_claim'
+          ? {
+              kind: 'claim_grant_required',
+              claimId: actorContext.authority.claimId,
+              runId: plan.targetState.id,
+            }
+          : { kind: 'actor_context_required' };
+      }
       case 'delegation_collection_pending':
         return {
           kind: 'delegation_collection_pending',
@@ -1615,7 +1845,6 @@ export class RunbookLifecycleCommandService {
           message: policy.message,
         };
       case 'open_claims':
-      case 'collect_requires_orchestrator':
       case 'missing_outcomes':
       case 'already_collected':
       case 'collection_frame_not_active':
@@ -1702,36 +1931,6 @@ export class RunbookLifecycleCommandService {
     };
   }
 
-  // Build the EvidenceTarget for a resolved anchor run. Only `direct_cli`
-  // evidence consults exposure, so classification (a read-only event-time
-  // derivation: parsed steps + open claims + state — never persisted) runs for
-  // that lane alone; every other variant receives the fail-closed
-  // `'delegating'` placeholder, which its mapping arm never reads.
-  //
-  // Lock conventions: exposure classification is a read-only operation and
-  // must never be called while holding the SessionLock (write path); inside a
-  // held DelegationLock it is safe (session reads never acquire a lock;
-  // DelegationLock → CompletionLock ordering is unaffected).
-  //
-  // Document-edit caveat (clauses a/f-static): `steps` are re-parsed at
-  // decision time, so a mid-run edit of the runbook document can flip a
-  // not-yet-issued run's static exposure — accepted; every state-derived
-  // clause is monotone and never decays.
-  async #evidenceTargetFor(
-    evidence: CallerEvidence,
-    state: RunbookState,
-    steps: readonly ResolvedStep[],
-  ): Promise<EvidenceTarget> {
-    if (evidence.kind !== 'direct_cli') {
-      return { runId: state.id, exposure: 'delegating' };
-    }
-    const openClaims = await this.#deps.sessionService.listOpenClaimsForParent(state.id);
-    return {
-      runId: state.id,
-      exposure: classifyDelegationExposure({ state, steps, openClaims }),
-    };
-  }
-
   // Resolve the issuance anchor run: the `--run`-named session-stack member
   // when a target run id is supplied (a missing/foreign/terminal id refuses as
   // `unknown_run` via the shared stack-member resolution, carrying the same
@@ -1753,52 +1952,6 @@ export class RunbookLifecycleCommandService {
     }
     const active = await this.#deps.sessionService.getActive();
     return active ? { kind: 'ok', state: active } : { kind: 'none' };
-  }
-
-  // Map caller evidence to an actor context anchored on the resolved run.
-  // `direct_cli` evidence anchors on the active default run and is trusted
-  // only when that run classifies `standalone` (the flip — ambient trust over
-  // any delegation-exposed run is gone); `run_controller` evidence anchors on
-  // its own named run; `claim` evidence anchors on its own controlled run;
-  // everything else maps to the unknown context. Returns the unknown context
-  // when no anchor run exists (a direct-CLI caller with no active run is
-  // refused downstream as `none`).
-  //
-  // The classification here and the transition resolver's target resolution
-  // are two lock-free reads; classifying from the active anchor the resolver
-  // will re-resolve keeps them aligned in practice, and the
-  // deriveEffectiveRole id binding is the fail-closed backstop for any
-  // interleave (trust minted for run A is unknown_for_target against run B).
-  async #resolveActorContext(
-    evidence: CallerEvidence,
-    claimId: ClaimId | undefined,
-  ): Promise<ActorContext> {
-    if (evidence.kind === 'claim') {
-      return actorContextFromEvidence(evidence, {
-        runId: evidence.controlledRunId,
-        // Fail-closed placeholder: the claim arm never reads exposure.
-        exposure: 'delegating',
-      });
-    }
-    if (evidence.kind === 'run_controller') {
-      return actorContextFromEvidence(evidence, {
-        runId: evidence.runId,
-        // Fail-closed placeholder: the run_controller arm never reads exposure.
-        exposure: 'delegating',
-      });
-    }
-    if (claimId !== undefined) {
-      // Claim-targeted writes resolve through the resolver's claim path, which
-      // does not consult the actor context for the bare-advance gate.
-      return UNKNOWN_ACTOR_CONTEXT;
-    }
-    const active = await this.#deps.sessionService.getActive();
-    if (!active) return UNKNOWN_ACTOR_CONTEXT;
-    const steps = await this.#deps.loadSteps(active);
-    return actorContextFromEvidence(
-      evidence,
-      await this.#evidenceTargetFor(evidence, active, steps),
-    );
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed
@@ -1875,6 +2028,15 @@ export class RunbookLifecycleCommandService {
         return {
           ready: false,
           outcome: { kind: 'actor_context_required' },
+        };
+      case 'claim_grant_required':
+        return {
+          ready: false,
+          outcome: {
+            kind: 'claim_grant_required',
+            claimId: resolution.claimId,
+            runId: resolution.runId,
+          },
         };
       default: {
         const _exhaustive: never = resolution;

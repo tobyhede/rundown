@@ -80,6 +80,16 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
           childRunId: failure.childRunId,
         },
       };
+    case 'delegation-already-claimed':
+      return {
+        code: 'DELEGATION_ALREADY_CLAIMED',
+        message: 'This delegation has already been claimed and cannot be claimed again.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
     case 'child-missing':
       return {
         code: 'CHILD_RUN_MISSING',

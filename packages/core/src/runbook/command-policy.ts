@@ -1,5 +1,10 @@
 import type { ActorContext, EffectiveRole } from './actor-context.js';
-import type { ClaimId, ClaimRecord } from './claim-id.js';
+import {
+  authorizeClaim,
+  type ClaimAuthorizationRequest,
+  type ClaimId,
+  type ClaimRecord,
+} from './claim-id.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -31,6 +36,16 @@ export type CommandIntent =
       readonly command: 'delegate';
       /** True when the caller supplied an explicit step or retry target. */
       readonly targeted: boolean;
+    }
+  | {
+      /** Retry command reissuing a delegation from a run. */
+      readonly kind: 'delegation-issuance';
+      /** Delegation retry command being evaluated. */
+      readonly command: 'retry';
+      /** Retry always targets a concrete delegation step. */
+      readonly targeted: true;
+      /** Concrete delegation step id being retried. */
+      readonly stepId: string;
     }
   | {
       /** Bare or claim-targeted complete/stop forcing a run terminal. */
@@ -79,7 +94,7 @@ export type CommandTargetSelector =
   | {
       /** Explicit run-id target selector from `--run <rd_…>`. */
       readonly kind: 'run';
-      /** Run id supplied by the caller as both target and named authority. */
+      /** Run id supplied by the caller as target selection only. */
       readonly runId: RunId;
     };
 
@@ -103,7 +118,7 @@ export interface ResolveCommandIntentInput {
  * This is NOT a pure subset of the spec's `DelegationPolicyOutcome` union (spec
  * lines 403-416): it is a subset of the spec's claim/terminal members AND a
  * superset on collection-operation members. Implemented: `allowed`,
- * `actor_context_required`, `collect_requires_orchestrator`,
+ * `actor_context_required`, `claim_grant_required`,
  * `delegation_collection_pending`, `open_claims`, plus the collection-operation
  * members added by Plan 4 (Core Collection Operation) that the spec union does
  * not list: `missing_outcomes`, `already_collected`, `collection_frame_not_active`,
@@ -134,17 +149,12 @@ export type DelegationPolicyOutcome =
       readonly intent: CommandIntent['kind'];
     }
   | {
-      /** Caller is not the effective orchestrator for the collection target. */
-      readonly kind: 'collect_requires_orchestrator';
-      /** Target run the caller attempted to collect into. */
-      readonly targetRunId: RunId;
-      /**
-       * Operator-facing remediation naming both explicit-authority lanes
-       * (`--run` for orchestrators, `--claim-id` for delegated children). Never
-       * echoes the target run id — the refusal is an accident barrier and must
-       * not hand a lingering child a copy-paste bypass.
-       */
-      readonly message: typeof COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE;
+      /** Verified claim lacks the exact grant required for the mutation. */
+      readonly kind: 'claim_grant_required';
+      /** Intent that was refused. */
+      readonly intent: CommandIntent['kind'];
+      /** Target run that needed authorization, when known. */
+      readonly targetRunId?: RunId;
     }
   | {
       /** Bare mutation is blocked by unconsumed reported delegation outcomes. */
@@ -281,12 +291,39 @@ export function deriveEffectiveRole(
   if (!targetState || actorContext.kind === 'unknown') {
     return 'unknown_for_target';
   }
-  if (actorContext.kind === 'trusted_run_controller') {
-    return actorContext.runId === targetState.id ? 'orchestrator_for_target' : 'unknown_for_target';
-  }
-  return actorContext.controlledRunId === targetState.id
+  return actorContext.claim.controlledRunId === targetState.id
     ? 'orchestrator_for_target'
     : 'delegated_relative_to_target';
+}
+
+function requestForIntent(
+  intent: CommandIntent,
+  targetState: RunbookState | undefined,
+): ClaimAuthorizationRequest | undefined {
+  if (!targetState) return undefined;
+  switch (intent.kind) {
+    case 'delegating-run-advance':
+    case 'terminal-run-force':
+    case 'run-navigation':
+      return { action: 'mutate-run', runId: targetState.id };
+    case 'delegation-issuance':
+      if (intent.command === 'delegate') {
+        return { action: 'delegate-from-run', runId: targetState.id };
+      }
+      return {
+        action: 'retry-delegation',
+        runId: targetState.id,
+        stepId: intent.stepId,
+      };
+    case 'delegation-collection':
+      return { action: 'collect-for-run', runId: targetState.id };
+    case 'inspect':
+      return undefined;
+    default: {
+      const _exhaustive: never = intent;
+      return _exhaustive;
+    }
+  }
 }
 
 function allowed(
@@ -297,37 +334,6 @@ function allowed(
     kind: 'allowed',
     role,
     ...(targetState ? { targetRunId: targetState.id } : {}),
-  };
-}
-
-/**
- * Remediation message for the `collect_requires_orchestrator` refusal.
- *
- * Names BOTH explicit-authority lanes with wording consistent with the
- * `RUN_TARGET_UNAVAILABLE` / `ACTOR_CONTEXT_REQUIRED` remediations, and never
- * echoes the target run id (decision 4 — accident-proofing, not secrecy: run
- * ids are natively available from `rundown run` output and every event's
- * `runbookId`).
- */
-export const COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE =
-  'rundown collect requires an actor that controls the target delegating run. ' +
-  'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-  '`rundown run` and carried as runbookId on every event) if you are the orchestrator, ' +
-  'or `--claim-id <claimId>` if you are collecting within delegated work.';
-
-function requireOrchestratorForCollection(
-  role: EffectiveRole,
-  intent: CommandIntent,
-  targetState: RunbookState | undefined,
-): DelegationPolicyOutcome | undefined {
-  if (role === 'orchestrator_for_target') return undefined;
-  if (role === 'unknown_for_target' || !targetState) {
-    return { kind: 'actor_context_required', intent: intent.kind };
-  }
-  return {
-    kind: 'collect_requires_orchestrator',
-    targetRunId: targetState.id,
-    message: COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   };
 }
 
@@ -369,36 +375,48 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
     return allowed(role, input.targetState);
   }
 
-  if (input.intent.kind === 'delegation-collection') {
-    // The claim selector itself is NOT a rejection trigger: the frontend
-    // resolves `--claim-id` to its claimed/controlled run and passes that as
-    // `targetState`, so role derivation above already treats the resolved
-    // claimed run as the target. A target run delegating upward does not
-    // disqualify it either (a middle claim-controller may collect delegations
-    // issued by the run it controls). The only gate here is the
-    // orchestrator-for-target check.
-    const orchestratorFailure = requireOrchestratorForCollection(
-      role,
-      input.intent,
-      input.targetState,
-    );
-    if (orchestratorFailure) return orchestratorFailure;
-    return allowed(role, input.targetState);
-  }
-
-  if (role === 'unknown_for_target') {
+  if (!input.targetState) {
     return { kind: 'actor_context_required', intent: input.intent.kind };
   }
 
   const pendingFailure = rejectBareMutationIfCollectionPending(input);
+  const hasOpenClaims =
+    (input.intent.kind === 'delegating-run-advance' ||
+      input.intent.kind === 'terminal-run-force') &&
+    'targeted' in input.intent &&
+    !input.intent.targeted &&
+    input.openClaims !== undefined &&
+    input.openClaims.length > 0;
+  const requiresBearer =
+    input.actorContext.kind === 'verified_claim' ||
+    input.intent.kind === 'delegation-issuance' ||
+    input.intent.kind === 'delegation-collection' ||
+    input.targetSelector.kind === 'run' ||
+    pendingFailure !== undefined ||
+    hasOpenClaims;
+
+  const request = requiresBearer ? requestForIntent(input.intent, input.targetState) : undefined;
+  if (request !== undefined) {
+    if (input.actorContext.kind !== 'verified_claim') {
+      return { kind: 'actor_context_required', intent: input.intent.kind };
+    }
+    const decision = authorizeClaim(input.actorContext.claim, request);
+    if (decision.kind === 'denied') {
+      return {
+        kind: 'claim_grant_required',
+        intent: input.intent.kind,
+        targetRunId: input.targetState.id,
+      };
+    }
+  }
+
   if (pendingFailure) return pendingFailure;
 
   if (
     input.intent.kind === 'delegating-run-advance' &&
     !input.intent.targeted &&
     input.openClaims &&
-    input.openClaims.length > 0 &&
-    input.targetState
+    input.openClaims.length > 0
   ) {
     return {
       kind: 'open_claims',

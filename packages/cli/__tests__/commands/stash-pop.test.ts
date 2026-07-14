@@ -21,6 +21,23 @@ import { Command } from 'commander';
 // statically imports both register functions. See collect.test.ts.
 import { registerStashCommand } from '../../src/commands/stash.js';
 import { registerPopCommand } from '../../src/commands/pop.js';
+import {
+  assertClaimId,
+  assertDelegationTokenHash,
+  assertRunId,
+  buildFrameKey,
+  claimKeyFromBearer,
+  createDelegatedChildGrants,
+  hashClaimSecret,
+  parseClaimBearer,
+} from '@rundown-org/core';
+
+const VALID_OTHER_CLAIM_ID = assertClaimId(
+  'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+);
+const MANUAL_CLAIM_ID = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
 
 describe('stash/pop command wiring', () => {
   it('registers the stash command with its documented flags and descriptions', () => {
@@ -192,7 +209,9 @@ describe('stash command', () => {
     session = await readSession(workspace);
     expect(session.stashed).toBeNull();
     expect(session.active).not.toBe(childRunId);
-    expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+    expect(Object.values(session.claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: childRunId }),
+    );
     const ownerStatus = await runCliInProcess(['status', '--claim-id', claimId], workspace);
     expect(JSON.parse(ownerStatus.stdout).state).toContain(childRunId);
   });
@@ -231,7 +250,7 @@ describe('stash command', () => {
     const claimOutput = findActionOutput(result.stdout);
     const childRunId = String(claimOutput?.run_id);
     const claimId = String(claimOutput?.claim_id);
-    const otherClaimId = 'rdclm_abcdefghijklmnopQRSTUV';
+    const otherClaimId = VALID_OTHER_CLAIM_ID;
 
     result = await runCliInProcess(['stash', '--claim-id', claimId, '--text'], workspace);
     expect(result.exitCode).toBe(0);
@@ -305,7 +324,9 @@ describe('stash command', () => {
 
     const session = await readSession(workspace);
     expect(session.stashed).toBe(childRunId);
-    expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+    expect(Object.values(session.claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: childRunId }),
+    );
   });
 
   it('keeps a claimed stash when the stashed child state is missing', async () => {
@@ -357,7 +378,9 @@ describe('stash command', () => {
     );
     const session = await readSession(workspace);
     expect(session.stashed).toBe(childRunId);
-    expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+    expect(Object.values(session.claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: childRunId }),
+    );
   });
 
   it('refuses to pop a claimed stash when the parent is terminal', async () => {
@@ -418,6 +441,10 @@ describe('stash command', () => {
         error: expect.stringContaining('parent runbook has completed'),
       }),
     );
+    // The refusal must identify the claim by its non-secret lookup key and must
+    // never echo the bearer secret segment (credential leak).
+    expect(result.stdout).toContain(claimKeyFromBearer(assertClaimId(claimId)));
+    expect(result.stdout).not.toContain(parseClaimBearer(claimId).secret);
 
     const session = await readSession(workspace);
     expect(session.stashed).toBe(childRunId);
@@ -637,36 +664,39 @@ rd echo "hello"
       ),
     );
 
+    const parsedClaim = parseClaimBearer(MANUAL_CLAIM_ID);
+    const linkage = {
+      childRunId: assertRunId(runbookId),
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      parentRunId: assertRunId(parentRunId),
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    };
     await writeSession(workspace, {
       stashed: runbookId,
       defaultStack: [],
       claims: {
-        rdclm_abcdefghijklmnopQRSTUV: {
-          kind: 'claim-record',
-          claimId: 'rdclm_abcdefghijklmnopQRSTUV',
-          childRunId: runbookId,
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-          parentRunId,
-          parentStepId: '1',
-          parentStep: '1',
-          parentFrameKey: '1|',
-          parentEntry: 1,
-          claimedAt: '2026-04-28T00:00:00.000Z',
+        [claimKeyFromBearer(MANUAL_CLAIM_ID)]: {
+          claimKey: parsedClaim.claimKey,
+          secretHash: hashClaimSecret(parsedClaim.secret),
+          controlledRunId: runbookId,
+          delegation: linkage,
+          grants: createDelegatedChildGrants({ linkage }),
+          issuedAt: '2026-04-28T00:00:00.000Z',
           updatedAt: '2026-04-28T00:00:00.000Z',
         },
       },
     });
 
-    const result = await runCliInProcess('pop --claim-id rdclm_abcdefghijklmnopQRSTUV', workspace);
+    const result = await runCliInProcess(`pop --claim-id ${MANUAL_CLAIM_ID}`, workspace);
 
     expect(result.exitCode).toBe(0);
     const session = await readSession(workspace);
     expect(session.active).not.toBe(runbookId);
     expect(session.stashed).toBeNull();
-    const ownerStatus = await runCliInProcess(
-      'status --claim-id rdclm_abcdefghijklmnopQRSTUV',
-      workspace,
-    );
+    const ownerStatus = await runCliInProcess(`status --claim-id ${MANUAL_CLAIM_ID}`, workspace);
     expect(JSON.parse(ownerStatus.stdout).state).toContain(runbookId);
   });
 });

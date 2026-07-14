@@ -257,13 +257,14 @@ terminal and exits non-zero.
 
 **Flags:**
 
-- `--run <runId>` — Name the run you control (explicit orchestrator targeting).
+- `--run <runId>` — Target a runbook by run id.
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--run <rd_…>` (orchestrator) or
-`--claim-id <claim_id>` (delegated child). Standalone runs (no delegation
-activity) still accept the bare form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `--run <rd_…>` selects a target but never satisfies the
+`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+Standalone runs (no delegation activity) still accept the bare form.
 
 <a id="force-terminal-targeting"></a>
 
@@ -274,7 +275,8 @@ running inline descendants remain under a terminal parent.
 
 This targeting rule stops at delegation boundaries. If the inline root is a
 delegated child, it reports its terminal outcome to the delegating parent, and
-the delegating parent advances only after `rundown collect --run <rd_…>`.
+the delegating parent advances only after
+`rundown collect --claim-id <claim_id>`.
 
 `--claim-id` keeps delegated-child scope: `rundown complete --claim-id <id>` and
 `rundown stop --claim-id <id>` target that claimed child directly.
@@ -301,18 +303,19 @@ scenarios.
 ```bash
 rundown complete                            # Force completion from current step
 rundown complete "Skipping remaining steps" # Complete with message
-rundown complete --run <rd_…>               # Orchestrator-targeted completion
+rundown complete --claim-id <claim_id>      # Bearer-authorized completion
 ```
 
 **Flags:**
 
-- `--run <runId>` — Name the run you control (explicit orchestrator targeting).
+- `--run <runId>` — Target a runbook by run id.
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--run <rd_…>` (orchestrator) or
-`--claim-id <claim_id>` (delegated child). Standalone runs still accept the bare
-form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `--run <rd_…>` selects a target but never satisfies the
+`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+Standalone runs still accept the bare form.
 
 **When to use:**
 
@@ -336,8 +339,7 @@ Signal successful step completion.
 rundown pass
 rundown pass --step 2.1              # Target a specific substep
 rundown pass --step 2.1 --index 3    # Target substep at FOR iteration 3
-rundown pass --run <rd_…>            # Orchestrator-targeted advance
-rundown pass --claim-id <claim_id>   # Delegated child reports its result
+rundown pass --claim-id <claim_id>   # Bearer-authorized advance / delegated child reports PASS
 ```
 
 **Aliases:** `rundown yes`, `rundown ok`
@@ -346,13 +348,12 @@ rundown pass --claim-id <claim_id>   # Delegated child reports its result
 
 - `--step <stepId>` — Target a specific substep (not the currently active one).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
-- `--run <runId>` — Name the run you control (explicit orchestrator targeting).
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--run <rd_…>` (orchestrator) or
-`--claim-id <claim_id>` (delegated child). Standalone runs still accept the bare
-form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `pass` has no `--run` selector. Standalone runs still
+accept the bare form.
 
 **Behavior:**
 
@@ -369,8 +370,7 @@ Signal step failure.
 rundown fail
 rundown fail --step 2.1              # Target a specific substep
 rundown fail --step 2.1 --index 3    # Target substep at FOR iteration 3
-rundown fail --run <rd_…>            # Orchestrator-targeted advance
-rundown fail --claim-id <claim_id>   # Delegated child reports its result
+rundown fail --claim-id <claim_id>   # Bearer-authorized failing advance / delegated child reports FAIL
 ```
 
 **Alias:** `rundown no`
@@ -379,13 +379,12 @@ rundown fail --claim-id <claim_id>   # Delegated child reports its result
 
 - `--step <stepId>` — Target a specific substep (not the currently active one).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
-- `--run <runId>` — Name the run you control (explicit orchestrator targeting).
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--run <rd_…>` (orchestrator) or
-`--claim-id <claim_id>` (delegated child). Standalone runs still accept the bare
-form.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `fail` has no `--run` selector. Standalone runs still
+accept the bare form.
 
 **Behavior:**
 
@@ -426,7 +425,7 @@ inline and delegation children differ. An inline child shares one process with
 its parent, so the exit code reflects the whole inline chain. A delegated child
 runs in its own worker process, so closing it halts _that_ process's workflow
 (exit non-zero on its own STOP) while the delegating parent advances later, in a
-different process, via `rundown collect --run <rd_…>`.
+different process, via `rundown collect --claim-id <claim_id>`.
 
 #### `rundown goto <step>` - Jump to Step
 
@@ -436,21 +435,22 @@ Navigate directly to a step.
 rundown goto 3                # Jump to step 3
 rundown goto 3.1              # Jump to substep 3.1
 rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
-rundown goto 3 --run <rd_…>   # Orchestrator-targeted jump
+rundown goto 3 --claim-id <claim_id> # Bearer-authorized jump
 ```
 
 **Flags:**
 
 - `--index <number>` — For FOR-annotated targets, enter the loop at the
   specified iteration.
-- `--run <runId>` — Name the run you control (explicit orchestrator targeting).
+- `--run <runId>` — Target a runbook by run id.
 - `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
 On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--run <rd_…>` (orchestrator) or
-`--claim-id <claim_id>` (delegated child). `goto` is additionally gated behind
-the `run-navigation` policy intent — the run's policy must grant navigation for
-the jump to be allowed.
+`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
+only mutation authority. `--run <rd_…>` selects a target but never satisfies the
+`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+`goto` is additionally gated behind the `run-navigation` policy intent — the
+run's policy must grant navigation for the jump to be allowed.
 
 **Restrictions:**
 
@@ -747,24 +747,18 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
 | `rundown claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
 | `rundown claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
-| `rundown pass --claim-id <claim_id>`                       | Complete a claimed child with PASS                                                |
-| `rundown fail --claim-id <claim_id>`                       | Complete a claimed child with FAIL                                                |
+| `rundown pass --claim-id <claim_id>`                       | Bearer-authorized PASS: advance a run or report a claimed child's result          |
+| `rundown fail --claim-id <claim_id>`                       | Bearer-authorized FAIL: advance a run or report a claimed child's result          |
 | `rundown status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
-| `rundown collect --claim-id <claim_id>`                    | Collect delegated results for a claimed child scope                               |
-| `rundown goto <step> --claim-id <claim_id>`                | Jump within a claimed child runbook                                               |
+| `rundown collect --claim-id <claim_id>`                    | Bearer-authorized aggregation of delegated results                                |
+| `rundown goto <step> --claim-id <claim_id>`                | Bearer-authorized jump within a claimed run (run-navigation policy gate)          |
 | `rundown stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
 | `rundown pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
-| `rundown stop --claim-id <claim_id>`                       | Stop a claimed child runbook                                                      |
-| `rundown complete --claim-id <claim_id>`                   | Complete a claimed child runbook                                                  |
-| `rundown delegate --step <id> --run <rd_…>`                | Orchestrator lane: delegate on a delegation-exposed run you control               |
-| `rundown collect --run <rd_…>`                             | Orchestrator lane: aggregate delegated results for the run you control            |
-| `rundown pass --run <rd_…>`                                | Orchestrator lane: advance the run you control                                    |
-| `rundown fail --run <rd_…>`                                | Orchestrator lane: record a failing advance on the run you control                |
-| `rundown goto <step> --run <rd_…>`                         | Orchestrator lane: jump within the run you control (run-navigation policy gate)   |
-| `rundown complete --run <rd_…>`                            | Orchestrator lane: complete the run you control                                   |
-| `rundown stop --run <rd_…>`                                | Orchestrator lane: stop the run you control                                       |
-| `rundown abort <token>`                                    | Cancel a delegation token                                                         |
-| `rundown abort <token> --force`                            | Cancel or clean up a claimed delegation                                           |
+| `rundown stop --claim-id <claim_id>`                       | Bearer-authorized stop of a claimed run                                           |
+| `rundown complete --claim-id <claim_id>`                   | Bearer-authorized completion of a claimed run                                     |
+| `rundown delegate --step <id> --claim-id <claim_id>`       | Bearer-authorized delegation on a delegation-exposed run                          |
+| `rundown abort <token> --claim-id <claim_id>`              | Cancel a delegation token                                                         |
+| `rundown abort <token> --claim-id <claim_id> --force`      | Cancel or clean up a claimed delegation                                           |
 
 `rundown collect` may continue execution into the next command step after
 aggregation. In default JSON mode, bytes written by that command step are
@@ -793,28 +787,30 @@ Delegation semantics:
   without minting or exposing a token.
 - Targeting a substep whose delegation is **claimed** by a live child fails with
   RD-811 (`DELEGATION_ALREADY_CLAIMED`) — a fresh mint would orphan the running
-  child. Recover explicitly with `rundown abort <token> --force` then
-  re-delegate, or `rundown delegate --retry`.
+  child. Recover explicitly with
+  `rundown abort <token> --claim-id <claim_id> --force` then re-delegate, or
+  `rundown delegate --retry <token> --claim-id <claim_id>`.
 - `rundown delegate --retry <token>` refuses a live claimed child, but can
   supersede a terminal linked child and mint a fresh token. The target is
   resolved from a token positional, from `--step` (optionally with `--index` for
   a FOR iteration), or inferred from the active substep.
   `--input`/`--input-json`/`--input-file` supply variable overrides on the
   re-issued delegation.
-- `rundown abort <token> --force` cancels an active claimed child as fail. When
-  the linked child is already terminal or already reported, it performs cleanup
-  without recording a duplicate fail.
+- `rundown abort <token> --claim-id <claim_id> --force` cancels an active
+  claimed child as fail. When the linked child is already terminal or already
+  reported, it performs cleanup without recording a duplicate fail.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
-  runbook and returns a stable `claim_id`.
+  runbook and returns a one-time `claim_id`; replaying the same token is
+  refused.
 - Child runbook uses `rundown pass --claim-id <claim_id>` /
   `rundown fail --claim-id <claim_id>` to report its outcome. Other
   claim-targeted lifecycle commands use the same explicit child routing.
-- Orchestrator lane: on a delegation-exposed run every mutating command
-  (`delegate`, `collect`, `pass`, `fail`, `goto`, `complete`, `stop`) must name
-  the run you control with `--run <rd_…>`; the bare form is refused with
-  `ACTOR_CONTEXT_REQUIRED`. The run id is printed by `rundown run` at start and
-  carried as `runbookId` on every event. The refusal remediation names both
-  lanes and never echoes the target run id.
+- Run-control lane: on a delegation-exposed run every mutating command
+  (`delegate`, `collect`, `pass`, `fail`, `goto`, `complete`, `stop`) must carry
+  bearer authority with `--claim-id <claim_id>`; the bare form is refused with
+  `ACTOR_CONTEXT_REQUIRED`. `--run <rd_…>` is a selector, not bearer authority,
+  and must not be combined with `--claim-id`. The refusal remediation never
+  echoes the target run id.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to
   prevent stale re-entry completions from being applied.
 - Claimed children are routed by claim id, not by the shared stack.
@@ -836,8 +832,7 @@ Delegation semantics:
 These examples assume a **standalone run** (no delegation activity), so the bare
 transition forms apply. On a delegation-exposed run the bare form is refused
 with `ACTOR_CONTEXT_REQUIRED`; see [Delegation Patterns](#delegation-patterns)
-for the `--run <rd_…>` (orchestrator) and `--claim-id <claim_id>` (child)
-targeted forms.
+for bearer-authorized `--claim-id <claim_id>` forms.
 
 ### Task: Run a Simple Sequential Runbook
 
@@ -950,12 +945,12 @@ Main agent runs runbook, dispatches subagents for substeps.
 **Command sequence:**
 
 ```bash
-# 1. Main agent starts parent runbook, capturing the run id it prints
-#    (also carried as runbookId on every subsequent event)
+# 1. Main agent starts parent runbook, capturing the claim_id and run id it prints
+#    (the run id is also carried as runbookId on every subsequent event)
 rundown run runbook.runbook.md
 
-# 2. At substep, main agent delegates to child runbook, naming the run it controls
-rundown delegate task.runbook.md --step 2.1 --run <rd_…>
+# 2. At substep, main agent delegates to child runbook using its run-control claim
+rundown delegate task.runbook.md --step 2.1 --claim-id <root_claim_id>
 
 # 3. Subagent claims the delegation token
 rundown claim <token>
@@ -965,8 +960,8 @@ rundown claim <token>
 # 5. Subagent reports result using the claim_id returned by rundown claim
 rundown pass --claim-id <claim_id>    # or: rundown fail --claim-id <claim_id>
 
-# 6. Main agent advances its own run with --run once the child has reported
-rundown pass --run <rd_…>             # or: rundown collect --run <rd_…>
+# 6. Main agent advances its own run once the child has reported
+rundown collect --claim-id <root_claim_id>
 ```
 
 **Key points:**
@@ -979,10 +974,13 @@ rundown pass --run <rd_…>             # or: rundown collect --run <rd_…>
 - The delegation token printed by `delegate` is passed to `claim` by the
   subagent
 - The `claim_id` printed by `claim` is passed to every child-targeting command
-- Orchestrator lane: capture the run id from `rundown run` (echoed as
-  `runbookId` on every event) and pass `--run <rd_…>` on every orchestrator
-  mutation (`delegate`, `collect`, `pass`, `fail`, `goto`); the bare form is
-  refused with `ACTOR_CONTEXT_REQUIRED` on a delegation-exposed run
+- Orchestrator lane: capture the root `claim_id` from `rundown run` and pass
+  `--claim-id <claim_id>` on every orchestrator mutation (`delegate`, `collect`,
+  `pass`, `fail`, `goto`) — the bearer claim is the only mutation authority.
+  `--run <rd_…>` selects a target but never satisfies the
+  `ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
+  The bare form is refused with `ACTOR_CONTEXT_REQUIRED` on a delegation-exposed
+  run
 - Child uses `rundown pass --claim-id <claim_id>` /
   `rundown fail --claim-id <claim_id>`
 - Completions are validated against frame + entry identity; stale completions
@@ -1006,8 +1004,9 @@ If complete: `rundown pass`
 ```
 
 Agent reads step, evaluates condition, runs appropriate CLI command. On a
-delegation-exposed run these become `rundown goto 3 --run <rd_…>` and
-`rundown pass --run <rd_…>`; the bare forms shown apply to a standalone run.
+delegation-exposed run these become `rundown goto 3 --claim-id <claim_id>` and
+`rundown pass --claim-id <claim_id>`; the bare forms shown apply to a standalone
+run.
 
 ---
 
@@ -1137,18 +1136,19 @@ JSON output compatibility:
 
 ### Common Errors and Resolutions
 
-| Error                                       | Cause                                                                    | Resolution                                                                                                            |
-| ------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| "No active runbook"                         | No runbook in stack                                                      | Run `rundown run <file>`                                                                                              |
-| "Runbook file not found"                    | Missing runbook                                                          | Check file path                                                                                                       |
-| "Step N does not exist"                     | Invalid GOTO target                                                      | Check step numbers                                                                                                    |
-| "Invalid step target"                       | Bad goto format                                                          | Use "N" or "N.M"                                                                                                      |
-| "FOR loop references undefined data source" | Sourced FOR clause without matching source                               | Define source via --input-json, config.yaml, or --input-file                                                          |
-| "File drift detected"                       | Data file changed during iteration                                       | Ensure file stability or restart runbook                                                                              |
-| `ACTOR_CONTEXT_REQUIRED`                    | Bare mutating command on a delegation-exposed run                        | Name your lane: `--run <rd_…>` (orchestrator) or `--claim-id <claim_id>` (delegated child)                            |
-| `RUN_TARGET_UNAVAILABLE`                    | `--run` target is not a running member of this session's stack           | Use a run id from the active session stack (claimed children are never stack members — target them with `--claim-id`) |
-| `INVALID_RUN_ID`                            | Malformed `--run` value                                                  | Supply a valid run id — `rd_<32 hex characters>`                                                                      |
-| `COLLECT_REQUIRES_ORCHESTRATOR`             | `rundown collect` without an actor controlling the target delegating run | Run `collect` as the orchestrator of the delegating run (`--run <rd_…>`)                                              |
+| Error                                       | Cause                                                                                                                                                  | Resolution                                                                                                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "No active runbook"                         | No runbook in stack                                                                                                                                    | Run `rundown run <file>`                                                                                                                                          |
+| "Runbook file not found"                    | Missing runbook                                                                                                                                        | Check file path                                                                                                                                                   |
+| "Step N does not exist"                     | Invalid GOTO target                                                                                                                                    | Check step numbers                                                                                                                                                |
+| "Invalid step target"                       | Bad goto format                                                                                                                                        | Use "N" or "N.M"                                                                                                                                                  |
+| "FOR loop references undefined data source" | Sourced FOR clause without matching source                                                                                                             | Define source via --input-json, config.yaml, or --input-file                                                                                                      |
+| "File drift detected"                       | Data file changed during iteration                                                                                                                     | Ensure file stability or restart runbook                                                                                                                          |
+| `ACTOR_CONTEXT_REQUIRED`                    | Bare mutating command, or a `--run`-only mutation, on a delegation-exposed run                                                                         | Name your bearer lane with `--claim-id <claim_id>` (the only mutation authority); `--run` never satisfies the refusal, and must not be combined with `--claim-id` |
+| `RUN_TARGET_UNAVAILABLE`                    | `--run` target is not a running member of this session's stack                                                                                         | Use a run id from the active session stack (claimed children are never stack members — target them with `--claim-id`)                                             |
+| `INVALID_RUN_ID`                            | Malformed `--run` value                                                                                                                                | Supply a valid run id — `rd_<32 hex characters>`                                                                                                                  |
+| `CLAIM_GRANT_REQUIRED`                      | The verified bearer lacks the exact grant for the command/target (e.g. `rundown collect` from a claim without `collect-for-run` on the delegating run) | Present a `--claim-id <claim_id>` whose grant controls the target run                                                                                             |
+| `INVALID_SYNTAX`                            | `--claim-id` and `--run` supplied together on the same command                                                                                         | Pass either `--claim-id` or `--run`, not both — they are mutually exclusive                                                                                       |
 
 ### State Recovery
 
@@ -1181,14 +1181,14 @@ rundown stop [message]       # Abort runbook with optional message
 rundown complete [message]   # Force early completion (auto-complete on final step)
 
 # Transitions (bare forms below are standalone-run only; a delegation-exposed
-# run refuses them with ACTOR_CONTEXT_REQUIRED — name your lane instead)
+# run refuses them with ACTOR_CONTEXT_REQUIRED — provide a claim_id instead)
 rundown pass                 # Step succeeded (aliases: yes, ok)
 rundown fail                 # Step failed (alias: no)
 rundown goto <N>             # Jump to step N
 rundown goto <N.M>           # Jump to substep N.M
-rundown pass --run <rd_…>    # Orchestrator advance (delegation-exposed run)
-rundown collect --run <rd_…> # Orchestrator aggregates delegated results
-rundown goto <N> --run <rd_…># Orchestrator jump (run-navigation policy gate)
+rundown pass --claim-id <claim_id>    # Bearer-authorized advance
+rundown collect --claim-id <claim_id> # Bearer-authorized aggregation
+rundown goto <N> --claim-id <claim_id># Bearer-authorized jump (run-navigation policy gate)
 
 # Status
 rundown status               # Show current state
@@ -1218,11 +1218,11 @@ rdpath --dir <path>          # Path assembly tool (see docs/reference/rdpath.md)
 rdx <file>                   # Render JSON to Markdown (see docs/reference/rdx.md)
 
 # Delegation (orchestrator commands on a delegation-exposed run carry
-# --run <rd_…>; capture the run id from `rundown run` / event `runbookId`)
-rundown delegate --step <id> --run <rd_…>         # Delegate on the run you control
-rundown delegate <runbook> --step <id> --run <rd_…>  # Explicit child runbook
-rundown delegate --retry <token> --run <rd_…>     # Retry: cancel and re-issue
-rundown collect --run <rd_…>            # Aggregate delegated results
+# --claim-id bearer authority; do not combine it with --run)
+rundown delegate --step <id> --claim-id <claim_id>          # Delegate on the run you control
+rundown delegate <runbook> --step <id> --claim-id <claim_id> # Explicit child runbook
+rundown delegate --retry <token> --claim-id <claim_id>      # Retry: cancel and re-issue
+rundown collect --claim-id <claim_id>       # Aggregate delegated results
 rundown claim <token>                   # Claim delegation token and return claim_id
 rundown status --claim-id <claim_id>    # Inspect claimed child
 rundown pass --claim-id <claim_id>      # Complete claimed child with PASS
@@ -1230,8 +1230,7 @@ rundown fail --claim-id <claim_id>      # Complete claimed child with FAIL
 rundown goto <step> --claim-id <claim_id> # Jump within claimed child
 rundown stash --claim-id <claim_id>     # Stash claimed child
 rundown pop --claim-id <claim_id>       # Restore stashed claimed child
-rundown collect --claim-id <claim_id>   # Collect delegated child results
 rundown stop --claim-id <claim_id>      # Stop claimed child
 rundown complete --claim-id <claim_id>  # Complete claimed child
-rundown abort <token>                   # Cancel delegation token
+rundown abort <token> --claim-id <claim_id> # Cancel delegation token
 ```

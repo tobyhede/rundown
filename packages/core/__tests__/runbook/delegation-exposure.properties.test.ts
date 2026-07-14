@@ -6,7 +6,13 @@ import {
   type DelegationExposureInput,
 } from '../../src/runbook/delegation-exposure.js';
 import type { ClaimRecord } from '../../src/runbook/claim-id.js';
-import { assertClaimId, assertRunId } from '../../src/runbook/index.js';
+import {
+  assertClaimLookupKey,
+  assertClaimSecretHash,
+  assertRunId,
+  createDelegatedChildGrants,
+} from '../../src/runbook/index.js';
+import { ClaimRecordSchema } from '../../src/schemas.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import {
   activeFrame,
@@ -28,8 +34,9 @@ import {
 const runId = assertRunId('rd_11111111111111111111111111111111');
 const parentRunId = assertRunId('rd_22222222222222222222222222222222');
 const childRunId = assertRunId('rd_33333333333333333333333333333333');
-const claimIdA = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
-const claimIdB = assertClaimId('rdclm_abcdefghijklmnopqrstu2');
+const claimKeyA = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
+const claimKeyB = assertClaimLookupKey('rdclk_22222222222222222222222222222222');
+const secretHash = assertClaimSecretHash(`sha256:${'e'.repeat(64)}`);
 const tokenHash = assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`);
 
 /**
@@ -90,9 +97,10 @@ function anyClauseFires(clauses: ExposureClauses): boolean {
 }
 
 function makeOpenClaim(index: number): ClaimRecord {
-  return {
-    kind: 'claim-record',
-    claimId: index === 0 ? claimIdA : claimIdB,
+  // A delegated (open-child) claim carries its parent report linkage, so its
+  // grants must include the matching report-delegation-result grant — the
+  // run-control grant set alone is rejected by ClaimRecordSchema.
+  const linkage = {
     childRunId,
     tokenHash,
     parentRunId: runId,
@@ -100,7 +108,14 @@ function makeOpenClaim(index: number): ClaimRecord {
     parentStep: '1',
     parentFrameKey: buildFrameKey('1'),
     parentEntry: 1,
-    claimedAt: '2026-07-03T00:00:00.000Z',
+  };
+  return {
+    claimKey: index === 0 ? claimKeyA : claimKeyB,
+    secretHash,
+    controlledRunId: childRunId,
+    delegation: linkage,
+    grants: createDelegatedChildGrants({ linkage }),
+    issuedAt: '2026-07-03T00:00:00.000Z',
     updatedAt: '2026-07-03T00:00:00.000Z',
   };
 }
@@ -294,6 +309,14 @@ function augmentInput(
 }
 
 describe('classifyDelegationExposure properties', () => {
+  it('exercises the open-claims clause with a persistable (schema-valid) claim record', () => {
+    // Guards the fixture: an open delegated claim must be a shape the session can
+    // actually persist, so the clause-(b) coverage reflects a real claim.
+    for (const index of [0, 1]) {
+      expect(ClaimRecordSchema.safeParse(makeOpenClaim(index)).success).toBe(true);
+    }
+  });
+
   it('OR-composition: delegating iff at least one clause fires, standalone iff none', () => {
     fc.assert(
       fc.property(clausesArb, noiseArb, (clauses, noise) => {

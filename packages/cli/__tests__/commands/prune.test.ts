@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RunbookStateManager, SessionService, type Runbook, type RunId } from '@rundown-org/core';
+import {
+  assertClaimId,
+  assertDelegationTokenHash,
+  buildFrameKey,
+  claimKeyFromBearer,
+  createDelegatedChildGrants,
+  hashClaimSecret,
+  parseClaimBearer,
+  RunbookStateManager,
+  SessionService,
+  type ClaimId,
+  type Runbook,
+  type RunId,
+} from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -506,7 +519,7 @@ rd echo --result pass
      *
      * @returns The claim id of the completed child.
      */
-    async function completeDelegatedChild(): Promise<string> {
+    async function completeDelegatedChild(): Promise<ClaimId> {
       const childRunbook = [
         '# Child',
         '',
@@ -555,6 +568,7 @@ rd echo --result pass
       const claimOutput = findActionOutput(claimResult.stdout);
       const claimId = claimOutput?.claim_id;
       if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
+      const typedClaimId = assertClaimId(claimId);
 
       const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
       expect(finish.exitCode).toBe(0);
@@ -563,7 +577,7 @@ rd echo --result pass
       const child = await readRunbookState(workspace, runId);
       expect(child?.lifecycle).toBe('completed');
 
-      return claimId;
+      return typedClaimId;
     }
 
     it('rd prune --completed removes tombstone claims for pruned children', async () => {
@@ -571,14 +585,14 @@ rd echo --result pass
 
       // Sanity: the terminal tombstone claim is retained before prune.
       const before = await readSession(workspace);
-      expect(before.claims[claimId]).toBeDefined();
+      expect(before.claims[claimKeyFromBearer(claimId)]).toBeDefined();
 
       const result = await runCliInProcess(['prune', '--completed'], workspace);
       expect(result.exitCode).toBe(0);
 
       // The tombstone claim is dropped alongside its pruned child run.
       const after = await readSession(workspace);
-      expect(after.claims[claimId]).toBeUndefined();
+      expect(after.claims[claimKeyFromBearer(claimId)]).toBeUndefined();
 
       // A follow-up claim-targeted command no longer finds the tombstone.
       const status = await runCliInProcess(['status', '--claim-id', claimId], workspace);
@@ -677,7 +691,19 @@ Do the thing.
 
       // Write the claim record directly — the leak precondition is a claim
       // whose child went terminal without the terminal flow's release.
-      const claimId = 'rdclm_AAAAAAAAAAAAAAAAAAAAAA';
+      const claimId = assertClaimId(
+        'rdclm_22222222222222222222222222222222_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+      );
+      const parsedClaim = parseClaimBearer(claimId);
+      const linkage = {
+        childRunId: childId,
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+        parentRunId: parentId,
+        parentStepId: '1.1',
+        parentStep: 'Child',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      };
       const sessionPath = join(workspace.cwd, '.rundown', 'session.json');
       const raw = JSON.parse(await readFile(sessionPath, 'utf8')) as Record<string, unknown>;
       await writeFile(
@@ -685,17 +711,13 @@ Do the thing.
         JSON.stringify({
           ...raw,
           claims: {
-            [claimId]: {
-              kind: 'claim-record',
-              claimId,
-              childRunId: childId,
-              tokenHash: `sha256:${'a'.repeat(64)}`,
-              parentRunId: parentId,
-              parentStepId: '1.1',
-              parentStep: 'Child',
-              parentFrameKey: '1|',
-              parentEntry: 1,
-              claimedAt: '2026-07-03T00:00:00.000Z',
+            [parsedClaim.claimKey]: {
+              claimKey: parsedClaim.claimKey,
+              secretHash: hashClaimSecret(parsedClaim.secret),
+              controlledRunId: childId,
+              delegation: linkage,
+              grants: createDelegatedChildGrants({ linkage }),
+              issuedAt: '2026-07-03T00:00:00.000Z',
               updatedAt: '2026-07-03T00:00:00.000Z',
             },
           },
@@ -707,7 +729,7 @@ Do the thing.
       expect(result.exitCode).toBe(0);
 
       const session = await readSession(workspace);
-      expect(session.claims[claimId]).toBeUndefined();
+      expect(session.claims[parsedClaim.claimKey]).toBeUndefined();
       expect(session.defaultStack).toEqual([parentId]);
     });
 

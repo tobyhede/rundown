@@ -3,6 +3,7 @@ import {
   createTestWorkspace,
   createRunbook,
   getActiveState,
+  issueRunControlClaim,
   parseCliJsonObject,
   parseConcatenatedJson,
   readRunbookState,
@@ -60,8 +61,8 @@ describe('Delegation abort integration', () => {
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), content);
   }
 
-  /** Helper: start parent, delegate, return token. */
-  async function setupDelegation(): Promise<string> {
+  /** Helper: start parent, delegate, return token and parent bearer. */
+  async function setupDelegation(): Promise<{ token: string; parentClaimId: string }> {
     await writeParentRunbook();
     await writeChildRunbook();
 
@@ -71,7 +72,8 @@ describe('Delegation abort integration', () => {
     const state = await getActiveState(workspace);
     const token = state?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    const parentClaimId = await issueRunControlClaim(workspace, state!.id);
+    return { token: token!, parentClaimId };
   }
 
   it('rejects invalid token format', () => {
@@ -90,18 +92,18 @@ describe('Delegation abort integration', () => {
   });
 
   it('renders text output for pending abort', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
 
-    const result = runCli(`abort ${token} --text`, workspace);
+    const result = runCli(`abort ${token} --claim-id ${parentClaimId} --text`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/CANCELLED/i);
   });
 
   it('claim after abort fails with RD-809', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
 
     // Abort the delegation
-    let result = runCli(`abort ${token}`, workspace);
+    let result = runCli(`abort ${token} --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Try to claim — should fail
@@ -114,10 +116,10 @@ describe('Delegation abort integration', () => {
   });
 
   it('ordinary abort (no --force) closes the delegation without a fail outcome or pending collection', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
 
     // Ordinary cancel of a pending (issued, not yet claimed) delegation.
-    const abort = runCli(`abort ${token}`, workspace);
+    const abort = runCli(`abort ${token} --claim-id ${parentClaimId}`, workspace);
     expect(abort.exitCode).toBe(0);
 
     const parent = await getActiveState(workspace);
@@ -137,21 +139,21 @@ describe('Delegation abort integration', () => {
   });
 
   it('claimed abort without --force fails with RD-811', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
 
     // Claim the token
     let result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Try to abort without force — should fail
-    result = runCli(`abort ${token}`, workspace);
+    result = runCli(`abort ${token} --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(1);
     const envelope = parseCliJsonObject(result.stdout || result.stderr);
     expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-811' }));
   });
 
   it('claimed abort with --force records a fail outcome and leaves collection pending', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
     const parentId = (await getActiveState(workspace))!.id;
 
     // Claim the token
@@ -159,7 +161,7 @@ describe('Delegation abort integration', () => {
     expect(result.exitCode).toBe(0);
 
     // Force abort
-    result = runCli(`abort ${token} --force`, workspace);
+    result = runCli(`abort ${token} --claim-id ${parentClaimId} --force`, workspace);
     expect(result.exitCode).toBe(0);
     const output = parseConcatenatedJson(result.stdout).find(
       (value): value is Record<string, unknown> =>
@@ -183,13 +185,13 @@ describe('Delegation abort integration', () => {
 
     // Collection pending: a run-targeted bare-shaped advance is refused until
     // `rd collect` (named authority does not skip collection discipline).
-    const blocked = runCli(`pass --run ${parent!.id}`, workspace);
+    const blocked = runCli(`pass --claim-id ${parentClaimId}`, workspace);
     expect(blocked.exitCode).toBe(1);
     expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
   });
 
   it('force-aborts a resolved failed linked child without RD-812', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
     const parentId = (await getActiveState(workspace))!.id;
 
     const claim = runCli(`claim ${token}`, workspace);
@@ -206,7 +208,7 @@ describe('Delegation abort integration', () => {
     const failed = runCli(`fail --claim-id ${claimId}`, workspace);
     expect(failed.exitCode).toBe(1);
 
-    const result = runCli(`abort ${token} --force`, workspace);
+    const result = runCli(`abort ${token} --claim-id ${parentClaimId} --force`, workspace);
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toContain('RD-812');
 
@@ -254,6 +256,7 @@ describe('Delegation abort integration', () => {
     // the iteration frame.
     const entered = await getActiveState(workspace);
     const parentId = entered!.id;
+    const parentClaimId = await issueRunControlClaim(workspace, parentId);
     const iterationSubstep = entered?.substepStates?.find((ss) => ss.delegation?.token);
     const token = iterationSubstep?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
@@ -262,7 +265,7 @@ describe('Delegation abort integration', () => {
     // Claim (in-flight), then force abort.
     let result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
-    result = runCli(`abort ${token} --force`, workspace);
+    result = runCli(`abort ${token} --claim-id ${parentClaimId} --force`, workspace);
     expect(result.exitCode).toBe(0);
 
     const parent = await readRunbookState(workspace, parentId);
@@ -277,19 +280,19 @@ describe('Delegation abort integration', () => {
 
     // Run-targeted bare-shaped advance refused — the iteration frame is
     // collection pending.
-    const blocked = runCli(`pass --run ${parent!.id}`, workspace);
+    const blocked = runCli(`pass --claim-id ${parentClaimId}`, workspace);
     expect(blocked.exitCode).toBe(1);
     expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
   });
 
   it('idempotent on already-cancelled', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
 
     // Abort twice
-    let result = runCli(`abort ${token}`, workspace);
+    let result = runCli(`abort ${token} --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli(`abort ${token}`, workspace);
+    result = runCli(`abort ${token} --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
     const output = parseCliJsonObject(result.stdout);
     expect(output).toEqual(
@@ -298,9 +301,9 @@ describe('Delegation abort integration', () => {
   });
 
   it('JSON output structure', async () => {
-    const token = await setupDelegation();
+    const { token, parentClaimId } = await setupDelegation();
 
-    const result = runCli(`abort ${token}`, workspace);
+    const result = runCli(`abort ${token} --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
 
     const output = parseCliJsonObject(result.stdout);

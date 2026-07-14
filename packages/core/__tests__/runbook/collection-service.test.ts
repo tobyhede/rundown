@@ -10,11 +10,13 @@ import {
   RunbookStateManager,
   InvalidRunbookStateError,
   assertClaimId,
+  assertClaimLookupKey,
   assertDelegationTokenHash,
   assertRunId,
   type CallerEvidence,
   type RunbookState,
 } from '../../src/runbook/index.js';
+import type { CommandTargetReader } from '../../src/runbook/command-target-resolver.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -56,23 +58,27 @@ describe('RunbookCollectionService', () => {
   let actorService: RunbookActorService;
   let lifecycleService: ExecutionLifecycleService;
   let completionService: RunbookCompletionService;
+  let sessionService: CommandTargetReader;
   let collectionService: RunbookCollectionService;
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
   const controlledRunId = assertRunId('rd_22222222222222222222222222222222');
   const ancestorRunId = assertRunId('rd_33333333333333333333333333333333');
-  const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+  const claimId = assertClaimId(
+    'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+  );
+  const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
   const tokenHash = assertDelegationTokenHash(
     'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
   );
 
   // Post-R1, collection targets author DELEGATE and therefore classify
   // `delegating`, so bare direct-CLI evidence no longer mints orchestrator
-  // trust — the orchestrator names its run explicitly (`--run` =>
-  // run_controller evidence). The behavioural suites below exercise the
-  // collection operation as that named orchestrator; the refusal twin pinning
-  // direct_cli on these fixtures lives in the policy-gate describe.
-  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'run_controller', runId };
+  // trust — the orchestrator supplies bearer claim evidence. The behavioural
+  // suites below exercise the collection operation as that verified controller;
+  // the refusal twin pinning direct_cli on these fixtures lives in the
+  // policy-gate describe.
+  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'claim_bearer', claimId };
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
   // Default runbook: step 1 delegates two substeps (PASS CONTINUE so a full
@@ -132,7 +138,46 @@ describe('RunbookCollectionService', () => {
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    sessionService = {
+      async getActive() {
+        return null;
+      },
+      async resolveRunningStackMember() {
+        return { kind: 'not_on_stack' };
+      },
+      async getActiveForClaimId() {
+        return { status: 'missing', claimId };
+      },
+      async verifyClaimId(presentedClaimId) {
+        expect(presentedClaimId).toBe(claimId);
+        return {
+          status: 'verified',
+          claim: {
+            claimKey,
+            controlledRunId: runId,
+            grants: [
+              { action: 'collect-for-run', runId },
+              { action: 'collect-for-run', runId: controlledRunId },
+              {
+                action: 'report-delegation-result',
+                childRunId: controlledRunId,
+                tokenHash,
+                parentRunId: ancestorRunId,
+                parentStepId: '1.1',
+                parentStep: '1',
+                parentFrameKey: buildFrameKey('1'),
+                parentEntry: 1,
+              },
+            ],
+          },
+        };
+      },
+      async listOpenClaimsForParent() {
+        return [];
+      },
+    };
     collectionService = new RunbookCollectionService({
+      sessionService,
       manager,
       actorService,
       lifecycleService,
@@ -170,7 +215,8 @@ describe('RunbookCollectionService', () => {
     // The collection target authors DELEGATE substeps, so it classifies
     // `delegating`; bare direct_cli evidence maps to the unknown context and
     // the orchestrator gate refuses before inspecting any outcome state. The
-    // orchestrator lane is `run_controller` (--run); the child lane is claim.
+    // orchestrator authorizes with its run-control bearer claim; the child lane
+    // is its own claim.
     await manager.save(state());
 
     await expect(
@@ -664,7 +710,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: controlled,
         steps,
-        callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'missing_outcomes',
@@ -674,7 +720,7 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('rejects a claim controller collecting into its delegating ancestor', async () => {
+  it('rejects a bearer collecting into an ancestor without collect-for-run on that ancestor', async () => {
     const ancestor = state({ id: ancestorRunId });
     await manager.save(ancestor);
 
@@ -682,12 +728,12 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: ancestor,
         steps,
-        callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toEqual({
-      kind: 'collect_requires_orchestrator',
+      kind: 'claim_grant_required',
+      intent: 'delegation-collection',
       targetRunId: ancestorRunId,
-      message: expect.stringContaining('--run'),
     });
   });
 
@@ -879,7 +925,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -909,7 +955,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -923,6 +969,39 @@ describe('RunbookCollectionService', () => {
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
     });
+  });
+
+  it('does not report a terminal child upward when the verified claim lacks report grant', async () => {
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: delegationLinkage,
+    });
+    sessionService.verifyClaimId = async () => ({
+      status: 'verified',
+      claim: {
+        claimKey,
+        controlledRunId: runId,
+        grants: [
+          { action: 'collect-for-run', runId },
+          { action: 'collect-for-run', runId: controlledRunId },
+        ],
+      },
+    });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      reportedTerminalOutcome: false,
+    });
+    const freshAncestor = await manager.load(ancestorRunId);
+    expect(Object.keys(freshAncestor?.resolvedCompletions ?? {})).toHaveLength(0);
   });
 
   it('does not report delegated fail for policy-denied terminal children', async () => {
@@ -940,7 +1019,7 @@ describe('RunbookCollectionService', () => {
     const recorded = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -961,7 +1040,7 @@ describe('RunbookCollectionService', () => {
       targetState: controlled,
       steps: oneSubstepSteps,
       // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -988,7 +1067,7 @@ describe('RunbookCollectionService', () => {
       targetState: controlled,
       steps: oneSubstepSteps,
       // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1222,7 +1301,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: { ...controlled, lifecycle: 'running' },
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1269,7 +1348,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1298,7 +1377,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1410,7 +1489,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 

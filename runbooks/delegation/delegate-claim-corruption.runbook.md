@@ -13,7 +13,7 @@ scenarios:
       - rd run --prompted delegate-claim-corruption.runbook.md
       - rd claim ${TOKEN}
       - >-
-        node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(".rundown/session.json","utf8")); const c=s.claims["${CLAIM_ID}"]; fs.unlinkSync(`.rundown/runs/${c.childRunId}.json`);'
+        node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(".rundown/session.json","utf8")); const key="${CLAIM_ID}".replace(/^rdclm_([a-f0-9]{32})_.+$/,"rdclk_$1"); const c=s.claims[key]; fs.unlinkSync(`.rundown/runs/${c.controlledRunId}.json`);'
       - "! rd claim ${TOKEN}"
     expect:
       errors:
@@ -26,7 +26,7 @@ scenarios:
       - rd run --prompted delegate-claim-corruption.runbook.md
       - rd claim ${TOKEN}
       - >-
-        node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(".rundown/session.json","utf8")); const c=s.claims["${CLAIM_ID}"]; const p=`.rundown/runs/${c.childRunId}.json`; const child=JSON.parse(fs.readFileSync(p,"utf8")); child.parentLinkage.tokenHash=`sha256:${"f".repeat(64)}`; fs.writeFileSync(p, JSON.stringify(child, null, 2));'
+        node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(".rundown/session.json","utf8")); const key="${CLAIM_ID}".replace(/^rdclm_([a-f0-9]{32})_.+$/,"rdclk_$1"); const c=s.claims[key]; const p=`.rundown/runs/${c.controlledRunId}.json`; const child=JSON.parse(fs.readFileSync(p,"utf8")); child.parentLinkage.tokenHash=`sha256:${"f".repeat(64)}`; fs.writeFileSync(p, JSON.stringify(child, null, 2));'
       - "! rd claim ${TOKEN}"
     expect:
       errors:

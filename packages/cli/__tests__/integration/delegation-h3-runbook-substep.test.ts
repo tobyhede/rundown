@@ -15,9 +15,9 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
   parseCliJsonObject,
+  parseConcatenatedJson,
   runCli,
   type TestWorkspace,
-  getActiveState,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -37,6 +37,20 @@ describe('H3 runbook-list substep delegation integration', () => {
     const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(stdout);
     expect(tokenMatch).not.toBeNull();
     return tokenMatch![1];
+  }
+
+  function extractRunControlClaimId(stdout: string): string {
+    for (const event of parseConcatenatedJson(stdout)) {
+      if (
+        event &&
+        typeof event === 'object' &&
+        (event as { type?: unknown }).type === 'runbook_started' &&
+        typeof (event as { claim_id?: unknown }).claim_id === 'string'
+      ) {
+        return (event as { claim_id: string }).claim_id;
+      }
+    }
+    throw new Error(`runbook_started claim_id not found in output:\n${stdout}`);
   }
 
   /** Simple auto-completing child runbook. */
@@ -223,8 +237,9 @@ Done.
 
     let result = runCli('run --prompted parent-no-delegate-target.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const parentClaimId = extractRunControlClaimId(result.stdout);
 
-    result = runCli('delegate child.runbook.md', workspace);
+    result = runCli(`delegate child.runbook.md --claim-id ${parentClaimId}`, workspace);
 
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain('RD-813');
@@ -306,11 +321,11 @@ Done.
     const [originalToken] = extractTokens(result.stdout);
     expect(originalToken).toBeDefined();
     expect(originalToken).toMatch(/^rdtk_/);
+    const parentClaimId = extractRunControlClaimId(result.stdout);
 
     // A run-targeted `rd delegate` is idempotent on an auto-issued frontier:
     // it echoes the existing token rather than re-issuing or throwing RD-813.
-    const parentId = (await getActiveState(workspace))!.id;
-    result = runCli(`delegate --run ${parentId}`, workspace);
+    result = runCli(`delegate --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
     expect(/rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0]).toBe(originalToken);
@@ -318,7 +333,7 @@ Done.
     // Explicit `--step` on an already-delegated substep is idempotent: it echoes
     // the existing in-flight token rather than re-issuing a duplicate delegation
     // or erroring RD-804.
-    result = runCli(`delegate --step 1.1 --run ${parentId}`, workspace);
+    result = runCli(`delegate --step 1.1 --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
     const echoedToken = /rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0];
@@ -372,9 +387,10 @@ Done.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const parentClaimId = extractRunControlClaimId(result.stdout);
 
     result = runCli(
-      `delegate explicit-child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      `delegate explicit-child.runbook.md --step 1.1 --claim-id ${parentClaimId}`,
       workspace,
     );
     expect(result.exitCode).not.toBe(0);
@@ -400,9 +416,10 @@ Do some manual work here.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const parentClaimId = extractRunControlClaimId(result.stdout);
 
     result = runCli(
-      `delegate explicit-child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      `delegate explicit-child.runbook.md --step 1.1 --claim-id ${parentClaimId}`,
       workspace,
     );
     expect(result.exitCode).not.toBe(0);
@@ -419,14 +436,12 @@ Do some manual work here.
     expect(result.exitCode).toBe(0);
     const [autoToken] = extractTokens(result.stdout);
     expect(autoToken).toBeDefined();
+    const parentClaimId = extractRunControlClaimId(result.stdout);
 
-    result = runCli(`abort ${autoToken}`, workspace);
+    result = runCli(`abort ${autoToken} --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli(
-      `delegate child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
-      workspace,
-    );
+    result = runCli(`delegate child.runbook.md --step 1.1 --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).action).toBe('delegated');
 
@@ -455,9 +470,10 @@ Do some manual work here.
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const parentClaimId = extractRunControlClaimId(result.stdout);
 
-    // Step 1.1 is prose — pass it directly (run+step named authority post-R1)
-    result = runCli(`pass --step 1.1 --run ${(await getActiveState(workspace))!.id}`, workspace);
+    // Step 1.1 is prose — pass it directly with run-control authority.
+    result = runCli(`pass --step 1.1 --claim-id ${parentClaimId}`, workspace);
     expect(result.exitCode).toBe(0);
 
     const [token] = extractTokens(result.stdout);

@@ -8,7 +8,6 @@ import type {
   SessionService,
   StepId,
 } from '@rundown-org/core';
-import { assertClaimId } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import {
   brandDelegationTokenHashForTest,
@@ -564,20 +563,24 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
       defaultStack: [PARENT_RUNBOOK_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {
-          kind: 'claim-record',
-          claimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
-          childRunId: CLAIMED_RUNBOOK_ID,
-          parentRunId: PARENT_RUNBOOK_ID,
-          parentStepId: '1.1',
-          parentStep: '1',
-          parentFrameKey: brandFrameKeyForTest('1'),
-          parentEntry: 1,
-          tokenHash: brandDelegationTokenHashForTest(
-            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          ),
-          claimedAt: '2026-01-01T00:00:00.000Z',
+          claimKey: 'rdclk_abcdefghijklmnopqrstu1',
+          secretHash: `sha256:${'a'.repeat(64)}`,
+          controlledRunId: CLAIMED_RUNBOOK_ID,
+          delegation: {
+            childRunId: CLAIMED_RUNBOOK_ID,
+            parentRunId: PARENT_RUNBOOK_ID,
+            parentStepId: '1.1',
+            parentStep: '1',
+            parentFrameKey: brandFrameKeyForTest('1'),
+            parentEntry: 1,
+            tokenHash: brandDelegationTokenHashForTest(
+              'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            ),
+          },
+          grants: [],
+          issuedAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-01T00:00:00.000Z',
-        },
+        } as unknown as never,
       },
     });
 

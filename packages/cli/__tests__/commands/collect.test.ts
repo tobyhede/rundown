@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import {
   activeFrame,
+  assertRunId,
   buildFrameKey,
   buildCompletionKey,
-  COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   type FrameKey,
 } from '@rundown-org/core';
 // Static import of the command module under test. The behavioural tests below
@@ -29,6 +29,7 @@ import {
   readRunbookState,
   parseConcatenatedJson,
   findActionOutput,
+  issueRunControlClaim,
   readSession,
   writeSession,
   type TestWorkspace,
@@ -305,18 +306,15 @@ describe('collect command', () => {
       const claimId = String(claimPayload?.claim_id);
       expect(claimId).toMatch(/^rdclm_/);
 
-      // `rd collect --claim-id` must NOT be rejected by the orchestrator gate:
-      // the direct-CLI adapter resolves the claim to its controlled run and is
-      // the trusted controller of that run. The command therefore proceeds past
-      // the policy gate (it must not emit ACTOR_CONTEXT_REQUIRED or
-      // COLLECT_REQUIRES_ORCHESTRATOR). Whether outcomes exist to aggregate is
-      // the collection operation's concern (Plan 4), so this test asserts only
-      // that the policy gate did not refuse the command.
+      // `rd collect --claim-id` presents bearer evidence, so it is never refused
+      // with ACTOR_CONTEXT_REQUIRED (the bare/no-bearer refusal). Whether the
+      // claim carries the exact grant, or outcomes exist to aggregate, is the
+      // collection operation's concern (Plan 4); this test asserts only that the
+      // no-actor-context gate did not refuse the command.
       const result = await runCliInProcess(['collect', '--claim-id', claimId], workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string };
       expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
-      expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
     }, 30_000);
 
     it('allows collection on a run that itself delegates upward', async () => {
@@ -353,7 +351,7 @@ describe('collect command', () => {
       const claim = await runCliInProcess(['claim', token!], workspace);
       expect(claim.exitCode).toBe(0);
       const claimPayload = findActionOutput(claim.stdout);
-      const childRunId = String(claimPayload?.run_id);
+      const childRunId = assertRunId(String(claimPayload?.run_id));
       // Make the claimed child the active run by hand: no CLI command promotes a
       // claimed child onto the default stack while leaving its parent claim
       // intact, so we cannot reach this "active run is itself delegated upward"
@@ -366,14 +364,14 @@ describe('collect command', () => {
       });
 
       // The active run is itself delegated upward. Under the target-relative
-      // model the orchestrator gate must NOT reject it as a collection target —
-      // but post-R1 the orchestrator must NAME the run it collects: the child
-      // is delegation-linked (clause e), so a bare collect is refused.
+      // model the orchestrator gate must NOT reject it as a collection target
+      // once bearer authority is presented.
       const bare = await runCliInProcess(['collect'], workspace);
       const bareEnvelope = JSON.parse(bare.stdout) as { code?: string };
       expect(bareEnvelope.code).toBe('ACTOR_CONTEXT_REQUIRED');
 
-      const result = await runCliInProcess(['collect', '--run', childRunId], workspace);
+      const childClaimId = await issueRunControlClaim(workspace, childRunId);
+      const result = await runCliInProcess(['collect', '--claim-id', childClaimId], workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string };
       // Pin the full outcome, not just the absence of the two gate refusals:
@@ -386,10 +384,11 @@ describe('collect command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('collects the named delegating parent via collect --run <parentId>', async () => {
+    it('collects the named delegating parent via collect --claim-id <parentClaimId>', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
+      const claimId = await issueRunControlClaim(workspace, assertRunId(runbookId));
 
-      const result = await runCliInProcess(['collect', '--run', runbookId], workspace);
+      const result = await runCliInProcess(['collect', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -408,14 +407,6 @@ describe('collect command', () => {
       // The refusal collected nothing.
       const state = await getActiveState(workspace);
       expect(state?.step).toBe('1');
-    });
-
-    it('names the --run remediation in the orchestrator-gate refusal message', () => {
-      // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at BOTH explicit
-      // authority lanes and never echo a run id (decision 4).
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--run');
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-id');
-      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).not.toMatch(/rd_[a-f0-9]{32}/);
     });
   });
 
@@ -998,7 +989,7 @@ describe('collect command', () => {
       expect(collectedParent.step).toBe('2');
     }, 20_000);
 
-    async function setupCollectAdvancesIntoCommand(): Promise<{ runId: string }> {
+    async function setupCollectAdvancesIntoCommand(): Promise<{ claimId: string }> {
       const parent = [
         '# Parent',
         '',
@@ -1042,6 +1033,8 @@ describe('collect command', () => {
       );
       const runId = String(started?.runbookId);
       expect(runId).toMatch(/^rd_/);
+      const parentClaimId = String(started?.claim_id);
+      expect(parentClaimId).toMatch(/^rdclm_/);
 
       type FrontierEntry = { token: string };
       type StepEnteredEvent = {
@@ -1075,13 +1068,16 @@ describe('collect command', () => {
       const passed = runCli(`pass --claim-id ${claimId}`, workspace);
       expect(passed.exitCode).toBe(0);
 
-      return { runId };
+      return { claimId: parentClaimId };
     }
 
     it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
-      const { runId } = await setupCollectAdvancesIntoCommand();
+      const { claimId } = await setupCollectAdvancesIntoCommand();
 
-      const collected = runCli(`collect --run ${runId} --allow-run printf --no-sandbox`, workspace);
+      const collected = runCli(
+        `collect --claim-id ${claimId} --allow-run printf --no-sandbox`,
+        workspace,
+      );
       expect(collected.exitCode).toBe(0);
       expect(collected.stdout).not.toContain('COMMAND_STDOUT');
       expect(collected.stdout).not.toContain('COMMAND_STDERR');
@@ -1097,10 +1093,10 @@ describe('collect command', () => {
     });
 
     it('routes command stdout and stderr separately when collect text output advances into a command', async () => {
-      const { runId } = await setupCollectAdvancesIntoCommand();
+      const { claimId } = await setupCollectAdvancesIntoCommand();
 
       const collected = runCli(
-        `collect --run ${runId} --text --allow-run printf --no-sandbox`,
+        `collect --claim-id ${claimId} --text --allow-run printf --no-sandbox`,
         workspace,
       );
 

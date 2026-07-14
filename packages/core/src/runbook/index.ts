@@ -89,11 +89,13 @@ export {
 } from './session-service.js';
 export {
   resolveCommandTarget,
+  resolveMutationAuthority,
   resolveTerminalTarget,
   resolveTransitionTarget,
   type CommandTargetResolution,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
+  type MutationAuthorityResolution,
   type TerminalCommandName,
   type TerminalTargetResolution,
   type TransitionCommandName,
@@ -101,21 +103,19 @@ export {
 } from './command-target-resolver.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
-  actorContextFromEvidence,
-  claimControllerContext,
-  trustedRunControllerContext,
+  verifiedClaimContext,
   type ActorContext,
   type CallerEvidence,
   type EffectiveRole,
-  type EvidenceTarget,
 } from './actor-context.js';
 export {
   classifyDelegationExposure,
+  classifyDelegationExposureDetail,
   type DelegationExposure,
+  type DelegationExposureDetail,
   type DelegationExposureInput,
 } from './delegation-exposure.js';
 export {
-  COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   deriveEffectiveRole,
   resolveCommandIntent,
   type CommandIntent,
@@ -132,6 +132,7 @@ export {
   DELEGATE_CLAIM_ID_REJECTED_CODE,
   GLOBAL_VALUE_TAKING_OPTION_NAMES,
   PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
+  SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
   type GlobalValueTakingOptionName,
   type PassFailValueTakingOptionName,
@@ -165,6 +166,13 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
+export {
+  AbortCommandService,
+  type AbortCommandAuthorizationInput,
+  type AbortCommandAuthorizationResult,
+  type AbortCommandServiceDependencies,
+  type AuthorizedAbortCommand,
+} from './abort-command-service.js';
 export {
   RunbookLifecycleCommandService,
   type AttributedTerminalObservation,

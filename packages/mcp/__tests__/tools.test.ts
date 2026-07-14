@@ -8,6 +8,19 @@ import {
   type RundownToolName,
 } from '../src/tools.js';
 
+/**
+ * Parse the MCP text block back into its JSON payload so assertions pin the
+ * structured envelope (e.g. `{ error }` / the success payload), not just a
+ * substring of the rendered text.
+ */
+function parseToolResponse(res: unknown): unknown {
+  const text = (res as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text;
+  if (typeof text !== 'string') {
+    throw new Error('expected an MCP text response with a JSON text block');
+  }
+  return JSON.parse(text);
+}
+
 describe('buildRundownCommand', () => {
   it.each([
     ['validate', { file: 'workflow.md' }, ['check', 'workflow.md']],
@@ -42,8 +55,8 @@ describe('buildRundownCommand', () => {
     ['delegate', { step: '4.1', index: 2 }, ['delegate', '--step', '4.1', '--index', '2']],
     [
       'delegate',
-      { runbook: 'child.md', step: '1', input: ['env=prod'] },
-      ['delegate', 'child.md', '--step', '1', '--input', 'env=prod'],
+      { runbook: 'child.md', step: '1', claimId: 'claim-1', input: ['env=prod'] },
+      ['delegate', 'child.md', '--step', '1', '--claim-id', 'claim-1', '--input', 'env=prod'],
     ],
     [
       'delegate',
@@ -101,6 +114,24 @@ describe('buildRundownCommand', () => {
   it('maps bare pass/fail to CLI argv without a frontend-specific guard', () => {
     expect(buildRundownCommand('pass', {})).toEqual(['pass']);
     expect(buildRundownCommand('fail', {})).toEqual(['fail']);
+  });
+
+  it.each([
+    'pass',
+    'fail',
+    'goto',
+    'complete',
+    'stop',
+    'delegate',
+    'collect',
+  ] as const)('%s rejects claimId + runId before building CLI argv', (tool) => {
+    expect(() =>
+      buildRundownCommand(tool, {
+        step: '3.1',
+        claimId: 'claim-1',
+        runId: `rd_${'a'.repeat(32)}`,
+      }),
+    ).toThrow(/runId cannot be combined with claimId/);
   });
 
   it('renders CLI data as MCP text without interpreting runbook state', () => {
@@ -171,13 +202,19 @@ describe('inputSchema enforces index requires step', () => {
   });
 });
 
-describe('inputSchema enforces claimId/runId mutual exclusion', () => {
-  // Every tool whose schema accepts both authorities. `--run` and `--claim-id`
-  // name two different authorities and the CLI refuses the pair; the schema
-  // must fail the conflict closed before the handler spawns anything.
-  const dualAuthorityTools = ['pass', 'fail', 'goto', 'complete', 'stop', 'collect'] as const;
+describe('inputSchema rejects claimId and runId together', () => {
+  const dualAuthorityTools = [
+    'pass',
+    'fail',
+    'goto',
+    'complete',
+    'stop',
+    'delegate',
+    'collect',
+  ] as const;
   const runId = `rd_${'a'.repeat(32)}`;
-  const claimId = 'rdclm_abcdefghijklmnopqrstu1';
+  const claimId =
+    'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
   // `goto` requires `step`; harmless extra field for the rest.
   const withStep = { step: '3.1' };
 
@@ -192,15 +229,15 @@ describe('inputSchema enforces claimId/runId mutual exclusion', () => {
       expect(schema.safeParse({ ...withStep, runId }).success).toBe(true);
     });
 
-    it('rejects claimId + runId together with a clear conflict message', () => {
+    it('rejects claimId + runId together', () => {
       const result = schema.safeParse({ ...withStep, claimId, runId });
       expect(result.success).toBe(false);
       if (!result.success) {
-        const conflictIssue = result.error.issues.find(
-          (issue) => issue.path.length === 1 && issue.path[0] === 'runId',
+        const issue = result.error.issues.find(
+          (schemaIssue) => schemaIssue.path.length === 1 && schemaIssue.path[0] === 'runId',
         );
-        expect(conflictIssue).toBeDefined();
-        expect(conflictIssue?.message).toMatch(/claimId and runId are mutually exclusive/);
+        expect(issue).toBeDefined();
+        expect(issue?.message).toMatch(/runId cannot be combined with claimId/);
       }
     });
   });
@@ -256,13 +293,13 @@ describe('registerRundownTools', () => {
     expect(RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema.safeParse({ step: '3.1' }).success).toBe(true);
   });
 
-  it('rejects claimId on the delegate tool schema', () => {
+  it('accepts claimId on the delegate tool schema', () => {
     const result = RUNDOWN_TOOL_DEFINITIONS.delegate.inputSchema.safeParse({
       runbook: 'child.md',
       claimId: 'rdclm_abcdefghijklmnopqrstu1',
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('registered handlers invoke runCli with built argv and return CLI JSON', async () => {
@@ -378,6 +415,7 @@ describe('registerRundownTools', () => {
     'goto',
     'complete',
     'stop',
+    'delegate',
     'collect',
   ] as const)('%s handler rejects claimId + runId together before invoking the CLI', async (tool) => {
     const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
@@ -395,20 +433,13 @@ describe('registerRundownTools', () => {
     const runCli = jest.fn<RunCli>();
     registerRundownTools(fakeServer, runCli);
 
-    // Both authorities at once is always a conflict; it must fail closed at
-    // schema validation, never reach a spawned CLI to be refused post-spawn.
     const res = await handlers.get(tool)?.({
       step: '3.1',
-      claimId: 'rdclm_abcdefghijklmnopqrstu1',
+      claimId: 'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       runId: `rd_${'a'.repeat(32)}`,
     });
-    expect(res).toMatchObject({
-      content: [
-        {
-          type: 'text',
-          text: expect.stringMatching(/runId: claimId and runId are mutually exclusive/),
-        },
-      ],
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('runId cannot be combined with claimId'),
     });
     expect(runCli).not.toHaveBeenCalled();
   });
@@ -432,25 +463,13 @@ describe('subprocess trust boundary', () => {
     return handlers;
   }
 
-  // Parse the MCP text block back into its JSON payload so assertions pin the
-  // structured envelope (e.g. `{ error }` / the success payload), not just a
-  // substring of the rendered text.
-  function parseToolResponse(res: unknown): unknown {
-    const text = (res as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text;
-    if (typeof text !== 'string') {
-      throw new Error('expected an MCP text response with a JSON text block');
-    }
-    return JSON.parse(text);
-  }
-
-  it('advertises delegate as runId-gated: available WITH runId, withheld bare', () => {
-    // Post-R1 the delegate tool is available with explicit runId targeting
-    // (mapped to `--run`); a bare call is still withheld. The description must
-    // name both the constraint and the honest paths (runId, or run
-    // `rd delegate` directly).
+  it('advertises delegate as claimId-gated with selector-only runId', () => {
+    // Delegate needs bearer authority. runId is target selection only, so bare
+    // and runId-only subprocess calls are withheld.
     const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
+    expect(description).toMatch(/claimId/);
     expect(description).toMatch(/runId/);
-    expect(description).toMatch(/withheld bare/i);
+    expect(description).toMatch(/Bare or runId-only/i);
     expect(description).toMatch(/rundown delegate/);
   });
 
@@ -500,6 +519,7 @@ describe('subprocess trust boundary', () => {
   it.each([
     ['pass'],
     ['fail'],
+    ['delegate'],
     ['collect'],
   ] as const)('spawns a %s --claim-id claim-evidence mutation through the boundary', async (tool) => {
     const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
@@ -520,34 +540,38 @@ describe('subprocess trust boundary', () => {
       ['complete'],
       ['stop'],
       ['collect'],
-    ] as const)('forwards runId as --run argv on %s (explicit orchestrator targeting)', async (tool) => {
+    ] as const)('withholds runId-only %s because runId is target selection', async (tool) => {
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
       const handlers = registerWithHandlers(runCli);
 
       const res = await handlers.get(tool)?.({ runId });
-      expect(runCli).toHaveBeenCalledWith([tool, '--run', runId]);
-      expect(parseToolResponse(res)).toEqual({ ok: true });
+      expect(parseToolResponse(res)).toEqual({
+        error: expect.stringContaining('subprocess front end'),
+      });
+      expect(runCli).not.toHaveBeenCalled();
     });
 
-    it('forwards runId as --run argv on goto', async () => {
+    it('withholds runId-only goto because runId is target selection', async () => {
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
       const handlers = registerWithHandlers(runCli);
 
-      await handlers.get('goto')?.({ step: '3', runId });
-      expect(runCli).toHaveBeenCalledWith(['goto', '3', '--run', runId]);
+      const res = await handlers.get('goto')?.({ step: '3', runId });
+      expect(parseToolResponse(res)).toEqual({
+        error: expect.stringContaining('subprocess front end'),
+      });
+      expect(runCli).not.toHaveBeenCalled();
     });
 
-    it('spawns delegate WITH runId and keeps withholding it bare', async () => {
-      // The single most behavior-inverting MCP change in R1: delegate was
-      // withheld-always; an explicit runId names orchestrator authority and
-      // spawns, while the bare form stays withheld.
+    it('withholds delegate with runId and keeps withholding it bare', async () => {
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
       const handlers = registerWithHandlers(runCli);
 
-      await handlers.get('delegate')?.({ runId });
-      expect(runCli).toHaveBeenCalledWith(['delegate', '--run', runId]);
+      const withRun = await handlers.get('delegate')?.({ runId });
+      expect(parseToolResponse(withRun)).toEqual({
+        error: expect.stringContaining('subprocess front end'),
+      });
+      expect(runCli).not.toHaveBeenCalled();
 
-      runCli.mockClear();
       const bare = await handlers.get('delegate')?.({});
       expect(parseToolResponse(bare)).toEqual({
         error: expect.stringContaining('subprocess front end'),
@@ -569,14 +593,14 @@ describe('subprocess trust boundary', () => {
       content: [
         {
           type: 'text',
-          text: expect.stringMatching(/does not accept --claim-id/),
+          text: expect.stringMatching(/subprocess front end/),
         },
       ],
     });
     expect(runCli).not.toHaveBeenCalled();
   });
 
-  it('rejects delegate claimId input without spawning the CLI', async () => {
+  it('spawns delegate claimId input through the CLI', async () => {
     const runCli = jest.fn<RunCli>();
     const handlers = registerWithHandlers(runCli);
 
@@ -586,8 +610,13 @@ describe('subprocess trust boundary', () => {
         claimId: 'rdclm_abcdefghijklmnopqrstu1',
       }),
     ).resolves.toMatchObject({
-      content: [{ type: 'text', text: expect.stringMatching(/claimId/) }],
+      content: [{ type: 'text' }],
     });
-    expect(runCli).not.toHaveBeenCalled();
+    expect(runCli).toHaveBeenCalledWith([
+      'delegate',
+      'child.md',
+      '--claim-id',
+      'rdclm_abcdefghijklmnopqrstu1',
+    ]);
   });
 });

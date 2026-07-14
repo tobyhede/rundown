@@ -12,8 +12,7 @@ import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
-import { parseClaimIdOption } from './claim-id-option.js';
-import { parseRunOption } from './run-option.js';
+import { parseTransitionTarget, transitionTargetFields } from './transition-target.js';
 
 /**
  * Definition for a transition command (pass / fail).
@@ -58,7 +57,7 @@ const VALUE_TAKING_OPTION_PRESENTATION: Record<
   '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
   '--run': {
     value: 'runId',
-    description: 'Name the run you control (explicit orchestrator targeting)',
+    description: 'Target a runbook by run id',
   },
 };
 
@@ -113,10 +112,9 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             }
 
             const cwd = getCwd();
-            const claimTarget = parseClaimIdOption(options.claimId, output);
-            if (!claimTarget.ok) return;
-            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
-            if (!runTarget.ok) return;
+            const target = parseTransitionTarget(options, output);
+            if (!target) return;
+            const targetFields = transitionTargetFields(target);
 
             const config = def.buildConfig();
 
@@ -128,8 +126,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // here we own the post-transition parent-propagation/exit-code contract.
             const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
             const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
-              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
-              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              ...targetFields,
               ...(options.step !== undefined ? { step: options.step } : {}),
               ...(options.index !== undefined ? { index: options.index } : {}),
               commandStreamOptions,

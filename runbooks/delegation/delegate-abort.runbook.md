@@ -9,8 +9,8 @@ scenarios:
     description: Create delegation then abort before claim
     commands:
       - rd run --prompted delegate-abort.runbook.md
-      - rd abort ${TOKEN}
-      - rd pass --run ${RUN_ID}
+      - rd abort ${TOKEN} --claim-id ${RUN_CLAIM_ID}
+      - rd pass --claim-id ${RUN_CLAIM_ID}
     result: COMPLETE
 ---
 

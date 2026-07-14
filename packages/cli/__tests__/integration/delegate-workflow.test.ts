@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { RunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -11,6 +12,7 @@ import {
   parseConcatenatedJson,
   findActionOutput,
   type TestWorkspace,
+  issueRunControlClaim,
   withRunTarget,
 } from '../helpers/test-utils.js';
 
@@ -163,7 +165,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
    * substep (1.2) references `childRef2` so callers can wire a failing child.
    */
   async function setupParentWithChildren(childRef2 = 'child.runbook.md'): Promise<{
-    parentRunId: string;
+    parentRunId: RunId;
     token1: string;
     token2: string;
     startStdout: string;
@@ -474,7 +476,7 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     expect(start.exitCode).toBe(0);
 
     const manual = await runCliInProcess(
-      ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+      await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
       workspace,
     );
     expect(manual.exitCode).not.toBe(0);
@@ -506,7 +508,7 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
       expect(start.exitCode).toBe(0);
 
       const manual = await runCliInProcess(
-        ['delegate', externalChildPath, '--step', '1.1'],
+        await withRunTarget(['delegate', externalChildPath, '--step', '1.1'], workspace),
         workspace,
       );
       expect(manual.exitCode).not.toBe(0);
@@ -597,7 +599,7 @@ describe('DELEGATE re-entry and retry', () => {
    * `FAIL ANY RETRY 1 STOP` aggregation. Returns the first-entry tokens.
    */
   async function setupRetryParent(): Promise<{
-    parentRunId: string;
+    parentRunId: RunId;
     token1: string;
     token2: string;
   }> {
@@ -942,7 +944,10 @@ describe('DELEGATE re-entry and retry', () => {
     expect(firstFrontier).toBeUndefined();
 
     const manual = await runCliInProcess(
-      ['delegate', 'runbooks/child-fail.runbook.md', '--step', '1.1', '--input', 'env=staging'],
+      await withRunTarget(
+        ['delegate', 'runbooks/child-fail.runbook.md', '--step', '1.1', '--input', 'env=staging'],
+        workspace,
+      ),
       workspace,
     );
     expect(manual.exitCode).not.toBe(0);
@@ -1593,7 +1598,11 @@ describe('DELEGATE re-entry and retry', () => {
 
     // Force-abort ss2's delegation. Sets cancelledAt on the delegation
     // record; records a fail resolved completion; propagates via drain.
-    const abortResult = await runCliInProcess(['abort', tokenA2, '--force'], workspace);
+    const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+    const abortResult = await runCliInProcess(
+      ['abort', tokenA2, '--claim-id', parentClaimId, '--force'],
+      workspace,
+    );
     expect(abortResult.exitCode).toBe(0);
 
     // Capture T1 (cancelledAt of the aborted delegation) and the prior
@@ -1649,7 +1658,11 @@ describe('DELEGATE re-entry and retry', () => {
     // Claim + force-abort 1.2 → records a FAIL delegation outcome, collection pending.
     r = await runCliInProcess(`claim ${token2}`, workspace);
     expect(r.exitCode).toBe(0);
-    const abortResult = await runCliInProcess(['abort', token2, '--force'], workspace);
+    const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+    const abortResult = await runCliInProcess(
+      ['abort', token2, '--claim-id', parentClaimId, '--force'],
+      workspace,
+    );
     expect(abortResult.exitCode).toBe(0);
 
     // Retry mints a fresh token for 1.2 and supersedes the aborted attempt: its

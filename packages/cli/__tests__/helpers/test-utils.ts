@@ -26,8 +26,10 @@ import {
   sessionPath as _sessionPath,
   runbooksDir,
   locksDir,
+  RunbookStateManager,
+  SessionService,
 } from '@rundown-org/core';
-import type { FrameKey, RunbookState } from '@rundown-org/core';
+import type { ClaimId, FrameKey, RunbookState } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -376,14 +378,15 @@ export async function getActiveState(workspace: TestWorkspace): Promise<RunbookS
 }
 
 /**
- * Append explicit --run targeting for the workspace's active run.
+ * Issue and append explicit bearer authority for the workspace's active run.
  *
- * Post-R1, bare mutations on delegating runs are refused; orchestrator-side
- * tests name their authority the way a real orchestrator does.
+ * Strict claim authority means a run id is only a selector, not mutation
+ * authority. Legacy orchestrator-side tests use this helper to model the
+ * bearer returned by `rundown run`.
  *
  * @param args - CLI argv to extend (e.g. `['pass']`)
- * @param workspace - Test workspace whose active run supplies the id
- * @returns The argv with `--run <activeRunId>` appended
+ * @param workspace - Test workspace whose active run receives a bearer claim
+ * @returns The argv with `--claim-id <claimId>` appended
  * @throws {Error} When no active run exists to target
  */
 export async function withRunTarget(
@@ -392,7 +395,47 @@ export async function withRunTarget(
 ): Promise<string[]> {
   const state = await getActiveState(workspace);
   if (!state) throw new Error('withRunTarget: no active run to target');
+  const manager = new RunbookStateManager(workspace.cwd);
+  const sessionService = new SessionService(manager);
+  const { claimId } = await sessionService.issueRunControlClaim(state.id);
+  return [...args, '--claim-id', claimId];
+}
+
+/**
+ * Append explicit --run selection for the workspace's active run.
+ *
+ * Use this only when the test is asserting selector behavior. Mutating
+ * commands must present a bearer via {@link withRunTarget}.
+ *
+ * @param args - CLI argv to extend
+ * @param workspace - Test workspace whose active run supplies the id
+ * @returns The argv with `--run <activeRunId>` appended
+ * @throws {Error} When no active run exists to target
+ */
+export async function withRunSelector(
+  args: readonly string[],
+  workspace: TestWorkspace,
+): Promise<string[]> {
+  const state = await getActiveState(workspace);
+  if (!state) throw new Error('withRunSelector: no active run to target');
   return [...args, '--run', state.id];
+}
+
+/**
+ * Issue bearer authority for an arbitrary run in a test workspace.
+ *
+ * @param workspace - Test workspace containing the run
+ * @param runId - Run id to control
+ * @returns A freshly issued bearer claim id
+ */
+export async function issueRunControlClaim(
+  workspace: TestWorkspace,
+  runId: RunbookState['id'],
+): Promise<ClaimId> {
+  const manager = new RunbookStateManager(workspace.cwd);
+  const sessionService = new SessionService(manager);
+  const { claimId } = await sessionService.issueRunControlClaim(runId);
+  return claimId;
 }
 
 /**
@@ -1044,6 +1087,7 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
 
   // 3b. Claim ids (CLAIM_ID_PREFIX from packages/core/src/runbook/claim-id.ts)
+  text = text.replace(/rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}/g, '<claimId>');
   text = text.replace(/rdclm_[A-Za-z0-9_-]{22}/g, '<claimId>');
 
   // 4. SHA-256 hex digests (e.g. delegation token_hash field)

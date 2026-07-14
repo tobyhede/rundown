@@ -7,8 +7,10 @@ import {
   createTestWorkspace,
   extractToken,
   injectDelegationOutcomeForActiveRun,
+  issueRunControlClaim,
   runCliInProcess,
   getActiveState,
+  findActionOutput,
   type TestWorkspace,
   createRunbook,
   parseCliJsonObject,
@@ -35,7 +37,10 @@ function findErrorEnvelope(stdout: string): Record<string, unknown> | undefined 
 // file, so Stryker runs zero tests per mutant and every mutant falsely survives
 // (0.00% score). This static edge links the file into the graph so the covering
 // tests actually run against each mutant.
-import { registerDelegateCommand } from '../../src/commands/delegate.js';
+import {
+  collectDelegateRequiredArgumentValues,
+  registerDelegateCommand,
+} from '../../src/commands/delegate.js';
 
 describe('delegate command wiring', () => {
   it('registers the delegate command with its documented flags, descriptions, and defaults', () => {
@@ -187,7 +192,11 @@ describe('delegate command', () => {
     if (!autoToken) {
       throw new Error('setup run did not persist an auto-issued delegation token');
     }
-    const abortResult = await runCliInProcess(['abort', autoToken], workspace);
+    const parentClaimId = await issueRunControlClaim(workspace, state.id);
+    const abortResult = await runCliInProcess(
+      ['abort', autoToken, '--claim-id', parentClaimId],
+      workspace,
+    );
     if (abortResult.exitCode !== 0) {
       throw new Error(`setup abort failed:\n${abortResult.stdout}\n${abortResult.stderr}`);
     }
@@ -237,7 +246,7 @@ describe('delegate command', () => {
     return autoToken;
   }
 
-  it('rejects --claim-id-looking delegate input before delegation logic runs', async () => {
+  it('rejects malformed --claim-id before delegation logic runs', async () => {
     const result = await runCliInProcess(
       ['delegate', 'child.md', '--input-file', '--claim-id=foo'],
       workspace,
@@ -247,9 +256,19 @@ describe('delegate command', () => {
     const raw = JSON.parse(result.stdout);
     expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
     expect(raw).toMatchObject({
-      code: 'INVALID_DELEGATE_CLAIM_ID',
-      error: expect.stringContaining('does not accept --claim-id'),
+      code: 'INVALID_CLAIM_ID',
+      error: expect.stringContaining('Invalid claim id'),
     });
+  });
+
+  it('includes artifact option values in claim-id smuggling validation inputs', () => {
+    expect(
+      collectDelegateRequiredArgumentValues({
+        input: [],
+        artifacts: ['--claim-id=from-artifact'],
+        artifactsJson: ['--claim-id=from-artifact-json'],
+      }),
+    ).toEqual(['--claim-id=from-artifact', '--claim-id=from-artifact-json']);
   });
 
   describe('collection-pending guard', () => {
@@ -358,12 +377,45 @@ describe('delegate command', () => {
   });
 
   describe('delegate --run', () => {
-    it('issues delegation against the named run', async () => {
+    it('renders CLAIM_GRANT_REQUIRED when a child claim tries to issue a parent delegation', async () => {
+      await setupDelegation();
+      const issued = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
+        workspace,
+      );
+      expect(issued.exitCode).toBe(0);
+      const token = extractToken(issued.stdout);
+
+      const claimed = await runCliInProcess(['claim', token], workspace);
+      expect(claimed.exitCode).toBe(0);
+      const childClaimId = findActionOutput<{ claim_id: string }>(claimed.stdout)?.claim_id;
+      if (childClaimId === undefined)
+        throw new Error(`Expected child claim id:\n${claimed.stdout}`);
+
+      const closed = await runCliInProcess(['pass', '--claim-id', childClaimId], workspace);
+      expect(closed.exitCode).toBe(0);
+
+      const result = await runCliInProcess(['delegate', '--claim-id', childClaimId], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIM_GRANT_REQUIRED',
+          error: expect.stringContaining('rundown delegate'),
+        }),
+      );
+    });
+
+    it('issues delegation against the claimed parent run', async () => {
       await setupDelegation();
       const parent = await getActiveState(workspace);
       if (!parent) throw new Error('Expected active parent run');
+      const parentClaimId = await issueRunControlClaim(workspace, parent.id);
 
-      const result = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+      const result = await runCliInProcess(['delegate', '--claim-id', parentClaimId], workspace);
 
       expect(result.exitCode).toBe(0);
       expect(extractToken(result.stdout)).toBeDefined();
@@ -388,6 +440,25 @@ describe('delegate command', () => {
       expect(result.exitCode).not.toBe(0);
       const payload = JSON.parse(result.stdout) as { code?: string };
       expect(payload.code).toBe('INVALID_RUN_ID');
+    });
+
+    it('rejects both --claim-id and a malformed --run with INVALID_SYNTAX (precedence)', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          '--run',
+          'not-a-run-id',
+          '--claim-id',
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_SYNTAX');
     });
 
     it('refuses a --retry token whose --run names a run that does not own it (RUN_TARGET_MISMATCH)', async () => {
@@ -530,7 +601,13 @@ describe('delegate command', () => {
           ?.map((substep) => substep.delegation?.token)
           .filter((token): token is string => typeof token === 'string') ?? [];
       for (const token of autoTokens) {
-        const abort = await runCliInProcess(['abort', token], workspace);
+        const state = await getActiveState(workspace);
+        if (!state) throw new Error('Expected active run for abort setup');
+        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const abort = await runCliInProcess(
+          ['abort', token, '--claim-id', parentClaimId],
+          workspace,
+        );
         expect(abort.exitCode).toBe(0);
       }
 
@@ -1532,6 +1609,39 @@ describe('delegate command', () => {
       expect(delegation?.childRunId).not.toBeNull();
     });
 
+    it('renders CLAIM_GRANT_REQUIRED when a child claim tries to retry the parent delegation', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const token = extractToken(first.stdout);
+
+      const claimed = await runCliInProcess(['claim', token], workspace);
+      expect(claimed.exitCode).toBe(0);
+      const childClaimId = findActionOutput<{ claim_id: string }>(claimed.stdout)?.claim_id;
+      if (childClaimId === undefined)
+        throw new Error(`Expected child claim id:\n${claimed.stdout}`);
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', token, '--claim-id', childClaimId],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(retry.stdout || retry.stderr);
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIM_GRANT_REQUIRED',
+          error: expect.stringContaining('rundown delegate'),
+        }),
+      );
+    });
+
     it('rejects ambiguity: token + --step both provided', async () => {
       await setupDelegation();
 
@@ -1881,7 +1991,13 @@ describe('delegate command', () => {
           ?.map((substep) => substep.delegation?.token)
           .filter((token): token is string => typeof token === 'string') ?? [];
       for (const token of autoTokens) {
-        const abort = await runCliInProcess(['abort', token], workspace);
+        const state = await getActiveState(workspace);
+        if (!state) throw new Error('Expected active run for abort setup');
+        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const abort = await runCliInProcess(
+          ['abort', token, '--claim-id', parentClaimId],
+          workspace,
+        );
         expect(abort.exitCode).toBe(0);
       }
 

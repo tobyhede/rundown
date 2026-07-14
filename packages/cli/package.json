@@ -18,6 +18,7 @@
     "test": "jest",
     "test:unit": "jest --maxWorkers=2 --testPathIgnorePatterns='integration'",
     "test:integration": "jest --maxWorkers=2 --testPathPatterns='integration'",
+    "test:isolation": "jest --runInBand --testPathIgnorePatterns='integration'",
     "test:coverage": "jest --coverage",
     "test:mutate": "stryker run",
     "test:mutate:dry": "stryker run --dryRunOnly",

@@ -6,7 +6,17 @@ import {
   type delegationTokenHashBrand,
   type DelegationTokenHash,
 } from './runbook/delegation-token.js';
-import { CLAIM_ID_PATTERN, type ClaimId, type ClaimRecord } from './runbook/claim-id.js';
+import {
+  CLAIM_ID_PATTERN,
+  CLAIM_LOOKUP_KEY_PATTERN,
+  CLAIM_SECRET_HASH_PATTERN,
+  type ClaimGrant,
+  type ClaimId,
+  type ClaimLookupKey,
+  type ClaimRecord,
+  type ClaimSecretHash,
+  type DelegationClaimLinkage,
+} from './runbook/claim-id.js';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonArrayStream, JsonValue, TemplateVarValue } from './runbook/types.js';
@@ -529,20 +539,153 @@ export const ClaimIdSchema = z
   .regex(CLAIM_ID_PATTERN)
   .transform((value) => value as ClaimId);
 
-/** Zod schema for a single claimed child runbook session record. */
-export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z.object({
-  kind: z.literal('claim-record'),
-  claimId: ClaimIdSchema,
-  childRunId: RunIdSchema,
-  tokenHash: DelegationTokenHashSchema,
-  parentRunId: RunIdSchema,
-  parentStepId: z.string().min(1),
-  parentStep: z.string(),
-  parentFrameKey: FrameKeySchema,
-  parentEntry: z.number().int().positive(),
-  claimedAt: z.string().min(1),
-  updatedAt: z.string().min(1),
-});
+/** Zod schema that parses strings and brands them as {@link ClaimLookupKey}. */
+export const ClaimLookupKeySchema = z
+  .string()
+  .regex(CLAIM_LOOKUP_KEY_PATTERN)
+  .transform((value) => value as ClaimLookupKey);
+
+/** Zod schema that parses strings and brands them as {@link ClaimSecretHash}. */
+export const ClaimSecretHashSchema = z
+  .string()
+  .regex(CLAIM_SECRET_HASH_PATTERN)
+  .transform((value) => value as ClaimSecretHash);
+
+const ReportDelegationResultGrantSchema = z
+  .object({
+    action: z.literal('report-delegation-result'),
+    childRunId: RunIdSchema,
+    tokenHash: DelegationTokenHashSchema,
+    parentRunId: RunIdSchema,
+    parentStepId: z.string().min(1),
+    parentStep: z.string().min(1),
+    parentFrameKey: FrameKeySchema,
+    // Positive to match the canonical RunbookState.parentLinkage.parentEntry; a
+    // real child linkage never carries entry 0.
+    parentEntry: z.number().int().positive(),
+  })
+  .strict();
+
+const ClaimGrantSchema: z.ZodType<ClaimGrant> = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('mutate-run'), runId: RunIdSchema }).strict(),
+  z.object({ action: z.literal('delegate-from-run'), runId: RunIdSchema }).strict(),
+  z.object({ action: z.literal('collect-for-run'), runId: RunIdSchema }).strict(),
+  z
+    .object({
+      action: z.literal('abort-delegation'),
+      runId: RunIdSchema,
+      stepId: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('retry-delegation'),
+      runId: RunIdSchema,
+      stepId: z.string().min(1).optional(),
+    })
+    .strict(),
+  ReportDelegationResultGrantSchema,
+]);
+
+const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
+  .object({
+    childRunId: RunIdSchema,
+    tokenHash: DelegationTokenHashSchema,
+    parentRunId: RunIdSchema,
+    parentStepId: z.string().min(1),
+    parentStep: z.string().min(1),
+    parentFrameKey: FrameKeySchema,
+    // Positive to match the canonical RunbookState.parentLinkage.parentEntry.
+    parentEntry: z.number().int().positive(),
+  })
+  .strict();
+
+function grantMatchesDelegation(grant: ClaimGrant, delegation: DelegationClaimLinkage): boolean {
+  return (
+    grant.action === 'report-delegation-result' &&
+    grant.childRunId === delegation.childRunId &&
+    grant.parentRunId === delegation.parentRunId &&
+    grant.parentStepId === delegation.parentStepId &&
+    grant.parentStep === delegation.parentStep &&
+    grant.parentFrameKey === delegation.parentFrameKey &&
+    grant.parentEntry === delegation.parentEntry &&
+    grant.tokenHash === delegation.tokenHash
+  );
+}
+
+function grantTargetsRun(grant: ClaimGrant): RunId | undefined {
+  switch (grant.action) {
+    case 'mutate-run':
+    case 'delegate-from-run':
+    case 'collect-for-run':
+    case 'abort-delegation':
+    case 'retry-delegation':
+      return grant.runId;
+    case 'report-delegation-result':
+      return undefined;
+    default: {
+      const _exhaustive: never = grant;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Zod schema for a persisted proof-backed claim record. */
+export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z
+  .object({
+    claimKey: ClaimLookupKeySchema,
+    secretHash: ClaimSecretHashSchema,
+    controlledRunId: RunIdSchema,
+    delegation: DelegationClaimLinkageSchema.optional(),
+    grants: z.array(ClaimGrantSchema).min(1),
+    issuedAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict()
+  .superRefine((claim, ctx) => {
+    for (const [index, grant] of claim.grants.entries()) {
+      const runId = grantTargetsRun(grant);
+      if (runId !== undefined && runId !== claim.controlledRunId) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['grants', index, 'runId'],
+          message: 'run-scoped claim grants must target controlledRunId',
+        });
+      }
+    }
+
+    const reportGrants = claim.grants.filter(
+      (grant): grant is Extract<ClaimGrant, { readonly action: 'report-delegation-result' }> =>
+        grant.action === 'report-delegation-result',
+    );
+
+    if (claim.delegation === undefined) {
+      if (reportGrants.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['grants'],
+          message: 'non-delegated claims must not carry delegation report grants',
+        });
+      }
+      return;
+    }
+
+    const delegation = claim.delegation;
+    if (delegation.childRunId !== claim.controlledRunId) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['delegation', 'childRunId'],
+        message: 'delegated claim childRunId must match controlledRunId',
+      });
+    }
+    if (!reportGrants.some((grant) => grantMatchesDelegation(grant, delegation))) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['grants'],
+        message: 'delegated claims must carry a matching report-delegation-result grant',
+      });
+    }
+  });
 
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z
@@ -552,34 +695,40 @@ export const SessionDataSchema = z
     claims: z.record(z.string(), ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
-    const claimChildRunIds = new Map<string, string>();
-    for (const [claimId, claim] of Object.entries(session.claims)) {
-      if (!CLAIM_ID_PATTERN.test(claimId)) {
+    // Tracks the first claim key seen controlling each run so a second record
+    // sharing that controlledRunId can be reported against the duplicate.
+    const controllersByRun = new Map<string, string>();
+    for (const [claimKey, claim] of Object.entries(session.claims)) {
+      if (!CLAIM_LOOKUP_KEY_PATTERN.test(claimKey)) {
         ctx.addIssue({
           code: 'custom',
-          path: ['claims', claimId],
-          message: 'claims key must be a canonical claim id (rdclm_<22 base64url characters>)',
+          path: ['claims', claimKey],
+          message:
+            'claims key must be a canonical claim lookup key (rdclk_<32 lowercase hex characters>)',
         });
         continue;
       }
 
-      if (claimId !== claim.claimId) {
+      if (claimKey !== claim.claimKey) {
         ctx.addIssue({
           code: 'custom',
-          path: ['claims', claimId, 'claimId'],
-          message: 'claims key must match claim.claimId',
+          path: ['claims', claimKey, 'claimKey'],
+          message: 'claims key must match claim.claimKey',
         });
       }
 
-      const existing = claimChildRunIds.get(claim.childRunId);
+      // Minting guarantees at most one claim record per run; two distinct bearer
+      // secrets controlling the same run can only arise from tampered persisted
+      // state, and the schema is the boundary that rejects it.
+      const existing = controllersByRun.get(claim.controlledRunId);
       if (existing !== undefined) {
         ctx.addIssue({
           code: 'custom',
-          path: ['claims', claimId, 'childRunId'],
-          message: `childRunId must be unique across claim records; duplicate at claims.${existing}.childRunId`,
+          path: ['claims', claimKey, 'controlledRunId'],
+          message: `controlledRunId must be unique across claim records; duplicate at claims.${existing}.controlledRunId`,
         });
       } else {
-        claimChildRunIds.set(claim.childRunId, claimId);
+        controllersByRun.set(claim.controlledRunId, claimKey);
       }
     }
   });

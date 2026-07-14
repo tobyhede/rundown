@@ -138,7 +138,10 @@ describe('recovery semantics for delegated command infrastructure stops', () => 
     const child = await readRunbookState(workspace, childRunId);
     expect(child?.lastAction).toEqual(expect.objectContaining({ type: 'POLICY_DENIED' }));
 
-    const abort = await runCliInProcess(['abort', token, '--force'], workspace);
+    const abort = await runCliInProcess(
+      await withRunTarget(['abort', token, '--force'], workspace),
+      workspace,
+    );
     expect(abort.exitCode).toBe(0);
     expect(`${abort.stdout}${abort.stderr}`).not.toContain('RD-812');
 

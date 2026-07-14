@@ -1,11 +1,12 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
-import { actorContextFromEvidence, type CallerEvidence } from './actor-context.js';
-import type { ClaimRecord } from './claim-id.js';
-import { classifyDelegationExposure } from './delegation-exposure.js';
+import { verifiedClaimContext, type CallerEvidence } from './actor-context.js';
+import { claimCanReportDelegationResult } from './claim-id.js';
+import type { ClaimRecord, VerifiedClaim } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { projectDelegationTerminalOutcome } from './completion-service.js';
+import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
@@ -32,6 +33,8 @@ import {
 
 /** Dependencies used by the core collection operation. */
 export interface RunbookCollectionServiceDependencies {
+  /** Session/target reader used to verify bearer claims and resolve implicit authority. */
+  readonly sessionService: CommandTargetReader;
   /** State manager used to reload and persist target runs. */
   readonly manager: RunbookStateManager;
   /** Actor service used to apply collected delegation outcomes through the state machine. */
@@ -48,12 +51,7 @@ export interface CollectDelegationOutcomesInput {
   readonly targetState: RunbookState;
   /** Parsed runbook steps for the target run. */
   readonly steps: readonly ResolvedStep[];
-  /**
-   * Typed caller evidence supplied by the frontend. Core maps it to a
-   * target-relative actor context via {@link actorContextFromEvidence};
-   * frontends never construct trust directly (mirrors the lifecycle command
-   * seam in lifecycle-command-service.ts).
-   */
+  /** Typed caller evidence supplied by the frontend. Core verifies bearer claim authority. */
   readonly callerEvidence: CallerEvidence;
   /**
    * Open claimed children for the target run, when the caller already read
@@ -206,25 +204,27 @@ function missingDelegationOutcomeIds(args: {
 export async function collectDelegationOutcomes(
   input: CollectDelegationOutcomesOperationInput,
 ): Promise<DelegationPolicyOutcome> {
-  // Core owns the evidence->trust mapping: direct_cli yields a trusted run
-  // controller only when the resolved target classifies `standalone` (a
-  // collect target authors DELEGATE, so bare direct-CLI collect on a
-  // delegating parent is refused post-flip); run_controller anchors on its
-  // named run; claim evidence anchors on its own controlledRunId;
-  // plugin/mcp/unknown yield UNKNOWN_ACTOR_CONTEXT and are refused by the
-  // policy gate below (actor_context_required). Exposure is classified from
-  // the same targetState/steps this operation decides from.
-  const actorContext = actorContextFromEvidence(input.callerEvidence, {
-    runId: input.targetState.id,
-    exposure:
-      input.callerEvidence.kind === 'direct_cli'
-        ? classifyDelegationExposure({
-            state: input.targetState,
-            steps: input.steps,
-            openClaims: input.openClaims ?? [],
-          })
-        : // Fail-closed placeholder: only the direct_cli arm reads exposure.
-          'delegating',
+  const request = { action: 'collect-for-run', runId: input.targetState.id } as const;
+  const presentedClaimId =
+    input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
+  const authority = await resolveMutationAuthority({
+    targetReader: input.sessionService,
+    ...(presentedClaimId !== undefined ? { presentedClaimId } : {}),
+    targetState: input.targetState,
+    request,
+  });
+  if (authority.kind !== 'verified') {
+    return presentedClaimId !== undefined && authority.reason === 'no-authorizing-claim'
+      ? {
+          kind: 'claim_grant_required',
+          intent: 'delegation-collection',
+          targetRunId: input.targetState.id,
+        }
+      : { kind: 'actor_context_required', intent: 'delegation-collection' };
+  }
+  const actorContext = verifiedClaimContext({
+    authority: authority.authority,
+    claim: authority.claim,
   });
   // NOTE: the merged `resolveCommandIntent` input field is `targetSelector`
   // (not `target`). The resolved target run is passed separately as
@@ -307,7 +307,7 @@ export async function collectDelegationOutcomes(
     };
   }
 
-  return applyCollection(input, { stepName, frame, frameKey });
+  return applyCollection(input, { stepName, frame, frameKey, claim: authority.claim });
 }
 
 function deriveCollectionTransitionObservations(
@@ -409,7 +409,12 @@ async function projectAndConsumeReEntryFrontier(
 
 async function applyCollection(
   input: CollectDelegationOutcomesOperationInput,
-  scope: { readonly stepName: string; readonly frame: Frame; readonly frameKey?: FrameKey },
+  scope: {
+    readonly stepName: string;
+    readonly frame: Frame;
+    readonly frameKey?: FrameKey;
+    readonly claim: VerifiedClaim;
+  },
 ): Promise<DelegationPolicyOutcome> {
   const drained = await input.completionService.drainResolvedCompletions({
     runbookId: input.targetState.id,
@@ -474,7 +479,11 @@ async function applyCollection(
       applied,
       unresolved: drained.unresolved,
       lifecycle: drained.status === 'done' ? 'completed' : 'stopped',
-      reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(input, fresh),
+      reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(
+        input,
+        fresh,
+        scope.claim,
+      ),
       transitionObservations,
     };
   }
@@ -545,12 +554,14 @@ async function applyCollection(
 async function reportTerminalOutcomeToDelegatingRun(
   input: CollectDelegationOutcomesOperationInput,
   terminalState: RunbookState,
+  claim: VerifiedClaim,
 ): Promise<boolean> {
   // Report-then-collect type-split: only a DELEGATION-linked terminal child
   // reports an outcome upward here. An inline-linked child advances its parent
   // synchronously elsewhere and must not record a delegation outcome; a
   // root run has no linkage. Both are filtered by this guard.
   if (terminalState.parentLinkage?.kind !== 'delegation') return false;
+  if (!claimCanReportDelegationResult(claim, terminalState)) return false;
   const projection = projectDelegationTerminalOutcome(terminalState);
   if (projection.kind !== 'outcome') return false;
   const recorded = await input.completionService.recordChildCompletion({

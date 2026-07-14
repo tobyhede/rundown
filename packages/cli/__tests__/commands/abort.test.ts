@@ -35,7 +35,10 @@ describe('abort command wiring', () => {
     expect(abort?.description()).toBe('Cancel a delegation token');
 
     const byLong = new Map(abort!.options.map((o) => [o.long, o]));
-    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--force', '--text']));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--force', '--text']));
+    expect(byLong.get('--claim-id')?.description).toBe(
+      'Bearer authority for the parent run that owns the delegation',
+    );
     expect(byLong.get('--force')?.description).toBe(
       'Force cancel even if delegation is claimed (stops child run)',
     );
@@ -45,9 +48,11 @@ describe('abort command wiring', () => {
 
 describe('abort command - unit tests', () => {
   let workspace: TestWorkspace;
+  let orchestratorClaimId: string;
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
+    orchestratorClaimId = '';
   });
 
   afterEach(async () => {
@@ -94,13 +99,31 @@ describe('abort command - unit tests', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const started = parseConcatenatedJson(result.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    expect(typeof started?.claim_id).toBe('string');
+    orchestratorClaimId = String(started!.claim_id);
 
     const state = await getActiveState(workspace);
     const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
     return token!;
+  }
+
+  function abortCommand(token: string, suffix = ''): string {
+    // Fail fast: an empty claim id here means setupDelegation() was not run, which
+    // would silently emit `--claim-id ` and make the abort fail for an unrelated
+    // reason — masking the setup gap behind a green negative-path assertion.
+    if (!orchestratorClaimId) {
+      throw new Error('orchestratorClaimId is unset; call setupDelegation() before abortCommand()');
+    }
+    return `abort ${token} --claim-id ${orchestratorClaimId}${suffix ? ` ${suffix}` : ''}`;
   }
 
   async function mirrorActiveSubstepStatesIntoSnapshot(): Promise<void> {
@@ -163,7 +186,7 @@ describe('abort command - unit tests', () => {
 
     it('accepts valid token format', async () => {
       const token = await setupDelegation();
-      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
       expect(result.exitCode).toBe(0);
     });
   });
@@ -172,7 +195,7 @@ describe('abort command - unit tests', () => {
     it('pending → cancelled without force flag', async () => {
       const token = await setupDelegation();
 
-      const result = await runCliInProcess(`abort ${token}`, workspace);
+      const result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
       const output = parseCliJsonObject(result.stdout) as {
         action: string;
@@ -198,11 +221,30 @@ describe('abort command - unit tests', () => {
       expect(validation.valid).toBe(true);
     });
 
+    it('refuses a pending abort without a bearer claim id', async () => {
+      const token = await setupDelegation();
+
+      const result = await runCliInProcess(`abort ${token}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      // Envelope is single-sourced through renderActorContextRequiredRefusal, so
+      // the wording matches the other mutating commands and names the abort lane.
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'ACTOR_CONTEXT_REQUIRED',
+          error: expect.stringContaining('bare `rundown abort` is refused'),
+        }),
+      );
+      expect(String((envelope as { error?: unknown }).error)).toContain('aborting delegated work');
+    });
+
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {
       const token = await setupDelegation();
       await mirrorActiveSubstepStatesIntoSnapshot();
 
-      const result = await runCliInProcess(`abort ${token}`, workspace);
+      const result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
 
       const parent = await getActiveState(workspace);
@@ -224,11 +266,11 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // First abort
-      let result = await runCliInProcess(`abort ${token}`, workspace);
+      let result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
 
       // Second abort - should succeed with "already cancelled" message
-      result = await runCliInProcess(`abort ${token}`, workspace);
+      result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
       const output = parseCliJsonObject(result.stdout);
       expect(output).toEqual(
@@ -247,7 +289,7 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       // Try to abort without force
-      result = await runCliInProcess(`abort ${token}`, workspace);
+      result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(1);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
       expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-811' }));
@@ -261,7 +303,7 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = await runCliInProcess(`abort ${token} --force`, workspace);
+      result = await runCliInProcess(abortCommand(token, '--force'), workspace);
       expect(result.exitCode).toBe(0);
       const output = parseConcatenatedJson(result.stdout).find(
         (value): value is Record<string, unknown> =>
@@ -286,7 +328,7 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // Abort the delegation
-      let result = await runCliInProcess(`abort ${token}`, workspace);
+      let result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
 
       // Try to claim
@@ -300,7 +342,7 @@ describe('abort command - unit tests', () => {
     it('includes required fields in JSON output', async () => {
       const token = await setupDelegation();
 
-      const result = await runCliInProcess(`abort ${token}`, workspace);
+      const result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
 
       const output = parseCliJsonObject(result.stdout) as {
@@ -327,7 +369,7 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = await runCliInProcess(`abort ${token} --force`, workspace);
+      result = await runCliInProcess(abortCommand(token, '--force'), workspace);
       expect(result.exitCode).toBe(0);
 
       // stdout contains JSONL events + pretty-printed abort result + flush trailer
@@ -344,11 +386,11 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // First abort
-      let result = await runCliInProcess(`abort ${token}`, workspace);
+      let result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
 
       // Second abort with JSON
-      result = await runCliInProcess(`abort ${token}`, workspace);
+      result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
 
       const output = parseCliJsonObject(result.stdout);
@@ -386,20 +428,10 @@ describe('abort command - unit tests', () => {
 
   describe('edge cases', () => {
     it('handles delegation with substep ID', async () => {
-      await writeParentRunbook();
-      await writeChildRunbook();
-
-      // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const state = await getActiveState(workspace);
-      const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
-      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-      if (typeof token !== 'string') throw new Error('Expected delegation token');
+      const token = await setupDelegation();
 
       // Abort should work
-      result = await runCliInProcess(`abort ${token}`, workspace);
+      const result = await runCliInProcess(abortCommand(token), workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -407,11 +439,11 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // First abort should succeed
-      const result1 = await runCliInProcess(`abort ${token}`, workspace);
+      const result1 = await runCliInProcess(abortCommand(token), workspace);
       expect(result1.exitCode).toBe(0);
 
       // Second abort should be idempotent
-      const result2 = await runCliInProcess(`abort ${token}`, workspace);
+      const result2 = await runCliInProcess(abortCommand(token), workspace);
       expect(result2.exitCode).toBe(0);
       const output = parseCliJsonObject(result2.stdout);
       expect(output).toEqual(
@@ -429,7 +461,7 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // Pass multiple tokens - Commander should only use first positional arg
-      const result = await runCliInProcess(`abort ${token} extra-arg --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, 'extra-arg --text'), workspace);
       // Commander errors on unexpected argument
       expect(result.exitCode).toBe(1);
     });
@@ -439,7 +471,7 @@ describe('abort command - unit tests', () => {
     it('shows hint token in output', async () => {
       const token = await setupDelegation();
 
-      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
       expect(result.exitCode).toBe(0);
 
       // Should show token hint (e.g., rdtk_ABC...XYZ)
@@ -449,7 +481,7 @@ describe('abort command - unit tests', () => {
     it('shows runbook path in output', async () => {
       const token = await setupDelegation();
 
-      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toContain('child.runbook.md');
@@ -463,7 +495,7 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = await runCliInProcess(`abort ${token} --force --text`, workspace);
+      result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toMatch(/in-flight|child run stopped/i);
@@ -489,7 +521,7 @@ describe('abort command - unit tests', () => {
       expect(parentState.step).toBe('1');
 
       // Force abort stops and releases the claimed child.
-      result = await runCliInProcess(`abort ${token} --force --text`, workspace);
+      result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
       expect(result.exitCode).toBe(0);
 
       // The parent remains the default-stack runbook; the child state is gone.
@@ -516,8 +548,9 @@ describe('abort command - unit tests', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]?.result).toBe('fail');
 
-      // Post-R1 the guard needs named authority: the run-targeted bare-shaped
-      // advance still refuses with the collection-pending guard.
+      // Run ids are selectors only, not authority. Without a bearer claim id,
+      // the run-targeted bare-shaped advance is refused before collection
+      // policy can authorize a mutation.
       const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(blocked.exitCode).toBe(1);
       expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
@@ -532,7 +565,7 @@ describe('abort command - unit tests', () => {
       await runCliInProcess(`claim ${token} --text`, workspace);
 
       // Force abort after claim has completed
-      const result = await runCliInProcess(`abort ${token} --force --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -550,7 +583,7 @@ describe('abort command - unit tests', () => {
       );
       expect(failed.exitCode).toBe(1);
 
-      const result = await runCliInProcess(`abort ${token} --force --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('CANCELLED');
       expect(result.stdout).not.toContain('FAILED     step 1');
@@ -572,7 +605,7 @@ describe('abort command - unit tests', () => {
       );
       expect(failed.exitCode).toBe(1);
 
-      const result = await runCliInProcess(`abort ${token} --force`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--force'), workspace);
       expect(result.exitCode).toBe(0);
       const output = findActionOutput(result.stdout);
       expect(output).toEqual(
@@ -592,7 +625,7 @@ describe('abort command - unit tests', () => {
       expect(parentBefore).not.toBeNull();
 
       // Abort pending delegation
-      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
       expect(result.exitCode).toBe(0);
 
       const parentAfter = await getActiveState(workspace);

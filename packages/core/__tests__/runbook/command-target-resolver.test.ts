@@ -4,15 +4,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type CommandTargetReader,
+  resolveMutationAuthority,
   resolveCommandTarget,
   resolveTerminalTarget,
   resolveTransitionTarget,
 } from '../../src/runbook/command-target-resolver.js';
 import {
+  assertClaimLookupKey,
   assertClaimId,
+  assertClaimSecretHash,
+  claimKeyFromBearer,
+  parseClaimBearer,
+  type ClaimAuthorizationRequest,
   type ClaimId,
   type ClaimIdResolution,
   type ClaimRecord,
+  type ClaimVerificationResult,
+  type VerifiedClaim,
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
@@ -24,7 +32,7 @@ import {
   buildFrameKey,
   buildResolvedCompletion,
 } from '../../src/runbook/targeting.js';
-import { trustedRunControllerContext } from '../../src/runbook/actor-context.js';
+import { verifiedClaimContext } from '../../src/runbook/actor-context.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
@@ -33,10 +41,20 @@ const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
 const child = { id: 'child', lifecycle: 'running' } as RunbookState;
 const terminalCompletedChild = { ...child, lifecycle: 'completed' } as RunbookState;
 const terminalStoppedChild = { ...child, lifecycle: 'stopped' } as RunbookState;
-const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
-const secondClaimId = assertClaimId('rdclm_abcdefghijklmnopqrstu2');
+const claimId = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
+const secondClaimId = assertClaimId(
+  'rdclm_22222222222222222222222222222222_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
 const claim = makeClaim(claimId);
 const secondClaim = makeClaim(secondClaimId);
+const verifiedClaim = makeVerifiedClaim(claim);
+const claimWithoutMutateGrant: ClaimRecord = {
+  ...claim,
+  grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+};
+const verifiedClaimWithoutMutateGrant = makeVerifiedClaim(claimWithoutMutateGrant);
 
 const KNOWN_TRANSITION_KINDS = new Set([
   'claim',
@@ -49,29 +67,67 @@ const KNOWN_TRANSITION_KINDS = new Set([
 ]);
 
 function makeClaim(id: ClaimId): ClaimRecord {
+  const claimKey = assertClaimLookupKey(`rdclk_${id.slice('rdclm_'.length, 'rdclm_'.length + 32)}`);
   return {
-    kind: 'claim-record',
-    claimId: id,
-    childRunId: child.id,
-    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-    parentRunId: parent.id,
-    parentStepId: '1.1',
-    parentStep: '1',
-    parentFrameKey: buildFrameKey('1'),
-    parentEntry: 1,
-    claimedAt: '2026-05-01T00:00:00.000Z',
+    claimKey,
+    secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
+    controlledRunId: child.id,
+    delegation: {
+      childRunId: child.id,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      parentRunId: parent.id,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    },
+    grants: [
+      { action: 'mutate-run', runId: child.id },
+      {
+        action: 'report-delegation-result',
+        childRunId: child.id,
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+        parentRunId: parent.id,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      },
+    ],
+    issuedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:00.000Z',
   };
 }
 
+function makeVerifiedClaim(record: ClaimRecord): VerifiedClaim {
+  return {
+    claimKey: record.claimKey,
+    controlledRunId: record.controlledRunId,
+    ...(record.delegation ? { delegation: record.delegation } : {}),
+    grants: record.grants,
+  };
+}
+
+function verifiedRunContext(runId: RunbookState['id']) {
+  return verifiedClaimContext({
+    authority: { kind: 'bearer', claimId, claimKey: claim.claimKey },
+    claim: {
+      claimKey: claim.claimKey,
+      controlledRunId: runId,
+      grants: [{ action: 'mutate-run', runId }],
+    },
+  });
+}
+
 function claimedResolution(state: RunbookState = child): ClaimIdResolution {
-  return { status: 'claimed', claim, state };
+  return { status: 'claimed', claimId, claim: verifiedClaim, record: claim, state };
 }
 
 function fakeReader(options: {
   readonly active?: RunbookState | null;
   readonly openClaims?: readonly ClaimRecord[];
   readonly claimResolution?: ClaimIdResolution;
+  readonly claimVerification?: ClaimVerificationResult;
   readonly expectedClaimId?: ClaimId;
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
@@ -100,6 +156,10 @@ function fakeReader(options: {
       }
       return options.claimResolution ?? { status: 'missing', claimId: _claimId };
     },
+    async verifyClaimId(_claimId) {
+      expect(_claimId).toBe(options.expectedClaimId ?? claimId);
+      return options.claimVerification ?? { status: 'missing', claimKey: claim.claimKey };
+    },
     async listOpenClaimsForParent(parentRunId) {
       if (options.failOnOpenClaimRead) {
         throw new Error('open delegated children should not be inspected');
@@ -121,7 +181,7 @@ describe('resolveCommandTarget', () => {
       { claimId },
     );
 
-    expect(result).toEqual({ kind: 'claim', claimId, claim, state: child });
+    expect(result).toEqual({ kind: 'claim', claimId, claim: verifiedClaim, state: child });
   });
 
   it('passes allowStashed through claim resolution for read-only targeting', async () => {
@@ -151,7 +211,23 @@ describe('resolveCommandTarget', () => {
     expect(result).toEqual({
       kind: 'stale_claim',
       claimId,
-      message: `Claim id ${claimId} does not exist.`,
+      message: `Claim id ${claimKeyFromBearer(claimId)} does not exist.`,
+    });
+  });
+
+  it('refuses a claim id with an invalid secret', async () => {
+    const result = await resolveCommandTarget(
+      fakeReader({
+        claimResolution: { status: 'invalid-secret', claimId },
+        failOnDefaultRead: true,
+      }),
+      { claimId },
+    );
+
+    expect(result).toEqual({
+      kind: 'stale_claim',
+      claimId,
+      message: `Claim id ${claimKeyFromBearer(claimId)} is not valid for this session.`,
     });
   });
 
@@ -175,7 +251,7 @@ describe('resolveCommandTarget', () => {
       claim,
       state: terminalCompletedChild,
       lifecycle: 'completed',
-      message: `Claim id ${claimId} points at a completed child runbook.`,
+      message: `Claim id ${claimKeyFromBearer(claimId)} points at a completed child runbook.`,
     });
   });
 
@@ -192,7 +268,188 @@ describe('resolveCommandTarget', () => {
   });
 });
 
+describe('resolveCommandTarget claim-id message redaction', () => {
+  const secret = parseClaimBearer(claimId).secret;
+  const claimKey = claimKeyFromBearer(claimId);
+
+  function messageOf(result: Awaited<ReturnType<typeof resolveCommandTarget>>): string {
+    if (result.kind !== 'stale_claim' && result.kind !== 'terminal_claim') {
+      throw new Error(`expected a claim-refusal outcome, got ${result.kind}`);
+    }
+    return result.message;
+  }
+
+  const cases: ReadonlyArray<{ readonly name: string; readonly resolution: ClaimIdResolution }> = [
+    { name: 'missing', resolution: { status: 'missing', claimId } },
+    { name: 'invalid-secret', resolution: { status: 'invalid-secret', claimId } },
+    {
+      name: 'terminal',
+      resolution: {
+        status: 'terminal',
+        claim: verifiedClaim,
+        state: terminalCompletedChild,
+        lifecycle: 'completed',
+      },
+    },
+    {
+      name: 'stale',
+      resolution: { status: 'stale', claim: verifiedClaim, reason: 'missing-state' },
+    },
+    {
+      name: 'unlinked/stashed',
+      resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'stashed' },
+    },
+    {
+      name: 'unlinked/parent-missing',
+      resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'parent-missing' },
+    },
+  ];
+
+  for (const { name, resolution } of cases) {
+    it(`never leaks the bearer secret in the ${name} refusal message`, async () => {
+      const result = await resolveCommandTarget(
+        fakeReader({ claimResolution: resolution, failOnDefaultRead: true }),
+        { claimId },
+      );
+
+      const message = messageOf(result);
+      expect(message).not.toContain(secret);
+      expect(message).toContain(claimKey);
+    });
+  }
+});
+
+describe('resolveMutationAuthority', () => {
+  it('uses explicit bearer authority when the verified claim has the exact grant', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'verified', claim: verifiedClaim },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({
+      kind: 'verified',
+      authority: { kind: 'bearer', claimId, claimKey: verifiedClaim.claimKey },
+      claim: verifiedClaim,
+    });
+  });
+
+  it('refuses a presented bearer claim id with an invalid secret', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'invalid-secret', claimKey: verifiedClaim.claimKey },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'invalid-secret' });
+  });
+
+  it('refuses mutation authority when no bearer is presented, even though persisted grants authorize the request', async () => {
+    // Authority is bearer-only: without a presented claim id the request is
+    // refused `missing` regardless of what persisted grants would allow. There is
+    // no non-secret / ambient authority path to fall back to.
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({}),
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'missing' });
+  });
+
+  it('does not scan local claims when no bearer is presented', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        failOnDefaultRead: true,
+      }),
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'missing' });
+  });
+
+  it('refuses a verified bearer claim that lacks the requested grant (no-authorizing-claim)', async () => {
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: child.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'no-authorizing-claim' });
+  });
+
+  it('refuses a verified bearer claim whose mutate grant is for a different run (no-authorizing-claim)', async () => {
+    // Pins that authorization is driven by `request.runId`, NOT `targetState`.
+    // The target is `child` (which `verifiedClaim` CAN mutate), but the request
+    // names a different run. authorizeClaim compares the grant's runId to
+    // `request.runId` (command-target-resolver.ts:372), so an implementation that
+    // instead authorized against `targetState.id` would wrongly ALLOW and fail
+    // this test. Keeping `targetState: child` + `request.runId: foreign.id` is
+    // what makes the distinction observable — set both to the same run and the
+    // test would pass even under the buggy `targetState`-based implementation.
+    const foreign = { id: 'foreign', lifecycle: 'running' } as RunbookState;
+    const request: ClaimAuthorizationRequest = { action: 'mutate-run', runId: foreign.id };
+
+    const result = await resolveMutationAuthority({
+      targetReader: fakeReader({
+        claimVerification: { status: 'verified', claim: verifiedClaim },
+        failOnDefaultRead: true,
+      }),
+      presentedClaimId: claimId,
+      targetState: child,
+      request,
+    });
+
+    expect(result).toEqual({ kind: 'refused', reason: 'no-authorizing-claim' });
+  });
+});
+
 describe('resolveTransitionTarget', () => {
+  it.each([
+    'pass',
+    'fail',
+  ] as const)('refuses claim-targeted %s when the bearer lacks mutate-run grant', async (command) => {
+    const result = await resolveTransitionTarget(
+      fakeReader({
+        claimResolution: {
+          status: 'claimed',
+          claimId,
+          claim: verifiedClaimWithoutMutateGrant,
+          record: claimWithoutMutateGrant,
+          state: child,
+        },
+        claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+        expectedIncludeStashed: false,
+      }),
+      { command, claimId },
+    );
+
+    expect(result).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
+  });
+
   it.each([
     'pass',
     'fail',
@@ -200,7 +457,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
         command,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'open_delegated_children',
@@ -213,7 +470,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       }),
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
@@ -242,7 +499,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: pendingParent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'delegation_collection_pending',
@@ -261,21 +518,12 @@ describe('resolveTransitionTarget', () => {
     });
   });
 
-  it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
-    // No actorContext supplied: the strict core default evaluates as unknown for
-    // the target, so a bare transition is refused as a typed resolution rather
-    // than throwing. Frontends map typed caller evidence to an actor context
-    // (direct CLI -> trusted run controller) before reaching here; callers that
-    // pass none render the policy error consistently from this result.
+  it('resolves a standalone default transition with no actor evidence', async () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
       }),
-    ).resolves.toEqual({
-      // Deliberately carries NO run id: the refusal is an accident barrier and
-      // must not hand the caller the id it needs to bypass it (decision 4).
-      kind: 'actor_context_required',
-    });
+    ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
   it('skips the open delegated child guard for targeted transitions (with trusted evidence)', async () => {
@@ -285,13 +533,13 @@ describe('resolveTransitionTarget', () => {
         {
           command: 'pass',
           targeted: true,
-          actorContext: trustedRunControllerContext(parent.id),
+          actorContext: verifiedRunContext(parent.id),
         },
       ),
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
-  it('refuses a targeted transition with no trusted evidence on a delegating run (--step is not authority)', async () => {
+  it('resolves a targeted standalone transition with no actor evidence', async () => {
     // The #460 child could as easily issue `rd pass --step N`: a step name is
     // a completion target, not authority. The role gate applies to targeted
     // and bare transitions alike; only the collection guards stay exempt.
@@ -300,7 +548,7 @@ describe('resolveTransitionTarget', () => {
         fakeReader({ active: parent, openClaims: [claim], failOnOpenClaimRead: true }),
         { command: 'pass', targeted: true },
       ),
-    ).resolves.toEqual({ kind: 'actor_context_required' });
+    ).resolves.toEqual({ kind: 'default', state: parent });
   });
 
   it('resolves an explicit live claim without checking default stack or parent open claims', async () => {
@@ -314,7 +562,7 @@ describe('resolveTransitionTarget', () => {
         }),
         { command: 'pass', claimId },
       ),
-    ).resolves.toEqual({ kind: 'claim', claimId, claim, state: child });
+    ).resolves.toEqual({ kind: 'claim', claimId, claim: verifiedClaim, state: child });
   });
 
   it.each([
@@ -369,17 +617,17 @@ describe('resolveTransitionTarget', () => {
     {
       label: 'missing',
       resolution: { status: 'missing' as const, claimId },
-      expectedMessage: `Claim id ${claimId} does not exist.`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} does not exist.`,
     },
     {
       label: 'stale',
       resolution: { status: 'stale' as const, claim, reason: 'missing-state' as const },
-      expectedMessage: `Claim id ${claimId} points at missing child state (missing-state).`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} points at missing child state (missing-state).`,
     },
     {
       label: 'unlinked stashed',
       resolution: { status: 'unlinked' as const, claim, reason: 'stashed' as const },
-      expectedMessage: `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
     },
     {
       label: 'unlinked non-stashed',
@@ -388,7 +636,7 @@ describe('resolveTransitionTarget', () => {
         claim,
         reason: 'child-linkage-mismatch' as const,
       },
-      expectedMessage: `Claim id ${claimId} is no longer linked to an active delegation (child-linkage-mismatch).`,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is no longer linked to an active delegation (child-linkage-mismatch).`,
     },
   ])('reports stale_claim for $label claim resolution', async (caseDef) => {
     await expect(
@@ -417,7 +665,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [] }),
       options: {
         command: 'pass' as const,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     },
     {
@@ -430,7 +678,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [secondClaim] }),
       options: {
         command: 'fail' as const,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     },
   ])('returns a known transition target variant for $label', async (caseDef) => {
@@ -447,7 +695,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
@@ -460,7 +708,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: foreign,
-        actorContext: trustedRunControllerContext(foreign),
+        actorContext: verifiedRunContext(foreign),
       },
     );
     expect(resolution).toEqual({
@@ -477,7 +725,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({
@@ -499,7 +747,7 @@ describe('resolveTransitionTarget --run targeting', () => {
       {
         command: 'pass',
         runId: parent.id,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({
@@ -524,10 +772,34 @@ describe('resolveTransitionTarget --run targeting', () => {
         command: 'pass',
         runId: parent.id,
         targeted: true,
-        actorContext: trustedRunControllerContext(parent.id),
+        actorContext: verifiedRunContext(parent.id),
       },
     );
     expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
+  });
+
+  it('preserves claim_grant_required for a run-targeted bearer that lacks mutate-run', async () => {
+    const resolution = await resolveTransitionTarget(
+      fakeReader({
+        runById: { [parent.id]: parent },
+        openClaims: [],
+        failOnDefaultRead: true,
+      }),
+      {
+        command: 'pass',
+        runId: parent.id,
+        actorContext: verifiedClaimContext({
+          authority: { kind: 'bearer', claimId, claimKey: claim.claimKey },
+          claim: {
+            claimKey: claim.claimKey,
+            controlledRunId: parent.id,
+            grants: [],
+          },
+        }),
+      },
+    );
+
+    expect(resolution).toEqual({ kind: 'claim_grant_required', claimId, runId: parent.id });
   });
 });
 
@@ -560,7 +832,12 @@ describe('resolveTerminalTarget', () => {
   function terminalReader(lifecycle: 'completed' | 'stopped'): CommandTargetReader {
     const terminalChild = lifecycle === 'completed' ? terminalCompletedChild : terminalStoppedChild;
     return fakeReader({
-      claimResolution: { status: 'terminal', claim, state: terminalChild, lifecycle },
+      claimResolution: {
+        status: 'terminal',
+        claim: verifiedClaim,
+        state: terminalChild,
+        lifecycle,
+      },
       expectedIncludeStashed: false,
     });
   }
@@ -578,14 +855,14 @@ describe('resolveTerminalTarget', () => {
       expect(res.command).toBe(command);
       expect(res.lifecycle).toBe(lifecycle);
       expect(res.claimId).toBe(claimId);
-      expect(res.claim).toBe(claim);
+      expect(res.claim).toBe(verifiedClaim);
       expect(res.state).toBe(terminalChild);
     }
     if (res.kind === 'terminal_claim_conflict') {
       expect(res.requestedCommand).toBe(command);
       expect(res.expectedCommand).toBe(lifecycle === 'completed' ? 'complete' : 'stop');
       expect(res.claimId).toBe(claimId);
-      expect(res.claim).toBe(claim);
+      expect(res.claim).toBe(verifiedClaim);
       expect(res.state).toBe(terminalChild);
     }
   });
@@ -597,6 +874,27 @@ describe('resolveTerminalTarget', () => {
     });
     const res = await resolveTerminalTarget(reader, { command: 'complete', claimId });
     expect(res.kind).toBe('claim');
+  });
+
+  it.each([
+    'complete',
+    'stop',
+  ] as const)('refuses claim-targeted %s when the bearer lacks mutate-run grant', async (command) => {
+    const reader = fakeReader({
+      claimResolution: {
+        status: 'claimed',
+        claimId,
+        claim: verifiedClaimWithoutMutateGrant,
+        record: claimWithoutMutateGrant,
+        state: child,
+      },
+      claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+      expectedIncludeStashed: false,
+    });
+
+    const res = await resolveTerminalTarget(reader, { command, claimId });
+
+    expect(res).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
   });
 
   it('passes through a stale (missing) claim unchanged', async () => {
@@ -636,7 +934,7 @@ describe('resolveTransitionTarget integration', () => {
       await expect(
         resolveTransitionTarget(sessionService, {
           command: 'pass',
-          actorContext: trustedRunControllerContext(parentState.id),
+          actorContext: verifiedRunContext(parentState.id),
         }),
       ).resolves.toEqual({
         kind: 'open_delegated_children',

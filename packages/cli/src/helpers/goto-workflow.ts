@@ -98,7 +98,9 @@ export async function resolveTerminalReleaseModeForRunbook(
   runbookId: RunId,
 ): Promise<ExecutionTerminalReleaseMode> {
   const session = await manager.loadSession();
-  const claimed = Object.values(session.claims).some((claim) => claim.childRunId === runbookId);
+  const claimed = Object.values(session.claims).some(
+    (claim) => claim.controlledRunId === runbookId,
+  );
   return claimed ? 'release-runbook' : 'stack-pop';
 }
 
@@ -116,7 +118,8 @@ export async function resolveTerminalReleaseModeForRunbook(
  * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
- *   stack; mutually exclusive with `claimId` (enforced upstream)
+ *   stack. This selects a target run; bearer authority still comes from
+ *   `claimId` when one is supplied.
  * @param options.commandStreamOptions - Runtime-only routing for command
  * subprocess stdout/stderr while goto continues execution
  * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
@@ -141,7 +144,7 @@ export async function buildGotoContext(
   const outcome = await seam.resolveRunNavigation({
     command: 'goto',
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.claimId !== undefined ? { claimId: options.claimId } : {},
     ),
     targetSelector:
       options.claimId !== undefined

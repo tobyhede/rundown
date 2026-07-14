@@ -71,14 +71,14 @@ default-target invocation would silently inherit direct-CLI
 (`trusted_run_controller`) trust over the active run. The plugin/MCP front end
 is **not** a direct-CLI-trusted caller, so it withholds bare role-specific
 lifecycle mutations — bare `rundown pass`, `rundown fail`, `rundown delegate`,
-`rundown complete`, `rundown stop`, and `rundown collect` — rather than spawning
-them. The classification is the shared, argv-only predicate
+`rundown goto`, `rundown complete`, `rundown stop`, and `rundown collect` —
+rather than spawning them. The classification is the shared, argv-only predicate
 `bareRoleSpecificMutation`
 (`packages/core/src/runbook/subprocess-mutation-boundary.ts`); no source label
 is read or trusted, and `--actor-source` / `RD_ACTOR_SOURCE` do not exist.
 
 `--claim-id` mutations are **preserved**: `rundown pass --claim-id` /
-`rundown fail --claim-id` are `claim_controller` mutations whose evidence is
+`rundown fail --claim-id` are `claim_bearer` mutations whose evidence is
 reconstructable CLI-side from the resolved claim record, so they do not rely on
 direct-CLI trust and the delegated-child completion workflow still works. See
 [Lifecycle Command Seam](./architecture.md#lifecycle-command-seam) for the core

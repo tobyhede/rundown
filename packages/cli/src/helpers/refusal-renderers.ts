@@ -10,7 +10,7 @@
 // Each renderer returns whether the refusal requests a non-zero exit code, so
 // callers can `return render…(…)` directly from their switch arm.
 
-import type { ClaimId } from '@rundown-org/core';
+import { redactClaimId, type ClaimId, type RunId } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -49,10 +49,39 @@ export function renderActorContextRequiredRefusal(
 ): boolean {
   output.error(
     `This run has delegation activity, so a bare \`rundown ${commandName}\` is refused. ` +
-      'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-      '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
-      `if you are ${claimLanePurpose}.`,
+      `Pass \`--claim-id <claimId>\` if you are ${claimLanePurpose}.`,
     'ACTOR_CONTEXT_REQUIRED',
+  );
+  return true;
+}
+
+/**
+ * Render a claim-grant refusal (`CLAIM_GRANT_REQUIRED`).
+ *
+ * The caller presented a bearer claim id, but the verified claim does not carry
+ * the specific grant required for the requested command/target pair.
+ *
+ * Unlike the actor-context refusal, echoing the target run id here is safe: the
+ * caller already presented a verified bearer claim, so no accident barrier is
+ * being bypassed. Commands that scope the refusal to a specific run (e.g.
+ * `abort`, which names the parent delegation's run) pass it via `details`.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param commandName - The command that needs a stronger claim grant.
+ * @param details - Optional structured detail for the error envelope.
+ * @param details.targetRunId - Run the refusal is scoped to; echoed in the JSON
+ *   details for callers that already hold a verified bearer (e.g. `abort`).
+ * @returns `true` — always requests a non-zero exit code.
+ */
+export function renderClaimGrantRequiredRefusal(
+  output: OutputEmitter,
+  commandName: string,
+  details?: { readonly targetRunId?: RunId },
+): boolean {
+  output.error(
+    `The supplied claim id is not authorized to run \`rundown ${commandName}\` for this target.`,
+    'CLAIM_GRANT_REQUIRED',
+    details?.targetRunId !== undefined ? { targetRunId: details.targetRunId } : undefined,
   );
   return true;
 }
@@ -62,9 +91,14 @@ export function renderActorContextRequiredRefusal(
  * to the requested result). Emits the `already-resolved` action payload in JSON
  * mode and a human line otherwise.
  *
+ * The caller already holds the bearer `claimId`, but this response is an
+ * identification echo (not a credential-delivery point), so it names the claim
+ * by its non-secret lookup key via {@link redactClaimId} — the JSON identity
+ * field is `claimKey`, never a bearer that would persist the secret into logs.
+ *
  * @param output - Output emitter for CLI output.
  * @param commandName - The requested command (e.g. `pass`, `complete`).
- * @param claimId - The confirmed claim id.
+ * @param claimId - The confirmed claim id (bearer; redacted before output).
  * @param lifecycle - The child's terminal lifecycle (`completed` / `stopped`).
  * @returns `false` — an idempotent confirmation succeeds (exit 0).
  */
@@ -74,6 +108,7 @@ export function renderTerminalClaimConfirmed(
   claimId: ClaimId,
   lifecycle: 'completed' | 'stopped',
 ): boolean {
+  const claimKey = redactClaimId(claimId);
   if (output.isJson()) {
     // `kind` is the literal 'action' (ActionResponseSchema discriminant), not the
     // command name — preserves the idempotent payload contract.
@@ -81,11 +116,11 @@ export function renderTerminalClaimConfirmed(
       kind: 'action',
       action: commandName,
       status: 'already-resolved',
-      claimId,
+      claimKey,
       lifecycle,
     });
   } else {
-    output.message(`ALREADY ${commandName.toUpperCase()}  claim ${claimId} (child ${lifecycle})`);
+    output.message(`ALREADY ${commandName.toUpperCase()}  claim ${claimKey} (child ${lifecycle})`);
   }
   return false;
 }
@@ -95,7 +130,7 @@ export function renderTerminalClaimConfirmed(
  * already resolved as a different result than requested.
  *
  * @param output - Output emitter for CLI output.
- * @param claimId - The conflicting claim id.
+ * @param claimId - The conflicting claim id (bearer; redacted before output).
  * @param expectedLabel - The result/command the claim already resolved as.
  * @param requestedLabel - The result/command the caller requested.
  * @returns `true` — a conflict always requests a non-zero exit code.
@@ -107,7 +142,7 @@ export function renderTerminalClaimConflict(
   requestedLabel: string,
 ): boolean {
   output.error(
-    `Claim ${claimId} already resolved as ${expectedLabel}; cannot ${requestedLabel} it.`,
+    `Claim ${redactClaimId(claimId)} already resolved as ${expectedLabel}; cannot ${requestedLabel} it.`,
     'DELEGATION_RESULT_CONFLICT',
   );
   return true;

@@ -5,6 +5,7 @@ import {
   createTestWorkspace,
   findActionOutput,
   injectDelegationOutcomeForActiveRun,
+  issueRunControlClaim,
   runCliInProcess,
   getActiveState,
   readRunbookState,
@@ -102,12 +103,13 @@ describe('pass command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('applies pass --run <id> to the named running run', async () => {
+    it('applies pass --claim-id <id> to the claimed running run', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
 
-      const result = await runCliInProcess(`pass --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -142,12 +144,12 @@ describe('pass command', () => {
       expect(payload.code).toBe('INVALID_RUN_ID');
     });
 
-    it('rejects --run combined with --claim-id as INVALID_SYNTAX', async () => {
+    it('rejects combining --claim-id with --run instead of ignoring the run selector', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
 
       const result = await runCliInProcess(
-        `pass --run ${active!.id} --claim-id rdclm_abcdefghijklmnopqrstu1`,
+        `pass --run ${active!.id} --claim-id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
         workspace,
       );
 
@@ -156,12 +158,16 @@ describe('pass command', () => {
       expect(payload.code).toBe('INVALID_SYNTAX');
     });
 
-    it('drives the named run substep via pass --run <id> --step <n>', async () => {
+    it('drives the claimed run substep via pass --claim-id <id> --step <n>', async () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
 
-      const result = await runCliInProcess(`pass --run ${active!.id} --step 1.1`, workspace);
+      const result = await runCliInProcess(
+        ['pass', '--claim-id', claimId, '--step', '1.1'],
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('step_transitioned');
@@ -839,7 +845,11 @@ This step stops on pass.
 
     it('rd pass --claim-id on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
       const result = await runCliInProcess(
-        ['pass', '--claim-id', 'rdclm_AAAAAAAAAAAAAAAAAAAAAA'],
+        [
+          'pass',
+          '--claim-id',
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
         workspace,
       );
 

@@ -334,27 +334,116 @@ describe('DelegationTokenHashSchema', () => {
 
 describe('ClaimRecordSchema', () => {
   const validClaim = {
-    kind: 'claim-record',
-    claimId: 'rdclm_abcdefghijklmnopqrstu1',
-    childRunId: CHILD_RUN_ID,
-    tokenHash: `sha256:${'a'.repeat(64)}`,
-    parentRunId: PARENT_RUN_ID,
-    parentStepId: '1.1',
-    parentStep: '1',
-    parentFrameKey: '1|',
-    parentEntry: 1,
-    claimedAt: '2026-05-01T00:00:00.000Z',
+    claimKey: 'rdclk_11111111111111111111111111111111',
+    secretHash: `sha256:${'a'.repeat(64)}`,
+    controlledRunId: CHILD_RUN_ID,
+    delegation: {
+      childRunId: CHILD_RUN_ID,
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1.1',
+      parentStep: 'Process item',
+      parentFrameKey: buildFrameKey('1', 0),
+      parentEntry: 1,
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+    },
+    grants: [
+      { action: 'mutate-run', runId: CHILD_RUN_ID },
+      {
+        action: 'report-delegation-result',
+        childRunId: CHILD_RUN_ID,
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1.1',
+        parentStep: 'Process item',
+        parentFrameKey: buildFrameKey('1', 0),
+        parentEntry: 1,
+        tokenHash: `sha256:${'b'.repeat(64)}`,
+      },
+    ],
+    issuedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:01.000Z',
   };
 
-  it('accepts a complete claim record', () => {
+  it('accepts a complete proof-backed claim record with explicit grants', () => {
     expect(ClaimRecordSchema.safeParse(validClaim).success).toBe(true);
   });
 
-  it('rejects malformed claim ids', () => {
-    expect(ClaimRecordSchema.safeParse({ ...validClaim, claimId: 'rdclm_short' }).success).toBe(
+  it('rejects persisted reusable bearer claim ids', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      claimId: 'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects malformed lookup keys and secret hashes', () => {
+    expect(ClaimRecordSchema.safeParse({ ...validClaim, claimKey: 'rdclm_plain' }).success).toBe(
       false,
     );
+    expect(
+      ClaimRecordSchema.safeParse({ ...validClaim, secretHash: 'sha256:not-hex' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects run-scoped grants that target a run other than controlledRunId', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      grants: [{ action: 'mutate-run', runId: PARENT_RUN_ID }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects delegated claims without a matching report-delegation-result grant', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects delegated claims whose report grant does not match delegation linkage', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      grants: [
+        { action: 'mutate-run', runId: CHILD_RUN_ID },
+        {
+          action: 'report-delegation-result',
+          childRunId: CHILD_RUN_ID,
+          parentRunId: PARENT_RUN_ID,
+          parentStepId: '1.2',
+          parentStep: 'Process item',
+          parentFrameKey: buildFrameKey('1', 0),
+          parentEntry: 1,
+          tokenHash: `sha256:${'b'.repeat(64)}`,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-delegated claims with delegation report grants', () => {
+    const { delegation: _delegation, ...nonDelegatedClaim } = validClaim;
+
+    const result = ClaimRecordSchema.safeParse(nonDelegatedClaim);
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a delegation linkage / report grant with a non-positive parentEntry', () => {
+    // The canonical RunbookState.parentLinkage requires parentEntry.positive();
+    // a claim's linkage and report grant must agree, so parentEntry 0 (which no
+    // real child linkage ever carries) is rejected rather than persisted as a
+    // permanently-dead report grant.
+    const zeroEntry = {
+      ...validClaim,
+      delegation: { ...validClaim.delegation, parentEntry: 0 },
+      grants: [validClaim.grants[0], { ...validClaim.grants[1], parentEntry: 0 }],
+    };
+
+    expect(ClaimRecordSchema.safeParse(zeroEntry).success).toBe(false);
   });
 });
 
@@ -367,21 +456,16 @@ describe('SessionDataSchema claims registry', () => {
     }
   });
 
-  it('rejects claim records whose map key differs from claimId', () => {
+  it('rejects claim records whose map key differs from claimKey', () => {
     const result = SessionDataSchema.safeParse({
       defaultStack: [PARENT_RUN_ID],
       claims: {
-        rdclm_abcdefghijklmnopqrstu1: {
-          kind: 'claim-record',
-          claimId: 'rdclm_1234567890abcdefghijkl',
-          childRunId: CHILD_RUN_ID,
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-          parentRunId: PARENT_RUN_ID,
-          parentStepId: '1.1',
-          parentStep: '1',
-          parentFrameKey: '1|',
-          parentEntry: 1,
-          claimedAt: '2026-05-01T00:00:00.000Z',
+        rdclk_11111111111111111111111111111111: {
+          claimKey: 'rdclk_22222222222222222222222222222222',
+          secretHash: `sha256:${'a'.repeat(64)}`,
+          controlledRunId: CHILD_RUN_ID,
+          grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+          issuedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
         },
       },
@@ -389,34 +473,26 @@ describe('SessionDataSchema claims registry', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects duplicate claim records for the same childRunId', () => {
-    const base = {
-      kind: 'claim-record',
-      childRunId: CHILD_RUN_ID,
-      tokenHash: `sha256:${'b'.repeat(64)}`,
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '1.1',
-      parentStep: '1',
-      parentFrameKey: '1|',
-      parentEntry: 1,
-      claimedAt: '2026-05-01T00:00:00.000Z',
+  it('rejects two claim records controlling the same run', () => {
+    // Minting guarantees at most one claim per run (issueRunControlClaim runs
+    // once per run; claimRunbook dedupes on controlledRunId). Two distinct bearer
+    // secrets sharing a controlledRunId can only arise from tampered persisted
+    // state, so the schema is the boundary that rejects it.
+    const record = (claimKey: string) => ({
+      claimKey,
+      secretHash: `sha256:${'a'.repeat(64)}`,
+      controlledRunId: CHILD_RUN_ID,
+      grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+      issuedAt: '2026-05-01T00:00:00.000Z',
       updatedAt: '2026-05-01T00:00:01.000Z',
-    };
-
+    });
     const result = SessionDataSchema.safeParse({
       defaultStack: [PARENT_RUN_ID],
       claims: {
-        rdclm_abcdefghijklmnopqrstu1: {
-          ...base,
-          claimId: 'rdclm_abcdefghijklmnopqrstu1',
-        },
-        rdclm_1234567890abcdefghijkl: {
-          ...base,
-          claimId: 'rdclm_1234567890abcdefghijkl',
-        },
+        rdclk_11111111111111111111111111111111: record('rdclk_11111111111111111111111111111111'),
+        rdclk_22222222222222222222222222222222: record('rdclk_22222222222222222222222222222222'),
       },
     });
-
     expect(result.success).toBe(false);
   });
 });
@@ -629,7 +705,21 @@ describe('DelegationStatusEntrySchema', () => {
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
   });
 
-  it('validates a claimed entry with childRunId', () => {
+  const CLAIM_KEY = 'rdclk_11111111111111111111111111111111';
+
+  it('validates a claimed entry with childRunId and claimKey', () => {
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'claimed',
+      childRunId: 'run_abc123',
+      claimKey: CLAIM_KEY,
+      tokenHash: TOKEN_HASH,
+    };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+  });
+
+  it('rejects a claimed entry missing claimKey', () => {
     const entry = {
       substep: '1.1',
       runbook: 'child.md',
@@ -637,7 +727,7 @@ describe('DelegationStatusEntrySchema', () => {
       childRunId: 'run_abc123',
       tokenHash: TOKEN_HASH,
     };
-    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });
 
   it('validates a cancelled entry', () => {
@@ -709,6 +799,7 @@ describe('StatusResponseSchema with delegations', () => {
           runbook: 'test.md',
           state: 'claimed',
           childRunId: 'run_xyz',
+          claimKey: 'rdclk_22222222222222222222222222222222',
           tokenHash: TOKEN_HASH_B,
         },
       ],

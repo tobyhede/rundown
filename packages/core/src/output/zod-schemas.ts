@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
-import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
+import { CLAIM_ID_PATTERN, CLAIM_LOOKUP_KEY_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 import { PublicArtifactRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
@@ -46,8 +46,9 @@ const CLISymbolicErrorCodeValues = [
   'OPEN_DELEGATED_CHILDREN',
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
+  'CLAIM_GRANT_REQUIRED',
   'RUN_TARGET_UNAVAILABLE',
-  'COLLECT_REQUIRES_ORCHESTRATOR',
+  'RUN_TARGET_MISMATCH',
   'COLLECT_ALREADY_APPLIED',
   'COLLECT_OPERATION_FAILED',
   'CHILD_RUN_MISSING',
@@ -116,10 +117,12 @@ export const CLIErrorCodes = {
   DELEGATION_COLLECTION_PENDING: 'DELEGATION_COLLECTION_PENDING',
   /** Actor context is required for the requested role-specific command */
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
+  /** A verified bearer claim lacks the grant required for the requested command */
+  CLAIM_GRANT_REQUIRED: 'CLAIM_GRANT_REQUIRED',
   /** The explicit --run target is not a running member of this session's stack */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
-  /** Collection requires an actor that controls the target delegating run */
-  COLLECT_REQUIRES_ORCHESTRATOR: 'COLLECT_REQUIRES_ORCHESTRATOR',
+  /** The explicit --run target does not own the delegation retry token (delegate --retry) */
+  RUN_TARGET_MISMATCH: 'RUN_TARGET_MISMATCH',
   /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */
   COLLECT_ALREADY_APPLIED: 'COLLECT_ALREADY_APPLIED',
   /** Core collection failed while applying delegation outcomes. */
@@ -396,12 +399,12 @@ export const DelegationStatusEntrySchema = z
       .describe('Delegation state: pending, claimed, or cancelled'),
     /** Child run ID (when claimed) */
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
-    /** Stable claim handle for driving or recovering the claimed child */
-    claimId: z
+    /** Stable non-secret claim lookup key for claimed delegation correlation */
+    claimKey: z
       .string()
-      .regex(CLAIM_ID_PATTERN)
+      .regex(CLAIM_LOOKUP_KEY_PATTERN)
       .optional()
-      .describe('Claim id for a claimed delegation; drive or recover the child with --claim-id'),
+      .describe('Non-secret claim lookup key for a claimed delegation'),
     /** SHA-256 hash of the delegation token for correlation */
     tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
     /** Raw delegation token for pending-token recovery */
@@ -411,6 +414,7 @@ export const DelegationStatusEntrySchema = z
       .optional()
       .describe('Raw delegation token, present only while the delegation is pending'),
   })
+  .strict()
   .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
     message: 'childRunId is required when state is claimed',
     path: ['childRunId'],
@@ -419,9 +423,13 @@ export const DelegationStatusEntrySchema = z
     message: 'token is only available while state is pending',
     path: ['token'],
   })
-  .refine((entry) => entry.state === 'claimed' || entry.claimId === undefined, {
-    message: 'claimId is only available when state is claimed',
-    path: ['claimId'],
+  .refine((entry) => entry.state === 'claimed' || entry.claimKey === undefined, {
+    message: 'claimKey is only available when state is claimed',
+    path: ['claimKey'],
+  })
+  .refine((entry) => entry.state !== 'claimed' || entry.claimKey !== undefined, {
+    message: 'claimKey is required when state is claimed',
+    path: ['claimKey'],
   })
   .describe('Delegation status entry');
 

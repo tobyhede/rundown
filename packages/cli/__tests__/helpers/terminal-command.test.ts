@@ -2,13 +2,22 @@ import { describe, it, expect } from '@jest/globals';
 import {
   assertClaimId,
   assertRunId,
+  InvalidRunbookStateError,
+  parseClaimBearer,
+  redactClaimId,
   type LifecycleTerminalOutcome,
   type RunbookState,
   type RunbookStateManager,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
-import { renderTerminalOutcome } from '../../src/helpers/terminal-command.js';
+import {
+  finalizeAppliedClaimTerminal,
+  handleTerminalRecovery,
+  renderTerminalOutcome,
+  type ChildTerminalPropagator,
+} from '../../src/helpers/terminal-command.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { takeExitCode } from './exit-code.js';
 
 // Renderer contract coverage for the terminal (complete/stop) seam front end.
 // Each LifecycleTerminalOutcome kind must map to the correct CLI envelope / error
@@ -17,7 +26,9 @@ import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const PARENT_ID = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-const CLAIM_ID = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const CLAIM_ID = assertClaimId(
+  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+);
 
 interface Recorded {
   readonly method: string;
@@ -41,6 +52,7 @@ function recordingEmitter(json = true): { output: OutputEmitter; calls: Recorded
     executionEvent: rec('executionEvent'),
     complete: rec('complete'),
     stopped: rec('stopped'),
+    flush: rec('flush'),
     isJson: () => json,
   } as unknown as OutputEmitter;
   return { output, calls };
@@ -105,14 +117,24 @@ describe('renderTerminalOutcome', () => {
     expect(exitError).toBe(true);
     expect(codeOf(calls, 'error')).toBe('ACTOR_CONTEXT_REQUIRED');
     const errorCall = calls.find((c) => c.method === 'error');
-    // The remediation names both explicit-authority lanes...
-    expect(errorCall?.args[0]).toContain('--run');
+    // The remediation names the bearer-authority lane.
     expect(errorCall?.args[0]).toContain('--claim-id');
     // ...and the envelope carries NO details object and never echoes the
     // target run id — that would hand the refused caller a copy-paste bypass
     // of the accident barrier (decision 4).
     expect(errorCall?.args[2]).toBeUndefined();
     expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
+  });
+
+  it('renders claim_grant_required as CLAIM_GRANT_REQUIRED and exits non-zero', async () => {
+    const { exitError, calls } = await render({
+      kind: 'claim_grant_required',
+      claimId: CLAIM_ID,
+      runId: RUN_ID,
+    });
+
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('CLAIM_GRANT_REQUIRED');
   });
 
   it('renders delegation_collection_pending via DELEGATION_COLLECTION_PENDING and exits non-zero', async () => {
@@ -136,13 +158,15 @@ describe('renderTerminalOutcome', () => {
     });
     expect(exitError).toBe(false);
     const jsonCall = calls.find((c) => c.method === 'json');
+    // Identity is the non-secret lookup key, never the bearer (credential leak).
     expect(jsonCall?.args[0]).toMatchObject({
       kind: 'action',
       action: 'complete',
       status: 'already-resolved',
-      claimId: CLAIM_ID,
+      claimKey: redactClaimId(CLAIM_ID),
       lifecycle: 'completed',
     });
+    expect(JSON.stringify(jsonCall?.args[0])).not.toContain(parseClaimBearer(CLAIM_ID).secret);
   });
 
   it('renders terminal_claim_confirmed as a human message when not JSON, exit 0', async () => {
@@ -289,5 +313,148 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'metadata')).toBe(true);
     expect(calls.some((c) => c.method === 'executionEvent')).toBe(true);
     expect(calls.some((c) => c.method === 'stopped')).toBe(true);
+  });
+});
+
+describe('finalizeAppliedClaimTerminal', () => {
+  const APPLIED_STOP = {
+    kind: 'applied_claim' as const,
+    runId: RUN_ID,
+    status: 'stopped' as const,
+    events: [],
+    reported: 'not-applicable' as const,
+  };
+  const APPLIED_COMPLETE = { ...APPLIED_STOP, status: 'completed' as const };
+
+  /** Root state carrying an inline parent linkage (drives the propagate branch). */
+  function inlineChildState(): RunbookState {
+    return { ...fakeRootState(), parentLinkage: { kind: 'inline' } } as unknown as RunbookState;
+  }
+
+  /** Manager double counting loads and returning the supplied state. */
+  function countingManager(state: RunbookState | null): {
+    manager: RunbookStateManager;
+    loads: () => number;
+  } {
+    let loads = 0;
+    const manager = {
+      load: async () => {
+        loads++;
+        return state;
+      },
+    } as unknown as RunbookStateManager;
+    return { manager, loads: () => loads };
+  }
+
+  it('surfaces an error and non-zero exit when the terminated child fails to reload', async () => {
+    const { output, calls } = recordingEmitter(true);
+    let propagateCalled = false;
+    const propagate: ChildTerminalPropagator = async () => {
+      propagateCalled = true;
+      return 'handled';
+    };
+
+    const exitError = await finalizeAppliedClaimTerminal(
+      output,
+      'stop',
+      NO_MANAGER,
+      APPLIED_STOP,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('RUN_TARGET_UNAVAILABLE');
+    // Must NOT silently render a success envelope or propagate when the run vanished.
+    expect(propagateCalled).toBe(false);
+    expect(calls.some((c) => c.method === 'complete' || c.method === 'stopped')).toBe(false);
+  });
+
+  it('renders the child terminal before propagating to the inline parent', async () => {
+    const { output, calls } = recordingEmitter(true);
+    let childRenderedBeforePropagate = false;
+    const propagate: ChildTerminalPropagator = async () => {
+      childRenderedBeforePropagate = calls.some(
+        (c) => c.method === 'stopped' || c.method === 'complete',
+      );
+      return 'handled';
+    };
+
+    await finalizeAppliedClaimTerminal(
+      output,
+      'stop',
+      managerReturning(inlineChildState()),
+      APPLIED_STOP,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(childRenderedBeforePropagate).toBe(true);
+  });
+
+  it('reloads the terminated child exactly once for both render and propagation', async () => {
+    const { output } = recordingEmitter(true);
+    const { manager, loads } = countingManager(inlineChildState());
+    const propagate: ChildTerminalPropagator = async () => 'handled';
+
+    await finalizeAppliedClaimTerminal(
+      output,
+      'complete',
+      manager,
+      APPLIED_COMPLETE,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(loads()).toBe(1);
+  });
+
+  it('propagates a stopped inline parent into a non-zero exit', async () => {
+    const { output } = recordingEmitter(true);
+    const propagate: ChildTerminalPropagator = async () => 'stopped';
+
+    const exitError = await finalizeAppliedClaimTerminal(
+      output,
+      'complete',
+      managerReturning(inlineChildState()),
+      APPLIED_COMPLETE,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(exitError).toBe(true);
+  });
+});
+
+describe('handleTerminalRecovery', () => {
+  it('redacts the claim bearer in the complete recovery message (never leaks the secret)', async () => {
+    const { output, calls } = recordingEmitter();
+
+    await handleTerminalRecovery(
+      'complete',
+      new InvalidRunbookStateError('snapshot incompatible'),
+      output,
+      '/test',
+      { claimId: CLAIM_ID },
+    );
+
+    const errorCall = calls.find((c) => c.method === 'error');
+    expect(errorCall?.args[1]).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
+
+    // The recovery message must name only the non-secret lookup key, never the
+    // raw bearer whose 43-char secret would otherwise land in JSON output/logs.
+    const message = String(errorCall?.args[0]);
+    expect(message).toContain(redactClaimId(CLAIM_ID));
+    expect(message).not.toContain(parseClaimBearer(CLAIM_ID).secret);
+    // Defense in depth: nothing the recovery path emits carries the secret.
+    expect(JSON.stringify(calls)).not.toContain(parseClaimBearer(CLAIM_ID).secret);
+
+    // Recovery signals failure through `process.exitCode` rather than `process.exit`.
+    // Assert it, and consume it so the value cannot leak into the next test file.
+    expect(takeExitCode()).toBe(1);
   });
 });

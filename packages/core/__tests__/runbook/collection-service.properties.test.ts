@@ -10,9 +10,11 @@ import {
   RunbookCollectionService,
   RunbookCompletionService,
   RunbookStateManager,
+  SessionService,
   activeFrame,
   assertRunId,
   buildFrameKey,
+  type ClaimId,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
@@ -85,6 +87,7 @@ function doneSubstepStates(ids: readonly string[], iteration?: number): SubstepS
 describe('RunbookCollectionService properties', () => {
   let tmp: string;
   let collectionService: RunbookCollectionService;
+  let claimId: ClaimId;
 
   beforeAll(async () => {
     tmp = await mkdtemp(path.join(tmpdir(), 'collection-props-'));
@@ -92,7 +95,10 @@ describe('RunbookCollectionService properties', () => {
     const actorService = new RunbookActorService(manager);
     const lifecycleService = new ExecutionLifecycleService(manager);
     const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const sessionService = new SessionService(manager);
+    claimId = (await sessionService.issueRunControlClaim(runId)).claimId;
     collectionService = new RunbookCollectionService({
+      sessionService,
       manager,
       actorService,
       lifecycleService,
@@ -118,7 +124,7 @@ describe('RunbookCollectionService properties', () => {
           steps,
           // Post-R1 the delegating fixture refuses bare direct-CLI evidence;
           // the orchestrator names its run explicitly.
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'claim_bearer', claimId },
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 
@@ -148,7 +154,7 @@ describe('RunbookCollectionService properties', () => {
           steps,
           // Post-R1 the delegating fixture refuses bare direct-CLI evidence;
           // the orchestrator names its run explicitly.
-          callerEvidence: { kind: 'run_controller', runId },
+          callerEvidence: { kind: 'claim_bearer', claimId },
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 

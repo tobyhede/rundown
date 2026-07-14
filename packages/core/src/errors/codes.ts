@@ -369,7 +369,7 @@ export const ErrorCodes = {
     category: ErrorCategory.DELEGATION,
     title: 'Delegation child run in flight',
     description:
-      'Cannot retry a delegation while its child run is still linked. Use `rundown abort <token> --force` first to stop and record the child failure before retrying.',
+      'Cannot retry a delegation while its child run is still linked. Use `rundown abort <token> --claim-id <claim_id> --force` first to stop and record the child failure before retrying.',
     docSlug: 'delegation-in-flight',
   },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for

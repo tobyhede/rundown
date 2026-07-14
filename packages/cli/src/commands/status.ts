@@ -42,15 +42,15 @@ export function registerStatusCommand(program: Command): void {
 
           // #531: join session claim records onto claimed delegations so
           // orphaned claims are recoverable from status output. Later
-          // `updatedAt` wins on a childRunId collision.
+          // `updatedAt` wins on a controlledRunId collision.
           const session = await manager.loadSession();
-          const claimIdByChildRunId = new Map<string, string>();
+          const claimKeyByChildRunId = new Map<string, string>();
           for (const claim of Object.values(session.claims).sort((a, b) =>
             a.updatedAt.localeCompare(b.updatedAt),
           )) {
-            claimIdByChildRunId.set(claim.childRunId, claim.claimId);
+            claimKeyByChildRunId.set(claim.controlledRunId, claim.claimKey);
           }
-          const statusOptions = { claimIdByChildRunId };
+          const statusOptions = { claimKeyByChildRunId };
 
           switch (active.kind) {
             case 'claim':

@@ -56,6 +56,26 @@ function appendChunk(buffer: string, chunk: unknown): string {
   return buffer + String(chunk);
 }
 
+/**
+ * Clear any exit code left on the process by a previous caller.
+ *
+ * Kept in its own function so the assignment does not narrow
+ * `process.exitCode` to `undefined` for the rest of the invoking scope — the
+ * command dispatched afterwards is what sets the value we then read back.
+ */
+function clearProcessExitCode(): void {
+  process.exitCode = undefined;
+}
+
+/**
+ * Read the exit code the dispatched command assigned to the process.
+ *
+ * @returns The assigned code, or 0 when the command left it unset.
+ */
+function readProcessExitCode(): number {
+  return process.exitCode === undefined ? 0 : Number(process.exitCode);
+}
+
 function restoreEnv(originalEnv: Readonly<Record<string, string | undefined>>): void {
   for (const [key, value] of Object.entries(originalEnv)) {
     if (value === undefined) {
@@ -107,6 +127,10 @@ export async function runCliInProcess(
   try {
     resetPolicyContext();
     resetColorCache();
+    // Commands report failure by assigning `process.exitCode` rather than
+    // calling `process.exit`, and this runner reads it back after `parseAsync`.
+    // Clearing it first means only *this* invocation's assignment is observed.
+    clearProcessExitCode();
 
     process.chdir(options.cwd);
     process.env.NO_COLOR = '1';
@@ -156,8 +180,8 @@ export async function runCliInProcess(
     program.exitOverride();
     await program.parseAsync([...options.args], { from: 'user' });
 
-    exitCode = Number(process.exitCode ?? 0);
-    process.exitCode = undefined;
+    exitCode = readProcessExitCode();
+    clearProcessExitCode();
   } catch (err: unknown) {
     if (err instanceof ExitSignal) {
       exitCode = err.code;
@@ -173,7 +197,7 @@ export async function runCliInProcess(
     process.exit = originalExit;
     console.error = originalConsoleError;
     console.log = originalConsoleLog;
-    process.exitCode = undefined;
+    clearProcessExitCode();
     process.chdir(originalCwd);
     restoreEnv(originalEnv);
 

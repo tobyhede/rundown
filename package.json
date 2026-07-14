@@ -33,6 +33,7 @@
     "test:coverage": "run-p test:coverage:*",
     "test:coverage:parser": "pnpm --filter @rundown-org/parser test:coverage",
     "test:coverage:core": "pnpm --filter @rundown-org/core test:coverage",
+    "test:isolation:cli": "pnpm --filter @rundown-org/cli test:isolation",
     "test:coverage:cli": "pnpm --filter @rundown-org/cli test:coverage",
     "test:coverage:plugin": "pnpm --filter @rundown-org/claude-code-plugin test:coverage",
     "test:coverage:mcp": "pnpm --filter @rundown-org/mcp test:coverage",

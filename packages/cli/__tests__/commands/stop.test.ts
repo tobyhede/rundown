@@ -5,6 +5,9 @@ import {
   RunbookActorService,
   RunbookStateManager,
   InvalidRunbookStateError,
+  assertClaimId,
+  claimKeyFromBearer,
+  parseClaimBearer,
   readDelegationOutcomeReportedFacts,
 } from '@rundown-org/core';
 import {
@@ -14,6 +17,7 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
+  issueRunControlClaim,
   parseFinalCliJsonObject,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -57,17 +61,18 @@ describe('stop command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('forces the named stack-member run terminal via stop --run <id>', async () => {
+    it('refuses stop --run <id> without bearer authority', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
 
       const result = await runCliInProcess(`stop --run ${active!.id}`, workspace);
 
-      // A run-targeted stop is still a workflow failure terminal (exit 1).
       expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('ACTOR_CONTEXT_REQUIRED');
       const state = await readRunbookState(workspace, active!.id);
-      expect(state?.lifecycle).toBe('stopped');
+      expect(state?.lifecycle).toBe('running');
     });
 
     it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
@@ -517,11 +522,17 @@ Do work.
           command: 'stop',
         }),
       );
-      expect(String(errorResponse.error)).toContain(String(claimId));
+      // Refusal identifies the claim by its non-secret lookup key, never the bearer secret.
+      expect(String(errorResponse.error)).toContain(
+        claimKeyFromBearer(assertClaimId(String(claimId))),
+      );
+      expect(String(errorResponse.error)).not.toContain(parseClaimBearer(String(claimId)).secret);
       expect(String(errorResponse.error)).toContain('missing child state');
 
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
       expect(session.defaultStack).toContain(parentState!.id);
       expect(session.active).toBe(parentState!.id);
       expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
@@ -579,7 +590,9 @@ Do work.
       const session = await readSession(workspace);
       // Item 4: the terminal claim is RETAINED as a tombstone (release with
       // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
       expect(session.defaultStack).toContain(parentState!.id);
     });
 
@@ -632,7 +645,9 @@ Do work.
 
       // The claim tombstone is retained (record-before-release + retain).
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: childRunId }),
+      );
     });
   });
 
@@ -665,7 +680,11 @@ Do work.
       expect(parentId).toBeDefined();
 
       const result = await runCliInProcess(
-        ['stop', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'],
+        [
+          'stop',
+          '--claim-id',
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ],
         workspace,
       );
 
@@ -678,8 +697,12 @@ Do work.
           command: 'stop',
         }),
       );
+      // Refusal identifies the claim by its non-secret lookup key, never the bearer secret.
       expect(String(errorResponse.error)).toContain(
-        'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist',
+        'Claim id rdclk_00000000000000000000000000000000 does not exist',
+      );
+      expect(String(errorResponse.error)).not.toContain(
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       );
 
       const sessionAfter = await readSession(workspace);
@@ -882,7 +905,8 @@ Run the child task.
       expect(result.exitCode).toBe(0);
 
       // The orchestrator collects with named authority: FAIL ANY fires STOP.
-      result = await runCliInProcess(['collect', '--run', parentRunId], workspace);
+      const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+      result = await runCliInProcess(['collect', '--claim-id', parentClaimId], workspace);
       expect(result.exitCode).toBe(1);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -1047,7 +1071,8 @@ Approve the deployment.
 
       // The orchestrator collects the grandparent with named authority:
       // FAIL ANY aggregation fires STOP.
-      result = await runCliInProcess(['collect', '--run', grandparentRunId], workspace);
+      const grandparentClaimId = await issueRunControlClaim(workspace, grandparentRunId);
+      result = await runCliInProcess(['collect', '--claim-id', grandparentClaimId], workspace);
       expect(result.exitCode).toBe(1);
 
       // Verify grandparent is stopped

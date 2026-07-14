@@ -7,6 +7,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertRunId, RunbookStateManager, SessionService } from '@rundown-org/core';
+import type { RunId } from '@rundown-org/core';
 import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -266,15 +268,14 @@ export function assertDefined<T>(
 /**
  * Extract the active run id from a `rundown status` invocation result.
  *
- * Post-R1 named-authority helper shared by the runbook integration suites:
- * mutating commands need `--run <rd_…>`, and the id is resolved from the
- * status payload's `state` path.
+ * Extract the active run id from status output for tests that need target
+ * selection. Mutating commands use bearer `claim_id` authority instead.
  *
  * @param result - Exit code and stdout of a `rundown status` invocation
  * @returns The active run id (`rd_` + 32 hex)
  * @throws {Error} When the status payload carries no run id
  */
-export function activeRunIdFromStatus(result: { exitCode: number | null; stdout: string }): string {
+export function activeRunIdFromStatus(result: { exitCode: number | null; stdout: string }): RunId {
   if (result.exitCode !== 0) {
     throw new Error(`status exited ${String(result.exitCode)}: ${result.stdout}`);
   }
@@ -283,5 +284,25 @@ export function activeRunIdFromStatus(result: { exitCode: number | null; stdout:
   if (!match) {
     throw new Error(`No active run id in status: ${result.stdout}`);
   }
-  return match[0];
+  return assertRunId(match[0]);
+}
+
+/**
+ * Issue bearer authority for the active run and append it to a mutating command.
+ *
+ * Run ids are selector-only under unified claim grants. Prompted integration
+ * tests that advance the active run need the same run-control bearer that
+ * `rundown run` emits for agents.
+ *
+ * @param args - CLI argv to extend
+ * @param cwd - Workspace whose active run should receive a bearer claim
+ * @returns The argv with `--claim-id <claimId>` appended
+ */
+export async function withActiveRunClaim(args: readonly string[], cwd: string): Promise<string[]> {
+  const manager = new RunbookStateManager(cwd);
+  const sessionService = new SessionService(manager);
+  const state = await sessionService.getActive();
+  if (!state) throw new Error('withActiveRunClaim: no active run to target');
+  const { claimId } = await sessionService.issueRunControlClaim(state.id);
+  return [...args, '--claim-id', claimId];
 }

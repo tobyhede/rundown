@@ -235,11 +235,13 @@ additionally include `delegations` and `parentLinkage` when present. Accumulated
 artifact records live in the unified `state.variables` map alongside other
 variables and are surfaced through `vars` rather than a separate field.
 
-Claimed `delegations` entries MAY carry an optional `claimId` (pattern
-`rdclm_...`, present only when the entry's `state` is `claimed`); use it with
-`--claim-id` to drive or recover the claimed child (#531). The Zod
-`DelegationStatusEntrySchema` in `@rundown-org/core` remains the single source
-of truth for the exact per-entry shape.
+Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
+(pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for
+correlation. Bearer `claim_id` values are only returned by `rundown claim` and
+the `runbook_started` event emitted by `rundown run`; they are never
+reconstructed from status output. The Zod `DelegationStatusEntrySchema` in
+`@rundown-org/core` remains the single source of truth for the exact per-entry
+shape.
 
 ### `rundown status` (no active runbook)
 
@@ -305,7 +307,7 @@ arbitrary command bytes cannot corrupt the JSON stream. `--text` preserves the
 human terminal behavior.
 
 ```jsonl
-{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","claim_id":"rdclm_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
 {"type":"command_started","command":"echo \"hello\"","displayCommand":"echo \"hello\"","position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":3}
 {"type":"command_completed","command":"echo \"hello\"","success":true,"exitCode":0,"position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":4}
@@ -399,7 +401,7 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
   "kind": "claim",
   "action": "claimed",
   "token": "rdtk_abcd...",
-  "claim_id": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
+  "claim_id": "rdclm_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
   "run_id": "rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "runbook": "child.runbook.md",
   "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -416,8 +418,9 @@ for delegated child work.
 ## pass
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>` — the bearer claim is the only mutation authority. `pass`
+has no `--run` selector.
 
 ### `rundown pass`
 
@@ -467,8 +470,9 @@ by `claim_id` instead of the default stack.
 ## fail
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>` — the bearer claim is the only mutation authority. `fail`
+has no `--run` selector.
 
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
 for stopping).
@@ -534,9 +538,11 @@ by `claim_id` instead of the default stack.
 ## goto
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child). `goto` is
-additionally gated behind the `run-navigation` policy intent.
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>` — the bearer claim is the only mutation authority.
+`--run <rd_…>` selects a target but never satisfies the `ACTOR_CONTEXT_REQUIRED`
+refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
+`goto` is additionally gated behind the `run-navigation` policy intent.
 
 ### `rundown goto <step>`
 
@@ -577,8 +583,10 @@ Step description.
 ## stop
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>` — the bearer claim is the only mutation authority.
+`--run <rd_…>` selects a target but never satisfies the `ACTOR_CONTEXT_REQUIRED`
+refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
 
 ### `rundown stop [message]`
 
@@ -623,8 +631,10 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 ## complete
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
-see [Error Output](#actor-context-required). Name your lane with `--run <rd_…>`
-(orchestrator) or `--claim-id <claimId>` (delegated child).
+see [Error Output](#actor-context-required). Name your lane with
+`--claim-id <claimId>` — the bearer claim is the only mutation authority.
+`--run <rd_…>` selects a target but never satisfies the `ACTOR_CONTEXT_REQUIRED`
+refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
 
 ### `rundown complete [message]`
 
@@ -1101,8 +1111,9 @@ Error: Runbook file not found: missing.runbook.md
 
 <!--
   RUN_TARGET_MISMATCH is intentionally NOT documented here. It is emitted by
-  `rundown delegate --retry <token> --run <rd_…>` (packages/cli/src/commands/delegate.ts,
-  case 'run_target_mismatch') when the named run does not own the token, but it is
+  `rundown delegate --retry <token> --run <rd_…>`
+  (packages/cli/src/commands/delegate.ts, case 'run_target_mismatch') when the
+  selected run does not own the token, but it is
   NOT registered in CLISymbolicErrorCodeValues (packages/core/src/output/zod-schemas.ts),
   so its envelope fails ErrorCodeSchema / --schema validation. Documenting it would
   document a schema-invalid envelope. Pending the follow-up enum-registration issue
@@ -1112,17 +1123,16 @@ Error: Runbook file not found: missing.runbook.md
 ### Actor context required
 
 A bare mutating command (`pass`, `fail`, `goto`, `collect`, `complete`, `stop`,
-`delegate`) issued against a **delegation-exposed** run. Exposure is sticky, so
-the refusal persists after claims close and after `rundown prune`. The
-remediation names both explicit-authority lanes and **never echoes the target
-run id** (accident-proofing, not id secrecy — run ids are natively available
-from `rundown run` output and every event's `runbookId`); this no-echo property
-is pinned by the explicit-run-targeting tests.
+`delegate`) issued without bearer claim authority. Exposure is sticky, so
+refusal may persist after claims close and after `rundown prune`. The
+remediation names the bearer lane and **never echoes the target run id**
+(accident-proofing, not id secrecy — run ids are natively available from
+`rundown run` output and every event's `runbookId`).
 
 **Text:**
 
 ```text
-Error: This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` if you are completing delegated work.
+Error: This run has delegation activity, so a bare `rundown pass` is refused. Pass `--claim-id <claimId>` if you are completing delegated work.
 Code: ACTOR_CONTEXT_REQUIRED
 ```
 
@@ -1131,7 +1141,7 @@ Code: ACTOR_CONTEXT_REQUIRED
 ```json
 {
   "kind": "error",
-  "error": "This run has delegation activity, so a bare `rundown pass` is refused. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` if you are completing delegated work.",
+  "error": "This run has delegation activity, so a bare `rundown pass` is refused. Pass `--claim-id <claimId>` if you are completing delegated work.",
   "code": "ACTOR_CONTEXT_REQUIRED",
   "command": "pass"
 }
@@ -1158,7 +1168,7 @@ Code: RUN_TARGET_UNAVAILABLE
   "kind": "error",
   "error": "Run rd_9e725b142d81dabcefb9e04919568fcd is not part of this session's active stack.",
   "code": "RUN_TARGET_UNAVAILABLE",
-  "command": "pass"
+  "command": "goto"
 }
 ```
 
@@ -1181,22 +1191,25 @@ Code: INVALID_RUN_ID
   "kind": "error",
   "error": "Invalid run id. Expected rd_<32 hex characters>.",
   "code": "INVALID_RUN_ID",
-  "command": "pass"
+  "command": "complete"
 }
 ```
 
-### Collect requires orchestrator
+### Collect not authorized for this target
 
-`rundown collect` was issued by an actor that does not control the target
-delegating run. Collection is an orchestrator action; a claimant may collect
-only delegations issued by its own claimed run. Like the other refusals, the
-message names both lanes and never echoes the target run id.
+`rundown collect` was issued with a bearer claim that does not control the
+target delegating run — collection requires a `collect-for-run` grant for that
+run, so a claimant may collect only delegations issued by its own claimed run.
+The verified bearer lacks the exact grant, so the command is refused with the
+shared `CLAIM_GRANT_REQUIRED` claim-grant refusal. (A `collect` with no bearer
+at all on a delegation-exposed run is refused with `ACTOR_CONTEXT_REQUIRED`
+instead.)
 
 **Text:**
 
 ```text
-Error: rundown collect requires an actor that controls the target delegating run. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event) if you are the orchestrator, or `--claim-id <claimId>` if you are collecting within delegated work.
-Code: COLLECT_REQUIRES_ORCHESTRATOR
+Error: The supplied claim id is not authorized to run `rundown collect` for this target.
+Code: CLAIM_GRANT_REQUIRED
 ```
 
 **JSON:**
@@ -1204,8 +1217,8 @@ Code: COLLECT_REQUIRES_ORCHESTRATOR
 ```json
 {
   "kind": "error",
-  "error": "rundown collect requires an actor that controls the target delegating run. Pass `--run <rd_…>` with the run id from your orchestration context (printed by `rundown run` and carried as runbookId on every event) if you are the orchestrator, or `--claim-id <claimId>` if you are collecting within delegated work.",
-  "code": "COLLECT_REQUIRES_ORCHESTRATOR",
+  "error": "The supplied claim id is not authorized to run `rundown collect` for this target.",
+  "code": "CLAIM_GRANT_REQUIRED",
   "command": "collect"
 }
 ```

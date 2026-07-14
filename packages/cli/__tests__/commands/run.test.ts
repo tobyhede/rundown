@@ -113,6 +113,25 @@ describe('start command', () => {
       expect(objects.at(-1)).toMatchObject({ type: 'runbook_completed' });
     });
 
+    it('returns the orchestrator bearer claim id on the runbook_started event', async () => {
+      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const events = parseConcatenatedJson(result.stdout);
+      const started = events.find(
+        (event): event is Record<string, unknown> =>
+          typeof event === 'object' &&
+          event !== null &&
+          (event as { type?: unknown }).type === 'runbook_started',
+      );
+      expect(started).toEqual(
+        expect.objectContaining({
+          claim_id: expect.stringMatching(/^rdclm_/),
+          runbookId: expect.any(String),
+        }),
+      );
+    });
+
     it('creates runbook state from valid runbook file', async () => {
       const result = await runCliInProcess(
         'run --prompted runbooks/simple.runbook.md --text',
@@ -367,9 +386,11 @@ required:
 // JSON output per the CLI JSON-first testing convention.
 describe('run --step inline linkage (sandbox-visible coverage)', () => {
   let workspace: TestWorkspace;
+  let parentClaimId: string;
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
+    parentClaimId = '';
   });
 
   afterEach(async () => {
@@ -472,6 +493,14 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
     await writeSubstepParent(vars);
     const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    const started = parseConcatenatedJson(result.stdout).find(
+      (event): event is Record<string, unknown> =>
+        typeof event === 'object' &&
+        event !== null &&
+        (event as { type?: unknown }).type === 'runbook_started',
+    );
+    expect(typeof started?.claim_id).toBe('string');
+    parentClaimId = String(started!.claim_id);
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
     return state!.id;
@@ -686,7 +715,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       await writePassingChild();
 
       // Resolve substep 1.1 directly on the parent — drain advances the cursor.
-      const pass = await runCliInProcess('pass --step 1.1', workspace);
+      const pass = await runCliInProcess(`pass --step 1.1 --claim-id ${parentClaimId}`, workspace);
       expect(pass.exitCode).toBe(0);
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);

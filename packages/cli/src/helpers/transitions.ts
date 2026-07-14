@@ -16,7 +16,6 @@ import {
   parseStepIdFromString,
   resolveCommandTarget,
   type ActionType,
-  type ClaimRecord,
   type CommandTargetResolution,
   type CommandTargetSelector,
   type ExecutionEventEmitter,
@@ -25,15 +24,18 @@ import {
   type ResolvedStep,
   type RunbookState,
   type ClaimId,
+  type ClaimLookupKey,
   type RunId,
   type CommandExecutionStreamOptions,
   type LifecycleTransitionOutcome,
+  type VerifiedClaim,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
 import {
   renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
@@ -159,11 +161,11 @@ export interface TransitionContext {
   guardOpenChildren: boolean;
   /**
    * Resolved claim record when the target was selected via `--claim-id`;
-   * undefined for the default-stack target. Carries `claimId` and `tokenHash`
-   * needed to build a claim-controller actor context for core policy. Surfaced
-   * on the base (collect) path only — see {@link buildTransitionContext}.
+   * undefined for the default-stack target. Identifies the bearer-verified claim
+   * whose authority core evaluates for policy. Surfaced on the base (collect)
+   * path only — see {@link buildTransitionContext}.
    */
-  claim?: ClaimRecord;
+  claim?: VerifiedClaim;
 }
 
 /**
@@ -195,7 +197,8 @@ export type BaseBuildTransitionContextResult =
  * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
  * @param options.runId - Run id (`--run`) to resolve instead of the default
- *   stack; mutually exclusive with `claimId` (enforced upstream)
+ *   stack. This selects a target run; bearer authority still comes from
+ *   `claimId` when one is supplied.
  * @param options.commandStreamOptions - Runtime-only routing for command
  * subprocess stdout/stderr while transition follow-on execution continues
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
@@ -217,9 +220,10 @@ export async function buildTransitionContext(
 
   let resolvedKind: 'claim' | 'default' | 'run';
   let state: RunbookState;
-  // Resolved claim record, surfaced so the collect command can build a
-  // claim-controller actor context; undefined for the default-stack target.
-  let claim: ClaimRecord | undefined;
+  // Resolved claim record, surfaced so the collect command can name the
+  // bearer-verified claim for core authorization; undefined for the
+  // default-stack target.
+  let claim: VerifiedClaim | undefined;
 
   const active = await resolveCommandTarget(sessionService, {
     ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
@@ -291,14 +295,14 @@ export async function buildTransitionContext(
  * @param output - Output emitter to write the error to
  * @param command - The bare transition that was refused (`pass`/`fail`)
  * @param parentRunId - Active parent runbook id
- * @param claimIds - Open claim ids blocking the advance
+ * @param claimIds - Open claim lookup keys blocking the advance
  * @param childRunIds - Child run ids for the open claims
  */
 export function emitOpenDelegatedChildrenError(
   output: OutputEmitter,
   command: 'pass' | 'fail',
   parentRunId: RunId,
-  claimIds: readonly ClaimId[],
+  claimIds: readonly ClaimLookupKey[],
   childRunIds: readonly RunId[],
 ): void {
   output.error(
@@ -344,12 +348,9 @@ export function emitDelegationCollectionPendingError(
 
 /** CLI options forwarded to a pass/fail seam transition. */
 export interface SeamTransitionOptions {
-  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
+  /** Explicit claim-id bearer authority (`--claim-id`). */
   readonly claimId?: ClaimId;
-  /**
-   * Explicit run target and named authority (`--run`). Mutually exclusive with
-   * `claimId` (enforced upstream by `parseRunOption`).
-   */
+  /** Explicit run target selector (`--run`); selector precedence is resolved by the caller. */
   readonly runId?: RunId;
   /** Explicit substep target (`--step`). */
   readonly step?: string;
@@ -471,8 +472,8 @@ function renderRefusal(
         output,
         config.commandName,
         outcome.parentRunId,
-        outcome.claims.map((claim) => claim.claimId),
-        outcome.claims.map((claim) => claim.childRunId),
+        outcome.claims.map((claim) => claim.claimKey),
+        outcome.claims.map((claim) => claim.controlledRunId),
       );
       return true;
     case 'delegation_collection_pending':
@@ -486,6 +487,8 @@ function renderRefusal(
       return true;
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, config.commandName);
+    case 'claim_grant_required':
+      return renderClaimGrantRequiredRefusal(output, config.commandName);
     case 'unknown_run':
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;
@@ -629,7 +632,7 @@ export async function runSeamTransition(
   const outcome = await seam.runTransition({
     command: config.commandName,
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.claimId !== undefined ? { claimId: options.claimId } : {},
     ),
     targetSelector,
     terminalPolicy: config.policy,

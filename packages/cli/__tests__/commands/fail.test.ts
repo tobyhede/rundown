@@ -8,6 +8,7 @@ import {
   getAllStates,
   findActionOutput,
   injectDelegationOutcomeForActiveRun,
+  issueRunControlClaim,
   readRunbookState,
   parseConcatenatedJson,
   type TestWorkspace,
@@ -95,12 +96,13 @@ describe('fail command', () => {
   });
 
   describe('--run explicit targeting', () => {
-    it('applies fail --run <id> to the named running run', async () => {
+    it('applies fail --claim-id <id> to the claimed running run', async () => {
       await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
       expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
 
-      const result = await runCliInProcess(`fail --run ${active!.id}`, workspace);
+      const result = await runCliInProcess(['fail', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);

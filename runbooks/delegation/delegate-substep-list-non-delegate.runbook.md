@@ -10,8 +10,8 @@ scenarios:
     description: rd delegate rejects a runbook-list substep that lacks DELEGATE
     commands:
       - rd run --prompted delegate-substep-list-non-delegate.runbook.md
-      - "! rd delegate --step 1.1 --run ${RUN_ID}"
-      - rd stop --run ${RUN_ID}
+      - "! rd delegate --step 1.1 --claim-id ${RUN_CLAIM_ID}"
+      - rd stop --claim-id ${RUN_CLAIM_ID}
     expect:
       result: STOP
 ---

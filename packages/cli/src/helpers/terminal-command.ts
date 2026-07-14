@@ -14,12 +14,14 @@ import {
   getErrorMessage,
   isError,
   logger,
+  redactClaimId,
   type ClaimId,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
   type RunbookEventInput,
   type RunbookEventV1,
   type RunbookRef,
+  type RunbookState,
   type RunId,
   type TerminalCommandName,
 } from '@rundown-org/core';
@@ -28,6 +30,7 @@ import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { emitDelegationCollectionPendingError } from './transitions.js';
 import {
   renderActorContextRequiredRefusal,
+  renderClaimGrantRequiredRefusal,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
@@ -37,6 +40,7 @@ import {
   isRecoverableActiveStackError,
   type OrphanCleanupResult,
 } from './active-runbook-cleanup.js';
+import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
@@ -85,12 +89,9 @@ export class ForceTerminalEventBridge {
 
 /** CLI options forwarded to a terminal seam command. */
 export interface SeamTerminalOptions {
-  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
+  /** Explicit claim-id bearer authority (`--claim-id`). */
   readonly claimId?: ClaimId;
-  /**
-   * Explicit run target and named authority (`--run`). Mutually exclusive with
-   * `claimId` (enforced upstream by `parseRunOption`).
-   */
+  /** Explicit run target selector (`--run`), not authority by itself. */
   readonly runId?: RunId;
   /** Optional terminal message forwarded to the machine. */
   readonly message?: string;
@@ -113,6 +114,9 @@ export interface SeamTerminalOptions {
  * @param outcome - Typed terminal outcome returned by the seam.
  * @param message - Optional operator-supplied terminal message for the applied
  *   complete/stopped summary; falls back to the default summary when absent.
+ * @param preloadedRoot - Already-loaded resolved root for the `applied_claim`
+ *   path; supplied by {@link finalizeAppliedClaimTerminal} so the run is not
+ *   reloaded a second time in the same command.
  * @returns `true` when the outcome requests a non-zero exit code.
  */
 export async function renderTerminalOutcome(
@@ -121,6 +125,7 @@ export async function renderTerminalOutcome(
   manager: RunbookStateManager,
   outcome: LifecycleTerminalOutcome,
   message?: string,
+  preloadedRoot?: RunbookState,
 ): Promise<boolean> {
   switch (outcome.kind) {
     case 'none':
@@ -130,6 +135,8 @@ export async function renderTerminalOutcome(
       return renderStaleClaimRefusal(output, outcome.message);
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, command);
+    case 'claim_grant_required':
+      return renderClaimGrantRequiredRefusal(output, command);
     case 'delegation_collection_pending':
       emitDelegationCollectionPendingError(
         output,
@@ -160,9 +167,10 @@ export async function renderTerminalOutcome(
       output.error(outcome.message, outcome.code);
       return true;
     case 'applied_claim': {
-      // Single forced run (the claimed child). Load it for metadata + attribution
-      // and stream its events stamped with the child's own id/ref.
-      const rootState = await manager.load(outcome.runId);
+      // Single forced run (the claimed child). Reuse the caller's already-loaded
+      // root when supplied (no second disk read), else load it for metadata +
+      // attribution, and stream its events stamped with the child's own id/ref.
+      const rootState = preloadedRoot ?? (await manager.load(outcome.runId));
       if (rootState) output.metadata(buildMetadata(rootState));
       if (outcome.events.length > 0 && rootState) {
         const bridge = new ForceTerminalEventBridge(output);
@@ -238,7 +246,7 @@ export async function runSeamTerminal(
   const outcome = await seam.runTerminal({
     command,
     callerEvidence: readLifecycleCallerEvidence(
-      options.runId !== undefined ? { runId: options.runId } : {},
+      options.claimId !== undefined ? { claimId: options.claimId } : {},
     ),
     targetSelector,
     ...(options.message !== undefined ? { message: options.message } : {}),
@@ -254,9 +262,6 @@ export async function runSeamTerminal(
   // reported as a removal (exit 0). An empty stack or a healthy top cleans
   // nothing and falls through to the normal `no active runbook` rendering. No
   // prior error exists here, so a guard failure may propagate normally.
-  // The `runId === undefined` leg is defensive hardening: `--run` targeting
-  // never returns `none` today (it refuses `unknown_run`), but if it ever did,
-  // default-stack cleanup must not run for a named-run target.
   if (outcome.kind === 'none' && options.claimId === undefined && options.runId === undefined) {
     const cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
     if (cleanup.kind === 'removed') {
@@ -268,15 +273,94 @@ export async function runSeamTerminal(
     }
   }
 
-  const exitError = await renderTerminalOutcome(output, command, manager, outcome, options.message);
+  const exitError =
+    outcome.kind === 'applied_claim'
+      ? await finalizeAppliedClaimTerminal(output, command, manager, outcome, cwd, options.message)
+      : await renderTerminalOutcome(output, command, manager, outcome, options.message);
   output.flush();
   return { manager, exitError };
 }
 
+/** The `applied_claim` variant of a terminal outcome (single forced child). */
+type AppliedClaimOutcome = Extract<LifecycleTerminalOutcome, { kind: 'applied_claim' }>;
+
+/**
+ * Signature of {@link propagateChildTerminal}, injectable so the finalize
+ * orchestration can be unit-tested without real inline-parent state on disk.
+ */
+export type ChildTerminalPropagator = typeof propagateChildTerminal;
+
+/**
+ * Finalize an `applied_claim` terminal: render the claimed child's own outcome,
+ * then propagate an inline-linked child's terminal to its parent.
+ *
+ * A single reload of the just-terminated child feeds both steps (the render
+ * reuses it rather than re-reading disk). The child's own complete/stopped
+ * output is emitted BEFORE the parent is advanced, so a streaming consumer never
+ * sees the inline parent's continuation interleaved ahead of the child's
+ * completion. A failed reload — after the seam already applied the terminal — is
+ * surfaced as an error and non-zero exit rather than silently skipping
+ * propagation and reporting success.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param command - The terminal command being finalized (`complete` / `stop`).
+ * @param manager - State manager used to reload the just-terminated child.
+ * @param outcome - The `applied_claim` outcome from the seam.
+ * @param cwd - Current working directory (for inline parent propagation).
+ * @param message - Optional operator-supplied terminal message.
+ * @param propagate - Inline/delegation propagator (injected in tests).
+ * @returns `true` when the command requests a non-zero exit code.
+ */
+export async function finalizeAppliedClaimTerminal(
+  output: OutputEmitter,
+  command: TerminalCommandName,
+  manager: RunbookStateManager,
+  outcome: AppliedClaimOutcome,
+  cwd: string,
+  message: string | undefined,
+  propagate: ChildTerminalPropagator = propagateChildTerminal,
+): Promise<boolean> {
+  const terminal = await manager.load(outcome.runId);
+  if (!terminal) {
+    // The seam just applied a terminal to this run, so a failed reload signals
+    // unexpected state loss (prune race / on-disk corruption). Surface it instead
+    // of silently skipping inline propagation and rendering command success.
+    output.error(
+      `Claimed run ${outcome.runId} could not be reloaded after its terminal was applied`,
+      'RUN_TARGET_UNAVAILABLE',
+    );
+    return true;
+  }
+
+  // Render the child's own terminal outcome BEFORE propagating to the inline
+  // parent (ordering: the child completes on stream before the parent advances).
+  const renderRequestedExit = await renderTerminalOutcome(
+    output,
+    command,
+    manager,
+    outcome,
+    message,
+    terminal,
+  );
+
+  let propagatedInlineTerminal = false;
+  if (extractParentLinkage(terminal)?.kind === 'inline') {
+    const propagation = await propagate(
+      terminal,
+      outcome.status === 'completed' ? 'pass' : 'fail',
+      cwd,
+      output,
+    );
+    propagatedInlineTerminal = propagation === 'stopped';
+  }
+
+  return renderRequestedExit || propagatedInlineTerminal;
+}
+
 /** Explicit target the failed terminal command was invoked with. */
 export interface TerminalRecoveryTarget {
-  /** Explicit claim id when the command targeted a claimed child (`--claim-id`). */
-  readonly claimId?: string;
+  /** Explicit claim bearer when the command targeted a claimed child (`--claim-id`). */
+  readonly claimId?: ClaimId;
   /** Explicit run id when the command named its target (`--run`). */
   readonly runId?: RunId;
 }
@@ -289,18 +373,14 @@ export interface TerminalRecoveryTarget {
  * cleanup and reports a clean removal, while the claim path maps the same
  * failure per command — `complete` to a `CLAIMED_RUNBOOK_UNAVAILABLE` error
  * (exit 1), `stop` to "no active runbook" (a claimed child that is no longer
- * usable is nothing to stop). A `--run`-targeted failure NEVER runs
- * default-stack orphan cleanup: the operator named a specific run, and popping
- * whatever happens to sit on the default stack would report success without
- * terminating the named run — the failure is surfaced against the named run
- * instead (fail closed). Any other error is rethrown for the outer
+ * usable is nothing to stop). Any other error is rethrown for the outer
  * `withErrorHandling` to render.
  *
  * @param command - The terminal command that failed (`complete` / `stop`).
  * @param error - The error thrown by the seam.
  * @param output - Output emitter for the recovery message.
  * @param cwd - Current working directory (used to build the cleanup manager).
- * @param target - Explicit `--claim-id` / `--run` target the command carried.
+ * @param target - Explicit `--claim-id` target the command carried.
  * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
  */
 export async function handleTerminalRecovery(
@@ -316,7 +396,7 @@ export async function handleTerminalRecovery(
     if (error instanceof InvalidRunbookStateError) {
       if (command === 'complete') {
         output.error(
-          `Claimed runbook ${target.claimId} is unavailable`,
+          `Claimed runbook ${redactClaimId(target.claimId)} is unavailable`,
           'CLAIMED_RUNBOOK_UNAVAILABLE',
         );
         output.flush();

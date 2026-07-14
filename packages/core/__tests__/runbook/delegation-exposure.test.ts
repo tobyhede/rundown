@@ -1,8 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
 import type { ResolvedStep } from '@rundown-org/parser';
-import { classifyDelegationExposure } from '../../src/runbook/delegation-exposure.js';
+import {
+  classifyDelegationExposure,
+  classifyDelegationExposureDetail,
+} from '../../src/runbook/delegation-exposure.js';
 import type { ClaimRecord } from '../../src/runbook/claim-id.js';
-import { assertClaimId, assertRunId } from '../../src/runbook/index.js';
+import {
+  assertClaimLookupKey,
+  assertClaimSecretHash,
+  assertRunId,
+  createRunControlGrants,
+} from '../../src/runbook/index.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import {
   activeFrame,
@@ -24,7 +32,8 @@ import {
 const runId = assertRunId('rd_11111111111111111111111111111111');
 const parentRunId = assertRunId('rd_22222222222222222222222222222222');
 const childRunId = assertRunId('rd_33333333333333333333333333333333');
-const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
+const secretHash = assertClaimSecretHash(`sha256:${'e'.repeat(64)}`);
 const tokenHash = assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`);
 
 /** Steps with no delegation or composition anywhere — includes substep-less members. */
@@ -82,16 +91,20 @@ function plainState(overrides: Partial<RunbookState> = {}): RunbookState {
 
 function openClaim(): ClaimRecord {
   return {
-    kind: 'claim-record',
-    claimId,
-    childRunId,
-    tokenHash,
-    parentRunId: runId,
-    parentStepId: '1',
-    parentStep: '1',
-    parentFrameKey: buildFrameKey('1'),
-    parentEntry: 1,
-    claimedAt: '2026-07-03T00:00:00.000Z',
+    claimKey,
+    secretHash,
+    controlledRunId: childRunId,
+    delegation: {
+      childRunId,
+      tokenHash,
+      parentRunId: runId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    },
+    grants: createRunControlGrants(childRunId),
+    issuedAt: '2026-07-03T00:00:00.000Z',
     updatedAt: '2026-07-03T00:00:00.000Z',
   };
 }
@@ -263,5 +276,112 @@ describe('classifyDelegationExposure', () => {
         openClaims: [],
       }),
     ).toBe('delegating');
+  });
+});
+
+describe('classifyDelegationExposureDetail', () => {
+  // Separates *delegation* exposure (requires named authority for every mutation,
+  // including terminal-force) from *inline composition* exposure (which the
+  // terminal path is designed to force as a contiguous chain via a bare command).
+  // The union of the two flags must equal classifyDelegationExposure's verdict.
+
+  it('reports neither for a linear standalone run', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for an authored DELEGATE substep', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: stepsWithDelegateSubstep(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for open claims', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: plainSteps(),
+        openClaims: [openClaim()],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for reported-but-uncollected outcomes', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithPendingOutcome(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for a sticky delegation substep record', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDoneDelegationSubstep(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports delegation (not inline) for a delegation parent linkage', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDelegationParentLinkage(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: false });
+  });
+
+  it('reports inline composition (not delegation) for an inline parent linkage', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithInlineParentLinkage(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: true });
+  });
+
+  it('reports inline composition (not delegation) for a sticky inline substep record', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDoneInlineSubstep(),
+        steps: plainSteps(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: true });
+  });
+
+  it('reports inline composition (not delegation) for an authored inline runbook-list substep', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: plainState(),
+        steps: stepsWithInlineRunbookListSubstep(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: false, inlineComposition: true });
+  });
+
+  it('reports both when a run is delegation-exposed and inline-composed at once', () => {
+    expect(
+      classifyDelegationExposureDetail({
+        state: stateWithDelegationParentLinkage(),
+        steps: stepsWithInlineRunbookListSubstep(),
+        openClaims: [],
+      }),
+    ).toEqual({ delegation: true, inlineComposition: true });
   });
 });
