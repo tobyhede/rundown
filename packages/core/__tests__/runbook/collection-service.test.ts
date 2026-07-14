@@ -16,6 +16,7 @@ import {
   type CallerEvidence,
   type RunbookState,
   type RunId,
+  type ReleaseRunbookResult,
 } from '../../src/runbook/index.js';
 import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
@@ -61,6 +62,15 @@ describe('RunbookCollectionService', () => {
   let completionService: RunbookCompletionService;
   let sessionService: CollectionSessionService;
   let collectionService: RunbookCollectionService;
+  // Held separately from the fake so assertions reference the spy directly —
+  // `sessionService.releaseRunbook` is a declared method, and passing that
+  // reference to `expect()` trips `@typescript-eslint/unbound-method`.
+  let releaseRunbookSpy: jest.Mock<
+    (
+      runbookId: RunId,
+      options?: { readonly retainClaimsAsTerminal?: boolean },
+    ) => Promise<ReleaseRunbookResult>
+  >;
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
   const controlledRunId = assertRunId('rd_22222222222222222222222222222222');
@@ -139,6 +149,12 @@ describe('RunbookCollectionService', () => {
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    releaseRunbookSpy = jest.fn(async (runbookId: RunId) => ({
+      status: 'released' as const,
+      runbookId,
+      removedFromDefaultStack: true,
+      nextDefaultRunbookId: null,
+    }));
     sessionService = {
       async getActive() {
         return null;
@@ -176,12 +192,7 @@ describe('RunbookCollectionService', () => {
       async listOpenClaimsForParent() {
         return [];
       },
-      releaseRunbook: jest.fn(async (runbookId: RunId) => ({
-        status: 'released' as const,
-        runbookId,
-        removedFromDefaultStack: true,
-        nextDefaultRunbookId: null,
-      })),
+      releaseRunbook: releaseRunbookSpy,
     };
     collectionService = new RunbookCollectionService({
       sessionService,
@@ -966,7 +977,7 @@ describe('RunbookCollectionService', () => {
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
-    expect(jest.mocked(sessionService.releaseRunbook)).toHaveBeenCalledWith(controlledRunId, {
+    expect(releaseRunbookSpy).toHaveBeenCalledWith(controlledRunId, {
       retainClaimsAsTerminal: true,
     });
   });
@@ -993,7 +1004,7 @@ describe('RunbookCollectionService', () => {
       frame: activeFrame(frameKey, 1),
     });
 
-    expect(jest.mocked(sessionService.releaseRunbook)).not.toHaveBeenCalled();
+    expect(releaseRunbookSpy).not.toHaveBeenCalled();
   });
 
   it('renders a stopped terminal collection with lifecycle stopped (fail polarity)', async () => {
@@ -1021,7 +1032,7 @@ describe('RunbookCollectionService', () => {
       transitionObservations: expect.any(Array),
     });
     // #556: a collect that drives the target STOPPED-terminal releases it too.
-    expect(jest.mocked(sessionService.releaseRunbook)).toHaveBeenCalledWith(controlledRunId, {
+    expect(releaseRunbookSpy).toHaveBeenCalledWith(controlledRunId, {
       retainClaimsAsTerminal: true,
     });
   });

@@ -38,8 +38,10 @@ export interface CollectionSessionService extends CommandTargetReader {
    * Release a run from all session targeting structures on terminal.
    *
    * @param runbookId - Terminal run id to release.
-   * @param options - Release options; `retainClaimsAsTerminal` keeps claim
-   *   tombstones so `--claim-id` confirm/conflict still resolves `terminal`.
+   * @param options - Release options.
+   * @param options.retainClaimsAsTerminal - Keep claim tombstones so a later
+   *   `--claim-id` confirm/conflict still resolves `terminal` rather than
+   *   `missing`.
    * @returns Structured release result (not consumed by the collection seam).
    */
   releaseRunbook(
