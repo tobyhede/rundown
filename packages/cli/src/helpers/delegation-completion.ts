@@ -29,20 +29,23 @@ import {
   type RunbookState,
   type ParentLinkage,
   type CommandExecutionStreamOptions,
+  type DelegationOutcome,
+  type RunId,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import type { TransitionOrchestrationPolicy } from './transition-orchestrator.js';
 
+/** Inline flow-back propagation outcomes ({@link advanceParentForInlineChild}). */
+export type InlinePropagationResult = 'handled' | 'stopped' | 'blocked' | 'not-applicable';
+/** Delegation report-only propagation outcomes ({@link reportTerminalToDelegatingRun}). */
+export type DelegationPropagationResult = 'reported' | 'blocked' | 'not-applicable';
 /**
- * Result returned after attempting to propagate a terminal child run to its parent.
+ * Result returned after attempting to propagate a terminal child run to its
+ * parent — the union of the two disjoint linkage subsets (same five members as
+ * before, so flat `=== 'stopped'` / `=== 'blocked'` callers stay valid).
  */
-export type TerminalPropagationResult =
-  | 'reported'
-  | 'handled'
-  | 'stopped'
-  | 'blocked'
-  | 'not-applicable';
+export type TerminalPropagationResult = InlinePropagationResult | DelegationPropagationResult;
 
 /**
  * Extract the discriminated parent linkage from a child state.
@@ -84,7 +87,7 @@ export async function reportTerminalToDelegatingRun(
   result: 'pass' | 'fail' | undefined,
   cwd: string,
   output: OutputEmitter,
-): Promise<TerminalPropagationResult> {
+): Promise<DelegationPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (linkage?.kind !== 'delegation') return 'not-applicable';
 
@@ -159,7 +162,7 @@ export async function advanceParentForInlineChild(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
-): Promise<TerminalPropagationResult> {
+): Promise<InlinePropagationResult> {
   const linkage = extractParentLinkage(childState);
   // This is the INLINE flow-back path only. Delegation linkage shares the same
   // base fields (parentRunId/parentFrameKey/parentEntry), so a delegation-linked
@@ -350,4 +353,107 @@ export async function propagateChildTerminal(
   return linkage.kind === 'inline'
     ? advanceParentForInlineChild(childState, result, cwd, output, commandStreamOptions)
     : reportTerminalToDelegatingRun(childState, result, cwd, output);
+}
+
+/**
+ * Whether the driving command authored an operator RESULT (`pass`/`fail`) or
+ * relies on lifecycle inference. Making this a required discriminated param —
+ * not a positional-optional `explicitResult` — encodes the operator-result vs
+ * loop-inferred contract in the type: a loop driver cannot accidentally author a
+ * result, and an operator-result command cannot forget to (SHOULD-FIX 5).
+ */
+export type PropagationTrigger =
+  | { readonly kind: 'operator-result'; readonly result: DelegationOutcome }
+  | { readonly kind: 'loop-inferred' };
+
+/**
+ * Outcome of {@link propagateDrivenRunTerminal}.
+ *
+ * `skipped` — the driven run was missing, non-terminal, or unlinked; the caller
+ * MUST leave its exit code untouched. `inline-advanced` / `delegation-reported`
+ * lift the linkage kind INTO the discriminant, so a caller branches on `kind`
+ * alone and its `result` is already the narrow subset that branch can produce —
+ * no `linkage:'delegation', result:'stopped'` dead pairs (SHOULD-FIX 4).
+ */
+export type DrivenRunPropagation =
+  | { readonly kind: 'skipped' }
+  | { readonly kind: 'inline-advanced'; readonly result: InlinePropagationResult }
+  | { readonly kind: 'delegation-reported'; readonly result: DelegationPropagationResult };
+
+/**
+ * Trigger parent propagation for a run this command just drove, if it reached
+ * terminal and carries a parent linkage.
+ *
+ * This is the SINGLE post-drive trigger every top-level driver uses (goto, run,
+ * claim, collect, pass/fail). It reloads the driven run, and — only when that
+ * run is terminal AND linked — dispatches on the linkage kind to
+ * {@link advanceParentForInlineChild} / {@link reportTerminalToDelegatingRun}
+ * directly (rather than through {@link propagateChildTerminal}) so each branch's
+ * `result` keeps its narrow subtype without a cast. Consolidating the
+ * reload-and-check here is what gives every driver, including `goto`,
+ * propagation by construction rather than by each command remembering to do it.
+ * {@link propagateChildTerminal} remains the single dispatcher for the
+ * non-migrated seams (`terminal-command`, `execution.ts`) and the internal
+ * inline recursion.
+ *
+ * The discriminated {@link DrivenRunPropagation} return is load-bearing: a bare
+ * `'not-applicable'` sentinel let each caller conflate "nothing to propagate,
+ * keep my exit code" with a real propagation outcome, and each hand-rolled its
+ * own terminal guard around the exit mapping. Returning `{ kind: 'skipped' }`
+ * forces every caller to narrow before touching the exit code, so the guard can
+ * no longer be dropped (Task 3, Correction 2).
+ *
+ * The `trigger`'s authored result (for `operator-result`) is forwarded into
+ * `projectDelegationTerminalOutcome`, which short-circuits on an explicit result
+ * and otherwise infers from lifecycle. Operator-result commands (`pass`/`fail`)
+ * MUST author their RESULT; loop-driven callers (goto/run/claim/collect) use
+ * `loop-inferred` and rely on lifecycle inference (Correction 1).
+ *
+ * The propagation EXECUTION stays CLI-side because advancing an inline parent
+ * runs the execution loop (spawns subprocesses — Category A); only this trigger
+ * predicate (terminal + linked) is pure.
+ *
+ * Do NOT call this from inside {@link advanceParentForInlineChild} or from
+ * `execution.ts`'s inline-launch propagation — those propagate a DIFFERENT run
+ * (the parent being advanced / a downward-launched child) and routing them here
+ * would double-propagate and break the single-level upward-report contract.
+ *
+ * @param manager - State manager bound to `cwd`.
+ * @param runId - The run this command just drove.
+ * @param cwd - Current working directory.
+ * @param output - Output emitter for CLI output.
+ * @param trigger - Operator-result (authored `pass`/`fail`) or loop-inferred.
+ * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @returns `{ kind: 'skipped' }` when the run is missing, non-terminal, or
+ *   unlinked; otherwise `inline-advanced` / `delegation-reported`.
+ * @throws {Error} If parent state I/O fails or drain execution fails.
+ */
+export async function propagateDrivenRunTerminal(
+  manager: RunbookStateManager,
+  runId: RunId,
+  cwd: string,
+  output: OutputEmitter,
+  trigger: PropagationTrigger,
+  commandStreamOptions?: CommandExecutionStreamOptions,
+): Promise<DrivenRunPropagation> {
+  const driven = await manager.load(runId);
+  if (!driven) return { kind: 'skipped' };
+  if (driven.lifecycle !== 'completed' && driven.lifecycle !== 'stopped') {
+    return { kind: 'skipped' };
+  }
+  const linkage = extractParentLinkage(driven);
+  if (!linkage) return { kind: 'skipped' };
+  const explicitResult = trigger.kind === 'operator-result' ? trigger.result : undefined;
+  if (linkage.kind === 'inline') {
+    const result = await advanceParentForInlineChild(
+      driven,
+      explicitResult,
+      cwd,
+      output,
+      commandStreamOptions,
+    );
+    return { kind: 'inline-advanced', result };
+  }
+  const result = await reportTerminalToDelegatingRun(driven, explicitResult, cwd, output);
+  return { kind: 'delegation-reported', result };
 }

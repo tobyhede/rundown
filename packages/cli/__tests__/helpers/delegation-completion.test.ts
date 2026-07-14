@@ -172,8 +172,12 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions.js'
 );
-const { reportTerminalToDelegatingRun, advanceParentForInlineChild, extractParentLinkage } =
-  await import('../../src/helpers/delegation-completion.js');
+const {
+  reportTerminalToDelegatingRun,
+  advanceParentForInlineChild,
+  extractParentLinkage,
+  propagateDrivenRunTerminal,
+} = await import('../../src/helpers/delegation-completion.js');
 
 function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
   const base: RunbookState = {
@@ -776,5 +780,115 @@ describe('advanceParentForInlineChild', () => {
     expect(runExecutionLoop).toHaveBeenCalledTimes(1);
     // Loop 'done' with a linkage-free parent -> propagate is not-applicable -> handled.
     expect(result).toBe('handled');
+  });
+});
+
+describe('propagateDrivenRunTerminal', () => {
+  const LOOP_INFERRED = { kind: 'loop-inferred' } as const;
+
+  it('skips when the driven run is missing', async () => {
+    const manager = makeManager(new Map());
+    const output = makeOutput();
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+    expect(result).toEqual({ kind: 'skipped' });
+  });
+
+  it('skips when the driven run is still running', async () => {
+    const child = makeState(CHILD_RUN_ID, {
+      lifecycle: 'running',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const manager = makeManager(new Map([[child.id, child]]));
+    const output = makeOutput();
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+    expect(result).toEqual({ kind: 'skipped' });
+  });
+
+  it('skips when the terminal run has no parent linkage', async () => {
+    const root = makeState(CHILD_RUN_ID, { lifecycle: 'completed', parentLinkage: undefined });
+    const manager = makeManager(new Map([[root.id, root]]));
+    const output = makeOutput();
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+    expect(result).toEqual({ kind: 'skipped' });
+  });
+
+  it('propagates a terminal inline child through the inline flow-back path (lifecycle-inferred)', async () => {
+    const child = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const parent = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(
+      new Map([
+        [child.id, child],
+        [parent.id, parent],
+      ]),
+    );
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    // loop-inferred (goto/run/collect path): the mock projection defaults
+    // `undefined` to not_terminal, so pin lifecycle-inference explicitly here so
+    // the inline flow-back proceeds (the real projectDelegationTerminalOutcome
+    // infers `completed → pass`).
+    mockProjectDelegationTerminalOutcome.mockReturnValue({ kind: 'outcome', result: 'pass' });
+    // Default drain returns status 'continue' / applied 0 → inline path → 'handled'.
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+    // Discriminated shape: linkage kind IS the discriminant (SHOULD-FIX 4).
+    expect(result).toEqual({ kind: 'inline-advanced', result: 'handled' });
+  });
+
+  it('forwards an operator-result trigger into propagation (pass/fail commands)', async () => {
+    // Correction 1 + SHOULD-FIX 5: an operator-result trigger overrides lifecycle
+    // inference. A child left `stopped` by its own STOP but reported `pass` by the
+    // operator must report 'pass' (not the inferred 'fail').
+    const child = makeState(CHILD_RUN_ID, {
+      lifecycle: 'stopped',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const parent = makeState(PARENT_RUN_ID, {
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'running' }],
+      resolvedCompletions: {},
+    });
+    const manager = makeManager(
+      new Map([
+        [child.id, child],
+        [parent.id, parent],
+      ]),
+    );
+    const output = makeOutput();
+    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      { kind: 'operator-result', result: 'pass' },
+    );
+    expect(result).toEqual({ kind: 'delegation-reported', result: 'reported' });
+    expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
   });
 });

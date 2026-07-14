@@ -26,6 +26,13 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
   SessionService: jest.fn(),
+  // Statically imported by delegation-completion.js (pulled in via executeGoto's
+  // propagateDrivenRunTerminal call); the ESM link check needs the names, but the
+  // executeGoto tests below make `manager.load` return null so propagation
+  // short-circuits `skipped` without invoking any of these.
+  ExecutionLifecycleService: jest.fn(),
+  RunbookCompletionService: jest.fn(),
+  projectDelegationTerminalOutcome: jest.fn(),
   parseStepIdFromString: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
@@ -406,7 +413,10 @@ describe('executeGoto', () => {
         action: jest.fn(),
         flush: jest.fn(),
       } as unknown as OutputEmitter,
-      manager: { update } as unknown as RunbookStateManager,
+      manager: {
+        update,
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -441,7 +451,10 @@ describe('executeGoto', () => {
         action,
         flush: jest.fn(),
       } as unknown as OutputEmitter,
-      manager: { update } as unknown as RunbookStateManager,
+      manager: {
+        update,
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -486,7 +499,9 @@ describe('executeGoto', () => {
     } as unknown as OutputEmitter;
     const ctx = {
       output,
-      manager: {} as RunbookStateManager,
+      manager: {
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -523,7 +538,10 @@ describe('executeGoto', () => {
         action: jest.fn(),
         flush: jest.fn(),
       } as unknown as OutputEmitter,
-      manager: { update } as unknown as RunbookStateManager,
+      manager: {
+        update,
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),

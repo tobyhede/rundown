@@ -88,7 +88,13 @@ export function registerGotoCommand(program: Command): void {
             // Flush any remaining output
             output.flush();
 
-            if (result.loopResult === 'stopped') {
+            if (
+              result.loopResult === 'stopped' ||
+              (result.propagation !== undefined &&
+                result.propagation.kind !== 'skipped' &&
+                (result.propagation.result === 'stopped' ||
+                  result.propagation.result === 'blocked'))
+            ) {
               process.exit(1);
             }
           },

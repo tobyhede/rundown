@@ -24,6 +24,7 @@ import {
   type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
+import { propagateDrivenRunTerminal, type DrivenRunPropagation } from './delegation-completion.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -66,7 +67,7 @@ export type GotoValidationResult =
  * Result of goto execution.
  */
 export type GotoExecutionResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
+  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; propagation?: DrivenRunPropagation }
   | { ok: false; error: string; code: string };
 
 /**
@@ -315,5 +316,19 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     },
   );
 
-  return { ok: true, loopResult };
+  // Any driver that takes a run terminal must propagate that terminal to its
+  // parent — goto included. goto authors no operator RESULT, so use the
+  // `loop-inferred` trigger and let lifecycle inference decide the outcome (same
+  // as the natural loop). Without this, `goto` completing an inline child left
+  // the parent's substep 'running' forever (#553).
+  const propagation = await propagateDrivenRunTerminal(
+    manager,
+    state.id,
+    cwd,
+    output,
+    { kind: 'loop-inferred' },
+    ctx.commandStreamOptions,
+  );
+
+  return { ok: true, loopResult, propagation };
 }
