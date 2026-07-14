@@ -22,7 +22,7 @@ import {
   type ClaimFailure,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
-import { propagateChildTerminal, extractParentLinkage } from '../helpers/delegation-completion.js';
+import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
 
 function claimFailureToEnvelope(failure: ClaimFailure): {
   readonly code: string;
@@ -236,16 +236,14 @@ export function registerClaimCommand(program: Command): void {
             // own loopResult governs this command's exit code.
             const shouldExitWithError = result.loopResult === 'stopped';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
-              const childState = await manager.load(result.childRunId);
-              if (childState && extractParentLinkage(childState)) {
-                await propagateChildTerminal(
-                  childState,
-                  undefined,
-                  cwd,
-                  output,
-                  commandStreamOptions,
-                );
-              }
+              await propagateDrivenRunTerminal(
+                manager,
+                result.childRunId,
+                cwd,
+                output,
+                { kind: 'loop-inferred' },
+                commandStreamOptions,
+              );
             }
 
             output.flush();

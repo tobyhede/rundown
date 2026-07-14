@@ -51,7 +51,7 @@ import {
   resolveIndexOption,
   IndexOptionError,
 } from '../helpers/index-option.js';
-import { propagateChildTerminal } from '../helpers/delegation-completion.js';
+import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 
@@ -256,23 +256,20 @@ export function registerRunCommand(program: Command): void {
             // (drain-and-advance), unlike delegation's report-then-collect. If
             // advancing the parent reaches a STOP terminal, exit 1.
             if (parentLinkage) {
-              const childState = await manager.load(result.stateId);
-              if (childState) {
-                const isTerminal =
-                  childState.lifecycle === 'completed' || childState.lifecycle === 'stopped';
-                if (isTerminal) {
-                  const propOutcome = await propagateChildTerminal(
-                    childState,
-                    undefined,
-                    cwd,
-                    output,
-                    commandStreamOptions,
-                  );
-                  if (propOutcome === 'stopped' || propOutcome === 'blocked') {
-                    output.flush();
-                    process.exit(1);
-                  }
-                }
+              const propagation = await propagateDrivenRunTerminal(
+                manager,
+                result.stateId,
+                cwd,
+                output,
+                { kind: 'loop-inferred' },
+                commandStreamOptions,
+              );
+              if (
+                propagation.kind !== 'skipped' &&
+                (propagation.result === 'stopped' || propagation.result === 'blocked')
+              ) {
+                output.flush();
+                process.exit(1);
               }
             }
 

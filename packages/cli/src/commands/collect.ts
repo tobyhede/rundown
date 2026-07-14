@@ -32,7 +32,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
-import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
+import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -555,30 +555,24 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // `output` — which is exactly why the applied action object below is emitted
   // LAST, after this pass (cli-output.md: the action object is the last line).
   let exitWithError = loopStopped || shouldExitWithError;
-  const terminal = await manager.load(state.id);
-  const linkage = terminal ? extractParentLinkage(terminal) : undefined;
-  if (
-    terminal &&
-    linkage &&
-    (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
-  ) {
-    const propagation = await propagateChildTerminal(
-      terminal,
-      undefined,
-      cwd,
-      output,
-      commandStreamOptions,
-    );
-    // Inline propagation may itself drive the parent terminal (STOP) — its
-    // outcome decides the exit code for inline, ORed with a stopped loop.
-    // Delegation propagation is report-only (no parent advancement) but can
-    // still surface a STOP exit.
-    if (linkage.kind === 'inline') {
-      exitWithError = propagation === 'stopped' || propagation === 'blocked' || loopStopped;
-    } else if (propagation === 'stopped') {
-      exitWithError = true;
-    }
+  const propagation = await propagateDrivenRunTerminal(
+    manager,
+    state.id,
+    cwd,
+    output,
+    { kind: 'loop-inferred' },
+    commandStreamOptions,
+  );
+  if (propagation.kind === 'inline-advanced') {
+    exitWithError =
+      propagation.result === 'stopped' || propagation.result === 'blocked' || loopStopped;
   }
+  // `delegation-reported` is report-only and never flips the exit code here — this
+  // matches today's behaviour: collect's delegation branch tested `=== 'stopped'`
+  // (`:578`), which reportTerminalToDelegatingRun can NEVER return, so it was dead.
+  // The discriminated type removes it structurally (SHOULD-FIX 4). `skipped` (a
+  // non-terminal collect) leaves `exitWithError` at `loopStopped || shouldExitWithError`
+  // — the Correction 2 guarantee.
 
   // Render the deferred collect action object exactly once, AFTER the loop's and
   // the inline propagation's streamed events, so it is the last JSON line on

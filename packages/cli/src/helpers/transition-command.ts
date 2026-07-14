@@ -10,7 +10,7 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
-import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
+import { propagateDrivenRunTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseTransitionTarget, transitionTargetFields } from './transition-target.js';
 
@@ -152,26 +152,23 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // STOPped, governs). Re-pointed at the seam outcome's runId (reloaded
             // via the same manager) now that the resolve/drive lives in core.
             if (applied) {
-              const freshState = await manager.load(applied.runId);
-              const linkage = freshState ? extractParentLinkage(freshState) : undefined;
-              if (freshState && linkage) {
-                const isTerminal =
-                  freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
-                if (isTerminal) {
-                  const propagation = await propagateChildTerminal(
-                    freshState,
-                    def.name,
-                    cwd,
-                    output,
-                    commandStreamOptions,
-                  );
-                  if (linkage.kind === 'inline') {
-                    shouldExitWithError = propagation === 'stopped' || propagation === 'blocked';
-                  } else if (propagation === 'stopped') {
-                    shouldExitWithError = true;
-                  }
-                }
+              const propagation = await propagateDrivenRunTerminal(
+                manager,
+                applied.runId,
+                cwd,
+                output,
+                { kind: 'operator-result', result: def.name },
+                commandStreamOptions,
+              );
+              if (propagation.kind === 'inline-advanced') {
+                shouldExitWithError =
+                  propagation.result === 'stopped' || propagation.result === 'blocked';
               }
+              // `delegation-reported` never flips the exit code here: today's else-if
+              // tested `propagation === 'stopped'` (`:170`), which
+              // reportTerminalToDelegatingRun can NEVER return — a dead branch the
+              // discriminated type removes (SHOULD-FIX 4). The child's own lifecycle
+              // (captured in `shouldExitWithError` when it locally STOPped) governs.
             }
             if (shouldExitWithError) {
               process.exitCode = 1;
