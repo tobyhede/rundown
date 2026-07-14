@@ -15,8 +15,9 @@ import {
   assertRunId,
   type CallerEvidence,
   type RunbookState,
+  type RunId,
 } from '../../src/runbook/index.js';
-import type { CommandTargetReader } from '../../src/runbook/command-target-resolver.js';
+import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -58,7 +59,7 @@ describe('RunbookCollectionService', () => {
   let actorService: RunbookActorService;
   let lifecycleService: ExecutionLifecycleService;
   let completionService: RunbookCompletionService;
-  let sessionService: CommandTargetReader;
+  let sessionService: CollectionSessionService;
   let collectionService: RunbookCollectionService;
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
@@ -175,6 +176,12 @@ describe('RunbookCollectionService', () => {
       async listOpenClaimsForParent() {
         return [];
       },
+      releaseRunbook: jest.fn(async (runbookId: RunId) => ({
+        status: 'released' as const,
+        runbookId,
+        removedFromDefaultStack: true,
+        nextDefaultRunbookId: null,
+      })),
     };
     collectionService = new RunbookCollectionService({
       sessionService,
@@ -945,6 +952,50 @@ describe('RunbookCollectionService', () => {
     expect(freshAncestor?.step).toBe('1');
   });
 
+  it('releases the target run from session targeting when collection drives it terminal', async () => {
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: delegationLinkage,
+    });
+
+    await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(jest.mocked(sessionService.releaseRunbook)).toHaveBeenCalledWith(controlledRunId, {
+      retainClaimsAsTerminal: true,
+    });
+  });
+
+  it('does NOT release the target when collection leaves it running', async () => {
+    // Mirror "reports the active-run lifecycle from the drained state, not the
+    // caller input" (:1504-1535): a 'continue' drain leaves the run running, so
+    // the CLI execution loop — not the collection seam — owns release.
+    const frameKey = buildFrameKey('1');
+    const drainedState = state({ id: runId, lifecycle: 'running' });
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: drainedState,
+      unresolved: 0,
+      applied: [appliedRecord(drainedState)],
+    });
+    const target = state({ lifecycle: 'completed' });
+    await manager.save(target);
+
+    await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(jest.mocked(sessionService.releaseRunbook)).not.toHaveBeenCalled();
+  });
+
   it('renders a stopped terminal collection with lifecycle stopped (fail polarity)', async () => {
     const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
     await manager.save(ancestor);
@@ -968,6 +1019,10 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'stopped',
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
+    });
+    // #556: a collect that drives the target STOPPED-terminal releases it too.
+    expect(jest.mocked(sessionService.releaseRunbook)).toHaveBeenCalledWith(controlledRunId, {
+      retainClaimsAsTerminal: true,
     });
   });
 
