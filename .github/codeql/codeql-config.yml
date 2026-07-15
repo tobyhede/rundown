@@ -1,0 +1,21 @@
+name: "CodeQL config"
+
+# Query suite for analysis. Kept here (rather than inline in the workflow) so the
+# suite and the path scoping live in one place.
+queries:
+  - uses: security-extended
+
+# Exclude only the fixtures that deliberately stage the patterns they guard
+# against. The reclaim-identity-guard tests open a lock then rm+recreate it at the
+# same path to prove the guard survives a concurrent swap, which trips
+# js/file-system-race (TOCTOU) — the race is the behaviour under test, not a
+# vulnerability. Those tests are isolated in a single file so the exclusion
+# surface is one file; the rest of the suite, and all production code (including
+# the lock implementation itself), keep full security-extended coverage.
+#
+# paths-ignore is fully honoured for JavaScript/TypeScript (extraction is
+# filesystem-based); it is the canonical mechanism for scoping analysis away from
+# specific files. Keep this list minimal — add a path only when a fixture cannot
+# express its scenario without tripping a security query.
+paths-ignore:
+  - 'packages/core/__tests__/runbook/file-lock-reclaim-identity-guard.test.ts'
