@@ -12,12 +12,21 @@
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const crateDir = join(repoRoot, 'native', 'rd-landlock');
-const distNative = join(repoRoot, 'packages', 'core', 'dist', 'native');
+// Destination for the placed binaries + provenance manifest. Defaults to the
+// package dist tree the release pipeline packages and uploads. Overridable via
+// RD_NATIVE_DEST so tests that exercise the real verify+copy path target a
+// scratch directory instead of writing to (and then having to clean up) the
+// real build output — the release job builds these binaries BEFORE it runs the
+// test suite, so a test touching the default path destroys the very artifact
+// the later upload step needs.
+const distNative = process.env.RD_NATIVE_DEST
+  ? resolve(process.env.RD_NATIVE_DEST)
+  : join(repoRoot, 'packages', 'core', 'dist', 'native');
 
 const TARGETS = [
   { rust: 'x86_64-unknown-linux-musl', out: 'linux-x64' },

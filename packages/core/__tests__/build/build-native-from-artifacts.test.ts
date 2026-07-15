@@ -1,7 +1,15 @@
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  existsSync,
+} from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +17,6 @@ import { join } from 'node:path';
 const SCRIPT = fileURLToPath(new URL('../../../../scripts/build-native.mjs', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CARGO_LOCK = join(REPO_ROOT, 'native', 'rd-landlock', 'Cargo.lock');
-const DIST_NATIVE = join(REPO_ROOT, 'packages', 'core', 'dist', 'native');
 
 const TARGETS = [
   { out: 'linux-x64', triple: 'x86_64-unknown-linux-musl' },
@@ -57,33 +64,48 @@ function writeManifest(root: string, manifest: Manifest): void {
   writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2));
 }
 
-function runFromArtifacts(root: string, commit: string) {
-  return spawnSync(process.execPath, [SCRIPT, '--from-artifacts', root], {
-    env: { ...process.env, RD_RELEASE_COMMIT: commit },
+// Scratch destinations handed to build-native.mjs via RD_NATIVE_DEST, cleaned
+// up after each test. The script's default destination is the REAL
+// packages/core/dist/native; the release job builds those binaries BEFORE it
+// runs this suite, so a test writing to (or, worse, deleting) the default path
+// would destroy the artifact the later upload step packages. Redirecting every
+// run to a temp dir keeps this suite from touching the real build output.
+const scratchDestinations: string[] = [];
+
+function runFromArtifacts(
+  root: string,
+  commit: string,
+): { result: ReturnType<typeof spawnSync>; dest: string } {
+  const dest = mkdtempSync(join(tmpdir(), 'rd-native-dest-'));
+  scratchDestinations.push(dest);
+  const result = spawnSync(process.execPath, [SCRIPT, '--from-artifacts', root], {
+    env: { ...process.env, RD_RELEASE_COMMIT: commit, RD_NATIVE_DEST: dest },
     encoding: 'utf8',
   });
+  return { result, dest };
 }
 
 describe('build-native.mjs --from-artifacts', () => {
   afterEach(() => {
-    // The happy-path case copies into the real packages/core/dist/native — make
-    // sure no test leaves that side effect behind (it doesn't exist pre-build).
-    if (existsSync(DIST_NATIVE)) rmSync(DIST_NATIVE, { recursive: true, force: true });
+    while (scratchDestinations.length > 0) {
+      const dest = scratchDestinations.pop();
+      if (dest) rmSync(dest, { recursive: true, force: true });
+    }
   });
 
   it('exits 0 and copies both targets for a well-formed artifact set', () => {
     const root = buildArtifactRoot(COMMIT);
-    const result = runFromArtifacts(root, COMMIT);
+    const { result, dest } = runFromArtifacts(root, COMMIT);
     expect(result.status).toBe(0);
     for (const t of TARGETS) {
-      expect(existsSync(join(DIST_NATIVE, t.out, 'rd-landlock'))).toBe(true);
+      expect(existsSync(join(dest, t.out, 'rd-landlock'))).toBe(true);
     }
   });
 
   it('rejects when the provenance manifest is missing', () => {
     const root = buildArtifactRoot(COMMIT);
     rmSync(join(root, 'manifest.json'));
-    const result = runFromArtifacts(root, COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('provenance manifest missing');
   });
@@ -91,7 +113,7 @@ describe('build-native.mjs --from-artifacts', () => {
   it('rejects when RD_RELEASE_COMMIT does not match manifest.commit', () => {
     const root = buildArtifactRoot(COMMIT);
     const otherCommit = 'b'.repeat(40);
-    const result = runFromArtifacts(root, otherCommit);
+    const { result } = runFromArtifacts(root, otherCommit);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`manifest commit ${COMMIT} != release commit ${otherCommit}`);
   });
@@ -101,7 +123,7 @@ describe('build-native.mjs --from-artifacts', () => {
     const manifest = readManifest(root);
     manifest.cargoLockSha256 = 'f'.repeat(64);
     writeManifest(root, manifest);
-    const result = runFromArtifacts(root, COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('manifest cargoLockSha256 ffff');
     expect(result.stderr).toContain('!= checkout Cargo.lock');
@@ -112,7 +134,7 @@ describe('build-native.mjs --from-artifacts', () => {
     const manifest = readManifest(root);
     manifest.binaries['linux-x64'].sha256 = 'f'.repeat(64);
     writeManifest(root, manifest);
-    const result = runFromArtifacts(root, COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('linux-x64: sha256');
     expect(result.stderr).toContain('!= manifest ffff');
@@ -123,7 +145,7 @@ describe('build-native.mjs --from-artifacts', () => {
     const manifest = readManifest(root);
     manifest.binaries['linux-x64'].triple = 'x86_64-unknown-linux-gnu';
     writeManifest(root, manifest);
-    const result = runFromArtifacts(root, COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
       'linux-x64: triple x86_64-unknown-linux-gnu != x86_64-unknown-linux-musl',
@@ -133,7 +155,7 @@ describe('build-native.mjs --from-artifacts', () => {
   it('rejects when a target binary is missing from the artifact root', () => {
     const root = buildArtifactRoot(COMMIT);
     rmSync(join(root, 'linux-x64', 'rd-landlock'));
-    const result = runFromArtifacts(root, COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`artifact missing: ${join(root, 'linux-x64', 'rd-landlock')}`);
   });
@@ -143,8 +165,27 @@ describe('build-native.mjs --from-artifacts', () => {
     const manifest = readManifest(root);
     delete manifest.binaries['linux-x64'];
     writeManifest(root, manifest);
-    const result = runFromArtifacts(root, COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('manifest has no entry for linux-x64');
+  });
+
+  // Release-safety regression: with RD_NATIVE_DEST set, a successful verify+copy
+  // must leave the real packages/core/dist/native untouched. The release job
+  // builds those binaries BEFORE running the test suite, so a test that wrote to
+  // or deleted the default path destroyed the artifact the upload step needed,
+  // failing every release run (the `rd-landlock-binaries` artifact went missing).
+  it('leaves the real packages/core/dist/native untouched', () => {
+    const REAL_DIST_NATIVE = join(REPO_ROOT, 'packages', 'core', 'dist', 'native');
+    const snapshot = (): string | null =>
+      existsSync(REAL_DIST_NATIVE)
+        ? JSON.stringify(readdirSync(REAL_DIST_NATIVE, { recursive: true }).sort())
+        : null;
+
+    const before = snapshot();
+    const root = buildArtifactRoot(COMMIT);
+    const { result } = runFromArtifacts(root, COMMIT);
+    expect(result.status).toBe(0);
+    expect(snapshot()).toEqual(before);
   });
 });
