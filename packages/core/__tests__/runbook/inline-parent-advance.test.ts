@@ -190,3 +190,175 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
     expect(result).toBe('duplicate');
   });
 });
+
+describe('propagateTerminalChildUpward — inline arm', () => {
+  it('cancelled recording short-circuits to handled without advancing', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const recordChildCompletion = jest
+      .fn<() => Promise<'cancelled'>>()
+      .mockResolvedValue('cancelled');
+    const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ completionService: { recordChildCompletion }, advanceInlineParent }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('handled');
+    expect(advanceInlineParent).not.toHaveBeenCalled();
+  });
+
+  it('blocked recording returns blocked without advancing', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const recordChildCompletion = jest.fn<() => Promise<'blocked'>>().mockResolvedValue('blocked');
+    const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ completionService: { recordChildCompletion }, advanceInlineParent }),
+      child,
+      'fail',
+    );
+    expect(result).toBe('blocked');
+    expect(advanceInlineParent).not.toHaveBeenCalled();
+  });
+
+  it('active advance (parent waiting on siblings) returns handled, no release', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'active' });
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<ReleaseRunbookResult>
+      >()
+      .mockResolvedValue({} as ReleaseRunbookResult);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, sessionService: { releaseRunbook } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('handled');
+    expect(advanceInlineParent).toHaveBeenCalledWith({
+      parentRunId: PARENT,
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+      result: 'pass',
+    });
+    expect(releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  it('stopped advance releases the parent and returns stopped (parent has no linkage)', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const parent = makeState(PARENT, { lifecycle: 'stopped', parentLinkage: undefined });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'stopped' });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(parent);
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<ReleaseRunbookResult>
+      >()
+      .mockResolvedValue({} as ReleaseRunbookResult);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      child,
+      'fail',
+    );
+    expect(result).toBe('stopped');
+    // Release disposition: retain the claim tombstone (matches collect + loop),
+    // so a bare second release never destroys it. See RD-598 verification.
+    expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
+  });
+
+  it('done advance with a linkage-free parent returns handled', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const parent = makeState(PARENT, { lifecycle: 'completed', parentLinkage: undefined });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(parent);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('handled');
+  });
+
+  it('inline→inline chain advances synchronously (callable re-invoked per level)', async () => {
+    // child -> parent(inline-linked to grandparent) -> grandparent.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: inlineLinkage(GRANDPARENT),
+    });
+    const grandparentTerminal = makeState(GRANDPARENT, {
+      lifecycle: 'completed',
+      parentLinkage: undefined,
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValueOnce(parentTerminal) // reload after advancing parent
+      .mockResolvedValueOnce(grandparentTerminal); // reload after advancing grandparent
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('handled');
+    // Callable invoked once for the parent, once for the grandparent.
+    expect(advanceInlineParent).toHaveBeenCalledTimes(2);
+    expect(advanceInlineParent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ parentRunId: PARENT }),
+    );
+    expect(advanceInlineParent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ parentRunId: GRANDPARENT }),
+    );
+  });
+
+  it('inline→delegation boundary is report-only (single-level invariant)', async () => {
+    // Advancing the inline parent drives it terminal; the parent is delegation-linked,
+    // so the recursion takes the report-only arm — the grandparent is NOT collected.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: delegationLinkage(GRANDPARENT),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const recordChildCompletion = jest
+      .fn<() => Promise<'recorded'>>()
+      .mockResolvedValue('recorded');
+    const result = await propagateTerminalChildUpward(
+      makeDeps({
+        advanceInlineParent,
+        manager: { load },
+        completionService: { recordChildCompletion },
+      }),
+      child,
+      'pass',
+    );
+    // 'done' at the inline level + 'reported' at the delegation recursion => handled.
+    expect(result).toBe('handled');
+    // Callable invoked ONCE (for the parent) — never for the grandparent.
+    expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+    // The recursion recorded the parent's outcome report-only against the grandparent.
+    expect(recordChildCompletion).toHaveBeenLastCalledWith({
+      childState: parentTerminal,
+      result: 'pass',
+    });
+  });
+});

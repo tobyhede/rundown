@@ -178,6 +178,48 @@ export async function propagateTerminalChildUpward(
     return 'duplicate';
   }
 
-  // Inline arm — implemented in Task 2.
-  throw new Error('inline parent-advance not yet implemented');
+  // Inline arm: record the child's outcome, then advance the composing parent.
+  const recorded = await deps.completionService.recordChildCompletion({
+    childState,
+    result: projection.result,
+  });
+  if (recorded === 'not-applicable') return 'not-applicable';
+  if (recorded === 'cancelled') return 'handled';
+  if (recorded === 'blocked') return 'blocked';
+
+  const outcome = await deps.advanceInlineParent({
+    parentRunId: linkage.parentRunId,
+    parentFrameKey: linkage.parentFrameKey,
+    parentEntry: linkage.parentEntry,
+    result: projection.result,
+  });
+
+  // Parent is still running / waiting on sibling substeps: nothing to release.
+  if (outcome.status === 'active') return 'handled';
+
+  // Parent reached a terminal (stopped/done) via the callable. This seam is the
+  // SOLE release owner (the callable defers release via 'defer-to-caller'), so
+  // release here exactly once and recurse ONE level up. reportTerminalChild
+  // self-guards when the fresh parent has no linkage of its own.
+  //
+  // RELEASE DISPOSITION (RD-598 verification): `retainClaimsAsTerminal: true` —
+  // matching the collect terminal branch (collection-service.ts releaseRunbook at
+  // ~:502) so a later `--claim-id` confirm/conflict against the terminal parent
+  // resolves `terminal`, not `missing`. Deciding disposition once, in one owner,
+  // eliminates the old drain-deletes / loop-retains inconsistency.
+  await deps.sessionService.releaseRunbook(linkage.parentRunId, {
+    retainClaimsAsTerminal: true,
+  });
+  const freshParent = await deps.manager.load(linkage.parentRunId);
+  const propagated: TerminalUpwardPropagationResult = freshParent
+    ? await propagateTerminalChildUpward(deps, freshParent, undefined)
+    : 'not-applicable';
+
+  if (outcome.status === 'stopped') {
+    return propagated === 'blocked' ? 'blocked' : 'stopped';
+  }
+  // outcome.status === 'done'
+  if (propagated === 'blocked') return 'blocked';
+  if (propagated === 'stopped') return 'stopped';
+  return 'handled';
 }
