@@ -178,6 +178,52 @@ describe('file-lock', () => {
         await Promise.all([releaseFileLock(lockFile), releaseFileLock(lockFile2)]);
       }
     });
+
+    // Exclusivity property under contention, guarding the empty-lock-file
+    // window (#585 CI flake). The historical bug: a lock created as an empty
+    // `open('wx')` file and populated by a second write is observable empty by a
+    // concurrent reclaimer, which parses `''` as corrupt and STEALS the live
+    // lock — two acquirers enter the critical section and one increment is lost.
+    // The atomic temp-write + `link()` create makes that window structurally
+    // impossible (the lock file only appears already-populated). This test
+    // asserts the resulting invariant: every increment survives. The race is
+    // sub-millisecond and only widened enough to *fail* under heavy load (the
+    // full parallel suite + coverage instrumentation that surfaced it in CI), so
+    // treat this as a contention property check, not a standalone reproduction.
+    it('serializes a shared-counter critical section under contention (no lost updates)', async () => {
+      const counterFile = path.join(tmpDir, 'counter.json');
+      await fs.writeFile(counterFile, '0', 'utf8');
+      const FANOUT = 24;
+
+      const bump = async (): Promise<void> => {
+        await acquireFileLock(lockFile, lockDir);
+        await using _guard = heldLock(
+          () => releaseFileLock(lockFile),
+          () => ({ lockFile }),
+        );
+        const current = Number.parseInt(await fs.readFile(counterFile, 'utf8'), 10);
+        // Yield inside the critical section: a stolen lock lets a second holder
+        // read the same `current` and clobber the increment.
+        await new Promise((resolve) => setImmediate(resolve));
+        await fs.writeFile(counterFile, String(current + 1), 'utf8');
+      };
+
+      await Promise.all(Array.from({ length: FANOUT }, () => bump()));
+
+      const total = Number.parseInt(await fs.readFile(counterFile, 'utf8'), 10);
+      expect(total).toBe(FANOUT);
+    }, 30_000);
+
+    it('acquire leaves no .tmp sidecar files in the lock directory', async () => {
+      await acquireFileLock(lockFile, lockDir);
+      try {
+        const entries = await fs.readdir(lockDir);
+        expect(entries.filter((e) => e.endsWith('.tmp'))).toEqual([]);
+        expect(entries).toContain(path.basename(lockFile));
+      } finally {
+        await releaseFileLock(lockFile);
+      }
+    });
   });
 
   // Sync variants share the lock-file format with the async path, so a sync

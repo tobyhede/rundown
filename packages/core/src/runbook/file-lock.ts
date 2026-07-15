@@ -2,8 +2,10 @@
  * Generic file-based exclusive lock primitives.
  *
  * Provides `acquireFileLock` / `releaseFileLock` for any path under the
- * `.rundown/locks/` directory. Uses `O_CREAT | O_EXCL` (`'wx'` flag) for
- * atomic acquisition with retry-jitter and stale-lock reclaim.
+ * `.rundown/locks/` directory. Acquisition writes the owner content to a temp
+ * file and atomically `link()`s it into place — exclusive like `O_EXCL`, but
+ * the lock file is never visible half-written — with retry-jitter and
+ * stale-lock reclaim.
  *
  * Used by the completion, delegation, session, and run-state locks, and by the
  * artifact-manifest append paths (sync and async).
@@ -13,6 +15,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { isError, isNodeError, getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
 
@@ -161,10 +164,67 @@ async function tryReclaimStale(lockFile: string): Promise<boolean> {
 }
 
 /**
+ * Atomically create `lockFile` already populated with its owner content.
+ *
+ * The lock file must never be observable in a half-created state: a
+ * `open('wx')` that creates an empty file and then writes the pid in a second
+ * step leaves a window where a concurrent {@link tryReclaimStale} reads `''`,
+ * fails `JSON.parse`, and reclaims the lock from a *live* holder — breaking
+ * mutual exclusion and losing updates. We instead write the content to a
+ * unique temp file and `link()` it into place: `link` is atomic and fails
+ * `EEXIST` if the lock is already held (same exclusivity as `O_EXCL`), but the
+ * destination is fully-populated the instant it becomes visible.
+ *
+ * @param lockFile - Absolute path to the lock file to create
+ * @param body     - Serialized {@link LockContent} to store in the lock file
+ * @throws {NodeJS.ErrnoException} `EEXIST` when the lock is already held; other
+ *   I/O errors propagate unchanged.
+ */
+async function atomicCreateLock(lockFile: string, body: string): Promise<void> {
+  const tmp = `${lockFile}.${String(process.pid)}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, body, { encoding: 'utf8', mode: 0o600 });
+    await fs.link(tmp, lockFile);
+  } finally {
+    try {
+      await fs.unlink(tmp);
+    } catch {
+      // Best-effort temp cleanup: on link success `tmp` and `lockFile` are
+      // hardlinks to one inode, so removing `tmp` leaves the populated lock
+      // intact; on failure the temp is the only reference and is removed. A
+      // leaked temp is inert (never consulted by acquire/reclaim).
+    }
+  }
+}
+
+/**
+ * Synchronous counterpart to {@link atomicCreateLock}.
+ *
+ * @param lockFile - Absolute path to the lock file to create
+ * @param body     - Serialized {@link LockContent} to store in the lock file
+ * @throws {NodeJS.ErrnoException} `EEXIST` when the lock is already held; other
+ *   I/O errors propagate unchanged.
+ */
+function atomicCreateLockSync(lockFile: string, body: string): void {
+  const tmp = `${lockFile}.${String(process.pid)}.${randomUUID()}.tmp`;
+  try {
+    fsSync.writeFileSync(tmp, body, { encoding: 'utf8', mode: 0o600 });
+    fsSync.linkSync(tmp, lockFile);
+  } finally {
+    try {
+      fsSync.unlinkSync(tmp);
+    } catch {
+      // Best-effort temp cleanup — see atomicCreateLock.
+    }
+  }
+}
+
+/**
  * Acquire an exclusive file lock at `lockFile`.
  *
  * Creates `lockDir` if it does not exist, then loops attempting an atomic
- * `open(lockFile, 'wx')` until success, stale-lock reclaim, or deadline.
+ * populated create (temp-write + `link`) until success, stale-lock reclaim, or
+ * deadline.
  *
  * @param lockFile - Absolute path to the lock file to create
  * @param lockDir  - Directory that must exist before acquiring (created if absent)
@@ -191,12 +251,7 @@ export async function acquireFileLock(lockFile: string, lockDir: string): Promis
         pid: process.pid,
         created_at: new Date().toISOString(),
       };
-      const handle = await fs.open(lockFile, 'wx', 0o600);
-      try {
-        await handle.writeFile(JSON.stringify(content), 'utf8');
-      } finally {
-        await handle.close();
-      }
+      await atomicCreateLock(lockFile, JSON.stringify(content));
       return;
     } catch (err) {
       if (!isNodeError(err) || err.code !== 'EEXIST') {
@@ -434,12 +489,7 @@ export function acquireFileLockSync(lockFile: string, lockDir: string): void {
         pid: process.pid,
         created_at: new Date().toISOString(),
       };
-      const fd = fsSync.openSync(lockFile, 'wx', 0o600);
-      try {
-        fsSync.writeFileSync(fd, JSON.stringify(content), 'utf8');
-      } finally {
-        fsSync.closeSync(fd);
-      }
+      atomicCreateLockSync(lockFile, JSON.stringify(content));
       return;
     } catch (err) {
       if (!isNodeError(err) || err.code !== 'EEXIST') {
