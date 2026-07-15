@@ -245,10 +245,6 @@ describe('file-lock', () => {
       } finally {
         await handle.close();
       }
-      // This suite deliberately stages a controlled, single-threaded race to
-      // exercise the identity guard; the "check→use" CodeQL flags is the test's
-      // whole point, not a vulnerability.
-      // codeql[js/file-system-race]
       await expect(fs.readFile(lockFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
@@ -260,13 +256,10 @@ describe('file-lock', () => {
       const handle = await fs.open(lockFile, 'r');
       try {
         // Another process reclaims + re-acquires: same path, new (live) inode.
-        // The deliberate check→use race is the behaviour under test.
         await fs.rm(lockFile);
-        // codeql[js/file-system-race]
         await fs.writeFile(lockFile, 'live-replacement', 'utf8');
         expect(await unlinkStaleByIdentity(handle, lockFile)).toBe(false);
         // The live replacement must survive untouched.
-        // codeql[js/file-system-race]
         expect(await fs.readFile(lockFile, 'utf8')).toBe('live-replacement');
       } finally {
         await handle.close();
@@ -290,12 +283,9 @@ describe('file-lock', () => {
       fsSync.writeFileSync(lockFile, 'stale', 'utf8');
       const fd = fsSync.openSync(lockFile, 'r');
       try {
-        // Deliberate check→use race is the behaviour under test.
         fsSync.rmSync(lockFile);
-        // codeql[js/file-system-race]
         fsSync.writeFileSync(lockFile, 'live-replacement', 'utf8');
         expect(unlinkStaleByIdentitySync(fd, lockFile)).toBe(false);
-        // codeql[js/file-system-race]
         expect(fsSync.readFileSync(lockFile, 'utf8')).toBe('live-replacement');
       } finally {
         fsSync.closeSync(fd);
