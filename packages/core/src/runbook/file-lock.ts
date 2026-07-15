@@ -147,18 +147,29 @@ function isReclaimableLockContent(raw: string): boolean {
  * identical path inside the tiny stat→unlink gap is indistinguishable from
  * identity, as it is everywhere `sameFile` is used.
  *
+ * The caller passes the STILL-OPEN handle it read the lock through, not a
+ * detached stat. Holding the descriptor keeps the observed inode allocated, so
+ * the kernel cannot recycle its inode number for the replacement — without that
+ * pin, a filesystem that reuses inodes eagerly (ext4 on CI) would make a
+ * re-created lock compare equal and defeat the guard. This is exactly why
+ * `safe-fs` re-stats against the opened descriptor rather than a prior path
+ * stat. A residual sub-syscall stat→unlink window remains (irreducible without
+ * unlink-by-fd); the dominant inode-reuse failure mode is what the pin closes.
+ *
  * Exported for direct unit testing of the identity guard.
  *
+ * @param handle - Open handle the reclaimer read the lock through; its `stat()`
+ *   supplies the observed identity and pins the inode across the check
  * @param lockFile - Absolute path to the lock file
- * @param observed - Stat of the lock this reclaimer read and judged reclaimable
  * @returns `true` when the observed inode was removed or had already vanished;
  *   `false` when a different (live) inode was found at the path and left intact
  * @throws {Error} On real I/O errors other than ENOENT
  */
 export async function unlinkStaleByIdentity(
+  handle: fs.FileHandle,
   lockFile: string,
-  observed: fsSync.Stats,
 ): Promise<boolean> {
+  const observed = await handle.stat();
   let current: fsSync.Stats;
   try {
     current = await fs.stat(lockFile);
@@ -201,8 +212,9 @@ export async function unlinkStaleByIdentity(
 async function tryReclaimStale(lockFile: string): Promise<boolean> {
   let handle: fs.FileHandle;
   try {
-    // Open once so the stat that pins the inode and the content read describe
-    // the SAME file, and the identity guard on delete compares against it.
+    // Open once so the content read and the identity guard describe the SAME
+    // file, and keep the handle open across the guarded delete so the observed
+    // inode stays pinned (see unlinkStaleByIdentity).
     handle = await fs.open(lockFile, 'r');
   } catch (err: unknown) {
     // Vanished between the failed create and here — effectively reclaimable.
@@ -212,19 +224,15 @@ async function tryReclaimStale(lockFile: string): Promise<boolean> {
     throw err;
   }
 
-  let observed: fsSync.Stats;
-  let raw: string;
   try {
-    observed = await handle.stat();
-    raw = await handle.readFile('utf8');
+    const raw = await handle.readFile('utf8');
+    if (!isReclaimableLockContent(raw)) {
+      return false;
+    }
+    return await unlinkStaleByIdentity(handle, lockFile);
   } finally {
     await handle.close();
   }
-
-  if (!isReclaimableLockContent(raw)) {
-    return false;
-  }
-  return unlinkStaleByIdentity(lockFile, observed);
 }
 
 /**
@@ -472,15 +480,21 @@ function sleepSync(ms: number): void {
 /**
  * Synchronous counterpart to {@link unlinkStaleByIdentity}.
  *
+ * The caller passes the STILL-OPEN descriptor it read the lock through; holding
+ * it pins the observed inode so a re-created lock cannot reuse its inode number
+ * and defeat the guard (see {@link unlinkStaleByIdentity}).
+ *
  * Exported for direct unit testing of the identity guard.
  *
+ * @param fd - Open descriptor the reclaimer read the lock through; `fstat`
+ *   supplies the observed identity and pins the inode across the check
  * @param lockFile - Absolute path to the lock file
- * @param observed - Stat of the lock this reclaimer read and judged reclaimable
  * @returns `true` when the observed inode was removed or had already vanished;
  *   `false` when a different (live) inode was found at the path and left intact
  * @throws {Error} On real I/O errors other than ENOENT
  */
-export function unlinkStaleByIdentitySync(lockFile: string, observed: fsSync.Stats): boolean {
+export function unlinkStaleByIdentitySync(fd: number, lockFile: string): boolean {
+  const observed = fsSync.fstatSync(fd);
   let current: fsSync.Stats;
   try {
     current = fsSync.statSync(lockFile);
@@ -528,19 +542,15 @@ function tryReclaimStaleSync(lockFile: string): boolean {
     throw err;
   }
 
-  let observed: fsSync.Stats;
-  let raw: string;
   try {
-    observed = fsSync.fstatSync(fd);
-    raw = fsSync.readFileSync(fd, 'utf8');
+    const raw = fsSync.readFileSync(fd, 'utf8');
+    if (!isReclaimableLockContent(raw)) {
+      return false;
+    }
+    return unlinkStaleByIdentitySync(fd, lockFile);
   } finally {
     fsSync.closeSync(fd);
   }
-
-  if (!isReclaimableLockContent(raw)) {
-    return false;
-  }
-  return unlinkStaleByIdentitySync(lockFile, observed);
 }
 
 /**

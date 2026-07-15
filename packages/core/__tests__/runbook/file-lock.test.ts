@@ -228,55 +228,68 @@ describe('file-lock', () => {
     });
   });
 
-  // The reclaim delete is guarded by dev/ino identity so a reclaimer never
-  // evicts a lock another process re-created in the read→delete window (the
-  // concurrent-reclaimer TOCTOU). These pin that guard directly.
+  // The reclaim delete is guarded by dev/ino identity, compared against the
+  // STILL-OPEN handle the lock was read through. Holding that handle pins the
+  // observed inode, so a lock re-created at the same path during the
+  // read→delete window cannot reuse the inode number and slip past the guard
+  // (the concurrent-reclaimer TOCTOU). These pin that guard directly; passing
+  // the open handle is also what makes the replacement's inode deterministically
+  // distinct on inode-reusing filesystems (ext4 on CI).
   describe('reclaim identity guard', () => {
-    it('async: removes the lock when the inode still matches the observed one', async () => {
+    it('async: removes the lock when the handle still matches the path', async () => {
       await fs.mkdir(lockDir, { recursive: true });
       await fs.writeFile(lockFile, 'stale', 'utf8');
-      const observed = await fs.stat(lockFile);
-
-      expect(await unlinkStaleByIdentity(lockFile, observed)).toBe(true);
-      await expect(fs.stat(lockFile)).rejects.toMatchObject({ code: 'ENOENT' });
+      const handle = await fs.open(lockFile, 'r');
+      try {
+        expect(await unlinkStaleByIdentity(handle, lockFile)).toBe(true);
+      } finally {
+        await handle.close();
+      }
+      await expect(fs.readFile(lockFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('async: leaves the lock intact when it was replaced by a different inode', async () => {
+    it('async: leaves the lock intact when it was replaced under the path', async () => {
       await fs.mkdir(lockDir, { recursive: true });
       await fs.writeFile(lockFile, 'stale', 'utf8');
-      const observed = await fs.stat(lockFile);
-
-      // Simulate another process reclaiming + re-acquiring: same path, new inode.
-      await fs.unlink(lockFile);
-      await fs.writeFile(lockFile, 'live-replacement', 'utf8');
-      const replacement = await fs.stat(lockFile);
-      expect(replacement.ino).not.toBe(observed.ino);
-
-      expect(await unlinkStaleByIdentity(lockFile, observed)).toBe(false);
-      // The live replacement must survive untouched.
-      expect(await fs.readFile(lockFile, 'utf8')).toBe('live-replacement');
+      // Read the stale lock through a handle and keep it open — pins the
+      // observed inode so the replacement below gets a distinct one.
+      const handle = await fs.open(lockFile, 'r');
+      try {
+        // Another process reclaims + re-acquires: same path, new (live) inode.
+        await fs.rm(lockFile);
+        await fs.writeFile(lockFile, 'live-replacement', 'utf8');
+        expect(await unlinkStaleByIdentity(handle, lockFile)).toBe(false);
+        // The live replacement must survive untouched.
+        expect(await fs.readFile(lockFile, 'utf8')).toBe('live-replacement');
+      } finally {
+        await handle.close();
+      }
     });
 
     it('async: treats an already-vanished lock as reclaimed', async () => {
       await fs.mkdir(lockDir, { recursive: true });
       await fs.writeFile(lockFile, 'stale', 'utf8');
-      const observed = await fs.stat(lockFile);
-      await fs.unlink(lockFile);
-
-      expect(await unlinkStaleByIdentity(lockFile, observed)).toBe(true);
+      const handle = await fs.open(lockFile, 'r');
+      try {
+        await fs.rm(lockFile);
+        expect(await unlinkStaleByIdentity(handle, lockFile)).toBe(true);
+      } finally {
+        await handle.close();
+      }
     });
 
-    it('sync: leaves the lock intact when it was replaced by a different inode', () => {
+    it('sync: leaves the lock intact when it was replaced under the path', () => {
       fsSync.mkdirSync(lockDir, { recursive: true });
       fsSync.writeFileSync(lockFile, 'stale', 'utf8');
-      const observed = fsSync.statSync(lockFile);
-
-      fsSync.unlinkSync(lockFile);
-      fsSync.writeFileSync(lockFile, 'live-replacement', 'utf8');
-      expect(fsSync.statSync(lockFile).ino).not.toBe(observed.ino);
-
-      expect(unlinkStaleByIdentitySync(lockFile, observed)).toBe(false);
-      expect(fsSync.readFileSync(lockFile, 'utf8')).toBe('live-replacement');
+      const fd = fsSync.openSync(lockFile, 'r');
+      try {
+        fsSync.rmSync(lockFile);
+        fsSync.writeFileSync(lockFile, 'live-replacement', 'utf8');
+        expect(unlinkStaleByIdentitySync(fd, lockFile)).toBe(false);
+        expect(fsSync.readFileSync(lockFile, 'utf8')).toBe('live-replacement');
+      } finally {
+        fsSync.closeSync(fd);
+      }
     });
   });
 

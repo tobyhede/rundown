@@ -7,13 +7,13 @@ import {
   writeFileSync,
   readFileSync,
   readdirSync,
-  statSync,
   rmSync,
   existsSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isNodeError } from '../../src/errors.js';
 
 const SCRIPT = fileURLToPath(new URL('../../../../scripts/build-native.mjs', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -180,18 +180,29 @@ describe('build-native.mjs --from-artifacts', () => {
     const REAL_DIST_NATIVE = join(REPO_ROOT, 'packages', 'core', 'dist', 'native');
     // Snapshot each entry's path AND file content hash so an in-place overwrite
     // of manifest.json or a binary (same filename, different bytes) is detected,
-    // not just additions/deletions. Directories are marked without a hash.
-    // Returns null when the directory is absent (the common dev/CI state), so
-    // before === after === null still passes.
+    // not just additions/deletions. Returns null when the directory is absent
+    // (the common dev/CI state), so before === after === null still passes.
+    //
+    // Every filesystem access is attempt-then-handle (no exists/stat "check"
+    // before the read) so there is no check-then-use TOCTOU window: a missing
+    // directory or a directory entry both surface as caught errno codes.
     const snapshot = (): string | null => {
-      if (!existsSync(REAL_DIST_NATIVE)) return null;
-      const entries = readdirSync(REAL_DIST_NATIVE, { recursive: true })
-        .map(String)
-        .sort()
-        .map((rel) => {
-          const abs = join(REAL_DIST_NATIVE, rel);
-          return statSync(abs).isDirectory() ? [rel, 'dir'] : [rel, sha256(readFileSync(abs))];
-        });
+      let names: string[];
+      try {
+        names = readdirSync(REAL_DIST_NATIVE, { recursive: true }).map(String).sort();
+      } catch (err) {
+        if (isNodeError(err) && err.code === 'ENOENT') return null;
+        throw err;
+      }
+      const entries = names.map((rel) => {
+        const abs = join(REAL_DIST_NATIVE, rel);
+        try {
+          return [rel, sha256(readFileSync(abs))];
+        } catch (err) {
+          if (isNodeError(err) && err.code === 'EISDIR') return [rel, 'dir'];
+          throw err;
+        }
+      });
       return JSON.stringify(entries);
     };
 
