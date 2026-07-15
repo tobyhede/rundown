@@ -5,7 +5,12 @@ import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
-import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
+import {
+  buildGotoContext,
+  validateGotoTarget,
+  executeGoto,
+  gotoResultRequiresFailureExit,
+} from '../helpers/goto-workflow.js';
 import {
   withTransitionTargetOptions,
   parseTransitionTarget,
@@ -88,13 +93,7 @@ export function registerGotoCommand(program: Command): void {
             // Flush any remaining output
             output.flush();
 
-            if (
-              result.loopResult === 'stopped' ||
-              (result.propagation !== undefined &&
-                result.propagation.kind !== 'skipped' &&
-                (result.propagation.result === 'stopped' ||
-                  result.propagation.result === 'blocked'))
-            ) {
+            if (gotoResultRequiresFailureExit(result)) {
               process.exit(1);
             }
           },

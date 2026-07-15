@@ -71,6 +71,29 @@ export type GotoExecutionResult =
   | { ok: false; error: string; code: string };
 
 /**
+ * Whether a successful goto execution must drive a non-zero process exit: either
+ * the run itself stopped, or its terminal propagated to a parent with a
+ * stopped/blocked outcome.
+ *
+ * Shared by `rundown goto` and the `run --prompted --step` launch-local jump so
+ * their exit decisions cannot drift — a bare `loopResult === 'stopped'` check
+ * misses a propagation that stopped/blocked the parent (#553).
+ *
+ * @param result - A successful ({@link GotoExecutionResult} `ok: true`) result.
+ * @returns `true` when the caller should exit non-zero.
+ */
+export function gotoResultRequiresFailureExit(
+  result: Extract<GotoExecutionResult, { ok: true }>,
+): boolean {
+  return (
+    result.loopResult === 'stopped' ||
+    (result.propagation !== undefined &&
+      result.propagation.kind !== 'skipped' &&
+      (result.propagation.result === 'stopped' || result.propagation.result === 'blocked'))
+  );
+}
+
+/**
  * Result of resolving the runbook target and building goto execution context.
  *
  * The refusal members are exactly the core navigation seam's refusing

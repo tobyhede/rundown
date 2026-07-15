@@ -45,6 +45,7 @@ import {
   validateGotoTarget,
   executeGoto,
   resolveTerminalReleaseModeForRunbook,
+  gotoResultRequiresFailureExit,
 } from '../helpers/goto-workflow.js';
 import {
   validateIndexRequiresStep,
@@ -327,7 +328,7 @@ export function registerRunCommand(program: Command): void {
               }
 
               output.flush();
-              if (gotoResult.loopResult === 'stopped') {
+              if (gotoResultRequiresFailureExit(gotoResult)) {
                 process.exit(1);
               }
               return;

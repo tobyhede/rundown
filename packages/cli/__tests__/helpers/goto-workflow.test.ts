@@ -469,6 +469,9 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.loopResult).toBe('done');
+      // manager.load resolves null, so propagateDrivenRunTerminal short-circuits
+      // `skipped` without touching the (unmocked) delegation services.
+      expect(result.propagation).toEqual({ kind: 'skipped' });
     }
     expect(action).toHaveBeenCalled();
     expect(sendAndSync).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID, ctx.steps, {
@@ -513,6 +516,10 @@ describe('executeGoto', () => {
     const result = await executeGoto(ctx, { step: '2' });
 
     expect(result.ok).toBe(true);
+    if (result.ok) {
+      // manager.load resolves null → propagation short-circuits `skipped`.
+      expect(result.propagation).toEqual({ kind: 'skipped' });
+    }
     expect(clearLastResult).not.toHaveBeenCalled();
     expect(outputAction).toHaveBeenCalledWith({
       action: 'GOTO 2',
@@ -555,6 +562,9 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.loopResult).toBe('stopped');
+      // The loop stopped locally; propagation still short-circuits `skipped`
+      // because manager.load resolves null (no parent linkage to report to).
+      expect(result.propagation).toEqual({ kind: 'skipped' });
     }
   });
 });
