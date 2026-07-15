@@ -83,9 +83,12 @@ jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const { runExecutionLoop } = await import('../../src/services/execution.js');
-const { validateGotoTarget, executeGoto, resolveTerminalReleaseModeForRunbook } = await import(
-  '../../src/helpers/goto-workflow.js'
-);
+const {
+  validateGotoTarget,
+  executeGoto,
+  resolveTerminalReleaseModeForRunbook,
+  gotoResultRequiresFailureExit,
+} = await import('../../src/helpers/goto-workflow.js');
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -566,6 +569,57 @@ describe('executeGoto', () => {
       // because manager.load resolves null (no parent linkage to report to).
       expect(result.propagation).toEqual({ kind: 'skipped' });
     }
+  });
+});
+
+describe('gotoResultRequiresFailureExit', () => {
+  // Pure predicate — the load-bearing half of #553: a successful goto must still
+  // exit non-zero when the run stopped locally OR its terminal propagated to a
+  // parent that stopped/blocked. `manager.load → null` in the executeGoto tests
+  // keeps `propagation` at `skipped`, so these cases pin the non-skipped arm the
+  // integration path never forced.
+  type OkResult = Parameters<typeof gotoResultRequiresFailureExit>[0];
+
+  it('requires failure exit when the loop stopped locally (no propagation)', () => {
+    const result: OkResult = { ok: true, loopResult: 'stopped' };
+    expect(gotoResultRequiresFailureExit(result)).toBe(true);
+  });
+
+  it('does not require failure exit when the run is still waiting with no propagation', () => {
+    const result: OkResult = { ok: true, loopResult: 'waiting' };
+    expect(gotoResultRequiresFailureExit(result)).toBe(false);
+  });
+
+  it('does not require failure exit when propagation was skipped', () => {
+    const result: OkResult = { ok: true, loopResult: 'done', propagation: { kind: 'skipped' } };
+    expect(gotoResultRequiresFailureExit(result)).toBe(false);
+  });
+
+  it('requires failure exit when an inline-advanced propagation stopped the parent', () => {
+    const result: OkResult = {
+      ok: true,
+      loopResult: 'done',
+      propagation: { kind: 'inline-advanced', result: 'stopped' },
+    };
+    expect(gotoResultRequiresFailureExit(result)).toBe(true);
+  });
+
+  it('requires failure exit when an inline-advanced propagation blocked the parent', () => {
+    const result: OkResult = {
+      ok: true,
+      loopResult: 'done',
+      propagation: { kind: 'inline-advanced', result: 'blocked' },
+    };
+    expect(gotoResultRequiresFailureExit(result)).toBe(true);
+  });
+
+  it('does not require failure exit when an inline-advanced propagation was handled', () => {
+    const result: OkResult = {
+      ok: true,
+      loopResult: 'done',
+      propagation: { kind: 'inline-advanced', result: 'handled' },
+    };
+    expect(gotoResultRequiresFailureExit(result)).toBe(false);
   });
 });
 

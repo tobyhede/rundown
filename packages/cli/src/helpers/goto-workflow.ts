@@ -24,7 +24,11 @@ import {
   type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
-import { propagateDrivenRunTerminal, type DrivenRunPropagation } from './delegation-completion.js';
+import {
+  propagateDrivenRunTerminal,
+  propagationRequiresFailureExit,
+  type DrivenRunPropagation,
+} from './delegation-completion.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -87,9 +91,7 @@ export function gotoResultRequiresFailureExit(
 ): boolean {
   return (
     result.loopResult === 'stopped' ||
-    (result.propagation !== undefined &&
-      result.propagation.kind !== 'skipped' &&
-      (result.propagation.result === 'stopped' || result.propagation.result === 'blocked'))
+    (result.propagation !== undefined && propagationRequiresFailureExit(result.propagation))
   );
 }
 

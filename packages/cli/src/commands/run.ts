@@ -52,7 +52,10 @@ import {
   resolveIndexOption,
   IndexOptionError,
 } from '../helpers/index-option.js';
-import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
+import {
+  propagateDrivenRunTerminal,
+  propagationRequiresFailureExit,
+} from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 
@@ -265,10 +268,7 @@ export function registerRunCommand(program: Command): void {
                 { kind: 'loop-inferred' },
                 commandStreamOptions,
               );
-              if (
-                propagation.kind !== 'skipped' &&
-                (propagation.result === 'stopped' || propagation.result === 'blocked')
-              ) {
+              if (propagationRequiresFailureExit(propagation)) {
                 output.flush();
                 process.exit(1);
               }

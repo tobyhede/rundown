@@ -381,6 +381,56 @@ export type DrivenRunPropagation =
   | { readonly kind: 'delegation-reported'; readonly result: DelegationPropagationResult };
 
 /**
+ * Whether a propagation outcome must drive a non-zero process exit under the
+ * **any-linkage** rule: the driven run propagated to a parent (inline OR
+ * delegation) that stopped or blocked.
+ *
+ * This is the exit shape used by drivers that treat ANY non-skipped propagation
+ * as exit-worthy — `rundown goto` (via
+ * {@link gotoResultRequiresFailureExit}) and the `rundown run --step` inline
+ * launch. It fires on a `delegation-reported` `blocked` too; `run --step` only
+ * ever produces inline linkages so that arm is unreachable there, but `goto` can
+ * drive a delegation child, and preserving the any-linkage semantics keeps its
+ * pre-consolidation behaviour intact.
+ *
+ * Contrast {@link inlineAdvanceRequiresFailureExit}, the **inline-only** rule used
+ * by `collect` and `pass`/`fail`, where delegation reporting is report-only and
+ * never flips the exit code. Naming both shapes keeps the two exit semantics from
+ * silently drifting back into open-coded copies.
+ *
+ * @param propagation - Outcome of {@link propagateDrivenRunTerminal}.
+ * @returns `true` when the caller should exit non-zero.
+ */
+export function propagationRequiresFailureExit(propagation: DrivenRunPropagation): boolean {
+  return (
+    propagation.kind !== 'skipped' &&
+    (propagation.result === 'stopped' || propagation.result === 'blocked')
+  );
+}
+
+/**
+ * Whether a propagation outcome must drive a non-zero process exit under the
+ * **inline-only** rule: an inline child's drain-and-advance stopped or blocked the
+ * composing parent.
+ *
+ * Used by `rundown collect` and `rundown pass`/`fail`, whose exit contract flips
+ * only when advancing an INLINE parent reaches a STOP/blocked terminal. A
+ * `delegation-reported` outcome is report-only (the delegating run collects later)
+ * and never flips the exit here — so, unlike
+ * {@link propagationRequiresFailureExit}, this returns `false` for every
+ * non-`inline-advanced` kind.
+ *
+ * @param propagation - Outcome of {@link propagateDrivenRunTerminal}.
+ * @returns `true` when the caller should exit non-zero.
+ */
+export function inlineAdvanceRequiresFailureExit(propagation: DrivenRunPropagation): boolean {
+  return (
+    propagation.kind === 'inline-advanced' &&
+    (propagation.result === 'stopped' || propagation.result === 'blocked')
+  );
+}
+
+/**
  * Trigger parent propagation for a run this command just drove, if it reached
  * terminal and carries a parent linkage.
  *
@@ -417,6 +467,11 @@ export type DrivenRunPropagation =
  * `execution.ts`'s inline-launch propagation — those propagate a DIFFERENT run
  * (the parent being advanced / a downward-launched child) and routing them here
  * would double-propagate and break the single-level upward-report contract.
+ *
+ * The parameters stay positional (not an options bag) to match the sibling
+ * dispatchers {@link advanceParentForInlineChild} /
+ * {@link reportTerminalToDelegatingRun}; the distinct param types make a silent
+ * argument swap a type error, so the options-object indirection buys nothing here.
  *
  * @param manager - State manager bound to `cwd`.
  * @param runId - The run this command just drove.

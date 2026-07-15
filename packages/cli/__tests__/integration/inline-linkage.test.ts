@@ -872,6 +872,121 @@ Check manually.
     });
   });
 
+  describe('inline STOP propagation exits non-zero (#553 failure half)', () => {
+    // Parent whose single inline substep aggregates FAIL ANY STOP: resolving 1.1
+    // fail drives the parent to a STOP terminal DURING the driver's propagation
+    // pass — distinct from the `auto-executing child propagation` parent above,
+    // whose two substeps only stop after a follow-up `pass`. This is what forces
+    // propagation.result === 'stopped' at the run/goto/fail exit sites.
+    async function writeStopAggregatingParent(): Promise<void> {
+      await writeFile(
+        join(workspace.cwd, 'parent.runbook.md'),
+        `# Parent
+
+## 1. Review
+
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Inline gate
+
+Run the inline gate.
+
+## 2. Done
+
+- PASS COMPLETE
+
+Final step.
+`,
+      );
+    }
+
+    it('run --step exits 1 when the inline child stop propagates a parent STOP', async () => {
+      await writeStopAggregatingParent();
+      await writeFailingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      // Auto-executing child fails and STOPs; advancing the parent aggregates
+      // FAIL ANY STOP → parent terminal `stopped` → run.ts exits 1 via
+      // propagationRequiresFailureExit.
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
+      expect(result.exitCode).toBe(1);
+
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('stopped');
+      const ss1 = (parentAfter!.substepStates ?? []).find((ss) => ss.id === '1');
+      expect(ss1!.result).toBe('fail');
+    });
+
+    it('goto that drives an inline child to a STOP terminal exits 1 and stops the parent', async () => {
+      await writeStopAggregatingParent();
+      // Child waits at a content step, then a goto-driven Finish command fails and
+      // STOPs (mirror of the FAIL COMPLETE #553 happy-path child at :86).
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        createRunbook({
+          title: 'Child',
+          steps: [
+            { title: 'Start', pass: 'CONTINUE', content: 'Waiting.' },
+            { title: 'Finish', fail: 'STOP', command: 'rd echo --result fail' },
+          ],
+        }),
+      );
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      // Compose the child into parent substep 1.1; its content-only step 1 waits.
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // goto drives the child to Finish → fail → FAIL STOP → child stopped;
+      // advancing the parent aggregates FAIL ANY STOP → parent stopped → exit 1.
+      result = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+      expect(result.exitCode).toBe(1);
+
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('stopped');
+    });
+
+    it('fail on an inline child exits 1 when the operator result propagates a parent STOP', async () => {
+      await writeStopAggregatingParent();
+      // Manual child that waits for the operator (no auto-executing command).
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        `# Child
+
+## 1. Check
+
+- PASS COMPLETE
+- FAIL STOP
+
+Check manually.
+`,
+      );
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Operator `fail` STOPs the child; advancing the parent aggregates FAIL ANY
+      // STOP → parent stopped → transition-command exits 1 via
+      // inlineAdvanceRequiresFailureExit.
+      result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
+      expect(result.exitCode).toBe(1);
+
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('stopped');
+    });
+  });
+
   it('bare pass still closes only the active inline unit and advances the parent normally', async () => {
     await writeFile(
       join(workspace.cwd, 'parent-pass-unit-local.runbook.md'),

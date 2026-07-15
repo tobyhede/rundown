@@ -32,7 +32,10 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
-import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
+import {
+  propagateDrivenRunTerminal,
+  inlineAdvanceRequiresFailureExit,
+} from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -564,8 +567,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     commandStreamOptions,
   );
   if (propagation.kind === 'inline-advanced') {
-    exitWithError =
-      propagation.result === 'stopped' || propagation.result === 'blocked' || loopStopped;
+    exitWithError = inlineAdvanceRequiresFailureExit(propagation) || loopStopped;
   }
   // `delegation-reported` is report-only and never flips the exit code here — this
   // matches today's behaviour: collect's delegation branch tested `=== 'stopped'`

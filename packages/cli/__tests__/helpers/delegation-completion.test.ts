@@ -177,6 +177,8 @@ const {
   advanceParentForInlineChild,
   extractParentLinkage,
   propagateDrivenRunTerminal,
+  propagationRequiresFailureExit,
+  inlineAdvanceRequiresFailureExit,
 } = await import('../../src/helpers/delegation-completion.js');
 
 function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
@@ -861,6 +863,98 @@ describe('propagateDrivenRunTerminal', () => {
     expect(result).toEqual({ kind: 'inline-advanced', result: 'handled' });
   });
 
+  it('propagates an inline-advanced STOP terminal as { inline-advanced, stopped }', async () => {
+    // The stopped/blocked inline result the exit predicates consume — never pinned
+    // through this wrapper before (only the sibling advanceParentForInlineChild had
+    // it). Drain applies the child completion, the post-apply parent loop STOPs, and
+    // the linkage-free parent makes the recursive propagate a no-op.
+    const child = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const parent = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(
+      new Map([
+        [child.id, child],
+        [parent.id, parent],
+      ]),
+    );
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    // loop-inferred forwards `undefined`; pin lifecycle-inference so the child's
+    // `completed → pass` flow-back proceeds (mirrors the 'handled' case above).
+    mockProjectDelegationTerminalOutcome.mockReturnValue({ kind: 'outcome', result: 'pass' });
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parent,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+
+    expect(result).toEqual({ kind: 'inline-advanced', result: 'stopped' });
+  });
+
+  it('propagates an inline-advanced blocked terminal as { inline-advanced, blocked }', async () => {
+    // Parent loop STOPs into a policy-denied terminal that projects to `blocked`
+    // (command-infrastructure), mirroring the advanceParentForInlineChild blocked
+    // case but routed through the wrapper.
+    const child = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const terminalParent = makeState(PARENT_RUN_ID, {
+      lifecycle: 'stopped',
+      parentLinkage: makeDelegationLinkage({ parentRunId: GRANDPARENT_RUN_ID }),
+      lastAction: {
+        type: 'POLICY_DENIED',
+        origin: 'direct',
+        message: 'blocked by policy',
+      },
+    });
+    const manager = makeManager(
+      new Map([
+        [child.id, child],
+        [PARENT_RUN_ID, terminalParent],
+      ]),
+    );
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: terminalParent,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    // First projection: the child's `completed → pass` flow-back. Second: the
+    // terminal parent projects to a command-infrastructure block.
+    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({ kind: 'outcome', result: 'pass' });
+    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({
+      kind: 'command_infrastructure',
+      reason: 'policy_denied',
+      message: 'blocked by policy',
+    });
+
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+
+    expect(result).toEqual({ kind: 'inline-advanced', result: 'blocked' });
+  });
+
   it('forwards an operator-result trigger into propagation (pass/fail commands)', async () => {
     // Correction 1 + SHOULD-FIX 5: an operator-result trigger overrides lifecycle
     // inference. A child left `stopped` by its own STOP but reported `pass` by the
@@ -890,5 +984,75 @@ describe('propagateDrivenRunTerminal', () => {
     );
     expect(result).toEqual({ kind: 'delegation-reported', result: 'reported' });
     expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
+  });
+});
+
+describe('propagationRequiresFailureExit', () => {
+  // any-linkage rule: fires on ANY non-skipped propagation whose result is
+  // stopped/blocked, delegation included (used by goto + run --step).
+  it('returns false for a skipped propagation', () => {
+    expect(propagationRequiresFailureExit({ kind: 'skipped' })).toBe(false);
+  });
+
+  it('returns true for an inline-advanced stopped/blocked propagation', () => {
+    expect(propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'stopped' })).toBe(
+      true,
+    );
+    expect(propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'blocked' })).toBe(
+      true,
+    );
+  });
+
+  it('returns false for an inline-advanced handled/not-applicable propagation', () => {
+    expect(propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'handled' })).toBe(
+      false,
+    );
+    expect(
+      propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'not-applicable' }),
+    ).toBe(false);
+  });
+
+  it('returns true for a delegation-reported blocked propagation (any-linkage semantics)', () => {
+    expect(propagationRequiresFailureExit({ kind: 'delegation-reported', result: 'blocked' })).toBe(
+      true,
+    );
+  });
+
+  it('returns false for a delegation-reported reported propagation', () => {
+    expect(
+      propagationRequiresFailureExit({ kind: 'delegation-reported', result: 'reported' }),
+    ).toBe(false);
+  });
+});
+
+describe('inlineAdvanceRequiresFailureExit', () => {
+  // inline-only rule: fires ONLY on inline-advanced stopped/blocked; delegation
+  // reporting is report-only and never flips the exit (used by collect + pass/fail).
+  it('returns true for an inline-advanced stopped/blocked propagation', () => {
+    expect(inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'stopped' })).toBe(
+      true,
+    );
+    expect(inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'blocked' })).toBe(
+      true,
+    );
+  });
+
+  it('returns false for an inline-advanced handled/not-applicable propagation', () => {
+    expect(inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'handled' })).toBe(
+      false,
+    );
+    expect(
+      inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'not-applicable' }),
+    ).toBe(false);
+  });
+
+  it('returns false for a delegation-reported blocked propagation (the key divergence)', () => {
+    expect(
+      inlineAdvanceRequiresFailureExit({ kind: 'delegation-reported', result: 'blocked' }),
+    ).toBe(false);
+  });
+
+  it('returns false for a skipped propagation', () => {
+    expect(inlineAdvanceRequiresFailureExit({ kind: 'skipped' })).toBe(false);
   });
 });
