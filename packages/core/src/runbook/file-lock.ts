@@ -2,8 +2,10 @@
  * Generic file-based exclusive lock primitives.
  *
  * Provides `acquireFileLock` / `releaseFileLock` for any path under the
- * `.rundown/locks/` directory. Uses `O_CREAT | O_EXCL` (`'wx'` flag) for
- * atomic acquisition with retry-jitter and stale-lock reclaim.
+ * `.rundown/locks/` directory. Acquisition writes the owner content to a temp
+ * file and atomically `link()`s it into place — exclusive like `O_EXCL`, but
+ * the lock file is never visible half-written — with retry-jitter and
+ * stale-lock reclaim.
  *
  * Used by the completion, delegation, session, and run-state locks, and by the
  * artifact-manifest append paths (sync and async).
@@ -13,8 +15,10 @@
 
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { isError, isNodeError, getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
+import { sameFile } from './safe-fs.js';
 
 const LOCK_DEADLINE_MS = 5_000;
 const RETRY_MIN_MS = 50;
@@ -102,69 +106,197 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Try to reclaim a stale lock file.
+ * Classify already-read lock content: is the lock reclaimable?
  *
- * A lock is reclaimed only when the owning process is no longer alive
- * (`kill(pid, 0)` → ESRCH). Age-based reclaim is intentionally not supported:
- * a slow-but-live writer (e.g. under CI load) must not lose its mutex just
- * because the lock file is old, or concurrent writers could interleave and drop updates.
+ * Reclaimable when the content is not well-formed {@link LockContent} —
+ * corrupt, empty, or shape-invalid JSON (which must never reach `process.kill`
+ * as a pid) — or when it names a process that is no longer alive
+ * (`kill(pid, 0)` → ESRCH). A well-formed lock owned by a live process is NOT
+ * reclaimable. Pure over its input except for the liveness syscall.
  *
- * @param lockFile - Absolute path to the lock file
- * @returns `true` if the lock was reclaimed and removed
- * @throws {Error} On real I/O errors (EACCES, EIO, etc.)
+ * @param raw - Raw UTF-8 lock-file content
+ * @returns `true` when the lock may be reclaimed
+ * @throws {Error} Re-throws a non-`SyntaxError` `JSON.parse` failure unchanged
  */
-async function tryReclaimStale(lockFile: string): Promise<boolean> {
+function isReclaimableLockContent(raw: string): boolean {
+  let parsed: unknown;
   try {
-    const raw = await fs.readFile(lockFile, 'utf8');
-    const parsed = JSON.parse(raw) as unknown;
-
-    // Shape-invalid lock content is as untrustworthy as corrupted JSON: never
-    // pass a non-numeric pid to process.kill. Unlink and reclaim.
-    if (!isLockContent(parsed)) {
-      try {
-        await fs.unlink(lockFile);
-      } catch (unlinkErr: unknown) {
-        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
-          throw unlinkErr;
-        }
-      }
-      return true;
-    }
-
-    if (!isProcessAlive(parsed.pid)) {
-      await fs.unlink(lockFile);
-      // Between this unlink and the next open('wx') attempt, another process may
-      // create the lock. That's fine — the caller retries on EEXIST.
-      return true;
-    }
+    parsed = JSON.parse(raw) as unknown;
   } catch (err: unknown) {
-    // Lock file disappeared between check and read — effectively reclaimable
+    if (isError(err) && err.name === 'SyntaxError') {
+      return true;
+    }
+    throw err;
+  }
+  if (!isLockContent(parsed)) {
+    return true;
+  }
+  return !isProcessAlive(parsed.pid);
+}
+
+/**
+ * Remove a stale lock file, but ONLY if the path still resolves to the inode
+ * this reclaimer inspected (`observed`).
+ *
+ * If the path now holds a different inode, another process reclaimed and
+ * re-created the lock in the read→delete window; a blind `unlink(lockFile)`
+ * would evict that live holder, letting two acquirers into the critical section
+ * (the concurrent-reclaimer TOCTOU). Guarding the delete by dev/ino identity
+ * mirrors {@link sameFile} — the same check `safe-fs` uses to close its
+ * symlink-swap window — and carries the same ABA caveat: inode reuse at the
+ * identical path inside the tiny stat→unlink gap is indistinguishable from
+ * identity, as it is everywhere `sameFile` is used.
+ *
+ * The caller passes the STILL-OPEN handle it read the lock through, not a
+ * detached stat. Holding the descriptor keeps the observed inode allocated, so
+ * the kernel cannot recycle its inode number for the replacement — without that
+ * pin, a filesystem that reuses inodes eagerly (ext4 on CI) would make a
+ * re-created lock compare equal and defeat the guard. This is exactly why
+ * `safe-fs` re-stats against the opened descriptor rather than a prior path
+ * stat. A residual sub-syscall stat→unlink window remains (irreducible without
+ * unlink-by-fd); the dominant inode-reuse failure mode is what the pin closes.
+ *
+ * Exported for direct unit testing of the identity guard.
+ *
+ * @param handle - Open handle the reclaimer read the lock through; its `stat()`
+ *   supplies the observed identity and pins the inode across the check
+ * @param lockFile - Absolute path to the lock file
+ * @returns `true` when the observed inode was removed or had already vanished;
+ *   `false` when a different (live) inode was found at the path and left intact
+ * @throws {Error} On real I/O errors other than ENOENT
+ */
+export async function unlinkStaleByIdentity(
+  handle: fs.FileHandle,
+  lockFile: string,
+): Promise<boolean> {
+  const observed = await handle.stat();
+  let current: fsSync.Stats;
+  try {
+    current = await fs.stat(lockFile);
+  } catch (err: unknown) {
     if (isNodeError(err) && err.code === 'ENOENT') {
       return true;
     }
-    // Corrupted lock file (invalid JSON) — unlink and reclaim
-    if (isError(err) && err.name === 'SyntaxError') {
-      try {
-        await fs.unlink(lockFile);
-      } catch (unlinkErr: unknown) {
-        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
-          throw unlinkErr;
-        }
-      }
+    throw err;
+  }
+  if (!sameFile(observed, current)) {
+    return false;
+  }
+  try {
+    await fs.unlink(lockFile);
+  } catch (err: unknown) {
+    if (!isNodeError(err) || err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+  return true;
+}
+
+/**
+ * Try to reclaim a stale lock file.
+ *
+ * A lock is reclaimed only when the owning process is no longer alive
+ * (`kill(pid, 0)` → ESRCH) or its content is corrupt/empty/shape-invalid.
+ * Age-based reclaim is intentionally not supported: a slow-but-live writer
+ * (e.g. under CI load) must not lose its mutex just because the lock file is
+ * old, or concurrent writers could interleave and drop updates. The delete is
+ * identity-guarded (see {@link unlinkStaleByIdentity}) so a reclaimer never
+ * evicts a lock another process re-created in the read→delete window.
+ *
+ * @param lockFile - Absolute path to the lock file
+ * @returns `true` if the lock was reclaimed (removed, or already gone); `false`
+ *   if a live lock is held, or the observed lock was replaced by a different
+ *   inode mid-flight — both cases leave the file for the caller's next retry
+ * @throws {Error} On real I/O errors (EACCES, EIO, etc.)
+ */
+async function tryReclaimStale(lockFile: string): Promise<boolean> {
+  let handle: fs.FileHandle;
+  try {
+    // Open once so the content read and the identity guard describe the SAME
+    // file, and keep the handle open across the guarded delete so the observed
+    // inode stays pinned (see unlinkStaleByIdentity).
+    handle = await fs.open(lockFile, 'r');
+  } catch (err: unknown) {
+    // Vanished between the failed create and here — effectively reclaimable.
+    if (isNodeError(err) && err.code === 'ENOENT') {
       return true;
     }
-    // Real I/O errors (EACCES, EIO, etc.) — rethrow
     throw err;
   }
 
-  return false;
+  try {
+    const raw = await handle.readFile('utf8');
+    if (!isReclaimableLockContent(raw)) {
+      return false;
+    }
+    return await unlinkStaleByIdentity(handle, lockFile);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Atomically create `lockFile` already populated with its owner content.
+ *
+ * The lock file must never be observable in a half-created state: a
+ * `open('wx')` that creates an empty file and then writes the pid in a second
+ * step leaves a window where a concurrent {@link tryReclaimStale} reads `''`,
+ * fails `JSON.parse`, and reclaims the lock from a *live* holder — breaking
+ * mutual exclusion and losing updates. We instead write the content to a
+ * unique temp file and `link()` it into place: `link` is atomic and fails
+ * `EEXIST` if the lock is already held (same exclusivity as `O_EXCL`), but the
+ * destination is fully-populated the instant it becomes visible.
+ *
+ * @param lockFile - Absolute path to the lock file to create
+ * @param body     - Serialized {@link LockContent} to store in the lock file
+ * @throws {NodeJS.ErrnoException} `EEXIST` when the lock is already held; other
+ *   I/O errors propagate unchanged.
+ */
+async function atomicCreateLock(lockFile: string, body: string): Promise<void> {
+  const tmp = `${lockFile}.${String(process.pid)}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, body, { encoding: 'utf8', mode: 0o600 });
+    await fs.link(tmp, lockFile);
+  } finally {
+    try {
+      await fs.unlink(tmp);
+    } catch {
+      // Best-effort temp cleanup: on link success `tmp` and `lockFile` are
+      // hardlinks to one inode, so removing `tmp` leaves the populated lock
+      // intact; on failure the temp is the only reference and is removed. A
+      // leaked temp is inert (never consulted by acquire/reclaim).
+    }
+  }
+}
+
+/**
+ * Synchronous counterpart to {@link atomicCreateLock}.
+ *
+ * @param lockFile - Absolute path to the lock file to create
+ * @param body     - Serialized {@link LockContent} to store in the lock file
+ * @throws {NodeJS.ErrnoException} `EEXIST` when the lock is already held; other
+ *   I/O errors propagate unchanged.
+ */
+function atomicCreateLockSync(lockFile: string, body: string): void {
+  const tmp = `${lockFile}.${String(process.pid)}.${randomUUID()}.tmp`;
+  try {
+    fsSync.writeFileSync(tmp, body, { encoding: 'utf8', mode: 0o600 });
+    fsSync.linkSync(tmp, lockFile);
+  } finally {
+    try {
+      fsSync.unlinkSync(tmp);
+    } catch {
+      // Best-effort temp cleanup — see atomicCreateLock.
+    }
+  }
 }
 
 /**
  * Acquire an exclusive file lock at `lockFile`.
  *
  * Creates `lockDir` if it does not exist, then loops attempting an atomic
- * `open(lockFile, 'wx')` until success, stale-lock reclaim, or deadline.
+ * populated create (temp-write + `link`) until success, stale-lock reclaim, or
+ * deadline.
  *
  * @param lockFile - Absolute path to the lock file to create
  * @param lockDir  - Directory that must exist before acquiring (created if absent)
@@ -191,12 +323,7 @@ export async function acquireFileLock(lockFile: string, lockDir: string): Promis
         pid: process.pid,
         created_at: new Date().toISOString(),
       };
-      const handle = await fs.open(lockFile, 'wx', 0o600);
-      try {
-        await handle.writeFile(JSON.stringify(content), 'utf8');
-      } finally {
-        await handle.close();
-      }
+      await atomicCreateLock(lockFile, JSON.stringify(content));
       return;
     } catch (err) {
       if (!isNodeError(err) || err.code !== 'EEXIST') {
@@ -351,54 +478,79 @@ function sleepSync(ms: number): void {
 }
 
 /**
- * Try to reclaim a stale lock file synchronously.
+ * Synchronous counterpart to {@link unlinkStaleByIdentity}.
  *
- * Mirrors {@link tryReclaimStale}: reclaim only on dead PID
- * (`kill(pid, 0)` → ESRCH) or on corrupted/missing lock content. Age-based
- * reclaim is intentionally NOT supported.
+ * The caller passes the STILL-OPEN descriptor it read the lock through; holding
+ * it pins the observed inode so a re-created lock cannot reuse its inode number
+ * and defeat the guard (see {@link unlinkStaleByIdentity}).
  *
+ * Exported for direct unit testing of the identity guard.
+ *
+ * @param fd - Open descriptor the reclaimer read the lock through; `fstat`
+ *   supplies the observed identity and pins the inode across the check
  * @param lockFile - Absolute path to the lock file
- * @returns `true` if the lock was reclaimed and removed
- * @throws {Error} On real I/O errors (EACCES, EIO, etc.)
+ * @returns `true` when the observed inode was removed or had already vanished;
+ *   `false` when a different (live) inode was found at the path and left intact
+ * @throws {Error} On real I/O errors other than ENOENT
  */
-function tryReclaimStaleSync(lockFile: string): boolean {
+export function unlinkStaleByIdentitySync(fd: number, lockFile: string): boolean {
+  const observed = fsSync.fstatSync(fd);
+  let current: fsSync.Stats;
   try {
-    const raw = fsSync.readFileSync(lockFile, 'utf8');
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (!isLockContent(parsed)) {
-      try {
-        fsSync.unlinkSync(lockFile);
-      } catch (unlinkErr: unknown) {
-        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
-          throw unlinkErr;
-        }
-      }
-      return true;
-    }
-
-    if (!isProcessAlive(parsed.pid)) {
-      fsSync.unlinkSync(lockFile);
-      return true;
-    }
+    current = fsSync.statSync(lockFile);
   } catch (err: unknown) {
     if (isNodeError(err) && err.code === 'ENOENT') {
       return true;
     }
-    if (isError(err) && err.name === 'SyntaxError') {
-      try {
-        fsSync.unlinkSync(lockFile);
-      } catch (unlinkErr: unknown) {
-        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
-          throw unlinkErr;
-        }
-      }
+    throw err;
+  }
+  if (!sameFile(observed, current)) {
+    return false;
+  }
+  try {
+    fsSync.unlinkSync(lockFile);
+  } catch (err: unknown) {
+    if (!isNodeError(err) || err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+  return true;
+}
+
+/**
+ * Try to reclaim a stale lock file synchronously.
+ *
+ * Mirrors {@link tryReclaimStale}: reclaim only on dead PID
+ * (`kill(pid, 0)` → ESRCH) or on corrupted/empty/shape-invalid content, with
+ * the delete identity-guarded by {@link unlinkStaleByIdentitySync}. Age-based
+ * reclaim is intentionally NOT supported.
+ *
+ * @param lockFile - Absolute path to the lock file
+ * @returns `true` if the lock was reclaimed (removed, or already gone); `false`
+ *   if a live lock is held, or the observed lock was replaced by a different
+ *   inode mid-flight — both leave the file for the caller's next retry
+ * @throws {Error} On real I/O errors (EACCES, EIO, etc.)
+ */
+function tryReclaimStaleSync(lockFile: string): boolean {
+  let fd: number;
+  try {
+    fd = fsSync.openSync(lockFile, 'r');
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') {
       return true;
     }
     throw err;
   }
 
-  return false;
+  try {
+    const raw = fsSync.readFileSync(fd, 'utf8');
+    if (!isReclaimableLockContent(raw)) {
+      return false;
+    }
+    return unlinkStaleByIdentitySync(fd, lockFile);
+  } finally {
+    fsSync.closeSync(fd);
+  }
 }
 
 /**
@@ -434,12 +586,7 @@ export function acquireFileLockSync(lockFile: string, lockDir: string): void {
         pid: process.pid,
         created_at: new Date().toISOString(),
       };
-      const fd = fsSync.openSync(lockFile, 'wx', 0o600);
-      try {
-        fsSync.writeFileSync(fd, JSON.stringify(content), 'utf8');
-      } finally {
-        fsSync.closeSync(fd);
-      }
+      atomicCreateLockSync(lockFile, JSON.stringify(content));
       return;
     } catch (err) {
       if (!isNodeError(err) || err.code !== 'EEXIST') {
