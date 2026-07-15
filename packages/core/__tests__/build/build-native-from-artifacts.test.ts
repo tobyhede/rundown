@@ -7,6 +7,7 @@ import {
   writeFileSync,
   readFileSync,
   readdirSync,
+  statSync,
   rmSync,
   existsSync,
 } from 'node:fs';
@@ -177,10 +178,22 @@ describe('build-native.mjs --from-artifacts', () => {
   // failing every release run (the `rd-landlock-binaries` artifact went missing).
   it('leaves the real packages/core/dist/native untouched', () => {
     const REAL_DIST_NATIVE = join(REPO_ROOT, 'packages', 'core', 'dist', 'native');
-    const snapshot = (): string | null =>
-      existsSync(REAL_DIST_NATIVE)
-        ? JSON.stringify(readdirSync(REAL_DIST_NATIVE, { recursive: true }).sort())
-        : null;
+    // Snapshot each entry's path AND file content hash so an in-place overwrite
+    // of manifest.json or a binary (same filename, different bytes) is detected,
+    // not just additions/deletions. Directories are marked without a hash.
+    // Returns null when the directory is absent (the common dev/CI state), so
+    // before === after === null still passes.
+    const snapshot = (): string | null => {
+      if (!existsSync(REAL_DIST_NATIVE)) return null;
+      const entries = readdirSync(REAL_DIST_NATIVE, { recursive: true })
+        .map(String)
+        .sort()
+        .map((rel) => {
+          const abs = join(REAL_DIST_NATIVE, rel);
+          return statSync(abs).isDirectory() ? [rel, 'dir'] : [rel, sha256(readFileSync(abs))];
+        });
+      return JSON.stringify(entries);
+    };
 
     const before = snapshot();
     const root = buildArtifactRoot(COMMIT);
