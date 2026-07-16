@@ -262,11 +262,15 @@ export async function reportTerminalToDelegatingRun(
   );
   output.flush();
   // A delegation linkage yields 'reported' | 'duplicate' | 'blocked' |
-  // 'not-applicable' from the seam. The CLI never distinguished a duplicate from a
-  // fresh report, so collapse 'duplicate' back into 'reported' (finding 2), and
-  // narrow away the inline-only members — all without a cast.
+  // 'linkage-cycle' | 'not-applicable' from the seam. The CLI never distinguished a
+  // duplicate from a fresh report, so collapse 'duplicate' back into 'reported'
+  // (finding 2), and narrow away the inline-only members — all without a cast.
   if (outcome === 'handled' || outcome === 'stopped') return 'not-applicable';
   if (outcome === 'duplicate') return 'reported';
+  // #602: a corrupt linkage graph is fail-closed. 'blocked' is this adapter's
+  // pre-existing "could not propagate; exit non-zero" member, so map onto it
+  // explicitly rather than inventing a CLI-visible member no caller can act on.
+  if (outcome === 'linkage-cycle') return 'blocked';
   return outcome;
 }
 
@@ -329,7 +333,9 @@ export async function advanceParentForInlineChild(
   // 'blocked'/'cancelled' record — returns before the callable runs).
   output.flush();
   // An inline linkage never yields the delegation-only 'reported' / 'duplicate';
-  // narrow them away without a cast.
+  // narrow them away without a cast. #602: a tripped linkage guard is fail-closed
+  // onto this adapter's pre-existing 'blocked'.
+  if (outcome === 'linkage-cycle') return 'blocked';
   return outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
 }
 
@@ -383,8 +389,10 @@ export async function propagateChildTerminal(
   // dispatch, where both sub-adapters flushed).
   output.flush();
   // TerminalPropagationResult has no 'duplicate' member (the CLI never
-  // distinguished it); collapse to 'reported' (finding 2). All other members are
-  // shared between the seam union and TerminalPropagationResult.
+  // distinguished it); collapse to 'reported' (finding 2). #602: nor a
+  // 'linkage-cycle' member; collapse to the fail-closed 'blocked'. All other
+  // members are shared between the seam union and TerminalPropagationResult.
+  if (outcome === 'linkage-cycle') return 'blocked';
   return outcome === 'duplicate' ? 'reported' : outcome;
 }
 

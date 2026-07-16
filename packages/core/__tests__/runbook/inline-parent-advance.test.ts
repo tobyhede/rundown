@@ -515,4 +515,127 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(result).toBe('stopped');
     expect(advanceInlineParent).toHaveBeenCalledTimes(2);
   });
+
+  // --- #602: cycle guard. The linkage graph is a tree by construction, so a
+  // repeat means corrupted persisted state: fail closed, perform no side
+  // effects for the repeated run, and never downgrade to 'handled'.
+
+  it('self-linked child (parent === child) trips the guard with no side effects', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(CHILD) });
+    const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'recorded'>>()
+      .mockResolvedValue('recorded');
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<ReleaseRunbookResult>
+      >()
+      .mockResolvedValue({} as ReleaseRunbookResult);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({
+        advanceInlineParent,
+        completionService: { recordChildCompletion },
+        sessionService: { releaseRunbook },
+      }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    expect(recordChildCompletion).not.toHaveBeenCalled();
+    expect(advanceInlineParent).not.toHaveBeenCalled();
+    expect(releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  it('two-node cycle (child→parent→child) trips after exactly one advance', async () => {
+    // child(A) -> parent(B); B's persisted linkage points back at A.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: inlineLinkage(CHILD),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<ReleaseRunbookResult>
+      >()
+      .mockResolvedValue({} as ReleaseRunbookResult);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    // The FIRST level is legitimate and completes; the repeat of A performs nothing.
+    expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+    expect(advanceInlineParent).toHaveBeenCalledWith(
+      expect.objectContaining({ parentRunId: PARENT }),
+    );
+    expect(releaseRunbook).toHaveBeenCalledTimes(1);
+    expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
+  });
+
+  it('a cycle discovered by the recursion outranks a stopped advance', async () => {
+    // Severity precedence: linkage-cycle > blocked > stopped > handled. A cycle
+    // must not be downgraded to 'stopped' (or 'handled') by a shallower level.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'stopped',
+      parentLinkage: inlineLinkage(CHILD),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'stopped' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'fail',
+    );
+    expect(result).toBe('linkage-cycle');
+  });
+
+  it('a cyclic DELEGATION linkage trips before recording report-only', async () => {
+    // child(A) -> inline parent(B); B is delegation-linked back to A. The guard
+    // is checked before the kind dispatch, so the report is refused too.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: delegationLinkage(CHILD),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'recorded'>>()
+      .mockResolvedValue('recorded');
+    const result = await propagateTerminalChildUpward(
+      makeDeps({
+        advanceInlineParent,
+        manager: { load },
+        completionService: { recordChildCompletion },
+      }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    // Only the child's own record ran (level 1); the cyclic report never did.
+    expect(recordChildCompletion).toHaveBeenCalledTimes(1);
+    expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
+  });
 });

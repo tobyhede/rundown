@@ -81,6 +81,21 @@ export type AdvanceInlineParent = (
  * at `collection-service.test.ts:1429`). The CLI adapters collapse `duplicate`
  * back into their pre-existing `'reported'` (they never distinguished), so the
  * seven CLI call sites and both exit predicates are unaffected.
+ *
+ * `linkage-cycle` (#602) is the fail-closed trip of the upward walk's guard: the
+ * walk reached a run id it had already visited, or the chain exceeded
+ * {@link MAX_INLINE_PROPAGATION_CHAIN}. The inline linkage graph is a tree by
+ * construction (a parent stamps a child's `parentLinkage.parentRunId` at launch,
+ * always pointing at an already-existing ancestor), so either condition means the
+ * persisted linkage graph is corrupt. Per the project's no-migration / "reject,
+ * don't adapt" rule the seam refuses rather than guessing: it performs NO
+ * propagation side effects for the repeated run and surfaces the cause. It is the
+ * HIGHEST severity member — a cycle found deep in the walk is never downgraded by
+ * a shallower `done`/`stopped`. Consumers that cannot represent it (the CLI
+ * adapters, the collect path) map it EXPLICITLY onto their pre-existing `blocked`,
+ * which already carries "fail closed, exit non-zero". The two causes are NOT
+ * distinguished in this union (no consumer branches on them) — they are named for
+ * the operator on the {@link OnLinkageCycle} sink instead.
  */
 export type TerminalUpwardPropagationResult =
   | 'handled'
@@ -88,6 +103,7 @@ export type TerminalUpwardPropagationResult =
   | 'blocked'
   | 'reported'
   | 'duplicate'
+  | 'linkage-cycle'
   | 'not-applicable';
 
 /** Narrow state reader used for reload-on-recursion. Satisfied by `RunbookStateManager`. */
@@ -136,12 +152,40 @@ export interface PropagateTerminalChildUpwardDeps {
 }
 
 /**
+ * Upper bound on the number of runs one upward propagation walk may visit.
+ *
+ * Backstop for the acyclic-but-corrupt case the visited-set cannot bound: a chain
+ * of N DISTINCT run ids costs N advances + N releases + N reloads before it ends.
+ * Legitimate inline nesting is a handful of levels (a runbook composing a child
+ * that composes a child), so 64 leaves ~2 orders of magnitude of headroom while
+ * capping worst-case side effects at 64. Exceeding it trips the same
+ * `'linkage-cycle'` disposition — on a tree-by-construction graph, a 64-deep chain
+ * is corruption of the same class.
+ *
+ * Deliberately NOT shared with `SessionService.resolveActiveInlineForceTerminalPlan`
+ * (`session-service.ts:777-796`), which walks the same graph ITERATIVELY, read-only,
+ * with no writes per level: it cannot exhaust the stack and its unbounded case costs
+ * only reads. Different hazard, different rule. See #602.
+ */
+export const MAX_INLINE_PROPAGATION_CHAIN = 64;
+
+/**
  * Propagate a terminal child run's outcome to its parent, dispatching on linkage.
  *
  * Inline: record the child's outcome, then invoke {@link AdvanceInlineParent}. If
  * the parent reaches terminal (`stopped`/`done`), release it and recurse ONE
  * level up (single-level: inline chains advance synchronously; a delegation
  * boundary takes the report-only arm). Delegation: record report-only and stop.
+ *
+ * @remarks
+ * The walk is guarded (#602): this wrapper seeds the visited-run set with the
+ * child's own id and the depth at 1, then delegates to the private recursion. The
+ * set is a recursion ARGUMENT, so it survives the release/reload of each parent —
+ * a reloaded parent carries no memory of the walk that produced it. On a repeat, or
+ * past {@link MAX_INLINE_PROPAGATION_CHAIN} levels, the walk returns
+ * `'linkage-cycle'` having performed no propagation side effects for the repeated
+ * run. This mirrors `SessionService.resolveActiveInlineForceTerminalPlan`, which
+ * fails closed on the same chain with `status: 'inline-cycle'`.
  *
  * @param deps - Core services + the inline-advance callable.
  * @param childState - The terminal child run's state.
@@ -154,12 +198,46 @@ export async function propagateTerminalChildUpward(
   childState: RunbookState,
   result: DelegationOutcome | undefined,
 ): Promise<TerminalUpwardPropagationResult> {
+  return propagateTerminalChildUpwardInner(deps, childState, result, new Set([childState.id]), 1);
+}
+
+/**
+ * Guarded recursion behind {@link propagateTerminalChildUpward}.
+ *
+ * Private: `visited` / `depth` must never leak into the exported 3-arg signature
+ * (#602).
+ *
+ * `depth` is threaded EXPLICITLY rather than read off `visited.size`: the set
+ * saturates in a true cycle (a 2-node cycle parks at size 2), so a size-derived cap
+ * would be parasitic on the `visited.has` check instead of an independent bound.
+ *
+ * @param deps - Core services + the inline-advance callable.
+ * @param childState - The terminal child run's state at this level.
+ * @param result - Explicit operator result, or `undefined` for lifecycle inference.
+ * @param visited - Run ids already walked, INCLUDING `childState.id`.
+ * @param depth - 1-based count of runs walked so far, including `childState`.
+ * @returns The upward-propagation outcome.
+ */
+async function propagateTerminalChildUpwardInner(
+  deps: PropagateTerminalChildUpwardDeps,
+  childState: RunbookState,
+  result: DelegationOutcome | undefined,
+  visited: ReadonlySet<RunId>,
+  depth: number,
+): Promise<TerminalUpwardPropagationResult> {
   const linkage = childState.parentLinkage;
   if (!linkage) return 'not-applicable';
 
   const projection = projectDelegationTerminalOutcome(childState, result);
   if (projection.kind === 'not_terminal') return 'not-applicable';
   if (projection.kind === 'command_infrastructure') return 'blocked';
+
+  // #602 guard — BEFORE any side effect, and before the kind dispatch, so a
+  // cyclic delegation linkage is refused as firmly as a cyclic inline one. A
+  // repeat means the persisted graph is not the tree it is built as; refuse
+  // rather than re-run record → advance → release on a run already walked.
+  if (visited.has(linkage.parentRunId)) return 'linkage-cycle';
+  if (depth >= MAX_INLINE_PROPAGATION_CHAIN) return 'linkage-cycle';
 
   if (linkage.kind === 'delegation') {
     const recorded = await deps.completionService.recordChildCompletion({
@@ -219,14 +297,21 @@ export async function propagateTerminalChildUpward(
   }
   const freshParent = await deps.manager.load(linkage.parentRunId);
   const propagated: TerminalUpwardPropagationResult = freshParent
-    ? await propagateTerminalChildUpward(deps, freshParent, undefined)
+    ? await propagateTerminalChildUpwardInner(
+        deps,
+        freshParent,
+        undefined,
+        new Set(visited).add(linkage.parentRunId),
+        depth + 1,
+      )
     : 'not-applicable';
 
-  if (outcome.status === 'stopped') {
-    return propagated === 'blocked' ? 'blocked' : 'stopped';
-  }
-  // outcome.status === 'done'
+  // Severity precedence: linkage-cycle > blocked > stopped > handled. The first
+  // two lines extend the pre-#602 rule (blocked already outranked stopped) to the
+  // new member; the rest is the same stopped/done collapse it always was.
+  if (propagated === 'linkage-cycle') return 'linkage-cycle';
   if (propagated === 'blocked') return 'blocked';
+  if (outcome.status === 'stopped') return 'stopped';
   if (propagated === 'stopped') return 'stopped';
   return 'handled';
 }

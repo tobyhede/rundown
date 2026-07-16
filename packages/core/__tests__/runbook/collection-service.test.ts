@@ -1193,6 +1193,38 @@ describe('RunbookCollectionService', () => {
       expect(advanceInlineParent).toHaveBeenCalledTimes(1);
     });
 
+    it('collapses a self-linked (cyclic) inline target onto a blocked advance (#602)', async () => {
+      // The target's inline linkage points at ITSELF — corrupt persisted state.
+      // The seam's guard trips before any side effect, and collect maps the trip
+      // onto its fail-closed 'blocked' so the CLI exits non-zero.
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: { ...inlineLinkage, parentRunId: controlledRunId },
+      });
+      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent,
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.terminalInlineAdvance).toBe('blocked');
+        expect(outcome.reportedTerminalOutcome).toBe(false);
+      }
+      expect(advanceInlineParent).not.toHaveBeenCalled();
+    });
+
     it('reports report-only for a delegation-linked terminal target (claim gate honoured)', async () => {
       const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
       await manager.save(ancestor);

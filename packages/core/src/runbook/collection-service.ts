@@ -641,10 +641,18 @@ async function propagateCollectTerminalUpward(
     undefined,
   );
   if (linkage?.kind === 'inline') {
-    // Inline seam yields 'handled' | 'stopped' | 'blocked' | 'not-applicable';
-    // narrow away the delegation-only 'reported' / 'duplicate' without a cast.
+    // Inline seam yields 'handled' | 'stopped' | 'blocked' | 'linkage-cycle' |
+    // 'not-applicable'; narrow away the delegation-only 'reported' / 'duplicate'
+    // without a cast. `terminalInlineAdvance` has no 'linkage-cycle' member (it
+    // feeds the CLI's exit mapping only), so collapse the trip onto 'blocked' —
+    // the deliberate, fail-closed disposition documented on
+    // TerminalUpwardPropagationResult (#602).
     const inlineOutcome =
-      outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
+      outcome === 'reported' || outcome === 'duplicate'
+        ? 'not-applicable'
+        : outcome === 'linkage-cycle'
+          ? 'blocked'
+          : outcome;
     return { reportedTerminalOutcome: false, terminalInlineAdvance: inlineOutcome };
   }
   // 'recorded' → reported (true); 'duplicate'/'cancelled' → false. Preserves the

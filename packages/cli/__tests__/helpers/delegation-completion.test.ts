@@ -19,6 +19,7 @@ import type {
   RunbookActorService as RunbookActorServiceType,
   SessionService as SessionServiceType,
   ExecutionLifecycleService as ExecutionLifecycleServiceType,
+  TerminalUpwardPropagationResult,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
@@ -47,8 +48,12 @@ const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>()
  * thin CLI adapters delegate the decision to this seam, so its mock is the sole
  * driver of adapter routing tests; the REAL seam logic is covered in
  * `packages/core/__tests__/runbook/inline-parent-advance.test.ts`.
+ *
+ * ALIASED from the core union rather than restated (#602): a hand-written copy
+ * silently rots when core gains a member, which is exactly the type pressure the
+ * seam's union is there to apply.
  */
-type SeamResult = 'handled' | 'stopped' | 'blocked' | 'reported' | 'duplicate' | 'not-applicable';
+type SeamResult = TerminalUpwardPropagationResult;
 
 // Mock @rundown-org/core. The report-only helper (Plan 5) constructs only
 // RunbookStateManager, ExecutionLifecycleService, and RunbookCompletionService;
@@ -194,6 +199,7 @@ const {
   advanceParentForInlineChild,
   buildAdvanceInlineParent,
   extractParentLinkage,
+  propagateChildTerminal,
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
   inlineAdvanceRequiresFailureExit,
@@ -436,6 +442,17 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
     expect(result).toBe('blocked');
   });
 
+  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+
   it('maps a seam not-applicable result to not-applicable', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
@@ -560,6 +577,45 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     propagateTerminalChildUpward.mockResolvedValue('reported');
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('not-applicable');
+  });
+
+  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+});
+
+describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
+  beforeEach(() => {
+    propagateTerminalChildUpward.mockReset();
+  });
+
+  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    const result = await propagateChildTerminal(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+
+  it('still collapses a seam duplicate to reported (finding 2 regression)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('duplicate');
+    const result = await propagateChildTerminal(childState, 'pass', '/test', output);
+    expect(result).toBe('reported');
   });
 });
 
