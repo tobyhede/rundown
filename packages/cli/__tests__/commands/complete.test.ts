@@ -674,7 +674,7 @@ Waiting.
       // indistinguishable from any other block and carries no recovery path.
       expect(cycle).toMatchObject({
         code: 'INLINE_PARENT_CYCLE',
-        error: `Inline parent cycle detected at ${childId}`,
+        error: `Parent linkage cycle detected at ${childId}`,
       });
     });
 
@@ -696,7 +696,7 @@ Waiting.
       // worded refusal: only the propagation guard carries the cause + run id.
       expect(cycle).toMatchObject({
         code: 'INLINE_PARENT_CYCLE',
-        error: `Inline parent cycle detected at ${childId}`,
+        error: `Parent linkage cycle detected at ${childId}`,
         details: { cause: 'repeat', runId: childId },
       });
     });

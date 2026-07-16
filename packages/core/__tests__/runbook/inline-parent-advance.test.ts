@@ -610,6 +610,38 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(result).toBe('linkage-cycle');
   });
 
+  it('does not call a purely DELEGATION cycle "inline" in the operator message', async () => {
+    // The guard sits BEFORE the kind dispatch, so it trips on a delegation
+    // back-edge with no inline linkage anywhere in the graph. Reachable:
+    // propagateDrivenRunTerminal routes a delegation-linked child straight to the
+    // seam with no claim gate, so `rundown pass` on a self-linked delegation
+    // child lands here. Telling that operator "Inline parent cycle" is simply
+    // false and sends them looking for a composition that does not exist.
+    //
+    // The INLINE_PARENT_CYCLE *code* deliberately stays: it is an established
+    // agent-facing identifier shared with the force-terminal path, and both
+    // conditions have one recovery — prune the named run. The code is an index
+    // into that recovery; the message is what a human reads. Only the message
+    // has to be true about the linkage kind.
+    const child = makeState(CHILD, { parentLinkage: delegationLinkage(CHILD) });
+    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
+
+    const result = await propagateTerminalChildUpward(makeDeps({ onLinkageCycle }), child, 'pass');
+
+    expect(result).toBe('linkage-cycle');
+    expect(onLinkageCycle).toHaveBeenCalledWith({
+      cause: 'repeat',
+      repeatedRunId: CHILD,
+      code: 'INLINE_PARENT_CYCLE',
+      message: `Parent linkage cycle detected at ${CHILD}`,
+    });
+    // The message must not assert a linkage kind the graph does not have. This
+    // outlives the exact-string assertion above: a future reword still cannot
+    // reintroduce "inline" on a delegation-only graph.
+    const [trip] = onLinkageCycle.mock.calls[0];
+    expect(trip.message).not.toMatch(/inline/i);
+  });
+
   it('a cyclic DELEGATION linkage trips before recording report-only', async () => {
     // child(A) -> inline parent(B); B is delegation-linked back to A. The guard
     // is checked before the kind dispatch, so the report is refused too.
@@ -725,7 +757,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       cause: 'repeat',
       repeatedRunId: CHILD,
       code: 'INLINE_PARENT_CYCLE',
-      message: `Inline parent cycle detected at ${CHILD}`,
+      message: `Parent linkage cycle detected at ${CHILD}`,
     });
   });
 
@@ -755,7 +787,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       cause: 'repeat',
       repeatedRunId: PARENT,
       code: 'INLINE_PARENT_CYCLE',
-      message: `Inline parent cycle detected at ${PARENT}`,
+      message: `Parent linkage cycle detected at ${PARENT}`,
     });
   });
 

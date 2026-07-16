@@ -147,21 +147,36 @@ export interface InlineParentAdvanceSessionService {
 export const INLINE_PARENT_CYCLE_CODE = 'INLINE_PARENT_CYCLE';
 
 /**
- * Compose the operator message for a back-edge in the inline linkage graph.
+ * Compose the operator message for a back-edge in the parent linkage graph.
+ *
+ * Deliberately says "Parent linkage", NOT "Inline parent" (#602 review). This
+ * walk's guard sits BEFORE the kind dispatch, so it also trips on a cyclic
+ * DELEGATION linkage — reachable, because `propagateDrivenRunTerminal` routes a
+ * delegation-linked child straight to the seam with no claim gate. Wording that
+ * asserts "inline" would be flatly false for such a graph and would send the
+ * operator hunting for a composition that does not exist. "Parent linkage" is
+ * true of both kinds and costs the force-terminal path nothing: its inline-ness
+ * is already carried by `reason: 'inline-cycle'` and the error code, not by this
+ * text.
+ *
+ * The {@link INLINE_PARENT_CYCLE_CODE} is unaffected: it is an established
+ * agent-facing identifier, and both conditions imply one recovery — prune the
+ * named run. The code is the index into that recovery; the message is what a
+ * human reads, and only the message has to be true about the linkage kind.
  *
  * SINGLE source of truth, shared with the force-terminal path
  * (`lifecycle-command-service`, via `resolveActiveInlineForceTerminalPlan`'s
- * `inline-cycle`). Both detect the same fact and prescribe the same recovery —
- * prune the named run — so they must not be able to word it differently. They
- * previously carried byte-identical copies of this string in two packages; the
- * copies were indistinguishable at the CLI boundary, which is precisely how a
- * test can assert one path while exercising the other (#602 review).
+ * `inline-cycle`). Both name the same run and prescribe the same recovery, so
+ * they must not be able to word it differently. They previously carried
+ * byte-identical copies of this string in two packages; the copies were
+ * indistinguishable at the CLI boundary, which is precisely how a test can
+ * assert one path while exercising the other (#602 review).
  *
  * @param repeatedRunId - The already-visited run the walk would have re-entered.
  * @returns The operator-facing message naming the run to prune.
  */
 export function inlineParentCycleMessage(repeatedRunId: RunId): string {
-  return `Inline parent cycle detected at ${repeatedRunId}`;
+  return `Parent linkage cycle detected at ${repeatedRunId}`;
 }
 
 /**
