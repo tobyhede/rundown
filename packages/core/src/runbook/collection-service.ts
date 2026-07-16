@@ -8,6 +8,7 @@ import { resolveCommandIntent } from './command-policy.js';
 import {
   propagateTerminalChildUpward,
   type AdvanceInlineParent,
+  type OnLinkageCycle,
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
@@ -73,6 +74,13 @@ export interface RunbookCollectionServiceDependencies {
    * targets never invoke it (report-only).
    */
   readonly advanceInlineParent: AdvanceInlineParent;
+  /**
+   * Frontend-supplied diagnostic sink invoked when the upward-propagation guard
+   * trips on a corrupt linkage graph (#602). Required for the same reason
+   * `advanceInlineParent` is: the collect path can drive the seam, so it must be
+   * able to name the offending run to the operator.
+   */
+  readonly onLinkageCycle: OnLinkageCycle;
 }
 
 /** Explicit collection target resolved by a frontend adapter or another core service. */
@@ -636,6 +644,7 @@ async function propagateCollectTerminalUpward(
       sessionService: input.sessionService,
       completionService: input.completionService,
       advanceInlineParent: input.advanceInlineParent,
+      onLinkageCycle: input.onLinkageCycle,
     },
     terminalState,
     undefined,

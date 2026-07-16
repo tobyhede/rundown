@@ -35,6 +35,7 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   type AdvanceInlineParent,
+  type OnLinkageCycle,
   type PropagateTerminalChildUpwardDeps,
   type RunbookState,
   type ParentLinkage,
@@ -206,6 +207,35 @@ export function buildAdvanceInlineParent(
  * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
  * @returns Deps for the core `propagateTerminalChildUpward` seam.
  */
+/**
+ * Build the CLI's linkage-guard diagnostic sink (Category A: terminal rendering).
+ *
+ * Emits the `INLINE_PARENT_CYCLE` error code — the SAME code the force-terminal
+ * path already surfaces for a cyclic inline chain
+ * (`core/src/runbook/lifecycle-command-service.ts:1754`). The seam's internal cause
+ * is named `linkage-cycle` (broader: its guard precedes the kind dispatch, so it
+ * covers delegation linkages too), but both conditions are one operator-facing
+ * fact — the persisted linkage graph has a back-edge — with one recovery, so they
+ * share one code rather than splitting the operator's index into it (#602).
+ *
+ * The adapters call `output.flush()` after the seam returns, so the emitted
+ * diagnostic lands with the rest of the command's output.
+ *
+ * @param output - Output emitter owned by the calling command.
+ * @returns The sink to place on the core deps bag.
+ */
+export function buildLinkageCycleDiagnostic(output: OutputEmitter): OnLinkageCycle {
+  return ({ runId, cause }) => {
+    output.error(
+      cause === 'repeat'
+        ? `Inline parent cycle detected at ${runId}`
+        : `Inline parent chain from ${runId} exceeded the maximum propagation depth`,
+      'INLINE_PARENT_CYCLE',
+      { runId, cause },
+    );
+  };
+}
+
 export async function buildInlineParentAdvanceDeps(
   cwd: string,
   output: OutputEmitter,
@@ -222,6 +252,7 @@ export async function buildInlineParentAdvanceDeps(
     sessionService,
     completionService,
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
+    onLinkageCycle: buildLinkageCycleDiagnostic(output),
   };
 }
 

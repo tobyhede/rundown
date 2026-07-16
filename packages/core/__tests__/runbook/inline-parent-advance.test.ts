@@ -3,6 +3,7 @@ import {
   propagateTerminalChildUpward,
   MAX_INLINE_PROPAGATION_CHAIN,
   type AdvanceInlineParent,
+  type LinkageCycleTrip,
   type PropagateTerminalChildUpwardDeps,
 } from '../../src/runbook/inline-parent-advance.js';
 import {
@@ -96,6 +97,7 @@ function makeDeps(
         .mockResolvedValue('recorded'),
     },
     advanceInlineParent: NEVER_ADVANCE,
+    onLinkageCycle: () => {},
     ...overrides,
   };
 }
@@ -705,5 +707,90 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     );
     expect(result).toBe('handled');
     expect(advanceInlineParent).toHaveBeenCalledTimes(MAX_INLINE_PROPAGATION_CHAIN - 1);
+  });
+
+  // --- #602: the trip's operator diagnostic. A fail-closed 'blocked' with no
+  // named run leaves the operator unable to know which run to prune.
+
+  it('names the repeated run on the sink when the visited set trips (#602)', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(CHILD) });
+    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
+    const result = await propagateTerminalChildUpward(makeDeps({ onLinkageCycle }), child, 'pass');
+    expect(result).toBe('linkage-cycle');
+    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
+    expect(onLinkageCycle).toHaveBeenCalledWith({ runId: CHILD, cause: 'repeat' });
+  });
+
+  it('reports the run the walk stalled at, not the entry child, on a deep cycle (#602)', async () => {
+    // child(A) -> parent(B) -> back to B itself. The trip is found at level 2, so
+    // the operator must be told to prune B — telling them A would be useless.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: inlineLinkage(PARENT),
+    });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
+    expect(onLinkageCycle).toHaveBeenCalledWith({ runId: PARENT, cause: 'repeat' });
+  });
+
+  it('distinguishes the depth cause on an over-deep acyclic chain (#602)', async () => {
+    const child = makeState(chainRunId(0), { parentLinkage: inlineLinkage(chainRunId(1)) });
+    let level = 1;
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>(async () => {
+      const current = level;
+      level += 1;
+      return makeState(chainRunId(current), {
+        lifecycle: 'completed',
+        parentLinkage: inlineLinkage(chainRunId(current + 1)),
+      });
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
+    // The walk stalls trying to step from level MAX-1 onto level MAX.
+    expect(onLinkageCycle).toHaveBeenCalledWith({
+      runId: chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1),
+      cause: 'depth',
+    });
+  });
+
+  it('never fires the sink on a valid acyclic chain (#602)', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentRoot = makeState(PARENT, { lifecycle: 'completed' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentRoot);
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('handled');
+    expect(onLinkageCycle).not.toHaveBeenCalled();
   });
 });

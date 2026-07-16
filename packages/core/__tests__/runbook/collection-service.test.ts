@@ -1174,6 +1174,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1208,6 +1209,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1239,6 +1241,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1277,6 +1280,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
       const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
 

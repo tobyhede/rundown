@@ -198,6 +198,7 @@ const {
   reportTerminalToDelegatingRun,
   advanceParentForInlineChild,
   buildAdvanceInlineParent,
+  buildLinkageCycleDiagnostic,
   extractParentLinkage,
   propagateChildTerminal,
   propagateDrivenRunTerminal,
@@ -616,6 +617,28 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
     propagateTerminalChildUpward.mockResolvedValue('duplicate');
     const result = await propagateChildTerminal(childState, 'pass', '/test', output);
     expect(result).toBe('reported');
+  });
+});
+
+describe('buildLinkageCycleDiagnostic (#602)', () => {
+  it('emits INLINE_PARENT_CYCLE naming the repeated run', () => {
+    const output = makeOutput();
+    buildLinkageCycleDiagnostic(output)({ runId: CHILD_RUN_ID, cause: 'repeat' });
+    expect(output.error).toHaveBeenCalledWith(
+      `Inline parent cycle detected at ${CHILD_RUN_ID}`,
+      'INLINE_PARENT_CYCLE',
+      { runId: CHILD_RUN_ID, cause: 'repeat' },
+    );
+  });
+
+  it('emits INLINE_PARENT_CYCLE naming the run the depth cap stalled at', () => {
+    const output = makeOutput();
+    buildLinkageCycleDiagnostic(output)({ runId: CHILD_RUN_ID, cause: 'depth' });
+    expect(output.error).toHaveBeenCalledWith(
+      `Inline parent chain from ${CHILD_RUN_ID} exceeded the maximum propagation depth`,
+      'INLINE_PARENT_CYCLE',
+      { runId: CHILD_RUN_ID, cause: 'depth' },
+    );
   });
 });
 

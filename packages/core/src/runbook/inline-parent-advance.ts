@@ -134,6 +134,41 @@ export interface InlineParentAdvanceSessionService {
 }
 
 /**
+ * The trip that ended an upward propagation walk (#602).
+ *
+ * `cause` is NOT a control-flow discriminant — both causes collapse to the single
+ * `'linkage-cycle'` result, and no consumer branches on it. It exists because the
+ * two conditions imply different operator inspections: `'repeat'` means the walk
+ * reached `runId` twice (a back-edge in a graph built as a tree), `'depth'` means
+ * the chain from `runId` upward exceeded {@link MAX_INLINE_PROPAGATION_CHAIN}
+ * without ending. Either way the recovery is explicit user action against `runId`.
+ */
+export interface LinkageCycleTrip {
+  /**
+   * The run the walk stalled at: the repeated id for `'repeat'`, the last run
+   * walked for `'depth'`. This is the run reported to the operator, so it is the
+   * id found AT the tripping level — never the entry child's.
+   */
+  readonly runId: RunId;
+  /** Which guard tripped. Diagnostic only; see {@link LinkageCycleTrip}. */
+  readonly cause: 'repeat' | 'depth';
+}
+
+/**
+ * Frontend-supplied diagnostic sink invoked when the upward walk's guard trips.
+ *
+ * Rendering a diagnostic is a Category A (frontend) side effect, so the seam does
+ * not render — it calls this. Required, not optional: a corrupt linkage graph that
+ * fails closed with no named run leaves the operator unable to act, and the project
+ * makes explicit user action (finish / stop / prune / restart) the only recovery
+ * path for invalid persisted state. Called AT MOST ONCE per walk, immediately
+ * before the guard returns `'linkage-cycle'`.
+ *
+ * @param trip - The stalled run and which guard tripped.
+ */
+export type OnLinkageCycle = (trip: LinkageCycleTrip) => void;
+
+/**
  * Dependencies for {@link propagateTerminalChildUpward}.
  *
  * `manager` / `sessionService` / `completionService` are already-constructed
@@ -149,6 +184,12 @@ export interface PropagateTerminalChildUpwardDeps {
   readonly completionService: Pick<RunbookCompletionService, 'recordChildCompletion'>;
   /** CLI-supplied inline parent-advance execution callable. */
   readonly advanceInlineParent: AdvanceInlineParent;
+  /**
+   * Frontend-supplied diagnostic sink for a tripped linkage guard (#602). Rides
+   * the same rail as `advanceInlineParent`: a runtime callable in the deps bag,
+   * never persisted.
+   */
+  readonly onLinkageCycle: OnLinkageCycle;
 }
 
 /**
@@ -236,8 +277,19 @@ async function propagateTerminalChildUpwardInner(
   // cyclic delegation linkage is refused as firmly as a cyclic inline one. A
   // repeat means the persisted graph is not the tree it is built as; refuse
   // rather than re-run record → advance → release on a run already walked.
-  if (visited.has(linkage.parentRunId)) return 'linkage-cycle';
-  if (depth >= MAX_INLINE_PROPAGATION_CHAIN) return 'linkage-cycle';
+  //
+  // The sink fires HERE, at the level that found the trip, so it names the true
+  // offending run: the severity collapse on the way back out keeps only the member.
+  // The 'depth' arm names `childState.id` — the deepest run actually walked —
+  // because `linkage.parentRunId` was never reached.
+  if (visited.has(linkage.parentRunId)) {
+    deps.onLinkageCycle({ runId: linkage.parentRunId, cause: 'repeat' });
+    return 'linkage-cycle';
+  }
+  if (depth >= MAX_INLINE_PROPAGATION_CHAIN) {
+    deps.onLinkageCycle({ runId: childState.id, cause: 'depth' });
+    return 'linkage-cycle';
+  }
 
   if (linkage.kind === 'delegation') {
     const recorded = await deps.completionService.recordChildCompletion({
