@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RunbookActorService, InvalidRunbookStateError } from '@rundown-org/core';
 import {
@@ -10,6 +10,7 @@ import {
   readRunbookState,
   findActionOutput,
   parseConcatenatedJson,
+  withRunTarget,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { Command } from 'commander';
@@ -589,5 +590,115 @@ Waiting.
     const session = await readSession(workspace);
     expect(session.defaultStack).not.toContain(parent!.id);
     expect(session.defaultStack).not.toContain(child!.id);
+  });
+
+  describe('corrupt inline linkage graph (#602)', () => {
+    // The linkage graph is a tree by construction, so no command sequence can
+    // author a back-edge — but corrupt persisted state is precisely what the
+    // guard exists for, and this repo already fixtures exactly that (stop.test.ts
+    // rewrites a run's JSON for #518; session-service.test.ts builds a 2-node
+    // inline cycle via manager.save). This drives the WHOLE chain the unit tests
+    // only cover in pieces: real persisted state -> seam guard -> adapter
+    // collapse -> process exit code + the agent-facing JSON envelope.
+
+    /** Seed a real parent + inline child, then point the child's linkage at itself. */
+    async function seedSelfLinkedInlineChild(): Promise<string> {
+      await writeFile(
+        join(workspace.cwd, 'parent-602.runbook.md'),
+        [
+          '# Parent 602',
+          '',
+          '## 1. Compose',
+          '- PASS CONTINUE',
+          '- FAIL STOP',
+          '',
+          '### 1.1 Inline child',
+          'Launch child here.',
+          '',
+          '## 2. Later',
+          '- PASS COMPLETE',
+          '- FAIL STOP',
+          '',
+        ].join('\n'),
+      );
+      await writeFile(
+        join(workspace.cwd, 'child-602.runbook.md'),
+        [
+          '# Child 602',
+          '',
+          '## 1. Waiting',
+          '- PASS COMPLETE',
+          '- FAIL STOP',
+          '',
+          'Waiting.',
+          '',
+        ].join('\n'),
+      );
+      await runCliInProcess('run --prompted parent-602.runbook.md', workspace);
+      await runCliInProcess('run child-602.runbook.md --step 1.1', workspace);
+      const child = await getActiveState(workspace);
+      expect(child?.parentLinkage?.kind).toBe('inline');
+
+      // The back-edge: the child's inline parent is now ITSELF.
+      const statePath = join(workspace.statePath(), `${child!.id}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as {
+        parentLinkage: { parentRunId: string };
+      };
+      raw.parentLinkage.parentRunId = child!.id;
+      await writeFile(statePath, JSON.stringify(raw));
+      return child!.id;
+    }
+
+    it('refuses a self-linked inline child: non-zero exit + INLINE_PARENT_CYCLE naming the run', async () => {
+      const childId = await seedSelfLinkedInlineChild();
+
+      const result = await runCliInProcess('complete', workspace);
+
+      // Fail closed at the PROCESS boundary, not merely in the seam. The
+      // equivalent healthy chain exits 0 (see the force-complete test above), so
+      // this pins the refusal end-to-end rather than a mock's arguments.
+      //
+      // NOTE ON WHICH GUARD THIS COVERS: `complete` resolves its force-terminal
+      // plan FIRST, so the pre-existing `resolveActiveInlineForceTerminalPlan`
+      // cycle check refuses here before the propagation seam is ever reached.
+      // That is correct behaviour and worth pinning — but it is NOT the #602
+      // propagation guard, which `pass --claim-id` covers below. The two shared a
+      // byte-identical message until this change routed both through
+      // `inlineParentCycleMessage`, which is exactly why this test could assert
+      // one path while exercising the other.
+      expect(result.exitCode).not.toBe(0);
+      const cycle = parseConcatenatedJson(result.stdout).find(
+        (entry) => (entry as Record<string, unknown>).code === 'INLINE_PARENT_CYCLE',
+      ) as Record<string, unknown> | undefined;
+      // The operator must be told WHICH run to prune: an unnamed refusal is
+      // indistinguishable from any other block and carries no recovery path.
+      expect(cycle).toMatchObject({
+        code: 'INLINE_PARENT_CYCLE',
+        error: `Inline parent cycle detected at ${childId}`,
+      });
+    });
+
+    it('refuses via the #602 propagation guard on pass, naming the run and its cause', async () => {
+      // This is the seam #602 added. `pass` on an inline child drives
+      // propagateTerminalChildUpward, whose guard trips on the self-edge BEFORE
+      // any record/advance/release, collapses to the adapter's fail-closed
+      // 'blocked', and drives a non-zero exit. Unlike the unit tests, nothing
+      // here is mocked: real persisted state, real seam, real exit code.
+      const childId = await seedSelfLinkedInlineChild();
+
+      const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const cycle = parseConcatenatedJson(result.stdout).find(
+        (entry) => (entry as Record<string, unknown>).code === 'INLINE_PARENT_CYCLE',
+      ) as Record<string, unknown> | undefined;
+      // `details` distinguishes this from the force-terminal path's identically
+      // worded refusal: only the propagation guard carries the cause + run id.
+      expect(cycle).toMatchObject({
+        code: 'INLINE_PARENT_CYCLE',
+        error: `Inline parent cycle detected at ${childId}`,
+        details: { cause: 'repeat', runId: childId },
+      });
+    });
   });
 });

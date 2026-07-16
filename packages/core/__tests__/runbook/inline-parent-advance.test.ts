@@ -718,7 +718,15 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const result = await propagateTerminalChildUpward(makeDeps({ onLinkageCycle }), child, 'pass');
     expect(result).toBe('linkage-cycle');
     expect(onLinkageCycle).toHaveBeenCalledTimes(1);
-    expect(onLinkageCycle).toHaveBeenCalledWith({ runId: CHILD, cause: 'repeat' });
+    // Core owns the operator message and code, mirroring the force-terminal
+    // precedent (`lifecycle-command-service.ts` builds both for its
+    // `INLINE_PARENT_CYCLE`). The frontend renders; it does not compose.
+    expect(onLinkageCycle).toHaveBeenCalledWith({
+      cause: 'repeat',
+      repeatedRunId: CHILD,
+      code: 'INLINE_PARENT_CYCLE',
+      message: `Inline parent cycle detected at ${CHILD}`,
+    });
   });
 
   it('reports the run the walk stalled at, not the entry child, on a deep cycle (#602)', async () => {
@@ -743,7 +751,12 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     );
     expect(result).toBe('linkage-cycle');
     expect(onLinkageCycle).toHaveBeenCalledTimes(1);
-    expect(onLinkageCycle).toHaveBeenCalledWith({ runId: PARENT, cause: 'repeat' });
+    expect(onLinkageCycle).toHaveBeenCalledWith({
+      cause: 'repeat',
+      repeatedRunId: PARENT,
+      code: 'INLINE_PARENT_CYCLE',
+      message: `Inline parent cycle detected at ${PARENT}`,
+    });
   });
 
   it('distinguishes the depth cause on an over-deep acyclic chain (#602)', async () => {
@@ -768,10 +781,15 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     );
     expect(result).toBe('linkage-cycle');
     expect(onLinkageCycle).toHaveBeenCalledTimes(1);
-    // The walk stalls trying to step from level MAX-1 onto level MAX.
+    // The walk stalls trying to step from level MAX-1 onto level MAX. The depth
+    // arm names its OWN field (`deepestRunId`) — a repeat names `repeatedRunId`.
+    // One field whose meaning depended on a sibling string was the #602 review's
+    // missing-type-structure finding; the union now makes each meaning explicit.
     expect(onLinkageCycle).toHaveBeenCalledWith({
-      runId: chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1),
       cause: 'depth',
+      deepestRunId: chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1),
+      code: 'INLINE_PARENT_CYCLE',
+      message: `Inline parent chain from ${chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1)} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
     });
   });
 

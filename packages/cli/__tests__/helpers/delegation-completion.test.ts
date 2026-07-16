@@ -623,23 +623,42 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
 });
 
 describe('buildLinkageCycleDiagnostic (#602)', () => {
-  it('emits INLINE_PARENT_CYCLE naming the repeated run', () => {
+  // The sink RENDERS; it does not compose. Core owns the message and code (the
+  // seam's own tests pin their text), so these assert pass-through + the run id
+  // each cause carries under its own field name.
+  it('renders core-composed repeat trip verbatim, naming the repeated run', () => {
     const output = makeOutput();
-    buildLinkageCycleDiagnostic(output)({ runId: CHILD_RUN_ID, cause: 'repeat' });
+    buildLinkageCycleDiagnostic(output)({
+      cause: 'repeat',
+      repeatedRunId: CHILD_RUN_ID,
+      code: 'INLINE_PARENT_CYCLE',
+      message: 'core-composed repeat message',
+    });
     expect(output.error).toHaveBeenCalledWith(
-      `Inline parent cycle detected at ${CHILD_RUN_ID}`,
+      'core-composed repeat message',
       'INLINE_PARENT_CYCLE',
-      { runId: CHILD_RUN_ID, cause: 'repeat' },
+      {
+        cause: 'repeat',
+        runId: CHILD_RUN_ID,
+      },
     );
   });
 
-  it('emits INLINE_PARENT_CYCLE naming the run the depth cap stalled at', () => {
+  it('renders core-composed depth trip verbatim, naming the deepest run walked', () => {
     const output = makeOutput();
-    buildLinkageCycleDiagnostic(output)({ runId: CHILD_RUN_ID, cause: 'depth' });
+    buildLinkageCycleDiagnostic(output)({
+      cause: 'depth',
+      deepestRunId: CHILD_RUN_ID,
+      code: 'INLINE_PARENT_CYCLE',
+      message: 'core-composed depth message',
+    });
     expect(output.error).toHaveBeenCalledWith(
-      `Inline parent chain from ${CHILD_RUN_ID} exceeded the maximum propagation depth`,
+      'core-composed depth message',
       'INLINE_PARENT_CYCLE',
-      { runId: CHILD_RUN_ID, cause: 'depth' },
+      {
+        cause: 'depth',
+        runId: CHILD_RUN_ID,
+      },
     );
   });
 });

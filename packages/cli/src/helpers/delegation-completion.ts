@@ -197,13 +197,11 @@ export function buildAdvanceInlineParent(
 /**
  * Build the CLI's linkage-guard diagnostic sink (Category A: terminal rendering).
  *
- * Emits the `INLINE_PARENT_CYCLE` error code — the SAME code the force-terminal
- * path already surfaces for a cyclic inline chain
- * (`core/src/runbook/lifecycle-command-service.ts:1754`). The seam's internal cause
- * is named `linkage-cycle` (broader: its guard precedes the kind dispatch, so it
- * covers delegation linkages too), but both conditions are one operator-facing
- * fact — the persisted linkage graph has a back-edge — with one recovery, so they
- * share one code rather than splitting the operator's index into it (#602).
+ * Renders only. The message and the `INLINE_PARENT_CYCLE` code are composed by
+ * core (#602) — choosing what a corrupt linkage graph says to an operator is
+ * runbook logic, and the CLI is a thin wrapper. This mirrors the force-terminal
+ * path, where core's `LifecycleTerminalOutcome` already carries both for the same
+ * fact and the CLI merely renders them.
  *
  * The adapters call `output.flush()` after the seam returns, so the emitted
  * diagnostic lands with the rest of the command's output.
@@ -212,14 +210,11 @@ export function buildAdvanceInlineParent(
  * @returns The sink to place on the core deps bag.
  */
 export function buildLinkageCycleDiagnostic(output: OutputEmitter): OnLinkageCycle {
-  return ({ runId, cause }) => {
-    output.error(
-      cause === 'repeat'
-        ? `Inline parent cycle detected at ${runId}`
-        : `Inline parent chain from ${runId} exceeded the maximum propagation depth`,
-      'INLINE_PARENT_CYCLE',
-      { runId, cause },
-    );
+  return (trip) => {
+    output.error(trip.message, trip.code, {
+      cause: trip.cause,
+      runId: trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId,
+    });
   };
 }
 

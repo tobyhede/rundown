@@ -93,9 +93,10 @@ export type AdvanceInlineParent = (
  * HIGHEST severity member — a cycle found deep in the walk is never downgraded by
  * a shallower `done`/`stopped`. Consumers that cannot represent it (the CLI
  * adapters, the collect path) map it EXPLICITLY onto their pre-existing `blocked`,
- * which already carries "fail closed, exit non-zero". The two causes are NOT
- * distinguished in this union (no consumer branches on them) — they are named for
- * the operator on the {@link OnLinkageCycle} sink instead.
+ * which carries "fail closed, exit non-zero". The two causes are NOT distinguished
+ * in this union — no consumer branches on the RESULT to route control flow — but
+ * they are distinguished for the operator on the {@link OnLinkageCycle} sink,
+ * which carries each cause's own run id, message, and code.
  */
 export type TerminalUpwardPropagationResult =
   | 'handled'
@@ -134,37 +135,82 @@ export interface InlineParentAdvanceSessionService {
 }
 
 /**
+ * Operator-facing error code for a refused linkage walk (#602).
+ *
+ * Deliberately the SAME code the force-terminal path already surfaces for a cyclic
+ * inline chain (`lifecycle-command-service.ts`, via
+ * `SessionService.resolveActiveInlineForceTerminalPlan`). Both are one operator
+ * fact — the persisted linkage graph is not the tree it is built as — with one
+ * recovery, so they share one index into that recovery rather than minting a
+ * second code for the same condition.
+ */
+export const INLINE_PARENT_CYCLE_CODE = 'INLINE_PARENT_CYCLE';
+
+/**
+ * Compose the operator message for a back-edge in the inline linkage graph.
+ *
+ * SINGLE source of truth, shared with the force-terminal path
+ * (`lifecycle-command-service`, via `resolveActiveInlineForceTerminalPlan`'s
+ * `inline-cycle`). Both detect the same fact and prescribe the same recovery —
+ * prune the named run — so they must not be able to word it differently. They
+ * previously carried byte-identical copies of this string in two packages; the
+ * copies were indistinguishable at the CLI boundary, which is precisely how a
+ * test can assert one path while exercising the other (#602 review).
+ *
+ * @param repeatedRunId - The already-visited run the walk would have re-entered.
+ * @returns The operator-facing message naming the run to prune.
+ */
+export function inlineParentCycleMessage(repeatedRunId: RunId): string {
+  return `Inline parent cycle detected at ${repeatedRunId}`;
+}
+
+/**
  * The trip that ended an upward propagation walk (#602).
  *
- * `cause` is NOT a control-flow discriminant — both causes collapse to the single
- * `'linkage-cycle'` result, and no consumer branches on it. It exists because the
- * two conditions imply different operator inspections: `'repeat'` means the walk
- * reached `runId` twice (a back-edge in a graph built as a tree), `'depth'` means
- * the chain from `runId` upward exceeded {@link MAX_INLINE_PROPAGATION_CHAIN}
- * without ending. Either way the recovery is explicit user action against `runId`.
+ * A discriminated union on `cause`, so each cause names the run it actually found
+ * and no field's meaning depends on a sibling string: a `'repeat'` names the
+ * already-visited ancestor the walk would have re-entered; a `'depth'` names the
+ * deepest run actually walked (its parent was never reached). Both carry the
+ * operator `message` and `code` because composing them is core's job — the same
+ * shape `LifecycleTerminalOutcome` uses for this exact fact — leaving the frontend
+ * to render, not to decide what a corrupt linkage graph should say.
  */
-export interface LinkageCycleTrip {
-  /**
-   * The run the walk stalled at: the repeated id for `'repeat'`, the last run
-   * walked for `'depth'`. This is the run reported to the operator, so it is the
-   * id found AT the tripping level — never the entry child's.
-   */
-  readonly runId: RunId;
-  /** Which guard tripped. Diagnostic only; see {@link LinkageCycleTrip}. */
-  readonly cause: 'repeat' | 'depth';
-}
+export type LinkageCycleTrip =
+  | {
+      /** The walk reached a run id it had already visited: a back-edge. */
+      readonly cause: 'repeat';
+      /** The already-visited run the walk would have re-entered. Prune this. */
+      readonly repeatedRunId: RunId;
+      /** Operator-facing message naming the offending run. */
+      readonly message: string;
+      /** Operator-facing error code. */
+      readonly code: typeof INLINE_PARENT_CYCLE_CODE;
+    }
+  | {
+      /** The chain exceeded {@link MAX_INLINE_PROPAGATION_CHAIN} without ending. */
+      readonly cause: 'depth';
+      /** The deepest run actually walked; its parent was never reached. */
+      readonly deepestRunId: RunId;
+      /** Operator-facing message naming the run the walk stalled at. */
+      readonly message: string;
+      /** Operator-facing error code. */
+      readonly code: typeof INLINE_PARENT_CYCLE_CODE;
+    };
 
 /**
  * Frontend-supplied diagnostic sink invoked when the upward walk's guard trips.
  *
- * Rendering a diagnostic is a Category A (frontend) side effect, so the seam does
- * not render — it calls this. Required, not optional: a corrupt linkage graph that
- * fails closed with no named run leaves the operator unable to act, and the project
- * makes explicit user action (finish / stop / prune / restart) the only recovery
- * path for invalid persisted state. Called AT MOST ONCE per walk, immediately
- * before the guard returns `'linkage-cycle'`.
+ * Rendering is a Category A (frontend) side effect, so the seam does not render —
+ * it hands the frontend a fully-composed {@link LinkageCycleTrip} and the frontend
+ * decides only HOW to display it. Required, not optional: a corrupt linkage graph
+ * that fails closed with no named run leaves the operator unable to act, and the
+ * project makes explicit user action (finish / stop / prune / restart) the only
+ * recovery path for invalid persisted state. Called AT MOST ONCE per walk,
+ * immediately before the guard returns `'linkage-cycle'` — i.e. at the level that
+ * FOUND the trip, so the reported run is the true offender and cannot be lost to
+ * the severity collapse on the way back out.
  *
- * @param trip - The stalled run and which guard tripped.
+ * @param trip - The composed trip: cause, the run it found, message, and code.
  */
 export type OnLinkageCycle = (trip: LinkageCycleTrip) => void;
 
@@ -199,7 +245,8 @@ export interface PropagateTerminalChildUpwardDeps {
  * of N DISTINCT run ids costs N advances + N releases + N reloads before it ends.
  * Legitimate inline nesting is a handful of levels (a runbook composing a child
  * that composes a child), so 64 leaves ~2 orders of magnitude of headroom while
- * capping worst-case side effects at 64. Exceeding it trips the same
+ * bounding worst-case side effects at 63 (the 64th run trips the guard BEFORE any
+ * side effect of its own, so 64 runs are visited but only 63 advance). Exceeding it trips the same
  * `'linkage-cycle'` disposition — on a tree-by-construction graph, a 64-deep chain
  * is corruption of the same class.
  *
@@ -283,11 +330,21 @@ async function propagateTerminalChildUpwardInner(
   // The 'depth' arm names `childState.id` — the deepest run actually walked —
   // because `linkage.parentRunId` was never reached.
   if (visited.has(linkage.parentRunId)) {
-    deps.onLinkageCycle({ runId: linkage.parentRunId, cause: 'repeat' });
+    deps.onLinkageCycle({
+      cause: 'repeat',
+      repeatedRunId: linkage.parentRunId,
+      code: INLINE_PARENT_CYCLE_CODE,
+      message: inlineParentCycleMessage(linkage.parentRunId),
+    });
     return 'linkage-cycle';
   }
   if (depth >= MAX_INLINE_PROPAGATION_CHAIN) {
-    deps.onLinkageCycle({ runId: childState.id, cause: 'depth' });
+    deps.onLinkageCycle({
+      cause: 'depth',
+      deepestRunId: childState.id,
+      code: INLINE_PARENT_CYCLE_CODE,
+      message: `Inline parent chain from ${childState.id} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
+    });
     return 'linkage-cycle';
   }
 

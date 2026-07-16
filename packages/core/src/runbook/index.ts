@@ -168,6 +168,8 @@ export {
 } from './collection-service.js';
 export {
   propagateTerminalChildUpward,
+  INLINE_PARENT_CYCLE_CODE,
+  MAX_INLINE_PROPAGATION_CHAIN,
   type AdvanceInlineParent,
   type AdvanceInlineParentInput,
   type AdvanceInlineParentOutcome,
