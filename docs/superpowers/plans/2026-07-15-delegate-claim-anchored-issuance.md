@@ -124,7 +124,7 @@ Run: `pnpm --filter @rundown-org/core exec jest lifecycle-command-service.test.t
 Expected: FAIL. Before the fix the seam anchors the active default (`otherRunId`); the authorization gate then rejects the claim's missing `delegate-from-run` grant for that run, so `outcome.kind` is `'refused'` — the `expect(outcome.kind).toBe('delegated')` assertion fails.
 
 > The fall-through test (`falls through … when the claim's controlled run is terminal`) already PASSES before the fix — before the branch exists the seam always anchors the active default, which is exactly what it asserts. That is intended: it is a mutation-killing / invariant guard, not a red→green driver. Confirm it stays green after Step 3-4.
-
+>
 > **Jest invocation:** use `exec jest <path> -t "<name>"`, NOT `test -- <path> -t "<name>"`. Both packages define `"test": "jest"`, so the script form forwards a literal `--` into jest 30, which then treats `-t` and the name as positional path patterns — the name filter is silently dropped and a mistyped red-test name matches nothing yet reports green. `exec jest` bypasses the script indirection.
 
 - [ ] **Step 3: Add the claim-anchored branch to `#resolveIssuanceAnchor`**
@@ -276,7 +276,7 @@ Add to `packages/cli/__tests__/integration/delegate-workflow.test.ts`, inside th
     // run.ts:66; mirrors how setupParentWithChildren keeps the parent alive).
     const other = createRunbook({
       title: 'Other',
-      steps: [{ title: 'Only', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      steps: [{ title: 'Only', pass: 'COMPLETE', command: 'rundown echo --result pass' }],
     });
     await writeFile(join(workspace.cwd, 'runbooks', 'other.runbook.md'), other);
     const otherStart = await runCliInProcess('run --prompted runbooks/other.runbook.md', workspace);
