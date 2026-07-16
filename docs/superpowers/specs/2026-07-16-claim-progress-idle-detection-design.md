@@ -47,6 +47,7 @@ Terms were chosen against prior art, and two obvious candidates rejected.
 | Timestamp of last progress     | `lastProgressAt`                  | Kubernetes "progress" vocabulary                         |
 | Threshold before reporting idle | `idleAfter`                       | dbt source freshness `warn_after`                        |
 | Derived advisory label         | `idle: boolean`, `idleFor`        | PostgreSQL `pg_stat_activity.state` / `state_change`     |
+| Child whose record is corrupt  | `unreadable`                      | —                                                        |
 
 Kubernetes names its timestamp `lastUpdateTime`; we deliberately do not, because "update" means *record write*, not *progress* — the conflation this design avoids (see Claim Shape).
 
@@ -87,20 +88,21 @@ Recorded in `SessionService`, inside the session-lock scope that claim-authentic
 
 The eight are the codebase's own mutating-command list — the seven pinned by the `--run` registration drift guard at `run-option.test.ts:50`, plus `abort`, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
 
-**`stash` and `pop` are excluded by the anti-fooling invariant, not by convenience.** Both are claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`), so a rule keyed on "mutation" alone would sweep them in. But `lastProgressAt` means the holder advanced the *controlled run*, and stashing advances session *targeting* — the run itself is untouched. Recording them would reopen precisely the hole that disqualified the rejected verify-path design: a child looping `stash`/`pop` would refresh itself alive forever without advancing anything, faking liveness through a mutating command instead of through a read. Same defect, different door. Corroboration: `unstashForClaimId` already moves `updatedAt` (`session-service.ts:1060`) — the field this design deliberately leaves alone, precisely because it means "record written", not "run advanced".
+**`stash` and `pop` fail the predicate — they are not exceptions to it.** The anti-fooling invariant is why the predicate is worded as it is, and that wording is why these two fall outside the rule with no carve-out needed. Both are claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`), so a rule keyed on "mutation" alone would sweep them in. But `lastProgressAt` means the holder advanced the *controlled run*, and stashing advances session *targeting* — the run itself is untouched. Recording them would reopen precisely the hole that disqualified the rejected verify-path design: a child looping `stash`/`pop` would refresh itself alive forever without advancing anything, faking liveness through a mutating command instead of through a read. Same defect, different door. Corroboration: `unstashForClaimId` already moves `updatedAt` (`session-service.ts:1060`) — the field this design deliberately leaves alone, precisely because it means "record written", not "run advanced".
 
 **Recording on a claim-terminating command (`complete`, `stop`, `abort`) is deliberately not special-cased away.** It is a redundant write to a claim leaving the reportable population: it costs nothing, and it buys a predicate with no exceptions to remember.
 
 **`rundown status --claim-id` does not record.** It is claim-authenticated but read-only: a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected. Only real workflow progress refreshes the mark, so the signal cannot be fooled. This also keeps `verifyClaimId` (`session-service.ts:361`) read-only and lock-free, as designed.
 
-**A fail-closed drift guard pins all eleven, in both directions.** Modelled on `run-option.test.ts:50` ("so a future command cannot silently miss the flag"), a test classifies every claim-authenticated command and asserts each records or does not, per its category. Two anchors are needed, because a Commander-option scan can prove a *flag* exists but not that *behaviour* happens:
+**A fail-closed drift guard pins all eleven, in both directions.** Modelled on `run-option.test.ts:50` ("so a future command cannot silently miss the flag"), a test classifies every claim-authenticated command and asserts each records or does not, per its category.
 
-- **Anchor A** — an exhaustive `Record<RoleSpecificMutationCommand, …>`. That union (`subprocess-mutation-boundary.ts:33`) is core's own mutating-command definition, and `MUTATION_COMMAND_ALIASES` (`:66`) already uses this idiom against the identical drift problem. A new union member with no row is a compile error.
-- **Anchor B** — a Commander `--claim-id` surface scan, set-equal against the classification table. Anchor A cannot see `abort` (outside the union), so B catches it and anything new.
+**The anchor is a `--claim-id` scan of the real program** — `createProgram()` (`cli.ts:72`), the same factory the shipped binary uses — set-equal against the classification table. Sourcing the scan from the real program is the whole guarantee, and is not a detail of construction: a guard that builds its program by registering the same table it then compares against is **tautological**. Both sides shrink together, a new `rundown foo --claim-id` is never registered and never classified, and the suite stays green while the hole opens. The scanned surface must be independent of the guard's own knowledge, or the guard is theatre.
 
-Both anchors must be *proven to bite* — a guard that cannot fail is theatre.
+**`RoleSpecificMutationCommand` is a cross-check, not the definition.** An earlier revision of this spec named that union (`subprocess-mutation-boundary.ts:33`) "core's own mutating-command definition" and made it an anchor. That was wrong. Its TSDoc (`:27-32`) defines a **subprocess-trust** concept — "commands whose only available trust is the bare direct-CLI lane" — and its overlap with the eight is a coincidence that is **already imperfect**: `abort` records but is not a member. Binding the two would give one type two meanings — the same conflation this design rejects for `updatedAt` / `lastProgressAt` — and would let the union drift the guard for subprocess-trust reasons unrelated to idle detection. It survives only as a containment check: every member should be classified somewhere.
 
-The guard is what makes the rule enforceable rather than aspirational, and it is why the recording *seam* may differ per command without risk. `goto` and `abort` commit their mutations in the CLI (`goto-workflow.ts:309` via `sendAndSync`; `abort.ts:203` via `manager.update`) — their core services are authorization gates that return `authorized`/`refused` and mutate nothing — so those two dispatch into the core recording API from the CLI, which CLAUDE.md permits since the CLI is calling a core API rather than re-implementing one. Restructuring those seams is out of scope for #519. **The guard, not the seam's uniformity, is the guarantee.**
+The guard must be *proven to bite*, via revert-after probes that include **adding a new `--claim-id` command** and confirming it surfaces as unclassified. That probe is the one a self-fed scan cannot pass, and it is the case the guard exists for.
+
+The guard is what makes the rule enforceable rather than aspirational, and it is why the recording *seam* may differ per command without risk. This is load-bearing in one direction only: with an inert guard there is no guarantee at all, and the CLI silently owns the policy decision of when progress is recorded. The sanction below for the CLI-side seams is therefore **conditional on the guard being real**. `goto` and `abort` commit their mutations in the CLI (`goto-workflow.ts:309` via `sendAndSync`; `abort.ts:203` via `manager.update`) — their core services are authorization gates that return `authorized`/`refused` and mutate nothing — so those two dispatch into the core recording API from the CLI, which CLAUDE.md permits since the CLI is calling a core API rather than re-implementing one. Restructuring those seams is out of scope for #519. **The guard, not the seam's uniformity, is the guarantee.**
 
 **Recorded on success, not on attempt.** A child whose `rundown pass` fails validation proved it is alive but did not advance the run. The field means "the run advanced at T". A live-but-erroring child correctly reads as idle — a true positive worth surfacing.
 
@@ -113,9 +115,11 @@ Ordering is therefore: verify bearer → authorize grant → commit mutation →
 New module `packages/core/src/runbook/claim-activity.ts`. (`claim-id.ts` already carries the bearer, hashing, grant, and authorization primitives; this is a separate concern with its own seam.)
 
 ```typescript
-export type ClaimActivity =
-  | { readonly kind: 'progressing'; readonly lastProgressAt: string; readonly idleFor: DurationMs }
-  | { readonly kind: 'idle'; readonly lastProgressAt: string; readonly idleFor: DurationMs };
+export interface ClaimActivity {
+  readonly lastProgressAt: string;
+  readonly idleFor: DurationMs;
+  readonly idle: boolean;
+}
 
 export function claimActivity(
   record: ClaimRecord,
@@ -124,9 +128,27 @@ export function claimActivity(
 ): ClaimActivity;
 ```
 
-A discriminated union rather than a bare boolean, per type-driven dispatch. Pure — no I/O, no clock read, `now` injected — so it is trivially unit- and property-testable, and cannot drift with wall-clock behaviour in tests.
+Pure — no I/O, no clock read, `now` injected — so it is trivially unit- and property-testable, and cannot drift with wall-clock behaviour in tests.
 
-**An unparseable `lastProgressAt` throws.** Date arithmetic on a corrupt timestamp yields `NaN`, and every `NaN` comparison is false — so `idleFor > idleAfter` would be false and a dead claim would silently classify as `progressing`. That is the single worst failure this design can have: a safety signal that fails *open*, quietly, in exactly the case it exists to catch. Throwing is also the consistent reading of the reject-invalid-persisted-state stance: corrupt state is rejected, never interpreted.
+**A readonly interface, not a discriminated union.** An earlier revision specified a two-member `progressing` | `idle` union "per type-driven dispatch". That was ceremony, not type safety: the variants carried **identical** fields, so no caller could narrow to anything, and every consumer flattened it straight back to `activity.kind === 'idle'` — a boolean in costume, contradicted by this spec's own naming table (`idle: boolean`). Type-driven dispatch means unions whose variants carry different data and therefore *force* narrowing. The union that earns its keep here is `ChildActivity`, below.
+
+**An unparseable `lastProgressAt` throws `RundownError` with `CLAIM_PROGRESS_UNREADABLE` (RD-824).** Date arithmetic on a corrupt timestamp yields `NaN`, and every `NaN` comparison is false — so `idleFor > idleAfter` would be false and a dead claim would silently classify as not idle. That is the single worst failure this design can have: a safety signal that fails *open*, quietly, in exactly the case it exists to catch. Throwing is also the consistent reading of the reject-invalid-persisted-state stance: corrupt state is rejected, never interpreted.
+
+The error is **typed**, not a bare `Error`, because `durationMs` throws a bare `Error` from the same function: with both untyped, only a message substring separates them, and a harmless reword would silently gut this protection with every test still green. Callers discriminate on the code.
+
+**A corrupt record is contained per child, never swallowed wholesale.** The throw is real, so every read boundary must decide what to do with it — and the tempting shape is the wrong one. Catching around a whole list and returning nothing is a **worse fail-open than the `NaN` this rejects**: one corrupt child erases every genuinely idle sibling from the report, and the parent concludes nothing needs checking. A silently shorter list reads as "fewer children need attention", which is the same fail-open wearing a different hat. Dropping the child from the list is equally wrong for the same reason.
+
+So the boundary derives **per child**, and an unassessable child is reported as such:
+
+```typescript
+export type ChildActivity =
+  | { readonly kind: 'known'; readonly activity: ClaimActivity }
+  | { readonly kind: 'unreadable' };
+```
+
+`unreadable` is a first-class member, not an error path: the reader is told this child cannot be assessed — which is itself a reason to look at it — and every other child still renders. This union earns narrowing precisely because `unreadable` has no `idleFor` to read, so a consumer cannot reach a fabricated value without the compiler stopping it. `status`, being read-only, applies the same containment: a corrupt advisory record must never escape as an unhandled error where a JSON envelope is the contract.
+
+This path is reachable, not hypothetical: `z.string().min(1)` admits `'not-a-date'`, and the structural guard in Claim Shape checks key **presence**, not parseability.
 
 `DEFAULT_IDLE_AFTER_MS = 60 * 60 * 1000` (one hour). Kubernetes anchors at 10 minutes for a rollout; a delegated agent step legitimately runs far longer, so the default is deliberately six times more generous. The asymmetry is intentional: reporting idle too late costs a delayed check, while reporting it too early trains the reader to ignore the signal — and an advisory label that is routinely wrong is worse than no label, because it is the one failure mode that cannot be corrected by acting on it. No configuration surface in this change — the default is long enough to be safe, and adding config later is purely additive. YAGNI.
 
@@ -134,13 +156,15 @@ A discriminated union rather than a bare boolean, per type-driven dispatch. Pure
 
 Both are read-only and derived at read. Nothing is persisted, no machine state is added, no events fire.
 
-**`rundown status`** — the delegations rows already join `claimKey` from #531 and already load `session.claims` (`status.ts:43-52`). Each claimed delegation row gains `lastProgressAt`, `idleFor`, and `idle`.
+**`rundown status`** — the delegations rows already join `claimKey` from #531 and already load `session.claims` (`status.ts:43-52`). Each claimed delegation row gains `lastProgressAt`, `idleFor`, and `idle`, or `activityUnreadable: true` for a corrupt record — never both, since an unassessable claim has no idle label to report.
 
 **`rundown collect`** — already reports `unresolved` and is one-shot, not blocking. Each unresolved child carries the same activity data, sourced from `listOpenClaimsForParent` on `CommandTargetReader`, which already returns exactly the unresolved delegated children. A parent resuming after its child's turn therefore sees which children are not progressing without issuing a second command. Note this reports the *children's* activity; the orchestrator's own claim is refreshed by the collect itself, per Recording Progress.
 
-**`unresolvedChildren.length` may be less than `unresolved`.** A pending, not-yet-claimed delegation counts toward `unresolved` but has no claim record and therefore no activity data. This is correct — an unclaimed delegation has no holder whose progress could be measured — and the two fields must not be assumed equal by consumers. The output schema documents the distinction.
+Each entry is a discriminated union on the wire, mirroring `ChildActivity`: a `known` member carrying `lastProgressAt` / `idleFor` / `idle`, or an `unreadable` member carrying only the child's identity. An agent reading this narrows on `kind` rather than trusting a default — the `unreadable` member deliberately has no `idle` field to misread.
 
-`idleFor` is milliseconds in JSON, matching `DurationMs`; `--text` renders it humanised. JSON is the contract and the default; `--text` gains a column. `docs/spec/cli-output.md` schemas are updated for both commands.
+**`unresolvedChildren.length` may be less than `unresolved`.** A pending, not-yet-claimed delegation counts toward `unresolved` but has no claim record and therefore no activity data. This is correct — an unclaimed delegation has no holder whose progress could be measured — and the two fields must not be assumed equal by consumers. The output schema documents the distinction. A corrupt claim, by contrast, is **never** a cause of this gap: it appears as an `unreadable` entry rather than vanishing from the list.
+
+`idleFor` is milliseconds in JSON, matching `DurationMs`; `--text` renders it humanised. JSON is the contract and the default. `--text` appends to the existing delegation **line** (`text-renderer.ts:296-314`) — that renderer is a line format with no headers, so this is a suffix, not a new column, and the table conventions in CLAUDE.md's CLI Output Standards do not apply to it. `docs/spec/cli-output.md` schemas are updated for both commands.
 
 Recovery is unchanged and already works: **adopt** the claim by presenting its bearer on a mutating command — which self-heals `lastProgressAt`, because a fresh session issuing `rundown pass --claim-id` genuinely is the new live holder making progress — or **abort** via the orchestrator's existing `abort-delegation` grant (`claim-id.ts:75-76`). Adoption via `status --claim-id` alone does not clear idle, and should not: reading a claim advances nothing.
 
@@ -168,11 +192,11 @@ Recovery is unchanged and already works: **adopt** the claim by presenting its b
 ## Testing
 
 - **Unit** — `claimActivity` before, after, and exactly at the threshold boundary.
-- **Property** — `idleFor` monotonic in `now`; `kind === 'idle'` iff `idleFor > idleAfter`; total over any valid ISO input.
+- **Property** — properties must be derived from an **independent oracle**, never restated from the implementation. `expect(activity.idle).toBe(activity.idleFor > idleAfter)` is a tautology: it reuses the implementation's own output to check the implementation, so it holds under *any* mutation of `>` and pins nothing. Compute the expectation from the raw inputs instead. Worthwhile properties: totality over any valid ISO input; `idleFor` monotonic non-decreasing in `now`; monotonic in the threshold (raising `idleAfter` never makes a claim idler); a claim whose progress is at or after `now` is never idle at any threshold.
 - **Core integration** — progress recorded on successful claim mutation; **not** recorded on `status --claim-id` (the anti-fooling invariant separating this from the rejected verify-path design); **not** recorded on failed mutation; a session-write failure neither fails nor masks the committed mutation (RD-102-shaped).
-- **Drift guard** — fail-closed, modelled on `run-option.test.ts:50`, classifying all eleven claim-authenticated commands and asserting each records or does not per its category. Anchor A (exhaustive `Record<RoleSpecificMutationCommand, …>`) and Anchor B (`--claim-id` surface scan, set-equal against the classification table) must each be **proven to bite** via revert-after probes; a guard that cannot fail is theatre.
+- **Drift guard** — fail-closed, modelled on `run-option.test.ts:50`, classifying all eleven claim-authenticated commands and asserting each records or does not per its category. Anchored on a `--claim-id` scan of the real `createProgram()`, set-equal against the classification table, so the scanned surface is independent of the guard's own tables. **Proven to bite** via revert-after probes, which must include adding a new `--claim-id` command and confirming it surfaces as unclassified — the probe a self-fed scan cannot pass. A guard that cannot fail is theatre.
 - **Anti-fooling** — `stash`/`pop` do not record: a loop of them must never clear idle, exactly as a `status --claim-id` loop must not.
-- **Corrupt timestamp** — an unparseable `lastProgressAt` throws rather than classifying as `progressing` (the fail-open case).
+- **Corrupt timestamp** — an unparseable `lastProgressAt` throws `CLAIM_PROGRESS_UNREADABLE` rather than classifying as not idle (the fail-open case), asserted **on the error code**, not a message substring. At both read boundaries, a corrupt child is reported `unreadable` while its healthy siblings still report normally — the case that pins per-child containment, and the one that fails if a future edit widens the catch around the whole list.
 - **Adoption** — a fresh session presenting the bearer on a mutating command clears idle; presenting it on `status --claim-id` does not.
 - **Structural guard** — a session whose claims lack `lastProgressAt` is rejected with the finish/prune/restart error, not migrated.
 - **CLI** — JSON path first per testing conventions, `--text` covered separately, for both `status` and `collect`.
@@ -187,16 +211,28 @@ This does not distinguish "working" from "gone" — that is unsolvable without a
 1. `ClaimRecord.lastProgressAt` exists, is required, and is set to `issuedAt` at claim creation.
 2. Sessions whose claims lack `lastProgressAt` are rejected with a finish/prune/restart error; no migration path exists.
 3. Every successful claim-authenticated command that changes runbook workflow state refreshes `lastProgressAt` — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort`. Commands that change only session targeting (`stash`, `pop`), that change nothing (`status`), and mutations that fail, do not.
-4. A fail-closed drift guard classifies all eleven claim-authenticated commands and pins the set in both directions, with both anchors proven to bite, so a command added later cannot silently miss recording or silently start.
+4. A fail-closed drift guard classifies all eleven claim-authenticated commands and pins the set in both directions, so a command added later cannot silently miss recording or silently start. Its scan is sourced from the real `createProgram()`, never from the guard's own tables, and is proven to bite — including against a newly added `--claim-id` command.
 5. A command refreshes only the claim whose bearer it presented, never another claim.
-6. An unparseable `lastProgressAt` throws rather than classifying as `progressing`.
+6. An unparseable `lastProgressAt` throws `CLAIM_PROGRESS_UNREADABLE` rather than classifying as not idle.
 7. A failure to record progress never fails and never masks the committed mutation.
-8. `claimActivity` is pure, takes an injected `now`, and returns a discriminated union.
+8. `claimActivity` is pure and takes an injected `now`.
 9. `rundown status` and `rundown collect` surface `lastProgressAt`, `idleFor` (milliseconds in JSON), and `idle` for claimed/unresolved delegations, in JSON by default and `--text` when asked.
 10. `docs/spec/cli-output.md` documents both output schemas, including that `unresolvedChildren.length` may be less than `unresolved`.
 11. Adopting a claim from a fresh session via a mutating command clears idle.
 12. No machine state, event, expiry, reclaim, or synthesized result is introduced.
 13. `claim-activity.ts` clears the scoped mutation gate via statically-imported tests.
+14. A corrupt claim record is contained per child: it is reported as `unreadable`, its healthy siblings still report their activity, and no read boundary catches around a whole list or drops the child. A read-only command never surfaces it as an unhandled error.
+
+## Revision History
+
+Amended in place, per the precedent of `2013cbcbf` and `12146f9b3`: these correct errors in *this* design rather than proposing a new one, so a new dated file would fragment the record rather than clarify it.
+
+**Rev 3 (this revision)** — four independent reviews of the implementation plan found two defects that originate in this spec, not in the plan. Both are recorded here because both were reasoned to confidently and wrongly:
+
+1. **The drift guard's anchors were unsound.** Anchor B, as specified, admitted a construction that can never fail (scan fed by the classification table). Anchor A rested on the claim that `RoleSpecificMutationCommand` is "core's own mutating-command definition" — it is not; it is a subprocess-trust concept, and `abort` already sits outside it, which this spec noticed without drawing the conclusion. This mattered because §Recording Progress stakes the acceptability of the CLI-side `goto`/`abort` seams **entirely** on the guard: an inert guard meant no guarantee at all. Now: anchored on the real `createProgram()`, with the union demoted to a cross-check.
+2. **The corrupt-timestamp throw had no specified containment.** This spec argued the fail-open case at length, then left every caller to decide what to do with the throw — and the natural shape (catch around the list, return nothing) is a *worse* fail-open than the `NaN` it rejects, since one corrupt child erases every idle sibling from the report. Now: per-child containment with a first-class `unreadable` member (AC14).
+
+Also corrected: `ClaimActivity` was specified as a discriminated union "per type-driven dispatch" while its variants were identical — a boolean in costume, contradicting this spec's own `idle: boolean` naming table; it is now an interface, and the narrowing-worthy union moved to the read boundary. The AC6 throw is now typed (RD-824) rather than a bare `Error` distinguishable from `durationMs`'s only by substring. The property-test guidance now forbids restating the implementation as an oracle. The `--text` claim that delegations "gain a column" was wrong — that renderer is a line format.
 
 ## References
 
