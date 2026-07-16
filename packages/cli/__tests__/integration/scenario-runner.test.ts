@@ -34,17 +34,13 @@ import {
   matchArtifactAssertions,
   matchEnteredAssertions,
   matchStepAssertions,
-  substituteArtifactUris,
   formatArtifactAssertionDescription,
   formatEnteredAssertionDescription,
   formatErrorAssertionDescription,
   formatWarningAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
-import {
-  resolveCapturedArtifactFromManifest,
-  seedScenarioArtifacts,
-} from '../../src/helpers/scenario-artifacts.js';
+import { resolveCapturedArtifactFromManifest } from '../../src/helpers/scenario-artifacts.js';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { assertSafeRelativeArtifactPath } from '../../src/helpers/artifact-path.js';
 import { assertContainedPath } from '../../src/helpers/path-containment.js';
@@ -333,9 +329,9 @@ function copyPatternWithDependencies(
   }
 }
 
-// `seedScenarioArtifacts` and `resolveCapturedArtifactFromManifest` are the
-// production scenario-harness helpers (also used by `rd scenario run`), imported
-// above from ../../src/helpers/scenario-artifacts.js so both harnesses share one
+// `resolveCapturedArtifactFromManifest` is the production scenario-harness
+// helper (also used by `rd scenario run`), imported above from
+// ../../src/helpers/scenario-artifacts.js so both harnesses share one
 // implementation.
 
 /**
@@ -347,12 +343,6 @@ async function executeScenario(
   workspace: TestWorkspace,
 ): Promise<void> {
   copyPatternWithDependencies(filename, scenario, workspace);
-
-  // Seed any artifacts declared by the scenario's `seed:` directive, then expose
-  // each seeded row's rd:// URI as a ${ARTIFACT:<name>} substitution token. This
-  // lets a boundary-channel scenario write `--artifacts PlanPath=${ARTIFACT:PlanPath}`.
-  const artifactUris = seedScenarioArtifacts(scenario, workspace);
-  const commands = scenario.commands.map((cmd) => substituteArtifactUris(cmd, artifactUris));
 
   const expectedResult = getEffectiveResult(scenario);
 
@@ -367,7 +357,7 @@ async function executeScenario(
   };
 
   const seqResult = await executeCommandSequence({
-    commands,
+    commands: scenario.commands,
     cwd: workspace.cwd,
     cliPath,
     quiet: true,

@@ -452,33 +452,6 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
 }
 
 /**
- * Substitute seeded artifact URI placeholders in a command string.
- *
- * `${ARTIFACT:<name>}` is replaced by the `rd://` URI of the manifest row seeded
- * for `<name>` by the scenario's `seed:` directive, so a scenario command can
- * write `--artifacts PlanPath=${ARTIFACT:PlanPath}`. Scenario-harness only.
- *
- * @param cmd - The command string with optional artifact placeholders
- * @param artifactUris - Map of seeded artifact name to its `rd://` URI
- * @returns The command string with placeholders replaced by seeded URIs
- * @throws {Error} When a placeholder references an unseeded artifact name
- */
-export function substituteArtifactUris(
-  cmd: string,
-  artifactUris: Readonly<Record<string, string | undefined>>,
-): string {
-  return cmd.replace(/\$\{ARTIFACT:([A-Za-z_][A-Za-z0-9_]*)\}/g, (match: string, name: string) => {
-    const uri = artifactUris[name];
-    if (uri === undefined) {
-      throw new Error(
-        `Artifact placeholder ${match} references an unseeded artifact (seed it via the scenario "seed" directive)`,
-      );
-    }
-    return uri;
-  });
-}
-
-/**
  * Resolver that maps a captured artifact key to its current `rd://` URI(s) from
  * the manifest.
  *
@@ -495,10 +468,13 @@ export type CapturedArtifactResolver = (key: string, asArray: boolean) => Promis
  *
  * `${CAPTURE_ARTIFACT:<key>}` is replaced by the `rd://` URI of the most recent
  * manifest row for `<key>`; `${CAPTURE_ARTIFACT_ARRAY:<key>}` is replaced by a
- * JSON array of all such URIs. Unlike `${ARTIFACT:…}` (pre-seeded), these are
- * resolved at execution time from rows a prior command produced, so a scenario
- * can hand a produced artifact to a later run via `--artifacts` /
- * `--artifacts-json`. Scenario-harness only; the resolver reads the manifest.
+ * JSON array of all such URIs. This is the sole artifact grammar: values are
+ * resolved at execution time from rows a prior command actually produced, so a
+ * scenario hands a real produced artifact to a later run via `--artifacts` /
+ * `--artifacts-json`. A scenario needing a pre-existing artifact runs a producer
+ * runbook first (see `runbooks/artifacts/scenario-seed-artifacts.runbook.md`)
+ * rather than fabricating a URI. Scenario-harness only; the resolver reads the
+ * manifest.
  *
  * @param cmd - The command string with optional capture placeholders
  * @param resolve - Async resolver mapping a key (and array flag) to its substitution text
@@ -540,6 +516,24 @@ export async function substituteCapturedArtifacts(
  * wired, rather than letting the raw placeholder leak into the executed command.
  */
 const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[^}]+\}/;
+
+/**
+ * Non-global detector for the **retired** `${ARTIFACT:<name>}` grammar (#498).
+ *
+ * `${ARTIFACT:…}` and its `seed:` directive were removed in favour of a single
+ * capture-from-output mechanism. Without this detector the retired placeholder
+ * has no substituter left, so it would pass through verbatim into `--artifacts`
+ * and surface as an opaque `INVALID_ARTIFACT_INPUT` — the precise confusion the
+ * retirement exists to prevent. This is a tombstone, not a compatibility shim:
+ * it makes the retired grammar fail loudly and name its replacement, rather than
+ * keeping it working.
+ *
+ * Deliberately matches `[^}]+` rather than the retired grammar's narrower
+ * identifier pattern, so a *malformed* retired placeholder is caught too. It
+ * cannot match `${CAPTURE_ARTIFACT…}`, whose text contains `ARTIFACT:` but never
+ * the required `${` immediately before it.
+ */
+const RETIRED_ARTIFACT_PLACEHOLDER = /\$\{ARTIFACT:[^}]+\}/;
 
 /**
  * Substitute captured claim id placeholders in a command string.
@@ -1635,6 +1629,16 @@ export async function executeCommandSequence(
       ),
       capturedRunIds,
     );
+    // The `${ARTIFACT:<name>}` grammar and its `seed:` directive were retired in
+    // #498. No substituter remains, so fail here and name the replacement rather
+    // than letting the raw placeholder leak into the executed command.
+    if (RETIRED_ARTIFACT_PLACEHOLDER.test(tokenSubstituted)) {
+      throw new Error(
+        `Command uses the retired \${ARTIFACT:} grammar, removed in #498: ${tokenSubstituted}\n` +
+          `Run a producer runbook first and use \${CAPTURE_ARTIFACT:<key>} to capture its artifact ` +
+          `(see runbooks/artifacts/scenario-seed-artifacts.runbook.md).`,
+      );
+    }
     // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
     // the manifest a prior command produced (resolver injected by the harness).
     // Fail fast if a command references a capture placeholder but no resolver was
