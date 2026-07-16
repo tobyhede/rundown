@@ -4,7 +4,7 @@
 
 **Goal:** Give the parent an advisory, pull-based signal that tells it whether a delegated child's claim is still advancing the run — by recording a per-claim `lastProgressAt` on successful claim-authenticated mutation and deriving an `idle` label at read time on `rundown status` and `rundown collect` (#519).
 
-**Architecture:** Three seams, no machine state. (1) `ClaimRecord` gains one **required** field `lastProgressAt`, set to `issuedAt` at creation by `createClaimRecord`; sessions whose persisted claims lack it are **rejected** by a structural guard in `loadSession` with the existing finish/prune/restart error shape — no migration, no hydration, no shim. (2) A new `SessionService.recordClaimProgress(claimId)` refreshes exactly one claim — the one whose bearer the caller presented — inside the existing session-lock scope, and is invoked **after** a mutation commits, best-effort: the method never throws, so it cannot mask the committed mutation (RD-102). It is called by **every** claim-authenticated mutating command with no exceptions, and a fail-closed drift guard pins that set. It is deliberately NOT wired into `verifyClaimId`, so a stuck child polling `status --claim-id` can never refresh its own mark. (3) A new pure module `claim-activity.ts` derives `ClaimActivity` from `(record, now, idleAfter)` with `now` injected; `rundown status` and `rundown collect` join it onto claimed/unresolved delegations at read time. Nothing expires, nothing is reclaimed, no result is synthesized.
+**Architecture:** Three seams, no machine state. (1) `ClaimRecord` gains one **required** field `lastProgressAt`, set to `issuedAt` at creation by `createClaimRecord`; sessions whose persisted claims lack it are **rejected** by a structural guard in `loadSession` with the existing finish/prune/restart error shape — no migration, no hydration, no shim. (2) A new `SessionService.recordClaimProgress(claimId)` refreshes exactly one claim — the one whose bearer the caller presented — inside the existing session-lock scope, and is invoked **after** a mutation commits, best-effort: the method never throws, so it cannot mask the committed mutation (RD-102). It is called by **every** claim-authenticated command that changes runbook workflow state (eight of the eleven on the `--claim-id` surface), and a fail-closed drift guard classifies all eleven and pins the set in both directions. It is deliberately NOT wired into `verifyClaimId` — nor into `stash`/`pop`, which mutate but change only session targeting — so neither a child polling `status --claim-id` nor one looping `stash`/`pop` can refresh its own mark without advancing the run. (3) A new pure module `claim-activity.ts` derives `ClaimActivity` from `(record, now, idleAfter)` with `now` injected; `rundown status` and `rundown collect` join it onto claimed/unresolved delegations at read time. Nothing expires, nothing is reclaimed, no result is synthesized.
 
 **Tech Stack:** TypeScript, Zod (persisted + output schemas), Jest (unit + integration), fast-check (property), Stryker (scoped mutation), pnpm workspaces. Packages: `@rundown-org/core` (claim shape, recording seam, pure activity module, collect read model), `@rundown-org/cli` (thin front end — status/collect rendering, the goto/abort recording call sites, and the drift guard).
 
@@ -15,10 +15,21 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **`lastProgressAt` is REQUIRED, not optional.** "An optional field with a fallback is legacy-field hydration, which CLAUDE.md forbids." No `?`, no `??`, no default-on-read, anywhere.
 - **NEVER migrate persisted state.** "This breaks existing persisted sessions. Per CLAUDE.md that is acceptable and preferred over compatibility code." A session whose claims lack the field is **rejected** with the same error shape and recovery path as the existing legacy-ownership guard (`state.ts:773`): finish, prune, or restart. No runtime migration, fallback parser, legacy field hydration, compatibility shim, or warning-only adapter.
 - **Not a reuse of `updatedAt`.** `updatedAt` means "this record was last written" and **is left alone** — `recordClaimProgress` must NOT touch it, and `refreshedClaimRecord` must NOT touch `lastProgressAt`. One field, one meaning.
-- **UNIFORM RULE: every successful claim-authenticated mutation records progress — no exceptions.** "The rule is uniform rather than an enumerated allow-list, because an allow-list has to be remembered: a mutating command added later would silently fail to record, and the failure mode is invisible." The set is **eight**: the seven the codebase's own `--run` registration drift guard pins (`packages/cli/__tests__/helpers/run-option.test.ts:50`) — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto` — **plus `abort`**, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
-- **Recording on a claim-terminating command (`complete`, `stop`, `abort`) is deliberately NOT special-cased away.** "It is a redundant write to a claim leaving the reportable population, costing nothing, and buying a rule with no exception list to forget." Do not add an exception, however harmless it looks.
-- **A fail-closed drift guard pins the set** (Task 5), modelled on `run-option.test.ts:50`. "The guard, not the seam's uniformity, is the guarantee" — which is why the recording *seam* may legitimately differ per command (core for most, CLI for `goto` and `abort`, whose mutations commit in the CLI with no core seam to hook).
-- **Read-only commands do not record.** `status --claim-id` is claim-authenticated but read-only and **deliberately does not record** — "a stuck child polling its own status would otherwise refresh its claim forever and never report idle". `verifyClaimId` (`session-service.ts:361`) stays read-only and lock-free.
+- **THE RULE: every successful claim-authenticated command that CHANGES RUNBOOK WORKFLOW STATE records progress.** The predicate is **"changes runbook workflow state", NOT "mutates"** — that distinction is load-bearing, not stylistic (see `stash`/`pop` below). This is a rule rather than an enumerated allow-list because "a list has to be remembered. A command added later that forgets to record fails _invisibly_: no test fails, no type error, and the only symptom is a claim reading idle while it is actually advancing — a spurious 'go check on this' that nobody can trace back to a missing line in a command file."
+- **The `--claim-id` surface is ELEVEN commands in THREE categories.** All eleven must be classified. The rule still has **no exception list**, because the two non-recording categories are **not carve-outs** — they simply do not satisfy the predicate:
+
+  | Category                       | Commands                                                                   | Records |
+  | ------------------------------ | -------------------------------------------------------------------------- | ------- |
+  | Changes runbook workflow state | `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` | **Yes** |
+  | Changes session targeting only | `stash`, `pop`                                                             | **No**  |
+  | Changes nothing (read-only)    | `status`                                                                   | **No**  |
+
+  The eight are the codebase's own mutating-command list — the seven pinned by the `--run` drift guard (`packages/cli/__tests__/helpers/run-option.test.ts:50`) plus `abort`, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
+
+- **`stash` / `pop` are excluded by the ANTI-FOOLING INVARIANT, not by convenience.** Both ARE claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`), so a rule keyed on "mutation" alone would sweep them in — which is precisely why the predicate is workflow state. "`lastProgressAt` means the holder advanced the _controlled run_, and stashing advances session _targeting_ — the run itself is untouched. Recording them would reopen precisely the hole that disqualified the rejected verify-path design: a child looping `stash`/`pop` would refresh itself alive forever without advancing anything, faking liveness through a mutating command instead of through a read. **Same defect, different door.**" Corroboration: `unstashForClaimId` already moves `updatedAt` (`session-service.ts:1060`) — the field this design deliberately leaves alone, precisely because it means "record written", not "run advanced".
+- **Recording on a claim-terminating command (`complete`, `stop`, `abort`) IS deliberately not special-cased away.** "It is a redundant write to a claim leaving the reportable population: it costs nothing, and it buys a predicate with no exceptions to remember." Do not add an exception, however harmless it looks. Contrast with `stash`/`pop`: those are not exceptions being denied — they fail the predicate outright.
+- **`status --claim-id` does not record.** Claim-authenticated but read-only: "a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected." `verifyClaimId` (`session-service.ts:361`) stays read-only and lock-free.
+- **A fail-closed drift guard pins all eleven IN BOTH DIRECTIONS** (Task 5), via two anchors that must each be **proven to bite** — "a guard that cannot fail is theatre". "The guard, not the seam's uniformity, is the guarantee", which is why the recording _seam_ may legitimately differ per command: core for six; CLI for `goto` and `abort`, whose core services are authorization gates that return `authorized`/`refused` and mutate nothing. **Restructuring those two seams is out of scope for #519.**
 - **An unparseable `lastProgressAt` THROWS.** Never classify it as `progressing`: "every `NaN` comparison is false — so `idleFor > idleAfter` would be false and a dead claim would silently classify as `progressing`. That is the single worst failure this design can have: a safety signal that fails *open*, quietly, in exactly the case it exists to catch."
 - **Recorded on success, not on attempt.** A failed mutation records nothing. "A live-but-erroring child correctly reads as idle — a true positive worth surfacing."
 - **A command refreshes only the claim whose bearer it presented.** Never another claim. `collect --claim-id <orchestrator-claim>` refreshes the orchestrator's own claim, **not** the children's. "A parent cannot vouch for a child's liveness, and must not appear to."
@@ -59,7 +70,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `packages/core/__tests__/runbook/claim-activity.test.ts` — unit tests. **Statically** imports `claim-activity.js` (Stryker gate).
 - `packages/core/__tests__/runbook/claim-activity.properties.test.ts` — fast-check property tests. Also a static import.
 - `packages/core/__tests__/runbook/claim-progress.test.ts` — the recording seam's core integration tests (anti-fooling invariant, bearer scoping, failed-mutation, RD-102 non-masking, adoption self-heal).
-- `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts` — the fail-closed drift guard over all eight claim-authenticated mutating commands (AC4), modelled on `run-option.test.ts:50`.
+- `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts` — the fail-closed drift guard classifying all eleven claim-authenticated commands and pinning both directions (AC4), modelled on `run-option.test.ts:50`.
 - `packages/cli/__tests__/commands/claim-idle-surfaces.test.ts` — CLI JSON-first then `--text` coverage for `status` and `collect`.
 
 **Modified:**
@@ -1004,7 +1015,7 @@ git commit -m "feat(core): record best-effort claim progress on the presented be
 
 ---
 
-## Task 4: Wire recording into every claim-authenticated mutating command (AC3, AC5, AC7, AC11)
+## Task 4: Wire recording into every command that changes runbook workflow state (AC3, AC5, AC7, AC11)
 
 **Files:**
 
@@ -1020,9 +1031,14 @@ git commit -m "feat(core): record best-effort claim progress on the presented be
 - Consumes: `SessionService.recordClaimProgress(claimId): Promise<ClaimProgressRecordResult>` (Task 3). Never throws, so no call site needs a `try`.
 - Produces: no new exported symbols. `CollectionSessionService` gains `recordClaimProgress(claimId: ClaimId): Promise<ClaimProgressRecordResult>`.
 
-**Scope note (read before implementing).** The rule is **uniform**: all **eight** claim-authenticated mutating commands record — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort`. There is **no exception list**. In particular, do NOT special-case away the claim-terminating commands (`complete`, `stop`, `abort`) on the reasoning that their claim leaves the reportable population: that write is redundant and harmless, and the point is a rule with nothing to forget. An enumerated allow-list is exactly what the spec rejects, because a command added later would silently fail to record and the failure is invisible. Task 5's drift guard enforces this. Do NOT extend recording to any read-only path.
+**Scope note (read before implementing).** The predicate is **"changes runbook workflow state"**, not "mutates". The **eight** commands that satisfy it all record — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` — and there is **no exception list**.
 
-The eight commands reach `recordClaimProgress` through **five** call sites, because several share a seam:
+Two things this task must NOT do, for opposite reasons:
+
+- **Do NOT special-case away the claim-terminating commands** (`complete`, `stop`, `abort`) on the reasoning that their claim is leaving the reportable population. That write is redundant and harmless, and the point is a predicate with no exceptions to remember. These DO satisfy the predicate.
+- **Do NOT add recording to `stash` / `pop`** (or `status`) on the reasoning that "they mutate too, and the rule says no exceptions". They are **not exceptions** — they fail the predicate: they change session *targeting*, not the run. Recording them would reopen the anti-fooling hole that disqualified the rejected verify-path design (a child looping `stash`/`pop` fakes liveness without advancing anything — same defect as polling `status`, different door). Task 5 pins this direction too.
+
+The eight commands reach `recordClaimProgress` through **six** call sites, because several share a seam:
 
 | Command(s) | Seam | Records on |
 | --- | --- | --- |
@@ -1244,7 +1260,7 @@ In the same file, `runTerminal` (`:1417`) dispatches to `#driveTerminalClaim` / 
    *
    * Recording on a claim-TERMINATING command is deliberate and not special-cased
    * away: the write is redundant (the claim is leaving the reportable population)
-   * but harmless, and it buys a uniform rule with no exception list to forget (#519).
+   * but harmless, and it buys a predicate with no exceptions to remember (#519).
    *
    * @param input - Command, caller evidence, target selector, and optional message.
    * @returns The terminal outcome, unchanged by the recording tail.
@@ -1386,7 +1402,7 @@ git add packages/core/src/runbook/lifecycle-command-service.ts \
   packages/cli/src/commands/abort.ts \
   packages/core/__tests__/runbook/claim-progress.test.ts \
   packages/cli/__tests__
-git commit -m "feat: record claim progress on every successful claim-authenticated mutation (#519)"
+git commit -m "feat: record claim progress on every command that changes runbook workflow state (#519)"
 ```
 
 ---
@@ -1400,22 +1416,24 @@ git commit -m "feat: record claim progress on every successful claim-authenticat
 **Interfaces:**
 
 - Consumes: `type RoleSpecificMutationCommand` from `@rundown-org/core` (exported at `packages/core/src/runbook/index.ts:139`; declared at `subprocess-mutation-boundary.ts:33` as exactly `pass | fail | delegate | goto | complete | stop | collect`). The `register*Command` functions from `packages/cli/src/commands/*.js`. `SessionService.recordClaimProgress` (Task 3).
-- Produces: no production symbols — this is the guarantee that makes the uniform rule enforceable rather than aspirational.
+- Produces: no production symbols — this is the guarantee that makes the rule enforceable rather than aspirational.
 
-**Why this task exists.** The recording *seam* differs per command: six record from core, `goto` and `abort` record from the CLI (their core services are gates only — see Background). Seam uniformity is therefore not available as the guarantee, so the guard is. This is exactly what the spec means by "the guard, not the seam's uniformity, is the guarantee", and it is why the CLI call sites are acceptable.
+**Why this task exists.** The recording _seam_ differs per command: six commands record from core, while `goto` and `abort` record from the CLI (their core services are authorization gates that mutate nothing — see Background). Seam uniformity is therefore not available as the guarantee, so the guard is. This is exactly what the spec means by "the guard, not the seam's uniformity, is the guarantee", and it is why the two CLI call sites are acceptable rather than debt.
+
+**The guard pins BOTH directions over all ELEVEN claim-authenticated commands.** Recording-when-it-should is only half of it: a future command that silently _starts_ recording — `stash`, say, or a new session-targeting command — would quietly reopen the anti-fooling hole, and nothing else in the suite would notice. A non-recording classification is a **decision**, not an omission, so the guard asserts it:
+
+| Category                       | Commands                                                                   | Records | Why                                                                                                                                                                                                                                                                    |
+| ------------------------------ | -------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Changes runbook workflow state | `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` | **Yes** | They advance the controlled run — which is what `lastProgressAt` measures.                                                                                                                                                                                              |
+| Changes session targeting only | `stash`, `pop`                                                             | **No**  | They ARE claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`) but advance session _targeting_, not the run. Recording them would let a child loop `stash`/`pop` to fake liveness without advancing anything — the rejected verify-path defect through a different door. |
+| Changes nothing (read-only)    | `status`                                                                   | **No**  | A stuck child polling its own status must never refresh its own mark.                                                                                                                                                                                                   |
 
 **Two fail-closed anchors, both modelled on existing repo idioms.** Neither alone is sufficient:
 
 - **Anchor A (compile-time, exhaustive `Record`):** the recording table is typed `Record<RoleSpecificMutationCommand, RecordingCase>` plus an explicit `abort` entry. Core's `RoleSpecificMutationCommand` union IS the codebase's definition of a role-specific mutating command, and `MUTATION_COMMAND_ALIASES` (`subprocess-mutation-boundary.ts:66`) already uses an exhaustive `Record` over it for precisely this drift problem. Adding a member to that union without a table row is a **compile error**.
-- **Anchor B (runtime, Commander scan):** every command that registers `--claim-id` on a real program must appear in the table as either recording or explicitly non-recording-with-a-reason. This catches what Anchor A cannot: `abort` (claim-authenticated and mutating, but outside the union because it takes a token, not `--run`), and any future claim-authenticated command. `pass`/`fail` register `--claim-id` via `PASS_FAIL_VALUE_TAKING_OPTION_NAMES` (`transition-command.ts:92`), so the scan sees them too.
+- **Anchor B (runtime, Commander scan):** every command that registers `--claim-id` on a real program must appear in one of the two tables — recording, or non-recording **with a reason**. This catches what Anchor A cannot: `abort` (claim-authenticated and mutating, but outside the union because it takes a token, not `--run`), `stash`/`pop`/`status`, and any future claim-authenticated command. `pass`/`fail` register `--claim-id` via `PASS_FAIL_VALUE_TAKING_OPTION_NAMES` (`transition-command.ts:92`), so the scan sees them too.
 
-**The `--claim-id` surface is eleven commands, not eight.** Three are claim-authenticated but must NOT record, and the guard pins that too — a non-recording classification is a decision, not an omission:
-
-| Command | Records | Why |
-| --- | --- | --- |
-| `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` | yes | Claim-authenticated mutation of the controlled run. |
-| `status` | **no** | Read-only. The anti-fooling invariant: a stuck child polling its own status must never refresh its own mark. |
-| `stash`, `pop` | **no** | They advance **session targeting**, not the run. `lastProgressAt` means "the holder last advanced the controlled run" — stashing a child advances nothing. This is consistent with `unstashForClaimId` already moving `updatedAt` ("this record was last written") via `refreshedClaimRecord`, which is exactly the field the spec says to leave alone. |
+Both anchors must be **proven to bite** (Step 3) — a guard that cannot fail is theatre.
 
 - [ ] **Step 1: Write the guard**
 
@@ -1476,9 +1494,13 @@ const RECORDING_COMMANDS: Record<RoleSpecificMutationCommand, RecordingCase> & {
 };
 
 /**
- * Claim-authenticated commands that deliberately do NOT record. Listed, not
- * omitted: a non-recording classification is a DECISION the guard pins, so a
- * future edit that starts recording on one of these fails loudly.
+ * Claim-authenticated commands that do NOT change runbook workflow state, and so
+ * do NOT record. These are NOT exceptions to the rule — they fail its predicate.
+ *
+ * Listed rather than omitted, because a non-recording classification is a
+ * DECISION the guard pins in BOTH directions: a future edit that starts recording
+ * on one of these fails loudly, which matters because such an edit would quietly
+ * reopen the anti-fooling hole and nothing else in the suite would notice.
  */
 const NON_RECORDING_CLAIM_COMMANDS: Readonly<
   Record<string, { readonly register: (program: Command) => void; readonly reason: string }>
@@ -1486,23 +1508,28 @@ const NON_RECORDING_CLAIM_COMMANDS: Readonly<
   status: {
     register: registerStatusCommand,
     reason:
-      'Read-only. The anti-fooling invariant: a stuck child polling its own status must never refresh its own mark.',
+      'Changes nothing (read-only). A stuck child polling its own status must never refresh its own mark.',
   },
   stash: {
     register: registerStashCommand,
-    reason: 'Advances session targeting, not the run. Stashing a child advances nothing.',
+    reason:
+      'Changes session targeting only, not the run. IS a claim-authenticated mutation (stash.ts:19) — which is exactly why the predicate is "changes runbook workflow state", not "mutates". Recording it would let a child loop stash/pop to fake liveness without advancing anything.',
   },
   pop: {
     register: registerPopCommand,
-    reason: 'Advances session targeting, not the run. Unstashing a child advances nothing.',
+    reason:
+      'Changes session targeting only, not the run. IS a claim-authenticated mutation (pop.ts:59); see stash. Corroboration: unstashForClaimId already moves updatedAt ("record written"), the field this design deliberately leaves alone.',
   },
 };
 
 describe('claim progress recording drift guard (#519 AC4)', () => {
-  // ANCHOR B: every command exposing --claim-id must be CLASSIFIED. A new
-  // claim-authenticated command that records nothing would otherwise be invisible
-  // — the failure mode is a claim reading idle while advancing, producing a
-  // spurious check nobody traces back. Set equality is what makes it fail closed.
+  // ANCHOR B: every command exposing --claim-id must be CLASSIFIED, in one
+  // direction or the other. Both failure modes are invisible without this:
+  //  - a new workflow-state command that records nothing => a claim reads idle
+  //    while advancing, a spurious check nobody traces back to a missing line;
+  //  - a new session-targeting command that DOES record => the anti-fooling hole
+  //    reopens and the idle signal can be faked.
+  // Set equality is what makes it fail closed in both directions.
   it('classifies every command that registers --claim-id', () => {
     const program = new Command();
     for (const { register } of [
@@ -1521,8 +1548,10 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       ...Object.keys(NON_RECORDING_CLAIM_COMMANDS),
     ].sort();
 
-    // If this fails with an EXTRA command, add it to one of the two tables above —
-    // recording (the default for a mutation) or non-recording WITH a reason.
+    // If this fails with an EXTRA command, classify it: does it change runbook
+    // workflow state (=> RECORDING_COMMANDS) or only session targeting / nothing
+    // (=> NON_RECORDING_CLAIM_COMMANDS, WITH a reason)? Do not delete the command
+    // from the scan to make this pass.
     expect(claimAuthenticated).toEqual(classified);
   });
 
@@ -1534,9 +1563,10 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
       await driveSuccess(claimId);
 
-      // The uniform rule: EVERY successful claim-authenticated mutation records.
-      // No exceptions — including the claim-terminating commands, whose write is
-      // redundant but harmless and buys a rule with nothing to forget.
+      // The rule: EVERY successful claim-authenticated command that changes runbook
+      // workflow state records. Including the claim-terminating ones (complete/stop/
+      // abort), whose write is redundant but harmless and buys a predicate with no
+      // exceptions to remember.
       const after = (await readSession(workspace)).claims[claimKey].lastProgressAt;
       expect(Date.parse(after)).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
     },
@@ -1548,35 +1578,64 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       const { claimId, claimKey } = await arrangeFor(name);
       await backdateClaimProgress(workspace, claimKey, '2020-01-01T00:00:00.000Z');
 
+      // Drives the command to a SUCCESSFUL invocation (exit 0) — a refusal would
+      // record nothing for the wrong reason and pass this test vacuously.
       await driveNonRecording(name, claimId);
 
+      // The mark must not move. `reason` documents WHY at the failure site: a
+      // reader who broke this needs the anti-fooling argument, not just a diff.
       const after = (await readSession(workspace)).claims[claimKey].lastProgressAt;
-      expect(after).toBe('2020-01-01T00:00:00.000Z');
-      void reason;
+      expect(after, reason).toBe('2020-01-01T00:00:00.000Z');
     },
   );
+
+  it('a stash/pop loop never clears idle (anti-fooling sibling of the status loop)', async () => {
+    // The decisive argument for excluding stash/pop. Both ARE claim-authenticated
+    // mutations, so a rule keyed on "mutation" would record them — and then a child
+    // could loop them to refresh itself alive forever WITHOUT advancing the run.
+    // That is the exact hole that disqualified the rejected verify-path design,
+    // reached through a mutating command instead of a read. Same defect, different
+    // door. This is the sibling of the `status --claim-id` anti-fooling test in
+    // packages/core/__tests__/runbook/claim-progress.test.ts.
+    const { claimId, claimKey } = await arrangeStashablePair();
+    await backdateClaimProgress(workspace, claimKey, '2020-01-01T00:00:00.000Z');
+
+    for (let i = 0; i < 3; i++) {
+      expect((await runCliInProcess(['stash', '--claim-id', claimId], workspace)).exitCode).toBe(0);
+      expect((await runCliInProcess(['pop', '--claim-id', claimId], workspace)).exitCode).toBe(0);
+    }
+
+    const claim = (await readSession(workspace)).claims[claimKey];
+    expect(claim.lastProgressAt).toBe('2020-01-01T00:00:00.000Z');
+    // Still idle after six successful claim-authenticated mutations: the signal
+    // cannot be faked by a holder that never advances the run.
+    expect(claimActivity(claim, new Date(), DEFAULT_IDLE_AFTER_MS).kind).toBe('idle');
+  });
 });
 ```
 
-> **The `drive*` / `arrangeFor` helpers are the substance of this task, not boilerplate.** Each of the eight commands needs a workspace arranged so that command reaches a *committed success* with a bearer — `complete`/`stop` need a running claimed run; `collect` needs a parent with a reported child; `delegate` needs an authored DELEGATE step; `abort` needs a pending token. Build them on the existing integration fixtures rather than inventing new ones: `packages/cli/__tests__/integration/delegate-workflow.test.ts` (`setupParentWithChildren`, `issueRunControlClaim`, `runCliInProcess`) and `packages/cli/__tests__/helpers/test-utils.ts`. `backdateClaimProgress` / `readSession` are the same local helpers Tasks 6 and 7 use — factor them into `test-utils.ts` so all three suites share one definition.
+> **The `drive*` / `arrangeFor` helpers are the substance of this task, not boilerplate.** Each of the eight recording commands needs a workspace arranged so it reaches a _committed success_ with a bearer — `complete`/`stop` need a running claimed run; `collect` needs a parent with a reported child; `delegate` needs an authored DELEGATE step; `abort` needs a pending token. `arrangeStashablePair` needs a claimed child that is stashable and poppable. Build them on the existing integration fixtures rather than inventing new ones: `packages/cli/__tests__/integration/delegate-workflow.test.ts` (`setupParentWithChildren`, `issueRunControlClaim`, `runCliInProcess`) and `packages/cli/__tests__/helpers/test-utils.ts`; `packages/cli/__tests__/commands/stash-pop.test.ts` already stands up a claimed stash/pop workspace (`:683`) — mirror it. `backdateClaimProgress` / `readSession` are the same local helpers Tasks 6 and 7 use — factor them into `test-utils.ts` so all three suites share one definition.
 >
-> **`driveSuccess` must assert its own exit code is 0.** Otherwise a command that silently starts refusing (a wrong fixture, a changed grant rule) would record nothing and the guard would report a *recording* failure — sending the reader hunting in the wrong place. Assert success first, then the timestamp.
+> **Every `drive*` helper must assert its own exit code is 0**, on BOTH the recording and non-recording paths. On the recording path, a command that silently starts refusing would record nothing and the guard would report a _recording_ failure, sending the reader hunting in the wrong place. On the non-recording path it matters more: a refused `stash` records nothing and would pass the assertion **vacuously**, so the guard would keep reporting green while pinning nothing at all. Assert success first, then the timestamp.
+>
+> `claimActivity` / `DEFAULT_IDLE_AFTER_MS` import from `@rundown-org/core`.
 
 - [ ] **Step 2: Run the guard**
 
 Run: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard.test.ts`
 
-Expected: PASS — all eight recording cases, all three non-recording cases, and the classification set equality.
+Expected: PASS — all eight recording cases, all three non-recording cases, the stash/pop anti-fooling loop, and the classification set equality.
 
 - [ ] **Step 3: Prove the guard is fail-closed (do not skip)**
 
-A guard that cannot fail is theatre. Verify both anchors actually bite, then revert each probe:
+"A guard that cannot fail is theatre" — the spec requires both anchors be **proven to bite**. Run each probe, confirm the expected failure, then revert it:
 
-1. **Anchor A:** temporarily add `| 'noop'` to `RoleSpecificMutationCommand` in `packages/core/src/runbook/subprocess-mutation-boundary.ts:33` and run `pnpm run check:types`. Expected: a compile error on `RECORDING_COMMANDS` (missing `noop` key). Revert.
-2. **Anchor B:** temporarily comment out the `status` entry in `NON_RECORDING_CLAIM_COMMANDS` and re-run the suite. Expected: the classification test FAILS with `status` present in the scan but absent from the classified list. Revert.
-3. **Behaviour:** temporarily comment out the `recordClaimProgress` call in `runTerminal` (Task 4 Step 4b) and re-run. Expected: the `complete` and `stop` cases FAIL. Revert.
+1. **Anchor A (compile-time):** temporarily add `| 'noop'` to `RoleSpecificMutationCommand` in `packages/core/src/runbook/subprocess-mutation-boundary.ts:33` and run `pnpm run check:types`. Expected: a compile error on `RECORDING_COMMANDS` (missing `noop` key). Revert.
+2. **Anchor B (classification):** temporarily comment out the `status` entry in `NON_RECORDING_CLAIM_COMMANDS` and re-run the suite. Expected: the classification test FAILS with `status` present in the scan but absent from the classified list. Revert.
+3. **Behaviour, positive direction:** temporarily comment out the `recordClaimProgress` call in `runTerminal` (Task 4 Step 4b) and re-run. Expected: the `complete` and `stop` cases FAIL. Revert.
+4. **Behaviour, negative direction:** temporarily add a `recordClaimProgress` call to `packages/cli/src/commands/stash.ts` (as a careless future edit would) and re-run. Expected: the `does NOT record claim progress on stash` case AND the stash/pop anti-fooling loop both FAIL. Revert. This probe is the point of the whole negative half — without it, nothing proves the guard would catch the anti-fooling hole reopening.
 
-If any probe does NOT fail, the guard is not pinning what it claims and must be fixed before proceeding.
+If any probe does NOT produce its expected failure, the guard is not pinning what it claims. Fix the guard before proceeding — a green suite that cannot go red is worse than no suite, because it is trusted.
 
 - [ ] **Step 4: Commit**
 
@@ -2427,14 +2486,14 @@ The PR description should include `Closes #519`. Note in the body that this disc
 
 **Spec coverage — every Acceptance Criterion maps to at least one task:**
 
-Retraced against the revised (2026-07-16, commit `2013cbcbf`) 13-criterion list.
+Retraced against the revised (2026-07-16, commit `12146f9b3`) 13-criterion list.
 
 | AC | Requirement | Task |
 | --- | --- | --- |
 | 1 | `lastProgressAt` exists, required, `= issuedAt` at creation | Task 1 Steps 1-5 (schema + `createClaimRecord`; both production mint sites go through `createClaimRecord`) |
 | 2 | Sessions lacking it are rejected; no migration | Task 1 Steps 6-9 (structural guard in `loadSession`, finish/prune/restart message) |
-| 3 | **Every** successful claim-authenticated mutation refreshes — all eight, no exceptions; failed mutation and `status --claim-id` do not | Task 4 (five call sites covering the eight commands: `runTransition`, `runTerminal`, `issueDelegation`, `collectDelegationOutcomes`, `executeGoto`, `abort.ts`); Task 4 Step 1 (anti-fooling + failed-mutation tests); Task 5 (the guard proving the set is complete) |
-| 4 | **A fail-closed drift guard pins that set** | Task 5 — Anchor A (exhaustive `Record<RoleSpecificMutationCommand, …>`, compile error on a new union member) + Anchor B (Commander `--claim-id` scan set-equality, catching `abort` and anything new); Task 5 Step 3 proves both anchors actually bite |
+| 3 | Every successful claim-authenticated command that **changes runbook workflow state** refreshes (the eight); session-targeting-only (`stash`, `pop`), read-only (`status`), and failed mutations do not | Task 4 (six call sites covering the eight: `runTransition`, `runTerminal`, `issueDelegation`, `collectDelegationOutcomes`, `executeGoto`, `abort.ts`), whose scope note forbids both adding an exception AND extending to `stash`/`pop`; Task 4 Step 1 (`status --claim-id` anti-fooling + failed-mutation tests); Task 5 (`stash`/`pop`/`status` pinned non-recording + the stash/pop anti-fooling loop) |
+| 4 | A fail-closed drift guard **classifies all eleven** and pins the set **in both directions**, with **both anchors proven to bite** | Task 5 — the three-category classification over all eleven; Anchor A (exhaustive `Record<RoleSpecificMutationCommand, …>`, compile error on a new union member) + Anchor B (Commander `--claim-id` scan set-equality, catching `abort`, `stash`/`pop`/`status`, and anything new); Task 5 Step 3's four revert-after probes prove both anchors and both directions bite (probe 4 is the negative direction: a `recordClaimProgress` added to `stash.ts` must fail the suite) |
 | 5 | A command refreshes only the claim whose bearer it presented | Task 3 Step 1 ("refreshes ONLY the presented claim"); Task 4 (every call site passes the PRESENTED `callerEvidence.claimId`, never a resolved/other claim); Task 7 Step 1 (collect refreshes the orchestrator, reports on the children) |
 | 6 | An unparseable `lastProgressAt` throws rather than classifying as `progressing` | Task 2 Step 1 (the fail-open unit test) + Step 3 (the `Number.isNaN` guard and its `@throws`) |
 | 7 | A failed recording never fails and never masks the mutation | Task 3 (`recordClaimProgress` is total by construction — the `try` wraps `withLock`); Task 3 Step 1 + Task 4 Step 1 (the two RD-102 tests) |
@@ -2449,10 +2508,14 @@ Retraced against the revised (2026-07-16, commit `2013cbcbf`) 13-criterion list.
 
 **Type consistency.** `DurationMs` / `durationMs` / `ClaimActivity` / `claimActivity` / `DEFAULT_IDLE_AFTER_MS` are defined in Task 2 and used with exactly those names in Tasks 4, 6, 7, and 8. `progressedClaimRecord(record, now)` (Task 3) is distinct from the untouched `refreshedClaimRecord(record, now)` and moves a different field — this asymmetry is the spec's central type-safety argument and must not be collapsed. `ClaimProgressRecordResult` is defined once (Task 3) and referenced by `CollectionSessionService` (Task 4 Step 5). The four core recording call sites all gate on `outcome.kind` ∈ the committed-success members of their own union — `applied` (`runTransition`), `applied_claim`/`applied_bare` (`runTerminal`), `delegated`/`retried` (`issueDelegation`), `collection_applied` (collect) — each verified against the union declaration and each excluding the no-op members (`already_terminal`, `terminal_claim_confirmed`, `already_delegated`, `already_collected`). `ActiveStatusOptions.activityByChildRunId` (Task 6 Step 5) is keyed by `childRunId` string, matching the sibling `claimKeyByChildRunId` exactly and populated in the same loop (Task 6 Step 6). `UnresolvedChildActivity` (Task 7 Step 3) carries `idleFor: DurationMs`, which serialises to a plain number in JSON — the brand is compile-time only, so `output.json` needs no conversion, and `UnresolvedChildActivitySchema` correctly validates `z.number()`. `listOpenClaimsForParent` returns `ClaimRecord[]` whose `delegation?.parentStepId` supplies `substep`; the `.filter((claim) => claim.delegation !== undefined)` before the `!` narrows it, and `listOpenClaimsForParent` only ever returns claims with a `delegation` anyway (`session-service.ts:647` skips the rest) — the filter is the type-level proof, not a behavioural guard.
 
-**Open classification the spec does not address — flagged for the reviewer:**
+**The predicate is "changes runbook workflow state", not "mutates" — do not collapse it back.** This is the single most load-bearing sentence in the plan, and the one a future reader is most likely to "simplify". `stash` and `pop` ARE claim-authenticated mutations, so the shorter phrasing sweeps them in and silently reopens the anti-fooling hole. They are **not exceptions** to the rule — that framing is also wrong, and also invites someone to "clean up the carve-out". They fail the predicate. The rule genuinely has no exception list; it has a predicate that three of the eleven commands do not satisfy. Task 5 pins all three, and probe 4 proves the pin is real.
 
-**`stash` and `pop` register `--claim-id` and mutate, but are classified NON-recording** (Task 5's `NON_RECORDING_CLAIM_COMMANDS`). They are not in the spec's set of eight, and they are not in `run-option.test.ts`'s seven or core's `RoleSpecificMutationCommand` union — but they *are* claim-authenticated and they *do* write, so the uniform rule's phrase "every successful claim-authenticated mutation" arguably reaches them. The plan classifies them as non-recording on the grounds that `lastProgressAt` means "the holder last advanced the **controlled run**", and stashing/unstashing advances *session targeting*, not the run. This reading is corroborated by `unstashForClaimId` already moving `updatedAt` ("this record was last written") via `refreshedClaimRecord` — precisely the field the spec says to leave alone. The guard pins the decision either way, so reversing it is a one-line table move; but it is a judgement the spec does not make, and it is the one place where "no exception list" and the eight-command set are in tension.
+**Previously-flagged items, all now resolved by spec revisions `2013cbcbf` and `12146f9b3`** (retained so a reader of an earlier plan version can see they were closed, not dropped):
 
-**Previously-flagged items, now resolved by spec revision `2013cbcbf`** (retained so a reader of both versions can see they were closed, not dropped): the `complete`/`stop`/`abort` omission (spec was wrong — now the uniform rule, Task 4 + Task 5); `goto`'s CLI recording site (approach stands, now justified by the drift guard); the corrupt-timestamp throw (now AC6); and `unresolvedChildren.length < unresolved` (now specified and required in the docs by AC10).
+1. **`complete`/`stop`/`abort` omitted from recording** — the spec was wrong; now the workflow-state predicate covers all eight (Task 4 + Task 5).
+2. **`goto` (and `abort`) recording from the CLI** — approach stands, now spec-backed: their core services are authorization gates that mutate nothing, restructuring them is out of scope for #519, and the drift guard is what makes the differing seams safe.
+3. **Corrupt timestamp throws** — now AC6.
+4. **`unresolvedChildren.length` may be `<` `unresolved`** — now specified, and required in the docs by AC10.
+5. **`stash`/`pop` classification** — surfaced while designing the guard; the owner ruled they are excluded, and the spec now carries the sharper predicate and the decisive anti-fooling argument. Task 5's negative-direction coverage exists because of this.
 
-**One remaining implementation choice, unchanged:** the status activity fields are optional-when-claimed, not required-when-claimed (unlike `claimKey`, which the #531 schema made required). The join is a read-model lookup that can legitimately miss; the "present together" refine is what keeps the trio coherent.
+**One remaining implementation choice, unchanged and unflagged by the spec:** the status activity fields are optional-when-claimed, not required-when-claimed (unlike `claimKey`, which the #531 schema made required). The join is a read-model lookup that can legitimately miss; the "present together" refine is what keeps the trio coherent.
