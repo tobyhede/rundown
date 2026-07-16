@@ -19,8 +19,6 @@ import type {
   RunbookActorService as RunbookActorServiceType,
   SessionService as SessionServiceType,
   ExecutionLifecycleService as ExecutionLifecycleServiceType,
-  DelegationLock as DelegationLockType,
-  DelegationTerminalProjection,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
@@ -28,7 +26,6 @@ type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'result' | 'deleg
 
 const PARENT_RUN_ID = brandRunIdForTest('rd_11111111111111111111111111111111');
 const CHILD_RUN_ID = brandRunIdForTest('rd_22222222222222222222222222222222');
-const GRANDPARENT_RUN_ID = brandRunIdForTest('rd_33333333333333333333333333333333');
 
 function upsertSubstepStateForTest(
   substepStates: readonly SubstepState[],
@@ -44,13 +41,14 @@ function upsertSubstepStateForTest(
 }
 
 const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>();
-const mockProjectDelegationTerminalOutcome = jest.fn<
-  (childState: RunbookState, explicitResult?: 'pass' | 'fail') => DelegationTerminalProjection
->((_childState: RunbookState, explicitResult?: 'pass' | 'fail') =>
-  explicitResult === undefined
-    ? { kind: 'not_terminal' as const }
-    : { kind: 'outcome' as const, result: explicitResult },
-);
+
+/**
+ * Seam-result union produced by the core `propagateTerminalChildUpward`. The
+ * thin CLI adapters delegate the decision to this seam, so its mock is the sole
+ * driver of adapter routing tests; the REAL seam logic is covered in
+ * `packages/core/__tests__/runbook/inline-parent-advance.test.ts`.
+ */
+type SeamResult = 'handled' | 'stopped' | 'blocked' | 'reported' | 'duplicate' | 'not-applicable';
 
 // Mock @rundown-org/core. The report-only helper (Plan 5) constructs only
 // RunbookStateManager, ExecutionLifecycleService, and RunbookCompletionService;
@@ -65,7 +63,20 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookCollectionService: jest.fn(),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
-  projectDelegationTerminalOutcome: mockProjectDelegationTerminalOutcome,
+  // Retained as a plain stub for the ESM link check; the thin adapters no longer
+  // project — the core seam does — so no test drives it.
+  projectDelegationTerminalOutcome: jest.fn(),
+  // The thin CLI adapters delegate the decision to the core seam. Mock it so
+  // adapter tests assert routing + result mapping; the REAL seam logic is
+  // covered by packages/core/__tests__/runbook/inline-parent-advance.test.ts.
+  propagateTerminalChildUpward:
+    mockFn<
+      (
+        deps: unknown,
+        childState: RunbookState,
+        result: 'pass' | 'fail' | undefined,
+      ) => Promise<SeamResult>
+    >().mockResolvedValue('handled'),
   // advanceParentForInlineChild lazily constructs a bridged emitter; a no-op
   // stub satisfies the link check (these tests assert on drain/loop branches).
   ExecutionEventEmitter: jest.fn().mockImplementation(() => ({ subscribe: jest.fn() })),
@@ -172,9 +183,19 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions.js'
 );
+const { propagateTerminalChildUpward } = core as unknown as {
+  propagateTerminalChildUpward: jest.Mock<
+    (
+      deps: unknown,
+      childState: RunbookState,
+      result: 'pass' | 'fail' | undefined,
+    ) => Promise<SeamResult>
+  >;
+};
 const {
   reportTerminalToDelegatingRun,
   advanceParentForInlineChild,
+  buildAdvanceInlineParent,
   extractParentLinkage,
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
@@ -253,21 +274,6 @@ function makeManager(states: Map<string, RunbookState | null>): MockManager {
     ),
     update: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined),
   };
-}
-
-interface MockLock {
-  acquire: jest.Mock<(parentRunId: string) => Promise<void>>;
-  release: jest.Mock<(parentRunId: string) => Promise<void>>;
-}
-
-function makeLock(): MockLock {
-  const MockLockClass = core.DelegationLock as unknown as jest.Mock<() => DelegationLockType>;
-  const lockInstance: MockLock = {
-    acquire: mockFn<(parentRunId: string) => Promise<void>>().mockResolvedValue(undefined),
-    release: mockFn<(parentRunId: string) => Promise<void>>().mockResolvedValue(undefined),
-  };
-  MockLockClass.mockImplementation(() => lockInstance as unknown as DelegationLockType);
-  return lockInstance;
 }
 
 interface MockLifecycleService {
@@ -353,12 +359,9 @@ function wireMocks(
 
 beforeEach(() => {
   jest.resetAllMocks();
-  mockProjectDelegationTerminalOutcome.mockImplementation(
-    (_childState: RunbookState, explicitResult?: 'pass' | 'fail') =>
-      explicitResult === undefined
-        ? { kind: 'not_terminal' as const }
-        : { kind: 'outcome' as const, result: explicitResult },
-  );
+  // Default the seam mock to 'handled'; suites that assert a specific mapping
+  // override it per test.
+  propagateTerminalChildUpward.mockResolvedValue('handled');
   mockCreateCliRunbookActorService.mockImplementation(() => makeActorDouble());
   jest.mocked(drainResolvedCompletions).mockResolvedValue({
     unresolved: 0,
@@ -381,221 +384,70 @@ beforeEach(() => {
   } as never);
 });
 
-describe('reportTerminalToDelegatingRun', () => {
-  it('reports the child outcome onto the immediate delegating run and stops', async () => {
-    const delegation = makeDelegationLinkage();
+describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
+  beforeEach(() => {
+    propagateTerminalChildUpward.mockReset();
+  });
+
+  it('returns not-applicable for a non-delegation child without calling the seam', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
-      parentLinkage: delegation,
+      parentLinkage: makeInlineLinkage(),
     });
-    const parentState = makeState(PARENT_RUN_ID, {
-      step: '1',
-      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'running' }],
-      resolvedCompletions: {},
-    });
-    const states = new Map([[parentState.id, parentState]]);
-    const manager = makeManager(states);
-    const _lock = makeLock();
-    const lifecycleService = makeLifecycleService();
     const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, lifecycleService);
-
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
-
-    // Report recorded exactly one outcome on the delegating run...
-    expect(result).toBe('reported');
-    expect(core.RunbookCompletionService).toHaveBeenCalledTimes(1);
-    expect(recordChildCompletion).toHaveBeenCalledWith({ childState, result: 'pass' });
-    // ...and NEVER collected: no collection service, no drain, no execution loop.
-    expect(core.RunbookCollectionService).not.toHaveBeenCalled();
-    expect(drainResolvedCompletions).not.toHaveBeenCalled();
-    expect(runExecutionLoop).not.toHaveBeenCalled();
-    // ...and did not advance the delegating run cursor.
-    const freshParent = await manager.load(PARENT_RUN_ID);
-    expect(freshParent?.step).toBe('1');
-    expect(output.flush).toHaveBeenCalled();
-  });
-
-  it('blocks report-only propagation for policy-denied child terminals', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'stopped',
-      parentLinkage: makeDelegationLinkage(),
-      lastAction: {
-        type: 'POLICY_DENIED',
-        origin: 'direct',
-        message: 'blocked by policy',
-      },
-    });
-    const manager = makeManager(new Map());
-    const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({
-      kind: 'command_infrastructure',
-      reason: 'policy_denied',
-      message: 'blocked by policy',
-    });
-
-    const result = await reportTerminalToDelegatingRun(childState, undefined, '/test', output);
-
-    expect(result).toBe('blocked');
-    expect(recordChildCompletion).not.toHaveBeenCalled();
-    expect(output.flush).toHaveBeenCalled();
-  });
-
-  it('blocks report-only propagation for command execution failures', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'stopped',
-      parentLinkage: makeDelegationLinkage(),
-      lastAction: {
-        type: 'COMMAND_EXECUTION_FAILED',
-        origin: 'direct',
-        message: 'Timeout of 30000 ms exceeded',
-      },
-    });
-    const manager = makeManager(new Map());
-    const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({
-      kind: 'command_infrastructure',
-      reason: 'command_execution_failed',
-      message: 'Timeout of 30000 ms exceeded',
-    });
-
-    const result = await reportTerminalToDelegatingRun(childState, undefined, '/test', output);
-
-    expect(result).toBe('blocked');
-    expect(recordChildCompletion).not.toHaveBeenCalled();
-    expect(output.flush).toHaveBeenCalled();
-  });
-
-  it('still records explicit fail when the caller supplies fail', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'stopped',
-      parentLinkage: makeDelegationLinkage(),
-      lastAction: {
-        type: 'POLICY_DENIED',
-        origin: 'direct',
-        message: 'blocked by policy',
-      },
-    });
-    const manager = makeManager(new Map());
-    const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({ kind: 'outcome', result: 'fail' });
-
-    const result = await reportTerminalToDelegatingRun(childState, 'fail', '/test', output);
-
-    expect(result).toBe('reported');
-    expect(recordChildCompletion).toHaveBeenCalledWith({ childState, result: 'fail' });
-  });
-
-  it('returns not-applicable when the child has no parent linkage', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'completed',
-      parentLinkage: undefined,
-    });
-    const manager = makeManager(new Map());
-    const output = makeOutput();
-    wireMocks(manager, makeLifecycleService());
-
-    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
-
     expect(result).toBe('not-applicable');
-    // The early linkage guard returns before constructing the completion service.
-    expect(core.RunbookCompletionService).not.toHaveBeenCalled();
+    expect(propagateTerminalChildUpward).not.toHaveBeenCalled();
   });
 
-  it('reports onto the immediate parent only and never touches an ancestor', async () => {
-    // Defensive single-level contract test. RD-819 means a delegating run never
-    // actually carries its own 'delegation' linkage, but we still pin that the
-    // helper touches ONLY the immediate parent: no recurse, no collect, no write
-    // to any ancestor. (The GRANDPARENT_RUN_ID state here is a synthetic guard.)
-    const delegation = makeDelegationLinkage();
+  it('routes a delegation child to the seam and maps a fresh report through', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
-      parentLinkage: delegation,
+      parentLinkage: makeDelegationLinkage(),
     });
-    const parentState = makeState(PARENT_RUN_ID, {
-      parentLinkage: makeDelegationLinkage({
-        parentRunId: GRANDPARENT_RUN_ID,
-        parentStepId: '2',
-      }),
-      resolvedCompletions: {},
-    });
-    const grandparentState = makeState(GRANDPARENT_RUN_ID, { resolvedCompletions: {} });
-    const states = new Map([
-      [parentState.id, parentState],
-      [grandparentState.id, grandparentState],
-    ]);
-    const manager = makeManager(states);
-    const _lock = makeLock();
     const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
-
+    propagateTerminalChildUpward.mockResolvedValue('reported');
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
-
     expect(result).toBe('reported');
-    // Exactly one report — the immediate parent. No recursion, no collection.
-    expect(recordChildCompletion).toHaveBeenCalledTimes(1);
-    expect(core.RunbookCollectionService).not.toHaveBeenCalled();
-    // Grandparent untouched: no outcome row written to it.
-    const freshGrandparent = await manager.load(GRANDPARENT_RUN_ID);
-    expect(Object.keys(freshGrandparent?.resolvedCompletions ?? {})).toHaveLength(0);
+    expect(propagateTerminalChildUpward).toHaveBeenCalledWith(
+      expect.objectContaining({ advanceInlineParent: expect.any(Function) }),
+      childState,
+      'pass',
+    );
+    expect(output.flush).toHaveBeenCalled();
   });
 
-  it('returns reported (not pending) when the slot was ordinarily cancelled', async () => {
-    // recordChildCompletion returns 'cancelled' when the parent substep was
-    // ordinarily cancelled. The child still closed and there was nothing to
-    // report (no outcome row), so the helper returns 'reported' and never
-    // collects — preserving the cancellation split (no fail outcome on cancel).
-    const delegation = makeDelegationLinkage();
+  it('collapses a seam duplicate to reported — CLI never distinguished it (finding 2)', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
-      parentLinkage: delegation,
+      parentLinkage: makeDelegationLinkage(),
     });
-    const parentState = makeState(PARENT_RUN_ID, {
-      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
-    });
-    const states = new Map([[parentState.id, parentState]]);
-    const manager = makeManager(states);
-    const _lock = makeLock();
     const output = makeOutput();
-    wireMocks(manager, makeLifecycleService(), { recordChildCompletionResult: 'cancelled' });
-
+    propagateTerminalChildUpward.mockResolvedValue('duplicate');
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
-
     expect(result).toBe('reported');
-    expect(core.RunbookCollectionService).not.toHaveBeenCalled();
-    expect(drainResolvedCompletions).not.toHaveBeenCalled();
   });
 
-  it('forwards child finalVars through to the core recordChildCompletion call', async () => {
-    // The CLI helper forwards childState (carrying finalVars) to the core
-    // service unchanged. Core materializes finalVars onto the persisted row —
-    // exercised in completion-service.test.ts.
-    const delegation = makeDelegationLinkage();
+  it('maps a seam blocked result to blocked', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'stopped',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('blocked');
+    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+
+  it('maps a seam not-applicable result to not-applicable', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
-      parentLinkage: delegation,
-      finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
+      parentLinkage: makeDelegationLinkage(),
     });
-    const parentState = makeState(PARENT_RUN_ID, {
-      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
-    });
-    const states = new Map([[parentState.id, parentState]]);
-    const manager = makeManager(states);
-    const _lock = makeLock();
     const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
-
-    await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
-
-    expect(recordChildCompletion).toHaveBeenCalledWith({
-      childState: expect.objectContaining({
-        finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
-      }),
-      result: 'pass',
-    });
+    propagateTerminalChildUpward.mockResolvedValue('not-applicable');
+    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
+    expect(result).toBe('not-applicable');
   });
 });
 
@@ -659,18 +511,74 @@ describe('inline linkage path', () => {
   });
 });
 
-describe('advanceParentForInlineChild', () => {
-  it('rethrows when draining resolved completions fails', async () => {
+describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
+  beforeEach(() => {
+    propagateTerminalChildUpward.mockReset();
+  });
+
+  it('returns not-applicable for a non-inline child without calling the seam', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('not-applicable');
+    expect(propagateTerminalChildUpward).not.toHaveBeenCalled();
+  });
+
+  it('delegates an inline child to the core seam and maps stopped through', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeInlineLinkage(),
     });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('stopped');
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('stopped');
+    expect(propagateTerminalChildUpward).toHaveBeenCalledWith(
+      expect.objectContaining({ advanceInlineParent: expect.any(Function) }),
+      childState,
+      'pass',
+    );
+  });
+
+  it('maps a seam handled result through', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('handled');
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('handled');
+  });
+
+  it('maps a seam reported result (unreachable for inline) to not-applicable', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('reported');
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('not-applicable');
+  });
+});
+
+describe('buildAdvanceInlineParent (CLI execution callable)', () => {
+  const FRAME = brandFrameKeyForTest('1|');
+
+  beforeEach(() => {
+    jest.mocked(drainResolvedCompletions).mockReset();
+    jest.mocked(runExecutionLoop).mockReset();
+  });
+
+  it('throws when drain reports a hard failure', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
     wireMocks(manager, makeLifecycleService());
-
-    // Drain reports a hard failure on the parent: the helper must surface it.
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
       status: 'failed',
@@ -679,26 +587,44 @@ describe('advanceParentForInlineChild', () => {
       message: 'drain blew up',
     } as never);
 
-    await expect(advanceParentForInlineChild(childState, 'pass', '/test', output)).rejects.toThrow(
-      'drain blew up',
-    );
-    // A failed drain never reaches the execution loop.
+    const advance = buildAdvanceInlineParent('/test', output);
+    await expect(
+      advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      }),
+    ).rejects.toThrow('drain blew up');
     expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
-  it('runs the execution loop after applying completions and propagates a loop STOP terminal', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'completed',
-      parentLinkage: makeInlineLinkage(),
+  it('collapses a drain STOP to status stopped', async () => {
+    const parentState = makeState(PARENT_RUN_ID);
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'stopped',
+      applied: 1,
+    } as never);
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
     });
-    // Parent carries no linkage of its own, so the recursive propagate after the
-    // loop terminal is a no-op — isolating the loopResult branch under test.
+    expect(outcome).toEqual({ status: 'stopped' });
+    expect(runExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it('runs the execution loop after applying completions and collapses a loop STOP', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
     wireMocks(manager, makeLifecycleService());
-
-    // Drain applied a completion but the parent is still active -> drives the loop.
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
       status: 'continue',
@@ -706,69 +632,22 @@ describe('advanceParentForInlineChild', () => {
       state: parentState,
     });
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
-
-    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
-
-    expect(runExecutionLoop).toHaveBeenCalledTimes(1);
-    expect(result).toBe('stopped');
-  });
-
-  it('uses terminal parent projection after loop stop instead of forcing fail', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'completed',
-      parentLinkage: makeInlineLinkage(),
-    });
-    const terminalParent = makeState(PARENT_RUN_ID, {
-      lifecycle: 'stopped',
-      parentLinkage: makeDelegationLinkage({ parentRunId: GRANDPARENT_RUN_ID }),
-      lastAction: {
-        type: 'POLICY_DENIED',
-        origin: 'direct',
-        message: 'blocked by policy',
-      },
-    });
-    const manager = makeManager(new Map([[PARENT_RUN_ID, terminalParent]]));
-    const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
-
-    jest.mocked(drainResolvedCompletions).mockResolvedValue({
-      unresolved: 0,
-      status: 'continue',
-      applied: 1,
-      state: terminalParent,
-    });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({
-      kind: 'outcome',
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
       result: 'pass',
     });
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({
-      kind: 'command_infrastructure',
-      reason: 'policy_denied',
-      message: 'blocked by policy',
-    });
-
-    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
-
-    expect(result).toBe('blocked');
-    const lastProjectionCall = mockProjectDelegationTerminalOutcome.mock.calls.at(-1);
-    expect(lastProjectionCall).toEqual([terminalParent, undefined]);
-    expect(recordChildCompletion).not.toHaveBeenCalledWith({
-      childState: terminalParent,
-      result: 'fail',
-    });
+    expect(runExecutionLoop).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ status: 'stopped' });
   });
 
-  it('returns handled when the post-apply execution loop completes normally', async () => {
-    const childState = makeState(CHILD_RUN_ID, {
-      lifecycle: 'completed',
-      parentLinkage: makeInlineLinkage(),
-    });
+  it('drives the loop with the defer-to-caller terminal mode (no self-release)', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
     wireMocks(manager, makeLifecycleService());
-
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
       status: 'continue',
@@ -776,12 +655,81 @@ describe('advanceParentForInlineChild', () => {
       state: parentState,
     });
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    const advance = buildAdvanceInlineParent('/test', output);
+    await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+    expect(runExecutionLoop).toHaveBeenCalledWith(
+      expect.anything(),
+      PARENT_RUN_ID,
+      expect.anything(),
+      '/test',
+      expect.any(Boolean),
+      expect.anything(),
+      expect.objectContaining({ terminalReleaseMode: 'defer-to-caller' }),
+    );
+  });
 
-    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+  it('collapses a normal loop completion to status done', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+    expect(outcome).toEqual({ status: 'done' });
+  });
 
-    expect(runExecutionLoop).toHaveBeenCalledTimes(1);
-    // Loop 'done' with a linkage-free parent -> propagate is not-applicable -> handled.
-    expect(result).toBe('handled');
+  it('returns status active when completions applied but the parent still waits', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 1,
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+    expect(outcome).toEqual({ status: 'active' });
+    expect(runExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it('returns status active when the parent has vanished', async () => {
+    const manager = makeManager(new Map());
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+    expect(outcome).toEqual({ status: 'active' });
+    expect(drainResolvedCompletions).not.toHaveBeenCalled();
   });
 });
 
@@ -832,26 +780,14 @@ describe('propagateDrivenRunTerminal', () => {
     expect(result).toEqual({ kind: 'skipped' });
   });
 
-  it('propagates a terminal inline child through the inline flow-back path (lifecycle-inferred)', async () => {
+  it('propagates a terminal inline child through the seam and lifts the linkage kind', async () => {
     const child = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeInlineLinkage(),
     });
-    const parent = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
-    const manager = makeManager(
-      new Map([
-        [child.id, child],
-        [parent.id, parent],
-      ]),
-    );
+    const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    wireMocks(manager, makeLifecycleService());
-    // loop-inferred (goto/run/collect path): the mock projection defaults
-    // `undefined` to not_terminal, so pin lifecycle-inference explicitly here so
-    // the inline flow-back proceeds (the real projectDelegationTerminalOutcome
-    // infers `completed → pass`).
-    mockProjectDelegationTerminalOutcome.mockReturnValue({ kind: 'outcome', result: 'pass' });
-    // Default drain returns status 'continue' / applied 0 → inline path → 'handled'.
+    propagateTerminalChildUpward.mockResolvedValue('handled');
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -859,39 +795,17 @@ describe('propagateDrivenRunTerminal', () => {
       output,
       LOOP_INFERRED,
     );
-    // Discriminated shape: linkage kind IS the discriminant (SHOULD-FIX 4).
     expect(result).toEqual({ kind: 'inline-advanced', result: 'handled' });
   });
 
-  it('propagates an inline-advanced STOP terminal as { inline-advanced, stopped }', async () => {
-    // The stopped/blocked inline result the exit predicates consume — never pinned
-    // through this wrapper before (only the sibling advanceParentForInlineChild had
-    // it). Drain applies the child completion, the post-apply parent loop STOPs, and
-    // the linkage-free parent makes the recursive propagate a no-op.
+  it('lifts an inline-advanced STOP terminal as { inline-advanced, stopped }', async () => {
     const child = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeInlineLinkage(),
     });
-    const parent = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
-    const manager = makeManager(
-      new Map([
-        [child.id, child],
-        [parent.id, parent],
-      ]),
-    );
+    const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    wireMocks(manager, makeLifecycleService());
-    // loop-inferred forwards `undefined`; pin lifecycle-inference so the child's
-    // `completed → pass` flow-back proceeds (mirrors the 'handled' case above).
-    mockProjectDelegationTerminalOutcome.mockReturnValue({ kind: 'outcome', result: 'pass' });
-    jest.mocked(drainResolvedCompletions).mockResolvedValue({
-      unresolved: 0,
-      status: 'continue',
-      applied: 1,
-      state: parent,
-    });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
-
+    propagateTerminalChildUpward.mockResolvedValue('stopped');
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -899,51 +813,17 @@ describe('propagateDrivenRunTerminal', () => {
       output,
       LOOP_INFERRED,
     );
-
     expect(result).toEqual({ kind: 'inline-advanced', result: 'stopped' });
   });
 
-  it('propagates an inline-advanced blocked terminal as { inline-advanced, blocked }', async () => {
-    // Parent loop STOPs into a policy-denied terminal that projects to `blocked`
-    // (command-infrastructure), mirroring the advanceParentForInlineChild blocked
-    // case but routed through the wrapper.
+  it('lifts an inline-advanced blocked terminal as { inline-advanced, blocked }', async () => {
     const child = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeInlineLinkage(),
     });
-    const terminalParent = makeState(PARENT_RUN_ID, {
-      lifecycle: 'stopped',
-      parentLinkage: makeDelegationLinkage({ parentRunId: GRANDPARENT_RUN_ID }),
-      lastAction: {
-        type: 'POLICY_DENIED',
-        origin: 'direct',
-        message: 'blocked by policy',
-      },
-    });
-    const manager = makeManager(
-      new Map([
-        [child.id, child],
-        [PARENT_RUN_ID, terminalParent],
-      ]),
-    );
+    const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    wireMocks(manager, makeLifecycleService());
-    jest.mocked(drainResolvedCompletions).mockResolvedValue({
-      unresolved: 0,
-      status: 'continue',
-      applied: 1,
-      state: terminalParent,
-    });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
-    // First projection: the child's `completed → pass` flow-back. Second: the
-    // terminal parent projects to a command-infrastructure block.
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({ kind: 'outcome', result: 'pass' });
-    mockProjectDelegationTerminalOutcome.mockReturnValueOnce({
-      kind: 'command_infrastructure',
-      reason: 'policy_denied',
-      message: 'blocked by policy',
-    });
-
+    propagateTerminalChildUpward.mockResolvedValue('blocked');
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -951,30 +831,38 @@ describe('propagateDrivenRunTerminal', () => {
       output,
       LOOP_INFERRED,
     );
-
     expect(result).toEqual({ kind: 'inline-advanced', result: 'blocked' });
   });
 
-  it('forwards an operator-result trigger into propagation (pass/fail commands)', async () => {
+  it('reports a terminal delegation child through the seam', async () => {
+    const child = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const manager = makeManager(new Map([[child.id, child]]));
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('reported');
+    const result = await propagateDrivenRunTerminal(
+      manager as unknown as RunbookStateManagerType,
+      CHILD_RUN_ID,
+      '/test',
+      output,
+      LOOP_INFERRED,
+    );
+    expect(result).toEqual({ kind: 'delegation-reported', result: 'reported' });
+  });
+
+  it('forwards an operator-result trigger into the seam call (pass/fail commands)', async () => {
     // Correction 1 + SHOULD-FIX 5: an operator-result trigger overrides lifecycle
-    // inference. A child left `stopped` by its own STOP but reported `pass` by the
-    // operator must report 'pass' (not the inferred 'fail').
+    // inference. The authored 'pass' is forwarded into the adapter and on into the
+    // seam, even though the child is lifecycle 'stopped'.
     const child = makeState(CHILD_RUN_ID, {
       lifecycle: 'stopped',
       parentLinkage: makeDelegationLinkage(),
     });
-    const parent = makeState(PARENT_RUN_ID, {
-      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'running' }],
-      resolvedCompletions: {},
-    });
-    const manager = makeManager(
-      new Map([
-        [child.id, child],
-        [parent.id, parent],
-      ]),
-    );
+    const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
+    propagateTerminalChildUpward.mockResolvedValue('reported');
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -983,7 +871,11 @@ describe('propagateDrivenRunTerminal', () => {
       { kind: 'operator-result', result: 'pass' },
     );
     expect(result).toEqual({ kind: 'delegation-reported', result: 'reported' });
-    expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
+    expect(propagateTerminalChildUpward).toHaveBeenCalledWith(
+      expect.objectContaining({ advanceInlineParent: expect.any(Function) }),
+      child,
+      'pass',
+    );
   });
 });
 
