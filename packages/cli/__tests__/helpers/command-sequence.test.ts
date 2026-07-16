@@ -908,6 +908,74 @@ describe('retired ${ARTIFACT:} grammar (#498)', () => {
     expect(resolved).toBe('rd run x --artifacts Plan=rd://artifacts/c/rd_1/plan.json');
   });
 });
+
+describe('${CAPTURE_ARTIFACT_ARRAY:} shell-quoting guard (#498)', () => {
+  it('rejects an unquoted array capture, naming the key and the fix', async () => {
+    const calls: string[][] = [];
+
+    await expect(
+      executeCommandSequence({
+        commands: ['rd run x.runbook.md --artifacts-json R=${CAPTURE_ARTIFACT_ARRAY:review.json}'],
+        cwd: process.cwd(),
+        cliPath: '/unused/cli.js',
+        quiet: true,
+        resolveCapturedArtifact: async () => '["rd://artifacts/c/rd_1/review.json"]',
+        commandExecutor: {
+          runRd: async (args) => {
+            calls.push(args);
+            return { stdout: '', stderr: '', exitCode: 0 };
+          },
+        },
+      }),
+    ).rejects.toThrow(/review\.json.*single-quote/is);
+    // The guard fires before dispatch, so the executor is never reached.
+    expect(calls).toEqual([]);
+  });
+
+  it('accepts the real quoted call-site spelling, where the whole assignment is quoted', async () => {
+    const calls: string[][] = [];
+
+    await executeCommandSequence({
+      commands: [
+        "rd run x.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all",
+      ],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      resolveCapturedArtifact: async () => '["rd://artifacts/c/rd_1/review.json"]',
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    // The resolved JSON reaches argv intact, as a single byte-identical entry.
+    expect(calls[0]).toContain('Reviews=["rd://artifacts/c/rd_1/review.json"]');
+  });
+
+  it('does not fire on the scalar form, which needs no quoting', async () => {
+    const calls: string[][] = [];
+
+    await executeCommandSequence({
+      commands: ['rd run x.runbook.md --artifacts P=${CAPTURE_ARTIFACT:plan.json}'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      resolveCapturedArtifact: async () => 'rd://artifacts/c/rd_1/plan.json',
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    expect(calls[0]).toContain('P=rd://artifacts/c/rd_1/plan.json');
+  });
+});
+
 describe('substituteCapturedArtifacts', () => {
   it('${CAPTURE_ARTIFACT:key} resolves a scalar URI', async () => {
     const resolve = async (key: string, asArray: boolean) => {

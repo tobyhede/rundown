@@ -535,6 +535,67 @@ const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[^}]+\}/;
  */
 const RETIRED_ARTIFACT_PLACEHOLDER = /\$\{ARTIFACT:[^}]+\}/;
 
+/** Global matcher for the array form, used to locate placeholders to probe. */
+const CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT_ARRAY:([^}]+)\}/g;
+
+/**
+ * Stand-in for a resolved array value, used to ask `shellParse` whether a real
+ * resolved value would survive at the same position.
+ *
+ * Covers every shell-significant character a real value can contain. A resolved
+ * array is `JSON.stringify` of `rd://` URIs (`scenario-artifacts.ts:130`), whose
+ * character set is closed under `assertSafeId` (`[A-Za-z0-9._-]`, `paths.ts:34`)
+ * plus the URI's `/` and `:` and JSON's `[`, `]`, `"`, `,`. Of those, only `"`
+ * and `[`/`]` are shell-significant, and the probe contains all three — so a
+ * probe that survives implies a real value survives.
+ */
+const ARRAY_QUOTING_PROBE = '["rd://s"]';
+
+/**
+ * Reject an `${CAPTURE_ARTIFACT_ARRAY:<key>}` placeholder that is not shell-quoted.
+ *
+ * The array form resolves to JSON containing `"` characters, which are spliced
+ * into command text and then re-tokenized by `shellParse` via
+ * {@link parseRdCommandWithEnv}. Unquoted, the shell consumes those quotes and
+ * `["rd://a","rd://b"]` arrives as the unparseable `[rd://a,rd://b]`, failing
+ * with an error naming a value the author never wrote. The scalar form needs no
+ * such guard: its resolved values cannot contain a shell metacharacter.
+ *
+ * Implemented by probing the real tokenizer rather than by matching quotes with
+ * a regex: authors quote the whole assignment (`'K=${...}'`), not the
+ * placeholder, so an adjacency regex false-rejects every real call site.
+ *
+ * Deliberately throwaway: under the deferred parse-then-substitute refactor
+ * (#498 follow-up) resolved values never reach `shellParse` and this guard is
+ * deleted with the hazard it guards.
+ *
+ * @param cmd - Command text after token substitution, placeholders still intact
+ * @throws {Error} When any array placeholder would not survive shell tokenization
+ */
+function assertArrayCapturesAreShellQuoted(cmd: string): void {
+  const keys = [...cmd.matchAll(CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER)].map((m) => m[1]);
+  if (keys.length === 0) return;
+  const probe = cmd.replace(CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER, ARRAY_QUOTING_PROBE);
+  let survived: number;
+  try {
+    // Count probe *occurrences*, not entries containing one: two placeholders
+    // can legitimately land in a single quoted argv entry.
+    survived = shellParse(probe)
+      .filter((entry): entry is string => typeof entry === 'string')
+      .reduce((n, entry) => n + entry.split(ARRAY_QUOTING_PROBE).length - 1, 0);
+  } catch {
+    survived = -1;
+  }
+  if (survived !== keys.length) {
+    throw new Error(
+      `Command uses \${CAPTURE_ARTIFACT_ARRAY:${keys[0]}} without shell quoting: ${cmd}\n` +
+        `The array form resolves to JSON containing double quotes; unquoted, the shell strips ` +
+        `them and the value arrives as invalid JSON. Single-quote the assignment, e.g. ` +
+        `--artifacts-json 'Key=\${CAPTURE_ARTIFACT_ARRAY:${keys[0]}}'.`,
+    );
+  }
+}
+
 /**
  * Substitute captured claim id placeholders in a command string.
  *
@@ -1639,6 +1700,10 @@ export async function executeCommandSequence(
           `(see runbooks/artifacts/scenario-seed-artifacts.runbook.md).`,
       );
     }
+    // The array capture resolves to JSON with double quotes and is re-tokenized
+    // by shellParse below; reject it here if it would not survive, rather than
+    // failing later against a value the author never wrote.
+    assertArrayCapturesAreShellQuoted(tokenSubstituted);
     // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
     // the manifest a prior command produced (resolver injected by the harness).
     // Fail fast if a command references a capture placeholder but no resolver was
