@@ -371,4 +371,121 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       result: 'pass',
     });
   });
+
+  // --- Mutation-gap closers (#598, step 6.5): the recursion's blocked/stopped
+  // bubble-up and the not-applicable / null-parent branches. ---
+
+  it('inline recording not-applicable short-circuits without advancing', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'not-applicable'>>()
+      .mockResolvedValue('not-applicable');
+    const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ completionService: { recordChildCompletion }, advanceInlineParent }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('not-applicable');
+    expect(advanceInlineParent).not.toHaveBeenCalled();
+  });
+
+  it('stopped advance with a vanished parent (load → null) still returns stopped', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'stopped' });
+    // Parent released then reloaded as null — the recursion is skipped
+    // (propagated = 'not-applicable'), so a stopped advance stays 'stopped'.
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(null);
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('stopped');
+  });
+
+  it('stopped advance whose recursion blocks returns blocked', async () => {
+    // child -> parent(delegation-linked). Advancing the parent STOPS it; the
+    // delegation recursion records 'blocked', so the stopped result escalates.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'stopped',
+      parentLinkage: delegationLinkage(GRANDPARENT),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'stopped' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'recorded' | 'blocked'>>()
+      .mockResolvedValueOnce('recorded') // child recorded on the parent
+      .mockResolvedValueOnce('blocked'); // recursion: parent report blocked
+    const result = await propagateTerminalChildUpward(
+      makeDeps({
+        advanceInlineParent,
+        manager: { load },
+        completionService: { recordChildCompletion },
+      }),
+      child,
+      'fail',
+    );
+    expect(result).toBe('blocked');
+  });
+
+  it('done advance whose recursion blocks returns blocked', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: delegationLinkage(GRANDPARENT),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValue(parentTerminal);
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'recorded' | 'blocked'>>()
+      .mockResolvedValueOnce('recorded')
+      .mockResolvedValueOnce('blocked');
+    const result = await propagateTerminalChildUpward(
+      makeDeps({
+        advanceInlineParent,
+        manager: { load },
+        completionService: { recordChildCompletion },
+      }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('blocked');
+  });
+
+  it('done advance whose inline→inline recursion stops returns stopped', async () => {
+    // child -> parent(inline-linked to grandparent). Parent advance DONE; the
+    // grandparent advance STOPS, so the done result escalates to stopped.
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+    const parentTerminal = makeState(PARENT, {
+      lifecycle: 'completed',
+      parentLinkage: inlineLinkage(GRANDPARENT),
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValueOnce({ status: 'done' }) // parent
+      .mockResolvedValueOnce({ status: 'stopped' }); // grandparent
+    const load = jest
+      .fn<(id: string) => Promise<RunbookState | null>>()
+      .mockResolvedValueOnce(parentTerminal) // reload after advancing parent
+      .mockResolvedValueOnce(null); // grandparent reload → null, recursion stops
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('stopped');
+    expect(advanceInlineParent).toHaveBeenCalledTimes(2);
+  });
 });
