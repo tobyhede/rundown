@@ -75,15 +75,32 @@ Recorded in `SessionService`, inside the session-lock scope that claim-authentic
 
 **A command refreshes only the claim it presents.** Progress is a property of a single claim and its holder. `rundown pass --claim-id <child-claim>` refreshes the child's claim; `rundown collect --claim-id <orchestrator-claim>` refreshes the orchestrator's own claim, **not** the child's. No command ever refreshes a claim it did not present a bearer for — a parent cannot vouch for a child's liveness, and must not appear to.
 
-**Every successful claim-authenticated mutation records progress — no exceptions.** The rule is uniform rather than an enumerated allow-list, because an allow-list has to be remembered: a mutating command added later would silently fail to record, and the failure mode is invisible (a claim reads idle while advancing, producing a spurious check nobody traces back). The rule is smaller than its exceptions would be.
+**Every successful claim-authenticated command that changes runbook workflow state records progress.** This is a rule, not an enumerated allow-list, because a list has to be remembered. A command added later that forgets to record fails *invisibly*: no test fails, no type error, and the only symptom is a claim reading idle while it is actually advancing — a spurious "go check on this" that nobody can trace back to a missing line in a command file. A safety signal quietly degrading into noise is how the feature loses the reader's trust, and it is exactly what an allow-list invites.
 
-The set is the codebase's established mutating-command list — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto` (the same seven pinned by the `--run` registration drift guard at `run-option.test.ts:50`) — plus `abort`, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
+"Changes runbook workflow state" is the predicate, not "mutates". The `--claim-id` surface is eleven commands in three categories:
 
-Recording on a command that terminates a claim (`complete`, `stop`, `abort`) is deliberately *not* special-cased away. It is a redundant write to a claim leaving the reportable population, costing nothing, and buying a rule with no exception list to forget.
+| Category                              | Commands                                                       | Records |
+| ------------------------------------- | -------------------------------------------------------------- | ------- |
+| Changes runbook workflow state        | `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` | Yes     |
+| Changes session targeting only        | `stash`, `pop`                                                 | No      |
+| Changes nothing (read-only)           | `status`                                                       | No      |
 
-**Bare read-only commands present no claim and cannot record.** `rundown status --claim-id` is claim-authenticated but read-only and deliberately **does not** record progress: a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected. Only real progress refreshes the mark, so the signal cannot be fooled. This also keeps `verifyClaimId` (`session-service.ts:361`) read-only and lock-free, as designed.
+The eight are the codebase's own mutating-command list — the seven pinned by the `--run` registration drift guard at `run-option.test.ts:50`, plus `abort`, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
 
-**A fail-closed drift guard pins the set.** Modelled on `run-option.test.ts:50`, a test enumerates every claim-authenticated mutating command and asserts each records progress. This is what makes the uniform rule enforceable rather than aspirational, and it is why the recording *seam* may differ per command without risk: `goto`'s mutation commits in the CLI (`goto-workflow.ts:309`, via `sendAndSync`) with no core seam to hook, so `goto` dispatches into the core recording API from the CLI — permitted, since the CLI is calling a core API rather than re-implementing one. The guard, not the seam's uniformity, is the guarantee.
+**`stash` and `pop` are excluded by the anti-fooling invariant, not by convenience.** Both are claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`), so a rule keyed on "mutation" alone would sweep them in. But `lastProgressAt` means the holder advanced the *controlled run*, and stashing advances session *targeting* — the run itself is untouched. Recording them would reopen precisely the hole that disqualified the rejected verify-path design: a child looping `stash`/`pop` would refresh itself alive forever without advancing anything, faking liveness through a mutating command instead of through a read. Same defect, different door. Corroboration: `unstashForClaimId` already moves `updatedAt` (`session-service.ts:1060`) — the field this design deliberately leaves alone, precisely because it means "record written", not "run advanced".
+
+**Recording on a claim-terminating command (`complete`, `stop`, `abort`) is deliberately not special-cased away.** It is a redundant write to a claim leaving the reportable population: it costs nothing, and it buys a predicate with no exceptions to remember.
+
+**`rundown status --claim-id` does not record.** It is claim-authenticated but read-only: a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected. Only real workflow progress refreshes the mark, so the signal cannot be fooled. This also keeps `verifyClaimId` (`session-service.ts:361`) read-only and lock-free, as designed.
+
+**A fail-closed drift guard pins all eleven, in both directions.** Modelled on `run-option.test.ts:50` ("so a future command cannot silently miss the flag"), a test classifies every claim-authenticated command and asserts each records or does not, per its category. Two anchors are needed, because a Commander-option scan can prove a *flag* exists but not that *behaviour* happens:
+
+- **Anchor A** — an exhaustive `Record<RoleSpecificMutationCommand, …>`. That union (`subprocess-mutation-boundary.ts:33`) is core's own mutating-command definition, and `MUTATION_COMMAND_ALIASES` (`:66`) already uses this idiom against the identical drift problem. A new union member with no row is a compile error.
+- **Anchor B** — a Commander `--claim-id` surface scan, set-equal against the classification table. Anchor A cannot see `abort` (outside the union), so B catches it and anything new.
+
+Both anchors must be *proven to bite* — a guard that cannot fail is theatre.
+
+The guard is what makes the rule enforceable rather than aspirational, and it is why the recording *seam* may differ per command without risk. `goto` and `abort` commit their mutations in the CLI (`goto-workflow.ts:309` via `sendAndSync`; `abort.ts:203` via `manager.update`) — their core services are authorization gates that return `authorized`/`refused` and mutate nothing — so those two dispatch into the core recording API from the CLI, which CLAUDE.md permits since the CLI is calling a core API rather than re-implementing one. Restructuring those seams is out of scope for #519. **The guard, not the seam's uniformity, is the guarantee.**
 
 **Recorded on success, not on attempt.** A child whose `rundown pass` fails validation proved it is alive but did not advance the run. The field means "the run advanced at T". A live-but-erroring child correctly reads as idle — a true positive worth surfacing.
 
@@ -153,7 +170,8 @@ Recovery is unchanged and already works: **adopt** the claim by presenting its b
 - **Unit** — `claimActivity` before, after, and exactly at the threshold boundary.
 - **Property** — `idleFor` monotonic in `now`; `kind === 'idle'` iff `idleFor > idleAfter`; total over any valid ISO input.
 - **Core integration** — progress recorded on successful claim mutation; **not** recorded on `status --claim-id` (the anti-fooling invariant separating this from the rejected verify-path design); **not** recorded on failed mutation; a session-write failure neither fails nor masks the committed mutation (RD-102-shaped).
-- **Drift guard** — fail-closed, modelled on `run-option.test.ts:50`: enumerate every claim-authenticated mutating command (`pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort`) and assert each records progress, so a command added later cannot silently miss it.
+- **Drift guard** — fail-closed, modelled on `run-option.test.ts:50`, classifying all eleven claim-authenticated commands and asserting each records or does not per its category. Anchor A (exhaustive `Record<RoleSpecificMutationCommand, …>`) and Anchor B (`--claim-id` surface scan, set-equal against the classification table) must each be **proven to bite** via revert-after probes; a guard that cannot fail is theatre.
+- **Anti-fooling** — `stash`/`pop` do not record: a loop of them must never clear idle, exactly as a `status --claim-id` loop must not.
 - **Corrupt timestamp** — an unparseable `lastProgressAt` throws rather than classifying as `progressing` (the fail-open case).
 - **Adoption** — a fresh session presenting the bearer on a mutating command clears idle; presenting it on `status --claim-id` does not.
 - **Structural guard** — a session whose claims lack `lastProgressAt` is rejected with the finish/prune/restart error, not migrated.
@@ -168,8 +186,8 @@ This does not distinguish "working" from "gone" — that is unsolvable without a
 
 1. `ClaimRecord.lastProgressAt` exists, is required, and is set to `issuedAt` at claim creation.
 2. Sessions whose claims lack `lastProgressAt` are rejected with a finish/prune/restart error; no migration path exists.
-3. Every successful claim-authenticated mutation refreshes `lastProgressAt` — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` — with no enumerated exceptions; failed mutation and `status --claim-id` do not.
-4. A fail-closed drift guard pins that set, so a mutating command added later cannot silently miss recording.
+3. Every successful claim-authenticated command that changes runbook workflow state refreshes `lastProgressAt` — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort`. Commands that change only session targeting (`stash`, `pop`), that change nothing (`status`), and mutations that fail, do not.
+4. A fail-closed drift guard classifies all eleven claim-authenticated commands and pins the set in both directions, with both anchors proven to bite, so a command added later cannot silently miss recording or silently start.
 5. A command refreshes only the claim whose bearer it presented, never another claim.
 6. An unparseable `lastProgressAt` throws rather than classifying as `progressing`.
 7. A failure to record progress never fails and never masks the committed mutation.
