@@ -15,6 +15,7 @@ import {
   assertRunId,
   type AdvanceInlineParent,
   type CallerEvidence,
+  type LinkageCycleTrip,
   type RunbookState,
   type RunId,
   type ReleaseRunbookResult,
@@ -1230,6 +1231,48 @@ describe('RunbookCollectionService', () => {
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
       expect(advanceInlineParent).not.toHaveBeenCalled();
+    });
+
+    it('claim gate refuses a self-linked DELEGATION target BEFORE the #602 guard is reached', async () => {
+      // Why collect's delegation arm needs no linkage-cycle disposition of its
+      // own: it is unreachable. `claimCanReportDelegationResult` runs first, and
+      // `grantAllows`'s 'report-delegation-result' arm requires an EXACT match on
+      // grant.parentRunId === request.parentRunId (claim-id.ts) with no
+      // wildcards. Corrupting a linkage into a self-edge rewrites
+      // request.parentRunId, which then cannot match the grant minted at
+      // delegation time — so the gate denies and the seam never runs.
+      //
+      // Reaching the seam's delegation arm from collect would require forging the
+      // claim's grant to agree with the corrupted linkage — not corrupt state, a
+      // forged bearer. This test pins that ordering so nobody "fixes" the
+      // unreachable arm on the strength of reading the seam alone.
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: { ...delegationLinkage, parentRunId: controlledRunId },
+      });
+      const trips: LinkageCycleTrip[] = [];
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent: jest.fn<AdvanceInlineParent>(),
+        onLinkageCycle: (trip) => trips.push(trip),
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.reportedTerminalOutcome).toBe(false);
+      }
+      // The guard never ran: the claim gate is the prior refusal.
+      expect(trips).toEqual([]);
     });
 
     it('reports report-only for a delegation-linked terminal target (claim gate honoured)', async () => {

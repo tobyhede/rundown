@@ -23,7 +23,12 @@ import {
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from '../../src/runbook/inline-parent-advance.js';
-import { assertRunId, type RunbookState, type RunId } from '../../src/runbook/index.js';
+import {
+  assertDelegationTokenHash,
+  assertRunId,
+  type RunbookState,
+  type RunId,
+} from '../../src/runbook/index.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
@@ -56,11 +61,47 @@ const withinBoundChainArb: fc.Arbitrary<LinkageGraph> = fc
   .integer({ min: 1, max: MAX_INLINE_PROPAGATION_CHAIN - 1 })
   .map((n) => Array.from({ length: n }, (_, i) => (i === n - 1 ? null : i + 1)));
 
+/**
+ * Advance statuses the composing parent may reach.
+ *
+ * Varying this is load-bearing: with `'done'` hardcoded, the severity-precedence
+ * collapse (`linkage-cycle > blocked > stopped > handled`) is never reached by
+ * any property, and `'active'` never short-circuits the recursion.
+ */
+const advanceStatusArb: fc.Arbitrary<'stopped' | 'done' | 'active'> = fc.constantFrom(
+  'stopped',
+  'done',
+  'active',
+);
+
+/**
+ * Linkage kind per node.
+ *
+ * Varying this is load-bearing: the guard sits BEFORE the kind dispatch — a
+ * stated design point — so a delegation linkage must be refused as firmly as an
+ * inline one. With `'inline'` hardcoded, no property ever exercised that claim.
+ */
+const linkageKindArb: fc.Arbitrary<'inline' | 'delegation'> = fc.constantFrom(
+  'inline',
+  'delegation',
+);
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
 
-function makeState(id: RunId, parent: number | null): RunbookState {
+function makeState(
+  id: RunId,
+  parent: number | null,
+  kind: 'inline' | 'delegation' = 'inline',
+): RunbookState {
+  const common = {
+    parentRunId: parent === null ? nodeRunId(0) : nodeRunId(parent),
+    parentStepId: '1',
+    parentStep: '1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+  };
   return {
     id,
     runbook: { source: 'project', path: 'test.md' },
@@ -78,14 +119,14 @@ function makeState(id: RunId, parent: number | null): RunbookState {
     ...(parent === null
       ? {}
       : {
-          parentLinkage: {
-            kind: 'inline' as const,
-            parentRunId: nodeRunId(parent),
-            parentStepId: '1',
-            parentStep: '1',
-            parentFrameKey: buildFrameKey('1'),
-            parentEntry: 1,
-          },
+          parentLinkage:
+            kind === 'inline'
+              ? { kind: 'inline' as const, ...common }
+              : {
+                  kind: 'delegation' as const,
+                  ...common,
+                  tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+                },
         }),
   };
 }
@@ -96,28 +137,42 @@ interface Run {
   readonly advanced: readonly RunId[];
 }
 
-/** Walk `graph` from node 0 with every parent advance reaching 'done'. */
-async function walk(graph: LinkageGraph): Promise<Run> {
+/**
+ * Walk `graph` from node 0.
+ *
+ * @param graph - Parent-pointer graph to walk.
+ * @param status - Status every parent advance reports (default `'done'`, the
+ *   only status that recurses; `'active'` short-circuits, `'stopped'` exercises
+ *   the severity collapse).
+ * @param kind - Linkage kind every node carries (default `'inline'`;
+ *   `'delegation'` takes the report-only arm, which the guard still precedes).
+ * @returns The walk's result plus every parent id advanced, in call order.
+ */
+async function walk(
+  graph: LinkageGraph,
+  status: 'stopped' | 'done' | 'active' = 'done',
+  kind: 'inline' | 'delegation' = 'inline',
+): Promise<Run> {
   const advanced: RunId[] = [];
   const index = new Map<string, number>(graph.map((_, i) => [nodeRunId(i), i]));
   const deps: PropagateTerminalChildUpwardDeps = {
     manager: {
       load: async (id: string) => {
         const i = index.get(id);
-        return i === undefined ? null : makeState(nodeRunId(i), graph[i] ?? null);
+        return i === undefined ? null : makeState(nodeRunId(i), graph[i] ?? null, kind);
       },
     },
     sessionService: { releaseRunbook: async () => ({}) as never },
     completionService: { recordChildCompletion: async () => 'recorded' },
     advanceInlineParent: async ({ parentRunId }) => {
       advanced.push(parentRunId);
-      return { status: 'done' };
+      return { status };
     },
     onLinkageCycle: () => {},
   };
   const result = await propagateTerminalChildUpward(
     deps,
-    makeState(nodeRunId(0), graph[0] ?? null),
+    makeState(nodeRunId(0), graph[0] ?? null, kind),
     'pass',
   );
   return { result, advanced };
@@ -128,12 +183,16 @@ async function walk(graph: LinkageGraph): Promise<Run> {
 // ---------------------------------------------------------------------------
 
 describe('inline propagation guard — properties (#602)', () => {
-  it('the walk always terminates with a member of the result union', async () => {
+  it('the walk terminates for any graph, status, and linkage kind', async () => {
     await fc.assert(
-      fc.asyncProperty(graphArb, async (graph) => {
+      fc.asyncProperty(graphArb, advanceStatusArb, linkageKindArb, async (graph, status, kind) => {
         // Reaching the assertion at all IS the termination proof: an unguarded
-        // walk on a cyclic graph never returns (or throws RangeError).
-        const { result } = await walk(graph);
+        // walk on a cyclic graph never returns (or throws RangeError). The union
+        // membership is guaranteed statically by the return type, so the content
+        // here is termination across the whole input space — including the
+        // 'stopped'/'active' statuses and the delegation arm the original
+        // harness pinned to constants and never reached.
+        const { result } = await walk(graph, status, kind);
         expect([
           'handled',
           'stopped',
@@ -148,10 +207,27 @@ describe('inline propagation guard — properties (#602)', () => {
     );
   });
 
+  it('a cyclic graph is refused, never silently reported as success', async () => {
+    // The severity claim, over arbitrary statuses: a walk whose graph forces a
+    // repeat must surface 'linkage-cycle' and must NOT be downgraded to
+    // 'handled'/'stopped' by a shallower level's result. Only 'done' recurses,
+    // so this is the property the 'done'-only harness could never state.
+    const cyclicArb = fc
+      .integer({ min: 1, max: 8 })
+      .map((n) => Array.from({ length: n }, (_, i) => (i + 1) % n));
+    await fc.assert(
+      fc.asyncProperty(cyclicArb, async (graph) => {
+        const { result } = await walk(graph, 'done');
+        expect(result).toBe('linkage-cycle');
+      }),
+      { numRuns: 200 },
+    );
+  });
+
   it('advanceInlineParent is invoked at most MAX - 1 times for any graph', async () => {
     await fc.assert(
-      fc.asyncProperty(graphArb, async (graph) => {
-        const { advanced } = await walk(graph);
+      fc.asyncProperty(graphArb, advanceStatusArb, async (graph, status) => {
+        const { advanced } = await walk(graph, status);
         expect(advanced.length).toBeLessThanOrEqual(MAX_INLINE_PROPAGATION_CHAIN - 1);
       }),
       { numRuns: 200 },
@@ -160,9 +236,24 @@ describe('inline propagation guard — properties (#602)', () => {
 
   it('no run id is ever advanced twice (the issue AC: no repeated side effects)', async () => {
     await fc.assert(
-      fc.asyncProperty(graphArb, async (graph) => {
-        const { advanced } = await walk(graph);
+      fc.asyncProperty(graphArb, advanceStatusArb, async (graph, status) => {
+        const { advanced } = await walk(graph, status);
         expect(new Set(advanced).size).toBe(advanced.length);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('a delegation linkage never advances an inline parent, cyclic or not', async () => {
+    // The guard precedes the kind dispatch — a stated design point that no
+    // property covered while the harness hardcoded kind: 'inline'. Delegation is
+    // report-only: it must never drive the inline-advance callable, and a cyclic
+    // delegation graph must still terminate.
+    await fc.assert(
+      fc.asyncProperty(graphArb, async (graph) => {
+        const { advanced, result } = await walk(graph, 'done', 'delegation');
+        expect(advanced).toEqual([]);
+        expect(result).not.toBe('handled');
       }),
       { numRuns: 200 },
     );
