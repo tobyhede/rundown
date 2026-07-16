@@ -312,8 +312,9 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(rootAfter?.step).toBe('2');
     expect(rootAfter?.lifecycle).toBe('running');
 
-    // Session-management cleanup of the completed stage (prune is the
-    // documented residual ambient lane) leaves the root as the active run.
+    // The stage was released from the default stack at collect time (#556); this
+    // prune is now redundant residual-lane cleanup and the root is already the
+    // active run.
     const pruned = await runCliInProcess(['prune'], workspace);
     expect(pruned.exitCode).toBe(0);
     const back = await getActiveState(workspace);
@@ -331,6 +332,76 @@ describe('explicit --run targeting (R1, #460)', () => {
     const rootClaimId = await issueRunControlClaim(workspace, back.id);
     const targeted = await runCliInProcess(['pass', '--claim-id', rootClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
+  });
+
+  it('collect that drives an inline stage terminal releases it from the session default stack (#556, closes #521)', async () => {
+    // Arrange exactly as ':refuses a lingering grandchild bare pass ...' (:243-304):
+    // write leaf/stage/root runbooks, start the root (stage auto-launches inline and
+    // auto-issues the delegation token), then claim + close the grandchild leaf.
+    const leafContent = createRunbook({
+      name: 'leaf',
+      title: 'Leaf',
+      steps: [{ title: 'Work', pass: 'COMPLETE', content: 'Leaf prompt.' }],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'leaf.runbook.md'), leafContent);
+    await writeFile(join(workspace.runbooksDir(), 'leaf.runbook.md'), leafContent);
+    const stageContent = createRunbook({
+      name: 'stage',
+      title: 'Stage',
+      steps: [
+        {
+          title: 'Delegate leaf',
+          pass: 'COMPLETE',
+          substeps: [
+            { title: 'Leaf work', delegate: true, runbooks: ['runbooks/leaf.runbook.md'] },
+          ],
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'stage.runbook.md'), stageContent);
+    await writeFile(join(workspace.runbooksDir(), 'stage.runbook.md'), stageContent);
+    const rootContent = createRunbook({
+      title: 'Root',
+      steps: [
+        {
+          title: 'Compose',
+          pass: 'CONTINUE',
+          substeps: [{ title: 'Stage', runbooks: ['runbooks/stage.runbook.md'] }],
+        },
+        { title: 'After', pass: 'COMPLETE', content: 'Wrap up.' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'root.runbook.md'), rootContent);
+
+    const start = await runCliInProcess('run runbooks/root.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const stage = await getActiveState(workspace);
+    if (!stage) throw new Error('Expected active inline stage');
+    const stageRunId = stage.id;
+    const token = findDelegateToken(start.stdout);
+    if (!token) throw new Error('Expected auto-issued delegation token');
+
+    // The stage is on the default stack while it is the active inline run.
+    expect((await readSession(workspace)).defaultStack).toContain(stageRunId);
+
+    const claimed = await runCliInProcess(['claim', token], workspace);
+    expect(claimed.exitCode).toBe(0);
+    const claimId = String(findActionOutput(claimed.stdout)?.claim_id);
+    const closed = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+    expect(closed.exitCode).toBe(0);
+
+    // Act: collect drives the STAGE to a terminal lifecycle and propagates inline to
+    // the root (advancing it to step 2), exactly as :308-313.
+    const stageClaimId = await issueRunControlClaim(workspace, stageRunId);
+    const collected = await runCliInProcess(['collect', '--claim-id', stageClaimId], workspace);
+    expect(collected.exitCode).toBe(0);
+
+    // The stage is `completed` on disk (already true before #556)...
+    const terminalStage = await readRunbookState(workspace, stageRunId);
+    expect(terminalStage!.lifecycle).toBe('completed');
+    // ...AND the #556 fix: released from the session default stack AT COLLECT TIME —
+    // no `prune` needed. Assert MEMBERSHIP, not the stack top.
+    expect((await readSession(workspace)).defaultStack).not.toContain(stageRunId);
   });
 
   it('refuses a bare goto on a delegating run with ACTOR_CONTEXT_REQUIRED, while goto --claim-id succeeds', async () => {

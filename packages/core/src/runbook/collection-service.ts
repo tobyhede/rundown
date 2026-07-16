@@ -23,7 +23,8 @@ import {
   SENTINEL_ENTRY,
 } from './targeting.js';
 import { countNumberedSteps } from './step-utils.js';
-import type { ResolvedStep, RunbookState } from './types.js';
+import type { ReleaseRunbookResult } from './session-service.js';
+import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import {
@@ -31,10 +32,28 @@ import {
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
 
+/** Session reader plus the single write used by terminal release. */
+export interface CollectionSessionService extends CommandTargetReader {
+  /**
+   * Release a run from all session targeting structures on terminal.
+   *
+   * @param runbookId - Terminal run id to release.
+   * @param options - Release options.
+   * @param options.retainClaimsAsTerminal - Keep claim tombstones so a later
+   *   `--claim-id` confirm/conflict still resolves `terminal` rather than
+   *   `missing`.
+   * @returns Structured release result (not consumed by the collection seam).
+   */
+  releaseRunbook(
+    runbookId: RunId,
+    options?: { readonly retainClaimsAsTerminal?: boolean },
+  ): Promise<ReleaseRunbookResult>;
+}
+
 /** Dependencies used by the core collection operation. */
 export interface RunbookCollectionServiceDependencies {
   /** Session/target reader used to verify bearer claims and resolve implicit authority. */
-  readonly sessionService: CommandTargetReader;
+  readonly sessionService: CollectionSessionService;
   /** State manager used to reload and persist target runs. */
   readonly manager: RunbookStateManager;
   /** Actor service used to apply collected delegation outcomes through the state machine. */
@@ -472,6 +491,26 @@ async function applyCollection(
       drained.applied.at(-1)?.stateAfter ??
       input.targetState;
     // Stryker restore OptionalChaining,UnaryOperator
+    // Terminal release lives in the seam, not in whichever CLI path drives the
+    // collect: the drain above persisted the terminal lifecycle, and this release
+    // removes the run from session targeting in the same seam call — so a collect
+    // that reaches terminal (and skips the CLI execution loop) does not leave the
+    // completed run on the session default stack (#556). Two sequential awaits, not
+    // one transaction; safe because releaseRunbook is idempotent and
+    // PID-stale-reclaimable. `retainClaimsAsTerminal: true` keeps claim tombstones so
+    // a later `--claim-id` confirm/conflict still resolves `terminal`.
+    //
+    // Best-effort: the terminal lifecycle is already committed above, and a failed
+    // release only leaks a self-healing session-stack entry (reclaimed by the next
+    // acquirer via PID-aware stale detection). Swallow its rejection rather than let
+    // cleanup mask the committed collection_applied outcome (RD-102).
+    try {
+      await input.sessionService.releaseRunbook(input.targetState.id, {
+        retainClaimsAsTerminal: true,
+      });
+    } catch {
+      // Intentionally ignored — see best-effort note above.
+    }
     return {
       kind: 'collection_applied',
       targetRunId: input.targetState.id,

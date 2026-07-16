@@ -24,6 +24,11 @@ import {
   type CommandExecutionStreamOptions,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
+import {
+  propagateDrivenRunTerminal,
+  propagationRequiresFailureExit,
+  type DrivenRunPropagation,
+} from './delegation-completion.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -66,8 +71,29 @@ export type GotoValidationResult =
  * Result of goto execution.
  */
 export type GotoExecutionResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
+  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; propagation?: DrivenRunPropagation }
   | { ok: false; error: string; code: string };
+
+/**
+ * Whether a successful goto execution must drive a non-zero process exit: either
+ * the run itself stopped, or its terminal propagated to a parent with a
+ * stopped/blocked outcome.
+ *
+ * Shared by `rundown goto` and the `run --prompted --step` launch-local jump so
+ * their exit decisions cannot drift — a bare `loopResult === 'stopped'` check
+ * misses a propagation that stopped/blocked the parent (#553).
+ *
+ * @param result - A successful ({@link GotoExecutionResult} `ok: true`) result.
+ * @returns `true` when the caller should exit non-zero.
+ */
+export function gotoResultRequiresFailureExit(
+  result: Extract<GotoExecutionResult, { ok: true }>,
+): boolean {
+  return (
+    result.loopResult === 'stopped' ||
+    (result.propagation !== undefined && propagationRequiresFailureExit(result.propagation))
+  );
+}
 
 /**
  * Result of resolving the runbook target and building goto execution context.
@@ -315,5 +341,19 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     },
   );
 
-  return { ok: true, loopResult };
+  // Any driver that takes a run terminal must propagate that terminal to its
+  // parent — goto included. goto authors no operator RESULT, so use the
+  // `loop-inferred` trigger and let lifecycle inference decide the outcome (same
+  // as the natural loop). Without this, `goto` completing an inline child left
+  // the parent's substep 'running' forever (#553).
+  const propagation = await propagateDrivenRunTerminal(
+    manager,
+    state.id,
+    cwd,
+    output,
+    { kind: 'loop-inferred' },
+    ctx.commandStreamOptions,
+  );
+
+  return { ok: true, loopResult, propagation };
 }

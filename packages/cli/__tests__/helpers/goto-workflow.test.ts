@@ -26,6 +26,13 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
   SessionService: jest.fn(),
+  // Statically imported by delegation-completion.js (pulled in via executeGoto's
+  // propagateDrivenRunTerminal call); the ESM link check needs the names, but the
+  // executeGoto tests below make `manager.load` return null so propagation
+  // short-circuits `skipped` without invoking any of these.
+  ExecutionLifecycleService: jest.fn(),
+  RunbookCompletionService: jest.fn(),
+  projectDelegationTerminalOutcome: jest.fn(),
   parseStepIdFromString: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
@@ -76,9 +83,12 @@ jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const { runExecutionLoop } = await import('../../src/services/execution.js');
-const { validateGotoTarget, executeGoto, resolveTerminalReleaseModeForRunbook } = await import(
-  '../../src/helpers/goto-workflow.js'
-);
+const {
+  validateGotoTarget,
+  executeGoto,
+  resolveTerminalReleaseModeForRunbook,
+  gotoResultRequiresFailureExit,
+} = await import('../../src/helpers/goto-workflow.js');
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -406,7 +416,10 @@ describe('executeGoto', () => {
         action: jest.fn(),
         flush: jest.fn(),
       } as unknown as OutputEmitter,
-      manager: { update } as unknown as RunbookStateManager,
+      manager: {
+        update,
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -441,7 +454,10 @@ describe('executeGoto', () => {
         action,
         flush: jest.fn(),
       } as unknown as OutputEmitter,
-      manager: { update } as unknown as RunbookStateManager,
+      manager: {
+        update,
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -456,6 +472,9 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.loopResult).toBe('done');
+      // manager.load resolves null, so propagateDrivenRunTerminal short-circuits
+      // `skipped` without touching the (unmocked) delegation services.
+      expect(result.propagation).toEqual({ kind: 'skipped' });
     }
     expect(action).toHaveBeenCalled();
     expect(sendAndSync).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID, ctx.steps, {
@@ -486,7 +505,9 @@ describe('executeGoto', () => {
     } as unknown as OutputEmitter;
     const ctx = {
       output,
-      manager: {} as RunbookStateManager,
+      manager: {
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -498,6 +519,10 @@ describe('executeGoto', () => {
     const result = await executeGoto(ctx, { step: '2' });
 
     expect(result.ok).toBe(true);
+    if (result.ok) {
+      // manager.load resolves null → propagation short-circuits `skipped`.
+      expect(result.propagation).toEqual({ kind: 'skipped' });
+    }
     expect(clearLastResult).not.toHaveBeenCalled();
     expect(outputAction).toHaveBeenCalledWith({
       action: 'GOTO 2',
@@ -523,7 +548,10 @@ describe('executeGoto', () => {
         action: jest.fn(),
         flush: jest.fn(),
       } as unknown as OutputEmitter,
-      manager: { update } as unknown as RunbookStateManager,
+      manager: {
+        update,
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
+      } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
       state: makeState(),
@@ -537,7 +565,61 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.loopResult).toBe('stopped');
+      // The loop stopped locally; propagation still short-circuits `skipped`
+      // because manager.load resolves null (no parent linkage to report to).
+      expect(result.propagation).toEqual({ kind: 'skipped' });
     }
+  });
+});
+
+describe('gotoResultRequiresFailureExit', () => {
+  // Pure predicate — the load-bearing half of #553: a successful goto must still
+  // exit non-zero when the run stopped locally OR its terminal propagated to a
+  // parent that stopped/blocked. `manager.load → null` in the executeGoto tests
+  // keeps `propagation` at `skipped`, so these cases pin the non-skipped arm the
+  // integration path never forced.
+  type OkResult = Parameters<typeof gotoResultRequiresFailureExit>[0];
+
+  it('requires failure exit when the loop stopped locally (no propagation)', () => {
+    const result: OkResult = { ok: true, loopResult: 'stopped' };
+    expect(gotoResultRequiresFailureExit(result)).toBe(true);
+  });
+
+  it('does not require failure exit when the run is still waiting with no propagation', () => {
+    const result: OkResult = { ok: true, loopResult: 'waiting' };
+    expect(gotoResultRequiresFailureExit(result)).toBe(false);
+  });
+
+  it('does not require failure exit when propagation was skipped', () => {
+    const result: OkResult = { ok: true, loopResult: 'done', propagation: { kind: 'skipped' } };
+    expect(gotoResultRequiresFailureExit(result)).toBe(false);
+  });
+
+  it('requires failure exit when an inline-advanced propagation stopped the parent', () => {
+    const result: OkResult = {
+      ok: true,
+      loopResult: 'done',
+      propagation: { kind: 'inline-advanced', result: 'stopped' },
+    };
+    expect(gotoResultRequiresFailureExit(result)).toBe(true);
+  });
+
+  it('requires failure exit when an inline-advanced propagation blocked the parent', () => {
+    const result: OkResult = {
+      ok: true,
+      loopResult: 'done',
+      propagation: { kind: 'inline-advanced', result: 'blocked' },
+    };
+    expect(gotoResultRequiresFailureExit(result)).toBe(true);
+  });
+
+  it('does not require failure exit when an inline-advanced propagation was handled', () => {
+    const result: OkResult = {
+      ok: true,
+      loopResult: 'done',
+      propagation: { kind: 'inline-advanced', result: 'handled' },
+    };
+    expect(gotoResultRequiresFailureExit(result)).toBe(false);
   });
 });
 
