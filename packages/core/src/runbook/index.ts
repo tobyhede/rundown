@@ -102,6 +102,10 @@ export {
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
 export {
+  resolveIssuanceAnchor,
+  type IssuanceAnchorResolution,
+} from './issuance-anchor.js';
+export {
   UNKNOWN_ACTOR_CONTEXT,
   verifiedClaimContext,
   type ActorContext,

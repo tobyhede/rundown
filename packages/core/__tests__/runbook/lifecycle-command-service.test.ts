@@ -393,6 +393,57 @@ describe('RunbookLifecycleCommandService', () => {
       expect(issued).toBeDefined();
     });
 
+    it("anchors fresh issuance on the claim's controlled run, not the active default (#586)", async () => {
+      // Run `runId` is activated with an authored DELEGATE substep and its own
+      // run-control claim.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+
+      // A DIFFERENT run is then activated, so `runId` is controlled-but-not-active:
+      // getActive() now returns this run, not `runId`.
+      const otherRunId = assertRunId('rd_22222222222222222222222222222222');
+      const activeDefault = baseState({ id: otherRunId, runbookPath: 'other.md' });
+      await activate(activeDefault);
+
+      // Delegating with `runId`'s run-control claim (NO --run) must anchor on
+      // `runId` — the run the claim controls — not on the active default.
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') throw new Error('expected delegated');
+      // The load-bearing assertion: issuance anchored on the CONTROLLED run
+      // (`runId`), not the active default (`otherRunId`). Before the fix the seam
+      // anchors `otherRunId`, whose run the claim lacks a grant for, and the
+      // outcome is `refused` (claim_grant_required) — so this expectation fails.
+      expect(outcome.parentRunId).toBe(runId);
+    });
+
+    it("falls through to the active default when the claim's controlled run is terminal (#586)", async () => {
+      // The run `runId` is activated with a DELEGATE step and its run-control
+      // claim, then driven terminal — so the claim resolves to `terminal_claim`,
+      // NOT `claim`. A different run is the active default.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      await manager.updateWithState(runId, () => ({ lifecycle: 'completed' as const }));
+      const otherRunId = assertRunId('rd_33333333333333333333333333333333');
+      await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      // The terminal claim does NOT divert the anchor: the seam falls through to
+      // the active default (`otherRunId`), and because the claim holds no
+      // `delegate-from-run` grant for it, the unchanged gate refuses. A mutant
+      // forcing `target.kind === 'claim'` true would anchor `runId` and produce a
+      // different outcome, so this assertion kills it.
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('claim_grant_required');
+    });
+
     it('returns the canonical persisted child ref (not the authored alias) and matches the echo', async () => {
       // The authored substep targets "child.md"; resolve it to a DIFFERENT
       // canonical path so returning the authored alias is observably wrong.
@@ -842,6 +893,35 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.token).not.toBe(first.token);
     });
 
+    it("anchors retry-step issuance on the claim's controlled run, not the active default (#586)", async () => {
+      // Fresh issuance while `runId` is still the active default: mints the token
+      // the retry below locates by step.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // A DIFFERENT run is then activated, so `runId` is controlled-but-not-active:
+      // getActive() now returns this run, not `runId`.
+      const otherRunId = assertRunId('rd_44444444444444444444444444444444');
+      await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('retried');
+      if (outcome.kind !== 'retried') throw new Error('expected retried');
+      // Anchored on the controlled run (`runId`), not the active default. Before
+      // the Step 4 fix the retry-step locator anchors the active default, whose run
+      // the claim lacks a grant for, so the outcome is `refused`.
+      expect(outcome.parentRunId).toBe(runId);
+    });
+
     it('retries the active substep via { kind: "active" }', async () => {
       const { seam: localSeam } = await startSeamOnActiveDelegateSubstep();
       const first = await localSeam.issueDelegation({
@@ -855,6 +935,35 @@ describe('RunbookLifecycleCommandService', () => {
         locator: { kind: 'active' },
       });
       expect(retried.kind).toBe('retried');
+    });
+
+    it("anchors retry-active issuance on the claim's controlled run, not the active default (#586)", async () => {
+      // Pins the THIRD anchor call site (the inferred-`active` retry locator).
+      // Without this, reverting only that site to `getActive()` leaves the whole
+      // core suite green — the defect would be caught solely by a slow CLI
+      // integration test.
+      const { seam: localSeam } = await startSeamOnActiveDelegateSubstep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // A DIFFERENT run becomes the active default, so `runId` is
+      // controlled-but-not-active. The second run sits on no substep, so an
+      // active-default anchor cannot resolve a substep cursor at all.
+      const otherRunId = assertRunId('rd_66666666666666666666666666666666');
+      await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'active' },
+      });
+
+      expect(outcome.kind).toBe('retried');
+      if (outcome.kind !== 'retried') throw new Error('expected retried');
+      expect(outcome.parentRunId).toBe(runId);
     });
 
     it('retries a linked terminal child without allowing the stale child to re-report', async () => {

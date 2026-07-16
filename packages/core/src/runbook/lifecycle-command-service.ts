@@ -35,6 +35,7 @@ import {
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
+import { type IssuanceAnchorResolution, resolveIssuanceAnchor } from './issuance-anchor.js';
 import { isRunId, type RunId } from './run-id.js';
 import {
   resolveManualCompletionCursor,
@@ -197,9 +198,13 @@ export type FindDelegationByToken = (token: string) => Promise<TokenScanResult |
 /**
  * How a retry locates its target delegation.
  *
+ * The `step` / `active` locators resolve against the *anchored* run — `--run`,
+ * else the presented claim's controlled run, else the active default (see
+ * {@link resolveIssuanceAnchor}) — which is not necessarily the active run.
+ *
  * - `token` — cross-run lookup by plain-text token; the target is the owning run.
- * - `step` — the active run's `--step` (with optional FOR `iteration`).
- * - `active` — the active run's current substep cursor.
+ * - `step` — the anchored run's `--step` (with optional FOR `iteration`).
+ * - `active` — the anchored run's current substep cursor.
  */
 export type RetryLocator =
   | { readonly kind: 'token'; readonly token: string }
@@ -216,12 +221,22 @@ export type DelegationIssuanceInput =
   | {
       /** Discriminant selecting the fresh-issuance path. */
       readonly mode: 'fresh';
-      /** Typed caller evidence mapped to an actor context for the policy gate. */
+      /**
+       * Typed caller evidence mapped to an actor context for the policy gate.
+       *
+       * Also selects the target when no `--run` is named: a `claim_bearer`
+       * unambiguously names the run it controls, so issuance anchors there even
+       * when that run is not the active default (#586). See
+       * {@link resolveIssuanceAnchor} for the full precedence.
+       */
       readonly callerEvidence: CallerEvidence;
       /**
        * Explicit run id from `--run`. When present the issuance anchor is the
-       * named session-stack run instead of the active default; a missing or
-       * foreign id returns the `unknown_run` outcome.
+       * named session-stack run instead of the presented claim's controlled run
+       * or the active default — it outranks both; a missing or foreign id
+       * returns the `unknown_run` outcome. (The CLI rejects `--run` combined
+       * with `--claim-id` as `INVALID_SYNTAX`, so the two are never both set
+       * from that front end.)
        */
       readonly targetRunId?: RunId;
       /** Explicit step id from `--step`; `undefined` => bare inference. */
@@ -247,11 +262,19 @@ export type DelegationIssuanceInput =
   | {
       /** Discriminant selecting the retry path. */
       readonly mode: 'retry';
-      /** Typed caller evidence mapped to an actor context for the policy gate. */
+      /**
+       * Typed caller evidence mapped to an actor context for the policy gate.
+       *
+       * Also selects the target when no `--run` is named: a `claim_bearer`
+       * unambiguously names the run it controls, so issuance anchors there even
+       * when that run is not the active default (#586). See
+       * {@link resolveIssuanceAnchor} for the full precedence.
+       */
       readonly callerEvidence: CallerEvidence;
       /**
-       * Explicit run id from `--run`. Replaces the active-run anchor for the
-       * `step` / `active` locators; a missing or foreign id returns the
+       * Explicit run id from `--run`. Replaces the anchor for the `step` /
+       * `active` locators — outranking both the presented claim's controlled run
+       * and the active default; a missing or foreign id returns the
        * `unknown_run` outcome. The `token` locator resolves cross-run by token
        * scan, then refuses with `run_target_mismatch` when the token's owning
        * run differs from this id — named authority is never silently discarded.
@@ -842,9 +865,10 @@ export class RunbookLifecycleCommandService {
     if (input.mode === 'retry') return this.#issueRetry(input);
 
     // Target identification only — the anchor run's id (the `--run`-named
-    // session-stack member, or the active default). Every state-dependent
-    // decision below runs against the locked re-read, not this snapshot.
-    const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+    // session-stack member, the presented claim's controlled run, or the active
+    // default). Every state-dependent decision below runs against the locked
+    // re-read, not this snapshot.
+    const anchored = await this.#resolveIssuanceAnchor(input.targetRunId, input.callerEvidence);
     if (anchored.kind !== 'ok') {
       return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
     }
@@ -1077,7 +1101,7 @@ export class RunbookLifecycleCommandService {
       }
       stepLabel = snapshot.at;
     } else if (locator.kind === 'step') {
-      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId, input.callerEvidence);
       if (anchored.kind !== 'ok') {
         return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
       }
@@ -1106,7 +1130,7 @@ export class RunbookLifecycleCommandService {
           ? deriveExecutionAt(stepName, parsed?.substep, locator.iteration)
           : locator.step;
     } else {
-      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId, input.callerEvidence);
       if (anchored.kind === 'unknown_run') return anchored;
       if (anchored.kind === 'none') return { kind: 'no-active-runbook' };
       const active = anchored.state;
@@ -1931,27 +1955,17 @@ export class RunbookLifecycleCommandService {
     };
   }
 
-  // Resolve the issuance anchor run: the `--run`-named session-stack member
-  // when a target run id is supplied (a missing/foreign/terminal id refuses as
-  // `unknown_run` via the shared stack-member resolution, carrying the same
-  // cause-specific message pass/complete refuse with), else the active default
-  // run (`none` when absent).
+  // Resolve the issuance anchor run via the shared `resolveIssuanceAnchor` seam
+  // (`--run` > presented claim's controlled run > active default). The CLI
+  // resolves its Category-A preconditions (`--index` FOR-step validation, the
+  // inferred-retry active-substep check) through the SAME function, so a
+  // precondition can never be validated against a different run than the one
+  // this seam acts on (#586).
   async #resolveIssuanceAnchor(
     targetRunId: RunId | undefined,
-  ): Promise<
-    | { readonly kind: 'ok'; readonly state: RunbookState }
-    | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
-    | { readonly kind: 'none' }
-  > {
-    if (targetRunId !== undefined) {
-      const member = await this.#deps.sessionService.resolveRunningStackMember(targetRunId);
-      if (member.kind !== 'running') {
-        return unknownRunRefusal(targetRunId, member);
-      }
-      return { kind: 'ok', state: member.state };
-    }
-    const active = await this.#deps.sessionService.getActive();
-    return active ? { kind: 'ok', state: active } : { kind: 'none' };
+    callerEvidence: CallerEvidence,
+  ): Promise<IssuanceAnchorResolution> {
+    return resolveIssuanceAnchor(this.#deps.sessionService, targetRunId, callerEvidence);
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed

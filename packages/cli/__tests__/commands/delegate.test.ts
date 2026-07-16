@@ -442,6 +442,55 @@ describe('delegate command', () => {
       expect(payload.code).toBe('INVALID_RUN_ID');
     });
 
+    it('surfaces RUN_TARGET_UNAVAILABLE for --index against a foreign --run, not INVALID_INDEX', async () => {
+      // The `--index` FOR-step guard validates against the ANCHORED run. A
+      // foreign `--run` anchors nothing, so the guard must be skipped and the
+      // seam's run refusal must surface. Validating against the active run here
+      // would report INVALID_INDEX about a step the operator never named —
+      // exactly the misleading-error class #586 exists to remove.
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--index', '1', '--run', foreign],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
+    it('surfaces RUN_TARGET_UNAVAILABLE for --retry --index against a foreign --run', async () => {
+      // Same guard on the retry `step` locator.
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--index', '1', '--run', foreign],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
+    it('surfaces RUN_TARGET_UNAVAILABLE for an inferred --retry against a foreign --run', async () => {
+      // The inferred-retry precondition needs the anchored run's substep cursor.
+      // A foreign `--run` anchors nothing, so the precondition defers to the
+      // seam rather than reporting INVALID_SYNTAX ("requires an active substep")
+      // about a run id that simply is not on the stack.
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(['delegate', '--retry', '--run', foreign], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
     it('rejects both --claim-id and a malformed --run with INVALID_SYNTAX (precedence)', async () => {
       await setupDelegation();
 
