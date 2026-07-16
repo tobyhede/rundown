@@ -499,9 +499,18 @@ async function applyCollection(
     // one transaction; safe because releaseRunbook is idempotent and
     // PID-stale-reclaimable. `retainClaimsAsTerminal: true` keeps claim tombstones so
     // a later `--claim-id` confirm/conflict still resolves `terminal`.
-    await input.sessionService.releaseRunbook(input.targetState.id, {
-      retainClaimsAsTerminal: true,
-    });
+    //
+    // Best-effort: the terminal lifecycle is already committed above, and a failed
+    // release only leaks a self-healing session-stack entry (reclaimed by the next
+    // acquirer via PID-aware stale detection). Swallow its rejection rather than let
+    // cleanup mask the committed collection_applied outcome (RD-102).
+    try {
+      await input.sessionService.releaseRunbook(input.targetState.id, {
+        retainClaimsAsTerminal: true,
+      });
+    } catch {
+      // Intentionally ignored — see best-effort note above.
+    }
     return {
       kind: 'collection_applied',
       targetRunId: input.targetState.id,

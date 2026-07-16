@@ -982,6 +982,34 @@ describe('RunbookCollectionService', () => {
     });
   });
 
+  it('preserves the committed terminal result when the session release rejects (best-effort cleanup, RD-102)', async () => {
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: delegationLinkage,
+    });
+    // The drain already persisted the terminal lifecycle before this release
+    // runs; releaseRunbook is idempotent and PID-stale-reclaimable, so a failed
+    // release only leaks a self-healing session-stack entry. It must never mask
+    // the committed collection_applied outcome.
+    releaseRunbookSpy.mockRejectedValueOnce(new Error('session lock contended'));
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(releaseRunbookSpy).toHaveBeenCalledWith(controlledRunId, {
+      retainClaimsAsTerminal: true,
+    });
+    expect(outcome.kind).toBe('collection_applied');
+    if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    expect(outcome.lifecycle).toBe('completed');
+    expect(outcome.reportedTerminalOutcome).toBe(true);
+  });
+
   it('does NOT release the target when collection leaves it running', async () => {
     // Mirror "reports the active-run lifecycle from the drained state, not the
     // caller input" (:1504-1535): a 'continue' drain leaves the run running, so
