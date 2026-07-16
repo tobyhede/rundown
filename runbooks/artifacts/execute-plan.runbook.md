@@ -7,10 +7,9 @@ required:
 scenarios:
   consume-plan-artifact:
     description: a boundary --artifacts value is consumed by a naked ARTIFACTS step
-    seed:
-      - artifact: PlanPath
     commands:
-      - "rd run execute-plan.runbook.md --artifacts PlanPath=${ARTIFACT:PlanPath}"
+      - rd run scenario-seed-artifacts.runbook.md --allow-all
+      - "rd run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
     expect:
       result: COMPLETE
       artifacts:
