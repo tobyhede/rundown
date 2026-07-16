@@ -603,6 +603,84 @@ expect:
       action: COMPLETE
 ```
 
+## Artifact Capture
+
+A scenario command receives an artifact `rd://` URI by **capturing it from a
+prior command's output**. This is the only mechanism -- there is no seed
+directive, and scenarios must never fabricate an `rd://` URI or hand-write a
+manifest row. Core owns URI construction (`buildArtifactUri`) and the manifest
+row shape; a scenario that duplicates either will drift silently when core
+changes.
+
+| Placeholder                       | Resolves to                                          |
+| --------------------------------- | ---------------------------------------------------- |
+| `${CAPTURE_ARTIFACT:<key>}`       | The most recent `rd://artifacts/...` URI for `<key>` |
+| `${CAPTURE_ARTIFACT_ARRAY:<key>}` | A JSON array of every matching URI for `<key>`       |
+
+**The array form must be single-quoted.** It resolves to JSON containing double
+quotes, and placeholders are substituted into command text that is then
+tokenized by the shell. Unquoted, the shell strips those quotes and
+`["rd://a","rd://b"]` arrives as the invalid `[rd://a,rd://b]`. Quote the whole
+assignment:
+
+```yaml
+- rd run collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
+```
+
+This is enforced, not advisory -- an unquoted array placeholder is rejected
+before the command runs. The scalar form needs no quoting: its values cannot
+contain a shell metacharacter.
+
+Both are resolved from the artifact manifest immediately before each command
+runs, so they see rows that earlier commands in the same scenario actually
+produced. Recency is by manifest row `timestamp`, with within-context append
+order breaking ties; a scalar pick whose latest-timestamp rows span more than
+one context is ambiguous and raises an error rather than guessing.
+
+An earlier `${ARTIFACT:<name>}` grammar and its `seed:` directive were retired
+in [#498](https://github.com/tobyhede/rundown/issues/498). Both are now rejected
+outright -- `seed:` fails scenario validation as an unknown key, and
+`${ARTIFACT:...}` in a command throws before execution -- rather than being
+ignored.
+
+### Seeding a pre-existing artifact
+
+When a scenario needs an artifact to "already exist", run a real producer
+runbook as its first command and capture the artifact it emits:
+
+```yaml
+scenarios:
+  consume-plan-artifact:
+    commands:
+      - rd run scenario-seed-artifacts.runbook.md --allow-all
+      - "rd run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
+    expect:
+      result: COMPLETE
+```
+
+`runbooks/artifacts/scenario-seed-artifacts.runbook.md` is the shared
+deterministic seeder; it emits keys `PlanPath` and `plan.json` through the real
+`ARTIFACTS` production path. Any producer runbook works -- the seeder is a
+convenience, not a special case. The producer needs `--allow-all` because it
+writes its backing files from a bash block.
+
+The producer runbook is staged automatically: the harness scans command strings
+for `*.runbook.md` references and copies them into the scenario workspace.
+
+### Asserting on a captured artifact
+
+A naked `ARTIFACTS` alias fed an exact `rd://` URI surfaces the **injected
+record's key**, while the record's **provenance stays the producer's**. Two
+consequences for `expect.artifacts` entries:
+
+- `key:` matches the consumer's alias mapping, as authored in the consuming
+  runbook.
+- `runbook:` filters the **emitting event's** runbook -- _not_ the record's
+  provenance. Adding `runbook: <consumer>` to an assertion over an injected
+  record does not scope it "to the consumer's row"; the row's provenance is the
+  producer's either way. Disambiguate consumer from producer by `alias:`
+  instead, and give the seeder's aliases distinct names from the consumer's.
+
 ## Dependency Copying and Path Safety
 
 Scenarios and suite cases run in isolated temporary workspaces.
