@@ -204,7 +204,9 @@ describe('RunbookCollectionService', () => {
       // Default fake: pre-existing tests never drive a target terminal that
       // carries INLINE linkage, so a never-resolving-terminal fake satisfies the
       // required dep. Inline-advance tests below construct their own spy.
-      advanceInlineParent: jest.fn<AdvanceInlineParent>().mockResolvedValue({ status: 'active' }),
+      advanceInlineParent: jest
+        .fn<AdvanceInlineParent>()
+        .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
     });
   });
 
@@ -1244,6 +1246,7 @@ describe('RunbookCollectionService', () => {
         sessionService,
         advanceInlineParent,
       });
+      const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1256,6 +1259,10 @@ describe('RunbookCollectionService', () => {
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
+      // The authorization gate must skip the write entirely — a mere
+      // `reportedTerminalOutcome: false` could also mean a duplicate/not-applicable
+      // recording, so prove the completion write never fired.
+      expect(recordSpy).not.toHaveBeenCalled();
       expect(advanceInlineParent).not.toHaveBeenCalled();
     });
   });

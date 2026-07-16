@@ -299,6 +299,33 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(result).toBe('handled');
   });
 
+  it('done advance still reloads and recurses when releaseRunbook rejects (RD-102)', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const parent = makeState(PARENT, { lifecycle: 'completed', parentLinkage: undefined });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(parent);
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<ReleaseRunbookResult>
+      >()
+      .mockRejectedValue(new Error('release boom'));
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      child,
+      'pass',
+    );
+    // A failed release must not mask the committed upward propagation: the parent
+    // is still reloaded (proving the recursion was not skipped) and, being
+    // linkage-free, the result is still 'handled'.
+    expect(result).toBe('handled');
+    expect(load).toHaveBeenCalledWith(PARENT);
+  });
+
   it('inline→inline chain advances synchronously (callable re-invoked per level)', async () => {
     // child -> parent(inline-linked to grandparent) -> grandparent.
     const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });

@@ -106,7 +106,13 @@ describe('RunbookCollectionService properties', () => {
       completionService,
       // Properties here never drive a target terminal (they assert missing/gate
       // behaviour before the drain), so a never-called fake satisfies the type.
-      advanceInlineParent: jest.fn<AdvanceInlineParent>(),
+      advanceInlineParent: jest
+        .fn<AdvanceInlineParent>()
+        .mockRejectedValue(
+          new Error(
+            'advanceInlineParent must not be called: properties assert pre-terminal behaviour',
+          ),
+        ),
     });
   });
 

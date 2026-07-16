@@ -207,9 +207,16 @@ export async function propagateTerminalChildUpward(
   // ~:502) so a later `--claim-id` confirm/conflict against the terminal parent
   // resolves `terminal`, not `missing`. Deciding disposition once, in one owner,
   // eliminates the old drain-deletes / loop-retains inconsistency.
-  await deps.sessionService.releaseRunbook(linkage.parentRunId, {
-    retainClaimsAsTerminal: true,
-  });
+  try {
+    await deps.sessionService.releaseRunbook(linkage.parentRunId, {
+      retainClaimsAsTerminal: true,
+    });
+  } catch {
+    // Terminal state is already committed by the callable; a failed release only
+    // leaks a self-healing session-stack entry (reclaimed by the next acquirer
+    // via PID-aware stale detection). Never let cleanup mask the committed
+    // upward propagation (RD-102, matching the collect terminal branch).
+  }
   const freshParent = await deps.manager.load(linkage.parentRunId);
   const propagated: TerminalUpwardPropagationResult = freshParent
     ? await propagateTerminalChildUpward(deps, freshParent, undefined)

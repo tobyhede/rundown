@@ -590,7 +590,8 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
       kind: 'inline-advanced',
       result: outcome.terminalInlineAdvance,
     };
-    exitWithError = inlineAdvanceRequiresFailureExit(corePropagation) || loopStopped;
+    exitWithError =
+      shouldExitWithError || inlineAdvanceRequiresFailureExit(corePropagation) || loopStopped;
   }
   // Drain-terminal DELEGATION target: core reported report-only; delegation never
   // flips the exit code (matches today's dead `=== 'stopped'` delegation branch).
