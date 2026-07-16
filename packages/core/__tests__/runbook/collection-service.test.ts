@@ -13,6 +13,7 @@ import {
   assertClaimLookupKey,
   assertDelegationTokenHash,
   assertRunId,
+  type AdvanceInlineParent,
   type CallerEvidence,
   type RunbookState,
   type RunId,
@@ -200,6 +201,12 @@ describe('RunbookCollectionService', () => {
       actorService,
       lifecycleService,
       completionService,
+      // Default fake: pre-existing tests never drive a target terminal that
+      // carries INLINE linkage, so a never-resolving-terminal fake satisfies the
+      // required dep. Inline-advance tests below construct their own spy.
+      advanceInlineParent: jest
+        .fn<AdvanceInlineParent>()
+        .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
     });
   });
 
@@ -1150,36 +1157,114 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('does not report terminal collected inline children through delegation reporting', async () => {
-    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
-    await manager.save(ancestor);
-    const { controlled } = await seedTerminalControlled('completed', 'pass', {
-      parentLinkage: inlineLinkage,
+  describe('terminal branch — unified inline + delegation upward propagation (#598)', () => {
+    it('invokes the inline-advance callable for an inline-linked terminal target', async () => {
+      const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+      await manager.save(ancestor);
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: inlineLinkage,
+      });
+      const advanceInlineParent = jest
+        .fn<AdvanceInlineParent>()
+        .mockResolvedValue({ status: 'active' });
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent,
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        // active -> handled: the inline parent is still running on siblings.
+        expect(outcome.terminalInlineAdvance).toBe('handled');
+        // Inline advance never reports a delegation outcome.
+        expect(outcome.reportedTerminalOutcome).toBe(false);
+      }
+      expect(advanceInlineParent).toHaveBeenCalledTimes(1);
     });
 
-    const outcome = await collectionService.collectDelegationOutcomes({
-      targetState: controlled,
-      steps: oneSubstepSteps,
-      // Orchestrator evidence must name the TARGET run (the controlled run).
-      callerEvidence: ORCHESTRATOR_EVIDENCE,
-      frame: activeFrame(buildFrameKey('1'), 1),
+    it('reports report-only for a delegation-linked terminal target (claim gate honoured)', async () => {
+      const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+      await manager.save(ancestor);
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: delegationLinkage,
+      });
+      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent,
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.reportedTerminalOutcome).toBe(true);
+        expect(outcome.terminalInlineAdvance).toBeUndefined();
+      }
+      // The inline callable never runs for a delegation target.
+      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
 
-    expect(outcome).toEqual({
-      kind: 'collection_applied',
-      targetRunId: controlledRunId,
-      step: '1',
-      applied: 1,
-      unresolved: 0,
-      lifecycle: 'completed',
-      reportedTerminalOutcome: false,
-      transitionObservations: expect.any(Array),
+    it('does not report when the claim cannot report the delegation result', async () => {
+      const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+      await manager.save(ancestor);
+      // A delegation linkage whose tokenHash does not match the report grant the
+      // claim carries → claimCanReportDelegationResult denies the report.
+      const unauthorizedLinkage = {
+        ...delegationLinkage,
+        tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+      };
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: unauthorizedLinkage,
+      });
+      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent,
+      });
+      const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.reportedTerminalOutcome).toBe(false);
+      }
+      // The authorization gate must skip the write entirely — a mere
+      // `reportedTerminalOutcome: false` could also mean a duplicate/not-applicable
+      // recording, so prove the completion write never fired.
+      expect(recordSpy).not.toHaveBeenCalled();
+      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
-    const freshAncestor = await manager.load(ancestorRunId);
-    // Assert the ancestor actually loaded before inspecting it: the `?? {}`
-    // fallback below would otherwise let a null load silently pass as "0 rows".
-    expect(freshAncestor).toBeDefined();
-    expect(Object.keys(freshAncestor?.resolvedCompletions ?? {})).toHaveLength(0);
   });
 
   it('returns collection_frame_not_active when the requested frame is not the cursor frame', async () => {

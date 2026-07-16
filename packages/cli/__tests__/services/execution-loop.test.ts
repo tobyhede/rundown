@@ -1155,6 +1155,77 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
+  describe("terminalReleaseMode 'defer-to-caller' (#598)", () => {
+    it('drives a run to done without releasing — caller owns release', async () => {
+      // Mirror the "completes the runbook" fixture: an in-loop command drive to
+      // a 'done' terminal. Under 'defer-to-caller' the drain policy is
+      // non-releasing AND the in-loop guard skips applyExecutionTerminalRelease,
+      // so NEITHER releaseRunbook NOR popRunbook fires — the caller (the inline
+      // parent-advance core seam) owns the single terminal release.
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'done',
+          variables: {},
+          runbookPath: '/tmp/test.md',
+        },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
+        },
+        effects: [commandCompletedEffect('pass')],
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'defer-to-caller' },
+      );
+
+      expect(result).toBe('done');
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    });
+
+    it('drives a run to stopped without releasing', async () => {
+      // Pre-loaded stopped state (CLI-owned stop recovery). Under
+      // 'defer-to-caller' applyExecutionTerminalRelease no-ops, so the terminal
+      // return releases nothing.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('1', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'defer-to-caller' },
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    });
+  });
+
   it('emits ERROR_OCCURRED when the state machine stops with a RETRY_ERROR lastAction', async () => {
     // Seed the actor to report a stopped lifecycle with a RETRY_ERROR
     // lastAction variant on the returned snapshot. runExecutionLoop should

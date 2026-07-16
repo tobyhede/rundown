@@ -18,6 +18,15 @@
  *   immediately ({@link advanceParentForInlineChild}) — there is no separate
  *   `rd collect` for inline composition.
  *
+ * Post-RD-598, the DECISION + single-level upward-report orchestration for both
+ * linkage kinds lives in `@rundown-org/core`'s
+ * {@link propagateTerminalChildUpward}. The functions here are thin adapters over
+ * that seam: they narrow the child's linkage, build the deps bag, and map the
+ * seam's union onto each adapter's pre-existing return type. The CLI supplies
+ * only the Category-A execution callable ({@link buildAdvanceInlineParent}) —
+ * loading the parent, draining, and running the execution loop (subprocess
+ * spawn). Release is owned solely by the core seam.
+ *
  * @module helpers/delegation-completion
  */
 
@@ -25,7 +34,8 @@ import {
   RunbookStateManager,
   ExecutionLifecycleService,
   RunbookCompletionService,
-  projectDelegationTerminalOutcome,
+  type AdvanceInlineParent,
+  type PropagateTerminalChildUpwardDeps,
   type RunbookState,
   type ParentLinkage,
   type CommandExecutionStreamOptions,
@@ -62,6 +72,160 @@ export function extractParentLinkage(state: RunbookState): ParentLinkage | undef
 }
 
 /**
+ * Build the CLI-supplied inline parent-advance callable (Category A execution).
+ *
+ * This is the extracted execution body of the former
+ * {@link advanceParentForInlineChild}: it loads the parent, drains resolved
+ * completions on the target frame, and — when completions applied but the parent
+ * is still active — runs the execution loop (spawning command subprocesses). It
+ * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
+ * It performs NO terminal session release on ANY path — the core seam is the SOLE
+ * release owner and releases parentRunId once, with `retainClaimsAsTerminal: true`,
+ * on terminal. The drain uses a non-releasing policy, and the execution loop is
+ * invoked with `terminalReleaseMode: 'defer-to-caller'` (Task 3) so it too skips
+ * release. This closes the ownership gap: there is exactly one release site with
+ * one deliberate claim disposition, so the tombstone-destruction hazard the old
+ * two-owner code carried (drain deleted, loop retained) cannot recur (RD-598).
+ *
+ * The heavy CLI collaborators are imported LAZILY to avoid a static
+ * delegation-completion ↔ execution import cycle.
+ *
+ * @param cwd - Current working directory.
+ * @param output - Output emitter for streamed parent events.
+ * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @returns The runtime callable the core seam invokes.
+ * @throws {Error} If drain reports a hard failure (`target_mismatch`).
+ */
+export function buildAdvanceInlineParent(
+  cwd: string,
+  output: OutputEmitter,
+  commandStreamOptions?: CommandExecutionStreamOptions,
+): AdvanceInlineParent {
+  return async ({ parentRunId, parentFrameKey, parentEntry, result }) => {
+    // Core symbols used ONLY on this execution path are imported lazily too, so
+    // the module's static surface stays minimal — test doubles that mock
+    // `@rundown-org/core` need not supply `SessionService` / `exactFrame`.
+    const { SessionService, exactFrame } = await import('@rundown-org/core');
+    const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
+    const { getRunbookFromState } = await import('./runbook-loader.js');
+    const { createBridgedEmitter } = await import('./execution-emitter.js');
+    const { createPassTransitionConfig, createFailTransitionConfig } = await import(
+      './transitions.js'
+    );
+
+    const manager = new RunbookStateManager(cwd);
+    const parentActorService = createCliRunbookActorService(manager);
+    const sessionService = new SessionService(manager);
+    const lifecycleService = new ExecutionLifecycleService(manager);
+
+    const transitionConfig =
+      result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
+    // Never release during drain — the core seam owns the single terminal release.
+    const inlinePolicy: TransitionOrchestrationPolicy = {
+      onComplete: { releaseRunbook: false },
+      onStopped: { releaseRunbook: false },
+    };
+
+    const parentState = await manager.load(parentRunId);
+    // Defensive: core already recorded against this parent, so it existed then.
+    // If it has since vanished, there is nothing to advance and nothing to
+    // release — report `active` (the seam treats it as handled).
+    if (!parentState) return { status: 'active' };
+
+    const parentSteps = [...getRunbookFromState(parentState, cwd)];
+    const emitter = createBridgedEmitter(parentState, output);
+    const drained = await drainResolvedCompletions({
+      actorService: parentActorService,
+      manager,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId: parentRunId,
+      steps: parentSteps,
+      currentState: parentState,
+      transitionPolicy: inlinePolicy,
+      computeActionResult: transitionConfig.computeActionResult,
+      frameOverride: exactFrame(parentFrameKey, parentEntry),
+    });
+
+    if (drained.status === 'stopped') {
+      output.flush();
+      return { status: 'stopped' };
+    }
+    if (drained.status === 'done') {
+      output.flush();
+      return { status: 'done' };
+    }
+    if (drained.status === 'failed') {
+      throw new Error(drained.message);
+    }
+    if (drained.status === 'not_active') {
+      output.flush();
+      return { status: 'active' };
+    }
+
+    // status === 'continue': completions applied but the parent is still active.
+    if (drained.applied > 0) {
+      const freshParent = await manager.load(parentRunId);
+      const loopState = freshParent ?? drained.state;
+      const loopSteps = [...getRunbookFromState(loopState, cwd)];
+      const loopResult = await runExecutionLoop(
+        manager,
+        parentRunId,
+        loopSteps,
+        cwd,
+        !!loopState.prompted,
+        emitter,
+        // 'defer-to-caller': the loop does NOT release parentRunId — the core seam
+        // is the sole release owner and releases once (with retain) on terminal.
+        // See Task 3 for the mode; RD-598 verification for why single-owner.
+        { terminalReleaseMode: 'defer-to-caller', output, commandStreamOptions },
+      );
+      output.flush();
+      if (loopResult === 'stopped') return { status: 'stopped' };
+      if (loopResult === 'done') return { status: 'done' };
+      return { status: 'active' };
+    }
+
+    // applied === 0: waiting for sibling substeps to resolve.
+    output.flush();
+    return { status: 'active' };
+  };
+}
+
+/**
+ * Construct the core seam deps bag bound to one command's `cwd`, wiring the
+ * CLI-supplied {@link buildAdvanceInlineParent} callable.
+ *
+ * `SessionService` is imported lazily (like the callable's core symbols) so this
+ * module keeps a minimal static `@rundown-org/core` surface; the function is
+ * therefore async.
+ *
+ * @param cwd - Current working directory.
+ * @param output - Output emitter for streamed parent events.
+ * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @returns Deps for the core `propagateTerminalChildUpward` seam.
+ */
+export async function buildInlineParentAdvanceDeps(
+  cwd: string,
+  output: OutputEmitter,
+  commandStreamOptions?: CommandExecutionStreamOptions,
+): Promise<PropagateTerminalChildUpwardDeps> {
+  const { SessionService } = await import('@rundown-org/core');
+  const manager = new RunbookStateManager(cwd);
+  const actorService = createCliRunbookActorService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
+  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+  const sessionService = new SessionService(manager);
+  return {
+    manager,
+    sessionService,
+    completionService,
+    advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
+  };
+}
+
+/**
  * Report a delegation child's terminal outcome to its immediate delegating run.
  *
  * This is the REPORT half of report-then-collect (Plan 5). It records ONE
@@ -90,36 +254,20 @@ export async function reportTerminalToDelegatingRun(
 ): Promise<DelegationPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (linkage?.kind !== 'delegation') return 'not-applicable';
-
-  const projection = projectDelegationTerminalOutcome(childState, result);
-  if (projection.kind === 'not_terminal') return 'not-applicable';
-  if (projection.kind === 'command_infrastructure') {
-    output.flush();
-    return 'blocked';
-  }
-
-  const manager = new RunbookStateManager(cwd);
-  const actorService = createCliRunbookActorService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-
-  const recorded = await completionService.recordChildCompletion({
+  const { propagateTerminalChildUpward } = await import('@rundown-org/core');
+  const outcome = await propagateTerminalChildUpward(
+    await buildInlineParentAdvanceDeps(cwd, output),
     childState,
-    result: projection.result,
-  });
-  if (recorded === 'blocked') {
-    output.flush();
-    return 'blocked';
-  }
-  // 'not-applicable' means the child had no linkage to report against (the
-  // early guard above already handled the common case; core re-checks). Every
-  // other outcome — 'recorded', 'duplicate', and 'cancelled' — means there is
-  // nothing more for the close path to do: 'recorded'/'duplicate' leave the
-  // delegating run collection pending, and 'cancelled' (ordinary cancel
-  // short-circuit) preserves the cancellation split by writing no fail outcome.
-  if (recorded === 'not-applicable') return 'not-applicable';
+    result,
+  );
   output.flush();
-  return 'reported';
+  // A delegation linkage yields 'reported' | 'duplicate' | 'blocked' |
+  // 'not-applicable' from the seam. The CLI never distinguished a duplicate from a
+  // fresh report, so collapse 'duplicate' back into 'reported' (finding 2), and
+  // narrow away the inline-only members — all without a cast.
+  if (outcome === 'handled' || outcome === 'stopped') return 'not-applicable';
+  if (outcome === 'duplicate') return 'reported';
+  return outcome;
 }
 
 /**
@@ -170,144 +318,19 @@ export async function advanceParentForInlineChild(
   // report-then-collect contract that leaves a delegating parent collection
   // pending until `rd collect`. Narrow to inline and refuse anything else.
   if (linkage?.kind !== 'inline') return 'not-applicable';
-
-  const projection = projectDelegationTerminalOutcome(childState, result);
-  if (projection.kind === 'not_terminal') return 'not-applicable';
-  if (projection.kind === 'command_infrastructure') {
-    output.flush();
-    return 'blocked';
-  }
-
-  const { SessionService, exactFrame } = await import('@rundown-org/core');
-  const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
-  const { getRunbookFromState } = await import('./runbook-loader.js');
-  const { createBridgedEmitter } = await import('./execution-emitter.js');
-  const { createPassTransitionConfig, createFailTransitionConfig } = await import(
-    './transitions.js'
-  );
-
-  const { parentRunId, parentFrameKey } = linkage;
-
-  const manager = new RunbookStateManager(cwd);
-  const parentActorService = createCliRunbookActorService(manager);
-  const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-  const completionService = new RunbookCompletionService(
-    manager,
-    lifecycleService,
-    parentActorService,
-  );
-  const recorded = await completionService.recordChildCompletion({
+  const { propagateTerminalChildUpward } = await import('@rundown-org/core');
+  const outcome = await propagateTerminalChildUpward(
+    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
     childState,
-    result: projection.result,
-  });
-  if (recorded === 'not-applicable') return 'not-applicable';
-  if (recorded === 'cancelled') return 'handled';
-  if (recorded === 'blocked') {
-    output.flush();
-    return 'blocked';
-  }
-
-  // Drain resolved completions on the parent after core-owned recording.
-  const transitionConfig =
-    projection.result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
-
-  // Inline advance: never release during drain. Session release is handled
-  // explicitly on the terminal branches below and by runExecutionLoop.
-  const inlinePolicy: TransitionOrchestrationPolicy = {
-    onComplete: { releaseRunbook: false },
-    onStopped: { releaseRunbook: false },
-  };
-
-  const parentState = await manager.load(parentRunId);
-  if (!parentState) return 'not-applicable';
-
-  const parentSteps = [...getRunbookFromState(parentState, cwd)];
-  const emitter = createBridgedEmitter(parentState, output);
-  const drained = await drainResolvedCompletions({
-    actorService: parentActorService,
-    manager,
-    sessionService,
-    lifecycleService,
-    emitter,
-    runbookId: parentRunId,
-    steps: parentSteps,
-    currentState: parentState,
-    transitionPolicy: inlinePolicy,
-    computeActionResult: transitionConfig.computeActionResult,
-    frameOverride: exactFrame(parentFrameKey, linkage.parentEntry),
-  });
-
-  // Parent reached a terminal state during drain. Release it and report ONE
-  // outcome upward (single-level — report-only, no recursion into the
-  // grandparent). reportTerminalToDelegatingRun self-guards when the parent has
-  // no linkage of its own.
-  if (drained.status === 'stopped') {
-    await sessionService.releaseRunbook(parentRunId);
-    const freshParent = await manager.load(parentRunId);
-    const propagated = freshParent
-      ? await propagateChildTerminal(freshParent, undefined, cwd, output, commandStreamOptions)
-      : 'not-applicable';
-    output.flush();
-    return propagated === 'blocked' ? 'blocked' : 'stopped';
-  }
-  if (drained.status === 'done') {
-    await sessionService.releaseRunbook(parentRunId);
-    const freshParent = await manager.load(parentRunId);
-    const propagated = freshParent
-      ? await propagateChildTerminal(freshParent, undefined, cwd, output, commandStreamOptions)
-      : 'not-applicable';
-    output.flush();
-    if (propagated === 'blocked') return 'blocked';
-    if (propagated === 'stopped') return 'stopped';
-    return 'handled';
-  }
-  if (drained.status === 'failed') {
-    throw new Error(drained.message);
-  }
-  if (drained.status === 'not_active') {
-    output.flush();
-    return 'handled';
-  }
-
-  // Completions were applied but the parent is still active: advance past the
-  // resolved step via the execution loop, then handle any terminal it reaches.
-  if (drained.applied > 0) {
-    const freshParent = await manager.load(parentRunId);
-    const loopState = freshParent ?? drained.state;
-    const loopSteps = [...getRunbookFromState(loopState, cwd)];
-    const loopResult = await runExecutionLoop(
-      manager,
-      parentRunId,
-      loopSteps,
-      cwd,
-      !!loopState.prompted,
-      emitter,
-      { terminalReleaseMode: 'release-runbook', output, commandStreamOptions },
-    );
-    output.flush();
-
-    if (loopResult === 'stopped') {
-      const terminalParent = await manager.load(parentRunId);
-      const propagated = terminalParent
-        ? await propagateChildTerminal(terminalParent, undefined, cwd, output, commandStreamOptions)
-        : 'not-applicable';
-      return propagated === 'blocked' ? 'blocked' : 'stopped';
-    }
-    if (loopResult === 'done') {
-      const terminalParent = await manager.load(parentRunId);
-      const propagated = terminalParent
-        ? await propagateChildTerminal(terminalParent, undefined, cwd, output, commandStreamOptions)
-        : 'not-applicable';
-      if (propagated === 'blocked') return 'blocked';
-      if (propagated === 'stopped') return 'stopped';
-    }
-    return 'handled';
-  }
-
-  // applied === 0: waiting for other substeps to resolve.
+    result,
+  );
+  // Flush any buffered parent-stream output the seam produced (the callable
+  // flushes on its advance paths, but a record-only short-circuit — e.g. a
+  // 'blocked'/'cancelled' record — returns before the callable runs).
   output.flush();
-  return 'handled';
+  // An inline linkage never yields the delegation-only 'reported' / 'duplicate';
+  // narrow them away without a cast.
+  return outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
 }
 
 /**
@@ -350,9 +373,19 @@ export async function propagateChildTerminal(
 ): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (!linkage) return 'not-applicable';
-  return linkage.kind === 'inline'
-    ? advanceParentForInlineChild(childState, result, cwd, output, commandStreamOptions)
-    : reportTerminalToDelegatingRun(childState, result, cwd, output);
+  const { propagateTerminalChildUpward } = await import('@rundown-org/core');
+  const outcome = await propagateTerminalChildUpward(
+    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
+    childState,
+    result,
+  );
+  // Flush any buffered parent-stream output the seam produced (matches the old
+  // dispatch, where both sub-adapters flushed).
+  output.flush();
+  // TerminalPropagationResult has no 'duplicate' member (the CLI never
+  // distinguished it); collapse to 'reported' (finding 2). All other members are
+  // shared between the seam union and TerminalPropagationResult.
+  return outcome === 'duplicate' ? 'reported' : outcome;
 }
 
 /**

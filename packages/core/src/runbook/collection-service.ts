@@ -5,7 +5,11 @@ import type { ClaimRecord, VerifiedClaim } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
-import { projectDelegationTerminalOutcome } from './completion-service.js';
+import {
+  propagateTerminalChildUpward,
+  type AdvanceInlineParent,
+  type TerminalUpwardPropagationResult,
+} from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
@@ -62,6 +66,13 @@ export interface RunbookCollectionServiceDependencies {
   readonly lifecycleService: ExecutionLifecycleService;
   /** Completion service used to drain resolved delegation outcomes. */
   readonly completionService: RunbookCompletionService;
+  /**
+   * CLI-supplied inline parent-advance callable (Category C). Used when a
+   * collected run reaches terminal and carries INLINE linkage: the seam drives
+   * the composing parent's execution loop through this callable. Delegation
+   * targets never invoke it (report-only).
+   */
+  readonly advanceInlineParent: AdvanceInlineParent;
 }
 
 /** Explicit collection target resolved by a frontend adapter or another core service. */
@@ -511,6 +522,7 @@ async function applyCollection(
     } catch {
       // Intentionally ignored — see best-effort note above.
     }
+    const upward = await propagateCollectTerminalUpward(input, fresh, scope.claim);
     return {
       kind: 'collection_applied',
       targetRunId: input.targetState.id,
@@ -518,11 +530,10 @@ async function applyCollection(
       applied,
       unresolved: drained.unresolved,
       lifecycle: drained.status === 'done' ? 'completed' : 'stopped',
-      reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(
-        input,
-        fresh,
-        scope.claim,
-      ),
+      reportedTerminalOutcome: upward.reportedTerminalOutcome,
+      ...(upward.terminalInlineAdvance !== undefined
+        ? { terminalInlineAdvance: upward.terminalInlineAdvance }
+        : {}),
       transitionObservations,
     };
   }
@@ -590,21 +601,53 @@ async function applyCollection(
   };
 }
 
-async function reportTerminalOutcomeToDelegatingRun(
+/**
+ * Propagate a terminal collect target's outcome upward through the unified seam.
+ *
+ * Both linkage kinds flow through {@link propagateTerminalChildUpward}: the
+ * kind-dispatch that used to live here (delegation-only) now lives in the seam.
+ * The claim-authorization gate for delegation reporting is a collect-local
+ * PRECONDITION — it is not the linkage dispatch AC #2 removes, and the shared
+ * seam must not impose a claim check on the CLI close path (which never had one).
+ *
+ * @param input - Collection operation input (services + target).
+ * @param terminalState - The reloaded terminal target state.
+ * @param claim - Verified claim authorizing the collect.
+ * @returns `reportedTerminalOutcome` (true iff a delegation outcome row was
+ *   recorded upward) and, for INLINE targets, the collapsed `terminalInlineAdvance`.
+ */
+async function propagateCollectTerminalUpward(
   input: CollectDelegationOutcomesOperationInput,
   terminalState: RunbookState,
   claim: VerifiedClaim,
-): Promise<boolean> {
-  // Report-then-collect type-split: only a DELEGATION-linked terminal child
-  // reports an outcome upward here. An inline-linked child advances its parent
-  // synchronously elsewhere and must not record a delegation outcome; a
-  // root run has no linkage. Both are filtered by this guard.
-  if (terminalState.parentLinkage?.kind !== 'delegation') return false;
-  if (!claimCanReportDelegationResult(claim, terminalState)) return false;
-  const projection = projectDelegationTerminalOutcome(terminalState);
-  if (projection.kind !== 'outcome') return false;
-  const recorded = await input.completionService.recordChildCompletion({
-    childState: terminalState,
-  });
-  return recorded === 'recorded';
+): Promise<{
+  readonly reportedTerminalOutcome: boolean;
+  readonly terminalInlineAdvance?: 'handled' | 'stopped' | 'blocked' | 'not-applicable';
+}> {
+  const linkage = terminalState.parentLinkage;
+  // Delegation reporting requires claim authorization; skip entirely if denied,
+  // preserving the pre-unification gate.
+  if (linkage?.kind === 'delegation' && !claimCanReportDelegationResult(claim, terminalState)) {
+    return { reportedTerminalOutcome: false };
+  }
+  const outcome: TerminalUpwardPropagationResult = await propagateTerminalChildUpward(
+    {
+      manager: input.manager,
+      sessionService: input.sessionService,
+      completionService: input.completionService,
+      advanceInlineParent: input.advanceInlineParent,
+    },
+    terminalState,
+    undefined,
+  );
+  if (linkage?.kind === 'inline') {
+    // Inline seam yields 'handled' | 'stopped' | 'blocked' | 'not-applicable';
+    // narrow away the delegation-only 'reported' / 'duplicate' without a cast.
+    const inlineOutcome =
+      outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
+    return { reportedTerminalOutcome: false, terminalInlineAdvance: inlineOutcome };
+  }
+  // 'recorded' → reported (true); 'duplicate'/'cancelled' → false. Preserves the
+  // mutation-pinned 'recorded'-only contract (finding 2).
+  return { reportedTerminalOutcome: outcome === 'reported' };
 }

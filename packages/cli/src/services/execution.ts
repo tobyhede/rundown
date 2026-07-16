@@ -220,8 +220,14 @@ const EXECUTION_TERMINAL_NO_STACK_POLICY: TransitionOrchestrationPolicy = {
 
 /**
  * Session cleanup behavior to apply when an execution loop reaches a terminal state.
+ *
+ * - `stack-pop`: pop the default active stack top.
+ * - `release-runbook`: release this run by id, retaining the claim tombstone.
+ * - `defer-to-caller`: release NOTHING — the caller (the inline parent-advance
+ *   core seam) is the sole release owner. The loop still returns its terminal
+ *   status so the caller can release exactly once (RD-598).
  */
-export type ExecutionTerminalReleaseMode = 'stack-pop' | 'release-runbook';
+export type ExecutionTerminalReleaseMode = 'stack-pop' | 'release-runbook' | 'defer-to-caller';
 
 /**
  * Optional behavior overrides for {@link runExecutionLoop}.
@@ -260,6 +266,13 @@ async function applyExecutionTerminalRelease(
   runbookId: RunId,
   mode: ExecutionTerminalReleaseMode,
 ): Promise<void> {
+  if (mode === 'defer-to-caller') {
+    // The caller (inline parent-advance core seam) owns the single terminal
+    // release. The loop releases nothing but still returns 'done'/'stopped',
+    // which the caller maps to one seam release with its chosen claim
+    // disposition. See RD-598 verification.
+    return;
+  }
   if (mode === 'release-runbook') {
     // Natural child completion: retain the claim as a terminal tombstone so
     // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
@@ -1022,9 +1035,9 @@ export async function runExecutionLoop(
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
   const terminalPolicy =
-    terminalReleaseMode === 'release-runbook'
-      ? EXECUTION_TERMINAL_NO_STACK_POLICY
-      : EXECUTION_TERMINAL_POLICY;
+    terminalReleaseMode === 'stack-pop'
+      ? EXECUTION_TERMINAL_POLICY
+      : EXECUTION_TERMINAL_NO_STACK_POLICY;
 
   const commandServices =
     options.commandServices ?? createCliCommandServices(options.commandStreamOptions);

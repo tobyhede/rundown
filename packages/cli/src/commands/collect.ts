@@ -35,6 +35,8 @@ import {
 import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
+  buildAdvanceInlineParent,
+  type DrivenRunPropagation,
 } from '../helpers/delegation-completion.js';
 
 /**
@@ -474,6 +476,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     sessionService: ctx.sessionService,
+    advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
   });
 
   const outcome = await collectionService.collectDelegationOutcomes({
@@ -557,24 +560,41 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // propagation STREAMS the parent's transition/`runbook_*` events through
   // `output` — which is exactly why the applied action object below is emitted
   // LAST, after this pass (cli-output.md: the action object is the last line).
+  // Split terminal propagation by the layer that reached terminal (#598 finding 1):
+  //  - advancesIntoLoop === false: the DRAIN reached terminal — core's collect
+  //    terminal branch already propagated (and set terminalInlineAdvance). Do NOT
+  //    re-propagate (that would double-advance the inline parent).
+  //  - advancesIntoLoop === true : the target was 'running' after the drain and may
+  //    have reached terminal INSIDE the loop, which never propagates the executed
+  //    run's own terminal — so the CLI still owns this propagation.
   let exitWithError = loopStopped || shouldExitWithError;
-  const propagation = await propagateDrivenRunTerminal(
-    manager,
-    state.id,
-    cwd,
-    output,
-    { kind: 'loop-inferred' },
-    commandStreamOptions,
-  );
-  if (propagation.kind === 'inline-advanced') {
-    exitWithError = inlineAdvanceRequiresFailureExit(propagation) || loopStopped;
+  if (advancesIntoLoop) {
+    const propagation = await propagateDrivenRunTerminal(
+      manager,
+      state.id,
+      cwd,
+      output,
+      { kind: 'loop-inferred' },
+      commandStreamOptions,
+    );
+    if (propagation.kind === 'inline-advanced') {
+      exitWithError = inlineAdvanceRequiresFailureExit(propagation) || loopStopped;
+    }
+    // 'delegation-reported' / 'skipped' leave exitWithError at
+    // loopStopped || shouldExitWithError — unchanged from today.
+  } else if (outcome.terminalInlineAdvance !== undefined) {
+    // Drain-terminal inline target: core already advanced the parent. Map its
+    // outcome to the same exit contract the CLI post-loop path uses. (loopStopped
+    // is false here — the loop did not run.)
+    const corePropagation: DrivenRunPropagation = {
+      kind: 'inline-advanced',
+      result: outcome.terminalInlineAdvance,
+    };
+    exitWithError =
+      shouldExitWithError || inlineAdvanceRequiresFailureExit(corePropagation) || loopStopped;
   }
-  // `delegation-reported` is report-only and never flips the exit code here — this
-  // matches today's behaviour: collect's delegation branch tested `=== 'stopped'`
-  // (`:578`), which reportTerminalToDelegatingRun can NEVER return, so it was dead.
-  // The discriminated type removes it structurally (SHOULD-FIX 4). `skipped` (a
-  // non-terminal collect) leaves `exitWithError` at `loopStopped || shouldExitWithError`
-  // — the Correction 2 guarantee.
+  // Drain-terminal DELEGATION target: core reported report-only; delegation never
+  // flips the exit code (matches today's dead `=== 'stopped'` delegation branch).
 
   // Render the deferred collect action object exactly once, AFTER the loop's and
   // the inline propagation's streamed events, so it is the last JSON line on

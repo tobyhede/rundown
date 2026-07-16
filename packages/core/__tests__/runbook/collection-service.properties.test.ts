@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,6 +14,7 @@ import {
   activeFrame,
   assertRunId,
   buildFrameKey,
+  type AdvanceInlineParent,
   type ClaimId,
   type RunbookState,
 } from '../../src/runbook/index.js';
@@ -103,6 +104,15 @@ describe('RunbookCollectionService properties', () => {
       actorService,
       lifecycleService,
       completionService,
+      // Properties here never drive a target terminal (they assert missing/gate
+      // behaviour before the drain), so a never-called fake satisfies the type.
+      advanceInlineParent: jest
+        .fn<AdvanceInlineParent>()
+        .mockRejectedValue(
+          new Error(
+            'advanceInlineParent must not be called: properties assert pre-terminal behaviour',
+          ),
+        ),
     });
   });
 

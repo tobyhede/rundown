@@ -167,6 +167,16 @@ export {
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
 export {
+  propagateTerminalChildUpward,
+  type AdvanceInlineParent,
+  type AdvanceInlineParentInput,
+  type AdvanceInlineParentOutcome,
+  type InlineParentAdvanceSessionService,
+  type InlineParentAdvanceStateReader,
+  type PropagateTerminalChildUpwardDeps,
+  type TerminalUpwardPropagationResult,
+} from './inline-parent-advance.js';
+export {
   AbortCommandService,
   type AbortCommandAuthorizationInput,
   type AbortCommandAuthorizationResult,

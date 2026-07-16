@@ -231,6 +231,14 @@ export type DelegationPolicyOutcome =
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
       /**
+       * Set only when a terminal collect target carried INLINE linkage and the
+       * seam advanced its composing parent. Carries the collapsed inline-advance
+       * outcome so the CLI can map it to an exit code via
+       * `inlineAdvanceRequiresFailureExit`. Undefined for delegation targets and
+       * non-linked targets. In-memory command outcome only — never persisted.
+       */
+      readonly terminalInlineAdvance?: 'handled' | 'stopped' | 'blocked' | 'not-applicable';
+      /**
        * Ordered transition observations projected from the applied collection
        * transitions. This is an in-memory command outcome only; it is never
        * persisted into `.rundown/runs/`.
