@@ -12,9 +12,8 @@ import {
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
   replaceSubstepStateEntry,
-  resolveIssuanceAnchor,
 } from '@rundown-org/core';
-import { parseStepIdFromString, type ResolvedStep } from '@rundown-org/parser';
+import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -44,7 +43,11 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
-import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
+import type {
+  ResolveIssuanceAnchorOptions,
+  TemplateVarValue,
+  RetryLocator,
+} from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -70,14 +73,11 @@ export interface DelegateActionOptions {
  * The seam-facing target fields derived from a parsed `--claim-id` / `--run`
  * target: bearer authority, plus the explicit run selector when one was named.
  *
- * Also selects the run every delegate precondition validates against — the CLI
- * passes this same object to {@link resolveIssuanceAnchor} that it spreads into
- * the seam call, so validation and issuance cannot target different runs (#586).
+ * The shape is exactly {@link ResolveIssuanceAnchorOptions}, so spreading it
+ * into the core seam preserves one typed target-selection contract. Core owns
+ * anchor resolution and every state-dependent precondition.
  */
-type DelegateSeamFields = {
-  readonly callerEvidence: CallerEvidence;
-  readonly targetRunId?: RunId;
-};
+type DelegateSeamFields = ResolveIssuanceAnchorOptions;
 
 /**
  * Derive the delegate seam-call fields from a resolved {@link TransitionTarget}.
@@ -279,19 +279,10 @@ export function registerDelegateCommand(program: Command): void {
               );
             }
 
-            // Resolve the retry target FIRST so its precondition envelopes
-            // (NO_ACTIVE_RUNBOOK / INVALID_STEP / INVALID_INDEX) take priority.
-            // Parsing --input* overrides up front would let an invalid
-            // --input-file (or other extra-var failure) mask the intended retry
-            // precondition error.
-            const locator = await resolveRetryLocator(
-              tokenArg,
-              options,
-              sessionService,
-              seamFields,
-              cwd,
-              output,
-            );
+            // Parse the raw retry locator first. Core resolves its state-bound
+            // preconditions under DelegationLock; lazy overrides stay deferred
+            // so input errors cannot mask those higher-priority outcomes.
+            const locator = resolveRetryLocator(tokenArg, options, output);
 
             const outcome = await seam.issueDelegation({
               mode: 'retry',
@@ -343,6 +334,16 @@ export function registerDelegateCommand(program: Command): void {
                 output.error(outcome.message, 'RUN_TARGET_MISMATCH');
                 process.exitCode = 1;
                 break;
+              case 'invalid_index':
+                failRetry(output, outcome.message, 'INVALID_INDEX');
+                break;
+              case 'retry_target_required':
+                failRetry(
+                  output,
+                  '--retry requires a token, --step <id>, or an active substep',
+                  'INVALID_SYNTAX',
+                );
+                break;
               case 'refused':
                 if (outcome.policy.kind === 'delegation_collection_pending') {
                   emitDelegationCollectionPendingError(
@@ -382,9 +383,8 @@ export function registerDelegateCommand(program: Command): void {
 
           const seam = buildDelegateSeam(manager, sessionService, cwd);
 
-          // --index validation stays Category-A (raw flag validation). It is
-          // derived from the raw --step value (--index requires --step, already
-          // enforced above), never from the seam-resolved target.
+          // Category-A syntax parsing only. Whether the target is a FOR step is
+          // state-dependent and is validated by core under DelegationLock.
           let explicitIteration: number | undefined;
           try {
             explicitIteration = resolveIndexOption(
@@ -397,50 +397,21 @@ export function registerDelegateCommand(program: Command): void {
             }
             throw error;
           }
-
-          // Validate --index requires a FOR step (Category-A input validation on
-          // the ANCHORED run's parsed steps). The seam trusts the pre-validated
-          // explicitIteration; this guard preserves the pre-migration error.
-          // The anchor is resolved lazily here — the only consumer — so the
-          // common path no longer double-fetches the run (the seam resolves it
-          // again internally). When no run anchors, the FOR-step guard is
-          // skipped and the seam's `no-active-runbook` / `unknown_run` outcome
-          // renders the message (single source of truth). `--index` requires
-          // `--step`, so a deliberate `--index` target without a run is a no-op.
-          if (explicitIteration !== undefined) {
-            // Resolve through the SAME anchor the seam issues against: with
-            // `--claim-id A` the target is A's run, not the active default. Using
-            // `getActive()` here validated `--index` against whichever run happened
-            // to be active, rejecting a valid FOR target on A with a misleading
-            // INVALID_INDEX about a step the operator never named (#586).
-            const anchored = await resolveIssuanceAnchor(
-              sessionService,
-              seamFields.targetRunId,
-              seamFields.callerEvidence,
-            );
-            // `unknown_run` is the seam's refusal to own (it renders the
-            // cause-specific message); skipping validation defers to it.
-            if (anchored.kind === 'ok') {
-              const state = anchored.state;
-              const steps = getRunbookFromState(state, cwd);
-              // `--index` requires `--step` (enforced above), so a target is
-              // present. If it does not parse, error on the bad target rather than
-              // silently validating the active step (which would surface a
-              // misleading INVALID_INDEX about a step the operator did not name, or
-              // fall through to a later RD-814). Mirrors resolveRetryLocator.
-              const parsedTarget = parseStepIdFromString(options.step ?? '');
-              if (!parsedTarget) {
-                failRetry(output, `invalid --step value "${options.step ?? ''}"`, 'INVALID_STEP');
-              }
-              assertForStep(output, steps, parsedTarget.step);
-            }
+          if (explicitIteration !== undefined && !parseStepIdFromString(options.step ?? '')) {
+            failRetry(output, `invalid --step value "${options.step ?? ''}"`, 'INVALID_STEP');
           }
 
           const outcome = await seam.issueDelegation({
             mode: 'fresh',
             ...seamFields,
-            ...(options.step ? { explicitStep: options.step } : {}),
-            ...(explicitIteration !== undefined ? { explicitIteration } : {}),
+            ...(options.step
+              ? {
+                  explicitTarget: {
+                    stepId: options.step,
+                    ...(explicitIteration !== undefined ? { iteration: explicitIteration } : {}),
+                  },
+                }
+              : {}),
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),
             // Lazily parse extra vars (Category-A flag handling stays in the CLI),
             // deferred to the issuable moment by the seam so the echo / conflict /
@@ -458,6 +429,9 @@ export function registerDelegateCommand(program: Command): void {
               // Core owns the cause-specific message (shared with pass/complete).
               output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
               process.exitCode = 1;
+              break;
+            case 'invalid_index':
+              failRetry(output, outcome.message, 'INVALID_INDEX');
               break;
             case 'refused':
               if (outcome.policy.kind === 'delegation_collection_pending') {
@@ -515,6 +489,7 @@ export function registerDelegateCommand(program: Command): void {
             case 'retried':
             case 'token-not-found':
             case 'run_target_mismatch':
+            case 'retry_target_required':
               // Retry-only outcomes; unreachable on the fresh-issue path.
               throw new Error(`Unexpected fresh delegate outcome: ${outcome.kind}`);
             default: {
@@ -661,51 +636,26 @@ async function resolveDelegateExtraVars(
 /**
  * Resolve `rd delegate --retry` flags to a {@link RetryLocator} (Category A).
  *
- * Performs the form-specific precondition checks that own CLI error envelopes:
- * a `--step` form requires an anchored runbook (`NO_ACTIVE_RUNBOOK`), a valid
- * step id (`INVALID_STEP`), and — when `--index` is present — a FOR step
- * (`INVALID_INDEX`); the inferred form requires an active substep
- * (`INVALID_SYNTAX`). The seam resolves the locator to a concrete target.
- *
- * Every precondition is evaluated against the run the seam will anchor on —
- * `--run`, else the presented claim's controlled run, else the active default
- * (`resolveIssuanceAnchor`). Reading `getActive()` here instead would reject a
- * valid `--claim-id A` retry whenever A is not the active default (#586).
+ * Parses only raw syntax: token/step/inferred form, step-id syntax, and numeric
+ * index conflicts. Core resolves the run once and performs every
+ * state-dependent check against its DelegationLock-scoped reread.
  *
  * @param tokenArg - The positional token when it looks like a delegation token.
  * @param options - Parsed delegate options (`--step` / `--index`).
- * @param sessionService - Session service used to resolve the anchored run.
- * @param seamFields - Caller evidence (+ `--run` target) selecting that run.
- * @param cwd - Current working directory for FOR-step validation.
  * @param output - Output emitter used by `failRetry` on validation failure.
  * @returns The resolved retry locator.
+ * @throws {IndexOptionError} When the raw `--index` syntax is invalid.
  */
-async function resolveRetryLocator(
+function resolveRetryLocator(
   tokenArg: string | undefined,
   options: DelegateActionOptions,
-  sessionService: SessionService,
-  seamFields: DelegateSeamFields,
-  cwd: string,
   output: OutputEmitter,
-): Promise<RetryLocator> {
+): RetryLocator {
   if (tokenArg) {
     return { kind: 'token', token: tokenArg };
   }
 
-  // The run the seam will anchor on: `--run`, else the presented claim's
-  // controlled run, else the active default. `unknown_run` carries no state to
-  // validate against and is the seam's refusal to render, so both non-`ok`
-  // resolutions skip the state-dependent guards below and defer to it.
-  const anchored = await resolveIssuanceAnchor(
-    sessionService,
-    seamFields.targetRunId,
-    seamFields.callerEvidence,
-  );
-
   if (options.step) {
-    if (anchored.kind === 'none') {
-      failRetry(output, '--retry requires an active runbook', 'NO_ACTIVE_RUNBOOK');
-    }
     const parsed = parseStepIdFromString(options.step);
     if (!parsed) {
       failRetry(output, `invalid --step value "${options.step}"`, 'INVALID_STEP');
@@ -719,27 +669,9 @@ async function resolveRetryLocator(
       }
       throw error;
     }
-    if (iteration !== undefined && anchored.kind === 'ok') {
-      const steps = getRunbookFromState(anchored.state, cwd);
-      assertForStep(output, steps, parsed.step);
-    }
     return { kind: 'step', step: options.step, ...(iteration !== undefined ? { iteration } : {}) };
   }
 
-  // Inferred form: requires the anchored runbook to be positioned on a substep.
-  // Both the missing-run and missing-substep cases share one message/code; an
-  // `unknown_run` target defers to the seam's own refusal instead.
-  if (anchored.kind === 'unknown_run') {
-    return { kind: 'active' };
-  }
-  const state = anchored.kind === 'ok' ? anchored.state : undefined;
-  if (!state?.substep) {
-    failRetry(
-      output,
-      '--retry requires a token, --step <id>, or an active substep',
-      'INVALID_SYNTAX',
-    );
-  }
   return { kind: 'active' };
 }
 
@@ -790,33 +722,4 @@ function failRetry(output: OutputEmitter, message: string, code: string): never 
   output.error(message, code);
   output.flush();
   process.exit(1);
-}
-
-/**
- * Validate that an `--index` target resolves to a FOR step.
- *
- * `--index` only has meaning on a FOR / prompted-FOR step (it selects an
- * iteration). Both the fresh-issue and `--retry` flows must reject `--index`
- * against a non-FOR step with the same `INVALID_INDEX` envelope; extracting the
- * guard here keeps that error contract single-sourced so the two call sites
- * cannot drift. When the named step is absent from the parsed steps the guard is
- * a no-op (the seam reports the missing-step outcome).
- *
- * @param output - OutputEmitter used by `failRetry` on validation failure.
- * @param steps - Parsed steps of the active run.
- * @param targetStepName - Name of the step the `--index` targets.
- */
-function assertForStep(
-  output: OutputEmitter,
-  steps: readonly ResolvedStep[],
-  targetStepName: string,
-): void {
-  const targetStep = steps.find((s) => s.name === targetStepName);
-  if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-    failRetry(
-      output,
-      `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
-      'INVALID_INDEX',
-    );
-  }
 }

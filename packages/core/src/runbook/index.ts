@@ -104,6 +104,7 @@ export {
 export {
   resolveIssuanceAnchor,
   type IssuanceAnchorResolution,
+  type ResolveIssuanceAnchorOptions,
 } from './issuance-anchor.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
@@ -192,6 +193,7 @@ export {
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
+  type ExplicitDelegationTarget,
   type FindDelegationByToken,
   type ForceAbortLinkedChildCleanupResult,
   type LifecycleLoopDirective,

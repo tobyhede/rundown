@@ -18,6 +18,21 @@ export type IssuanceAnchorResolution =
   | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'none' };
 
+/** Options for {@link resolveIssuanceAnchor}. */
+export interface ResolveIssuanceAnchorOptions {
+  /**
+   * Typed caller evidence; a `claim_bearer` unambiguously names the run it
+   * controls, so it anchors issuance when no `targetRunId` is supplied.
+   */
+  readonly callerEvidence: CallerEvidence;
+  /**
+   * Explicit run id from `--run`. Outranks the presented claim's controlled run
+   * and the active default; a missing/foreign/terminal id refuses as
+   * `unknown_run`.
+   */
+  readonly targetRunId?: RunId;
+}
+
 /**
  * Resolve the run a delegation issuance (or retry) anchors on.
  *
@@ -34,23 +49,21 @@ export type IssuanceAnchorResolution =
  *      through to (3), where the unchanged authorization gate refuses it.
  *   3. The active default run (`none` when absent).
  *
- * This is the single source of truth for delegate anchor selection: the core
- * issuance seam resolves its target with it, and the CLI resolves the run its
- * Category-A preconditions (`--index` FOR-step validation, the inferred-retry
- * active-substep check) validate against. Both must agree — validating a
- * precondition against a different run than the seam acts on rejects valid
- * commands before the seam is reached.
+ * This is the single source of truth for delegate anchor selection. The core
+ * issuance seam resolves through it once, pins the selected run id, then
+ * performs state-dependent validation against the DelegationLock-scoped reread.
  *
  * @param reader - Read-side session dependency used to resolve runs and claims
- * @param targetRunId - Explicit `--run` selector; `undefined` when not supplied
- * @param callerEvidence - Typed caller evidence; a `claim_bearer` names its run
+ * @param options - Caller evidence and the optional explicit `--run` selector
+ * @param options.callerEvidence - Typed caller evidence; a `claim_bearer` names its run
+ * @param options.targetRunId - Explicit `--run` selector; `undefined` when not supplied
  * @returns The anchored run, an `unknown_run` refusal, or `none`
  */
 export async function resolveIssuanceAnchor(
   reader: CommandTargetReader,
-  targetRunId: RunId | undefined,
-  callerEvidence: CallerEvidence,
+  options: ResolveIssuanceAnchorOptions,
 ): Promise<IssuanceAnchorResolution> {
+  const { callerEvidence, targetRunId } = options;
   if (targetRunId !== undefined) {
     const member = await reader.resolveRunningStackMember(targetRunId);
     if (member.kind !== 'running') {

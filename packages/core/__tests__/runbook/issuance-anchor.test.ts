@@ -97,7 +97,10 @@ describe('resolveIssuanceAnchor', () => {
     it('anchors the named running session-stack member', async () => {
       const reader = fakeReader({ active: activeRun, runById: { [namedRunId]: namedRun } });
 
-      const anchored = await resolveIssuanceAnchor(reader, namedRunId, pluginEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, {
+        callerEvidence: pluginEvidence,
+        targetRunId: namedRunId,
+      });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -116,7 +119,10 @@ describe('resolveIssuanceAnchor', () => {
         runById: { [namedRunId]: namedRun },
       });
 
-      const anchored = await resolveIssuanceAnchor(reader, namedRunId, bearerEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, {
+        callerEvidence: bearerEvidence,
+        targetRunId: namedRunId,
+      });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -126,7 +132,27 @@ describe('resolveIssuanceAnchor', () => {
     it('refuses unknown_run when the named id is not on the session stack', async () => {
       const reader = fakeReader({ active: activeRun, runById: {} });
 
-      const anchored = await resolveIssuanceAnchor(reader, namedRunId, pluginEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, {
+        callerEvidence: pluginEvidence,
+        targetRunId: namedRunId,
+      });
+
+      expect(anchored.kind).toBe('unknown_run');
+      if (anchored.kind !== 'unknown_run') throw new Error('expected unknown_run');
+      expect(anchored.runId).toBe(namedRunId);
+    });
+
+    it('does not fall through to a live bearer claim when the named id is absent', async () => {
+      const reader = fakeReader({
+        active: activeRun,
+        claimResolution: claimed(),
+        runById: {},
+      });
+
+      const anchored = await resolveIssuanceAnchor(reader, {
+        callerEvidence: bearerEvidence,
+        targetRunId: namedRunId,
+      });
 
       expect(anchored.kind).toBe('unknown_run');
       if (anchored.kind !== 'unknown_run') throw new Error('expected unknown_run');
@@ -141,7 +167,10 @@ describe('resolveIssuanceAnchor', () => {
         runById: { [namedRunId]: terminalNamedRun },
       });
 
-      const anchored = await resolveIssuanceAnchor(reader, namedRunId, pluginEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, {
+        callerEvidence: pluginEvidence,
+        targetRunId: namedRunId,
+      });
 
       expect(anchored.kind).toBe('unknown_run');
       if (anchored.kind !== 'unknown_run') throw new Error('expected unknown_run');
@@ -154,7 +183,7 @@ describe('resolveIssuanceAnchor', () => {
     it("anchors the claim's controlled run over the active default (#586)", async () => {
       const reader = fakeReader({ active: activeRun, claimResolution: claimed() });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, bearerEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -172,7 +201,7 @@ describe('resolveIssuanceAnchor', () => {
         },
       });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, bearerEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -185,7 +214,7 @@ describe('resolveIssuanceAnchor', () => {
         claimResolution: { status: 'missing', claimId },
       });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, bearerEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -202,7 +231,7 @@ describe('resolveIssuanceAnchor', () => {
         claimResolution: { status: 'unlinked', claim: verifiedClaim, reason: 'stashed' },
       });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, bearerEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -214,7 +243,7 @@ describe('resolveIssuanceAnchor', () => {
     it('anchors the active run for non-claim evidence', async () => {
       const reader = fakeReader({ active: activeRun });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, pluginEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: pluginEvidence });
 
       expect(anchored.kind).toBe('ok');
       if (anchored.kind !== 'ok') throw new Error('expected ok');
@@ -224,7 +253,7 @@ describe('resolveIssuanceAnchor', () => {
     it('resolves none when no run is active', async () => {
       const reader = fakeReader({ active: null });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, pluginEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: pluginEvidence });
 
       expect(anchored.kind).toBe('none');
     });
@@ -232,7 +261,7 @@ describe('resolveIssuanceAnchor', () => {
     it('resolves none when a stale claim leaves no active default', async () => {
       const reader = fakeReader({ active: null, claimResolution: { status: 'missing', claimId } });
 
-      const anchored = await resolveIssuanceAnchor(reader, undefined, bearerEvidence);
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
       expect(anchored.kind).toBe('none');
     });

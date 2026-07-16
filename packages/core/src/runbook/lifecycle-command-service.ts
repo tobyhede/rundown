@@ -35,7 +35,11 @@ import {
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
-import { type IssuanceAnchorResolution, resolveIssuanceAnchor } from './issuance-anchor.js';
+import {
+  type IssuanceAnchorResolution,
+  type ResolveIssuanceAnchorOptions,
+  resolveIssuanceAnchor,
+} from './issuance-anchor.js';
 import { isRunId, type RunId } from './run-id.js';
 import {
   resolveManualCompletionCursor,
@@ -211,6 +215,14 @@ export type RetryLocator =
   | { readonly kind: 'step'; readonly step: string; readonly iteration?: number }
   | { readonly kind: 'active' };
 
+/** Raw explicit fresh-issuance target parsed by a frontend. */
+export interface ExplicitDelegationTarget {
+  /** Qualified step id, for example `1.1`. */
+  readonly stepId: string;
+  /** Numeric FOR iteration selected by `--index`, when supplied. */
+  readonly iteration?: number;
+}
+
 /**
  * Input to {@link RunbookLifecycleCommandService.issueDelegation}.
  *
@@ -239,10 +251,8 @@ export type DelegationIssuanceInput =
        * from that front end.)
        */
       readonly targetRunId?: RunId;
-      /** Explicit step id from `--step`; `undefined` => bare inference. */
-      readonly explicitStep?: string;
-      /** Explicit FOR iteration from `--index`. */
-      readonly explicitIteration?: number;
+      /** Raw explicit `--step` / `--index` target; absent for bare inference. */
+      readonly explicitTarget?: ExplicitDelegationTarget;
       /** Raw positional runbook arg (RD-822 confirmation); `undefined` when absent. */
       readonly requestedRunbook?: string;
       /**
@@ -348,6 +358,8 @@ export type DelegationIssuanceOutcome =
       /** Operator-facing refusal message. */
       readonly message: string;
     }
+  | { readonly kind: 'invalid_index'; readonly message: string }
+  | { readonly kind: 'retry_target_required' }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError };
 
@@ -755,6 +767,26 @@ function withFrameIteration(stepId: string, iteration: number | undefined): stri
 }
 
 /**
+ * Return the existing CLI-compatible refusal message when an explicit
+ * iteration targets an authored non-FOR step. Missing steps deliberately pass
+ * through so the delegation resolver retains ownership of RD-801.
+ *
+ * @param steps - Parsed steps from the locked runbook reread.
+ * @param stepId - Raw qualified target from the frontend.
+ * @returns The refusal message, or `undefined` when validation should continue.
+ */
+function invalidDelegationIndexMessage(
+  steps: readonly ResolvedStep[],
+  stepId: string,
+): string | undefined {
+  const parsed = parseStepIdFromString(stepId);
+  if (!parsed) return undefined;
+  const target = steps.find((step) => step.name === parsed.step);
+  if (!target || target.kind === 'for' || target.kind === 'prompted-for') return undefined;
+  return `--index requires step "${parsed.step}" to be a FOR step, but it is "${target.kind}"`;
+}
+
+/**
  * Map a terminal command to its machine FORCE event. Exhaustive over
  * {@link TerminalCommandName} with a `never` fallthrough so a future terminal
  * command cannot silently collapse to `FORCE_STOP` (No silent mapping).
@@ -868,7 +900,7 @@ export class RunbookLifecycleCommandService {
     // session-stack member, the presented claim's controlled run, or the active
     // default). Every state-dependent decision below runs against the locked
     // re-read, not this snapshot.
-    const anchored = await this.#resolveIssuanceAnchor(input.targetRunId, input.callerEvidence);
+    const anchored = await this.#resolveIssuanceAnchor(input);
     if (anchored.kind !== 'ok') {
       return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
     }
@@ -905,6 +937,7 @@ export class RunbookLifecycleCommandService {
     // the parsed document (clause a/f static signals) as its input.
     const steps = await this.#deps.loadSteps(state);
 
+    const explicitTarget = input.explicitTarget;
     // Policy gate — `targeted` means the operator named a specific step target
     // (an explicit `--step`). Only that exempts issuance from the bare-advance
     // collection-pending guard. A positional runbook arg is NOT a target: it
@@ -913,7 +946,7 @@ export class RunbookLifecycleCommandService {
     // mirrors the pre-seam precheck, which keyed solely on `--step` absence.
     // Classification is from the locked re-read (`state`) — the same instance
     // the issuance resolution below decides from.
-    const targeted = input.explicitStep !== undefined;
+    const targeted = explicitTarget !== undefined;
     const authority = await this.#resolveMutationActorContext({
       callerEvidence: input.callerEvidence,
       targetState: state,
@@ -931,12 +964,20 @@ export class RunbookLifecycleCommandService {
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
 
+    // Validate authored target details only after authorization succeeds. This
+    // still uses the locked document, while avoiding disclosure of a named
+    // step's kind to callers that cannot issue from this run.
+    if (explicitTarget?.iteration !== undefined) {
+      const message = invalidDelegationIndexMessage(steps, explicitTarget.stepId);
+      if (message) return { kind: 'invalid_index', message };
+    }
+
     // Frame key: an explicit --index scopes to a FOR iteration of the active
-    // step; otherwise reuse the active frame. `--index` is pre-validated
-    // (Category A) by the frontend, so the seam trusts `explicitIteration`.
+    // step; otherwise reuse the active frame. The step kind was validated above
+    // against this same locked state/steps pair.
     const frameKey =
-      input.explicitIteration !== undefined
-        ? buildFrameKey(state.step, input.explicitIteration)
+      explicitTarget?.iteration !== undefined
+        ? buildFrameKey(state.step, explicitTarget.iteration)
         : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
     // Unified issuance resolution: one pure resolver owns explicit-step
@@ -945,7 +986,7 @@ export class RunbookLifecycleCommandService {
     // positional). Computed before resolving the authored child so an echo
     // never depends on authored resolvability.
     const resolution = resolveDelegationIssuance(state, steps, frameKey, {
-      ...(input.explicitStep !== undefined ? { explicitStep: input.explicitStep } : {}),
+      ...(explicitTarget !== undefined ? { explicitStep: explicitTarget.stepId } : {}),
       requested,
     });
     switch (resolution.kind) {
@@ -1005,7 +1046,7 @@ export class RunbookLifecycleCommandService {
     // the live FOR iteration in the context snapshot even though the frame key
     // scopes the entry to the requested iteration. Pass the iteration-qualified
     // id so the snapshot `index`/`at` match the frame the entry is stored under.
-    const createStepId = withFrameIteration(resolvedStepId, input.explicitIteration);
+    const createStepId = withFrameIteration(resolvedStepId, explicitTarget?.iteration);
 
     const result = createDelegation(
       {
@@ -1048,9 +1089,10 @@ export class RunbookLifecycleCommandService {
    * Locator resolution mirrors the pre-migration CLI:
    * - `token` resolves cross-run to the owning parent (not the active run);
    *   an unknown token returns `token-not-found`.
-   * - `step` / `active` resolve against the active run; a missing active run (or,
-   *   for `active`, a missing substep cursor) returns `no-active-runbook` — the
-   *   CLI renders the form-specific message.
+   * - `step` / `active` resolve the anchor run id before locking, then derive
+   *   their frame/cursor from the locked reread. Missing step-run state returns
+   *   `no-active-runbook`; a missing inferred cursor returns
+   *   `retry_target_required` for the CLI's form-specific envelope.
    *
    * Unlike fresh issuance, the policy gate runs as `targeted: true`, so a pending
    * collection never refuses a retry (closing the retry policy hole for untrusted
@@ -1064,10 +1106,14 @@ export class RunbookLifecycleCommandService {
   ): Promise<DelegationIssuanceOutcome> {
     const { locator } = input;
 
-    let targetState: RunbookState;
-    let substepId: string;
-    let frameKey: FrameKey;
-    let stepLabel: string;
+    type RetryCursor = {
+      readonly substepId: string;
+      readonly frameKey: FrameKey;
+      readonly stepLabel: string;
+    };
+
+    let targetRunId: RunId;
+    let cursor: RetryCursor | undefined;
 
     if (locator.kind === 'token') {
       const scan = await this.#deps.findDelegationByToken(locator.token);
@@ -1083,9 +1129,8 @@ export class RunbookLifecycleCommandService {
           message: `Run ${input.targetRunId} does not own the supplied delegation token.`,
         };
       }
-      targetState = scan.parentState;
-      substepId = scan.substepId ?? scan.stepId;
-      frameKey = scan.frameKey;
+      targetRunId = scan.parentState.id;
+      const substepId = scan.substepId ?? scan.stepId;
       // The canonical contextSnapshot.at surfaces FOR-iteration retries as e.g.
       // "1.2.1". `buildContextSnapshot` derives `at` unconditionally, so a
       // persisted snapshot always carries it; its absence means the snapshot is
@@ -1099,75 +1144,81 @@ export class RunbookLifecycleCommandService {
           error: Errors.delegationSnapshotStale(substepId, scan.stepId),
         };
       }
-      stepLabel = snapshot.at;
-    } else if (locator.kind === 'step') {
-      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId, input.callerEvidence);
+      cursor = { substepId, frameKey: scan.frameKey, stepLabel: snapshot.at };
+    } else {
+      const anchored = await this.#resolveIssuanceAnchor(input);
       if (anchored.kind !== 'ok') {
-        return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
+        if (anchored.kind === 'unknown_run') return anchored;
+        return locator.kind === 'active'
+          ? { kind: 'retry_target_required' }
+          : { kind: 'no-active-runbook' };
       }
-      const active = anchored.state;
-      targetState = active;
+      // Target identification only. Every state-dependent locator decision is
+      // deferred until after this run's DelegationLock is held and its state is
+      // reloaded.
+      targetRunId = anchored.state.id;
+    }
+
+    // DelegationLock-scoped read-modify-write (#508): the target run id above
+    // selects the mutex; locator validation/derivation, gate, retry, and persist
+    // all use the authoritative state reread while it is held.
+    const lock = await this.#acquireDelegationLock(targetRunId);
+    if (lock.kind === 'timeout') {
+      return { kind: 'error', error: Errors.delegationLockTimeout(targetRunId) };
+    }
+    await using _guard = lock.scope;
+
+    const freshState = await this.#deps.loadRun(targetRunId);
+    if (!freshState) {
+      if (locator.kind === 'token') return { kind: 'token-not-found', token: locator.token };
+      return locator.kind === 'active'
+        ? { kind: 'retry_target_required' }
+        : { kind: 'no-active-runbook' };
+    }
+
+    // Steps are loaded before locator validation and policy: both decisions use
+    // the same locked state/document pair.
+    const steps = await this.#deps.loadSteps(freshState);
+
+    if (locator.kind === 'step') {
       const parsed = parseStepIdFromString(locator.step);
       const stepName = parsed?.step ?? locator.step;
-      substepId = parsed?.substep ?? stepName;
+      const substepId = parsed?.substep ?? stepName;
+      let frameKey: FrameKey;
       if (locator.iteration !== undefined) {
         frameKey = buildFrameKey(stepName, locator.iteration);
       } else {
         // No explicit iteration: reuse the active frame when it is on the
         // requested step, else fall back to the step's base frame (matching how
         // createDelegation scopes lookup for a step-form caller).
-        const activeDerived = deriveActiveFrame(active);
+        const activeDerived = deriveActiveFrame(freshState);
         frameKey =
           activeDerived.step === stepName
-            ? (active.activeFrameKey ?? activeDerived.frameKey)
+            ? (freshState.activeFrameKey ?? activeDerived.frameKey)
             : buildFrameKey(stepName);
       }
       // Canonicalize the label to the resolved frame: an explicit `--index`
       // surfaces as e.g. "1.2.1" (matching the token/active retry forms), not the
       // bare "1.1" that drops the iteration.
-      stepLabel =
+      const stepLabel =
         locator.iteration !== undefined
           ? deriveExecutionAt(stepName, parsed?.substep, locator.iteration)
           : locator.step;
-    } else {
-      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId, input.callerEvidence);
-      if (anchored.kind === 'unknown_run') return anchored;
-      if (anchored.kind === 'none') return { kind: 'no-active-runbook' };
-      const active = anchored.state;
-      if (active.substep === undefined) return { kind: 'no-active-runbook' };
-      targetState = active;
-      substepId = active.substep;
+      cursor = { substepId, frameKey, stepLabel };
+    } else if (locator.kind === 'active') {
+      if (freshState.substep === undefined) return { kind: 'retry_target_required' };
       // Surface the same canonical location used by token/step retries: an
       // active FOR iteration renders as e.g. "1.2.1", not just "1.1".
-      const activeDerived = deriveActiveFrame(active);
-      frameKey = active.activeFrameKey ?? activeDerived.frameKey;
-      stepLabel = deriveExecutionAt(active.step, active.substep, activeDerived.iteration);
+      const activeDerived = deriveActiveFrame(freshState);
+      cursor = {
+        substepId: freshState.substep,
+        frameKey: freshState.activeFrameKey ?? activeDerived.frameKey,
+        stepLabel: deriveExecutionAt(freshState.step, freshState.substep, activeDerived.iteration),
+      };
     }
 
-    // DelegationLock-scoped read-modify-write (#508): the locator work above is
-    // read-only identification; the decisive read → retryDelegation → persist
-    // sequence runs in one critical section so a concurrent delegate/claim
-    // cannot interleave between the state read and the re-mint.
-    const lock = await this.#acquireDelegationLock(targetState.id);
-    if (lock.kind === 'timeout') {
-      return { kind: 'error', error: Errors.delegationLockTimeout(targetState.id) };
-    }
-    await using _guard = lock.scope;
-
-    // Locked re-read: the authoritative state for the gate and the retry.
-    // retryDelegation re-locates the delegation from this fresh state itself
-    // (its not_found/in_flight variants cover a delegation that vanished or got
-    // claimed in the gap), so no extra re-validation is needed here.
-    const freshState = await this.#deps.loadRun(targetState.id);
-    if (!freshState) {
-      return locator.kind === 'token'
-        ? { kind: 'token-not-found', token: locator.token }
-        : { kind: 'no-active-runbook' };
-    }
-
-    // Steps are loaded ABOVE the policy gate: direct_cli classification needs
-    // the parsed document (clause a/f static signals) as its input.
-    const steps = await this.#deps.loadSteps(freshState);
+    if (!cursor) throw new Error('Retry locator did not resolve a cursor');
+    const { substepId, frameKey, stepLabel } = cursor;
 
     // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
     // so a pending collection does not refuse it. Classification is from the
@@ -1194,6 +1245,13 @@ export class RunbookLifecycleCommandService {
       targetState: freshState,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
+
+    // As on the fresh path, authorization precedes authored-step validation so
+    // an unauthorized retry cannot probe whether a named step is iterable.
+    if (locator.kind === 'step' && locator.iteration !== undefined) {
+      const message = invalidDelegationIndexMessage(steps, locator.step);
+      if (message) return { kind: 'invalid_index', message };
+    }
 
     // Resolve overrides only now — after the locator resolved and the gate
     // passed — so a bad `--input-file` (or other extra-var failure) cannot mask
@@ -1224,7 +1282,7 @@ export class RunbookLifecycleCommandService {
     // propagated createDelegation error), so the dispatch collapses to one arm.
     if (result.status !== 'retried') return { kind: 'error', error: result.error };
 
-    await this.#supersedePendingOutcome(targetState.id, frameKey, substepId);
+    await this.#supersedePendingOutcome(freshState.id, frameKey, substepId);
     if (linkedChildRunId && allowLinkedChildRun) {
       await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
     }
@@ -1956,16 +2014,17 @@ export class RunbookLifecycleCommandService {
   }
 
   // Resolve the issuance anchor run via the shared `resolveIssuanceAnchor` seam
-  // (`--run` > presented claim's controlled run > active default). The CLI
-  // resolves its Category-A preconditions (`--index` FOR-step validation, the
-  // inferred-retry active-substep check) through the SAME function, so a
-  // precondition can never be validated against a different run than the one
-  // this seam acts on (#586).
+  // (`--run` > presented claim's controlled run > active default). Frontends
+  // pass only raw target syntax; this seam pins the resolved id and owns every
+  // state-dependent precondition against the locked reread.
+  // Takes the issuance `input` directly: both `DelegationIssuanceInput` variants
+  // already carry the anchor fields (`callerEvidence` + optional `targetRunId`),
+  // so it satisfies `ResolveIssuanceAnchorOptions` structurally and no call site
+  // has to pull those fields apart to call it.
   async #resolveIssuanceAnchor(
-    targetRunId: RunId | undefined,
-    callerEvidence: CallerEvidence,
+    options: ResolveIssuanceAnchorOptions,
   ): Promise<IssuanceAnchorResolution> {
-    return resolveIssuanceAnchor(this.#deps.sessionService, targetRunId, callerEvidence);
+    return resolveIssuanceAnchor(this.#deps.sessionService, options);
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed

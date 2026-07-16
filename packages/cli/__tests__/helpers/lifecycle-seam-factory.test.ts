@@ -121,7 +121,7 @@ describe('buildNonDelegatingLifecycleSeam', () => {
           // refuses before the resolver stub is ever reached. (A run id is only
           // target selection and never proves authority.)
           callerEvidence: { kind: 'direct_cli' },
-          explicitStep: '1.1',
+          explicitTarget: { stepId: '1.1' },
         }),
       ).resolves.toEqual({
         kind: 'refused',

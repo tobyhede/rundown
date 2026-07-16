@@ -426,10 +426,9 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
 });
 
 /**
- * CLI-side preconditions must be evaluated against the SAME run the core seam
- * anchors on. `--claim-id A` anchors issuance on A (#586); if the CLI validates
- * `--index` / inferred-retry against the active default B instead, a valid
- * command against A is rejected before the seam is ever reached.
+ * State-dependent preconditions belong in the core seam and must be evaluated
+ * against its claim-anchored, DelegationLock-scoped reread. `--claim-id A`
+ * therefore remains pinned to A even when the active default is B.
  */
 describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
   let workspace: TestWorkspace;
@@ -540,6 +539,21 @@ describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
     );
 
     expect(retried.stdout).not.toContain('INVALID_SYNTAX');
+    expect(retried.exitCode).toBe(0);
+    const action = findActionOutput<{ parent_run_id: string }>(retried.stdout);
+    expect(action).not.toBeNull();
+    expect(action!.parent_run_id).toBe(parentRunId);
+  }, 20_000);
+
+  it('validates retry --index against the claimed run, not the active default (#586)', async () => {
+    const { parentRunId, claimId } = await startForParentThenOther();
+
+    const retried = await runCliInProcess(
+      ['delegate', '--retry', '--step', '1.1', '--index', '1', '--claim-id', claimId],
+      workspace,
+    );
+
+    expect(retried.stdout).not.toContain('INVALID_INDEX');
     expect(retried.exitCode).toBe(0);
     const action = findActionOutput<{ parent_run_id: string }>(retried.stdout);
     expect(action).not.toBeNull();
