@@ -356,7 +356,14 @@ async function propagateTerminalChildUpwardInner(
         new Set(visited).add(linkage.parentRunId),
         depth + 1,
       )
-    : 'not-applicable';
+    : // Equivalent mutant: a vanished parent's `propagated` is only ever compared
+      // against 'linkage-cycle' / 'blocked' / 'stopped' below, so ANY value outside
+      // that set collapses identically to the same outcome. 'not-applicable' is the
+      // honest name for "there was no parent to propagate to", not a load-bearing
+      // discriminant.
+      // Stryker disable StringLiteral: equivalent — the value only has to miss the three severity comparisons below
+      'not-applicable';
+  // Stryker restore StringLiteral
 
   // Severity precedence: linkage-cycle > blocked > stopped > handled. The first
   // two lines extend the pre-#602 rule (blocked already outranked stopped) to the

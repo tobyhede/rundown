@@ -195,19 +195,6 @@ export function buildAdvanceInlineParent(
 }
 
 /**
- * Construct the core seam deps bag bound to one command's `cwd`, wiring the
- * CLI-supplied {@link buildAdvanceInlineParent} callable.
- *
- * `SessionService` is imported lazily (like the callable's core symbols) so this
- * module keeps a minimal static `@rundown-org/core` surface; the function is
- * therefore async.
- *
- * @param cwd - Current working directory.
- * @param output - Output emitter for streamed parent events.
- * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
- * @returns Deps for the core `propagateTerminalChildUpward` seam.
- */
-/**
  * Build the CLI's linkage-guard diagnostic sink (Category A: terminal rendering).
  *
  * Emits the `INLINE_PARENT_CYCLE` error code — the SAME code the force-terminal
@@ -236,6 +223,19 @@ export function buildLinkageCycleDiagnostic(output: OutputEmitter): OnLinkageCyc
   };
 }
 
+/**
+ * Construct the core seam deps bag bound to one command's `cwd`, wiring the
+ * CLI-supplied {@link buildAdvanceInlineParent} callable.
+ *
+ * `SessionService` is imported lazily (like the callable's core symbols) so this
+ * module keeps a minimal static `@rundown-org/core` surface; the function is
+ * therefore async.
+ *
+ * @param cwd - Current working directory.
+ * @param output - Output emitter for streamed parent events.
+ * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @returns Deps for the core `propagateTerminalChildUpward` seam.
+ */
 export async function buildInlineParentAdvanceDeps(
   cwd: string,
   output: OutputEmitter,

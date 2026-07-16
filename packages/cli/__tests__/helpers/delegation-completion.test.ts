@@ -251,7 +251,9 @@ function makeInlineLinkage(overrides: Partial<InlineLinkage> = {}): InlineLinkag
 interface MockOutput {
   flush: jest.Mock<() => void>;
   status: jest.Mock<(action: string, message?: string, data?: Record<string, unknown>) => void>;
-  error: jest.Mock<(message: string) => void>;
+  // Mirrors OutputEmitter.error's real (message, code, details) shape so the #602
+  // diagnostic's code + payload are type-checked at the assertion, not just matched.
+  error: jest.Mock<(message: string, code?: string, details?: Record<string, unknown>) => void>;
   warning: jest.Mock<(text: string) => void>;
 }
 
@@ -261,7 +263,7 @@ function makeOutput(): MockOutput & OutputEmitter {
   return {
     flush: mockFn<() => void>(),
     status: mockFn<(action: string, message?: string, data?: Record<string, unknown>) => void>(),
-    error: mockFn<(message: string) => void>(),
+    error: mockFn<(message: string, code?: string, details?: Record<string, unknown>) => void>(),
     warning: mockFn<(text: string) => void>(),
   } as unknown as MockOutput & OutputEmitter;
 }

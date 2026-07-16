@@ -20,7 +20,6 @@ import fc from 'fast-check';
 import {
   propagateTerminalChildUpward,
   MAX_INLINE_PROPAGATION_CHAIN,
-  type AdvanceInlineParent,
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from '../../src/runbook/inline-parent-advance.js';
@@ -109,11 +108,11 @@ async function walk(graph: LinkageGraph): Promise<Run> {
       },
     },
     sessionService: { releaseRunbook: async () => ({}) as never },
-    completionService: { recordChildCompletion: async () => 'recorded' as never },
-    advanceInlineParent: (async ({ parentRunId }) => {
+    completionService: { recordChildCompletion: async () => 'recorded' },
+    advanceInlineParent: async ({ parentRunId }) => {
       advanced.push(parentRunId);
       return { status: 'done' };
-    }) as AdvanceInlineParent,
+    },
     onLinkageCycle: () => {},
   };
   const result = await propagateTerminalChildUpward(

@@ -207,6 +207,11 @@ describe('RunbookCollectionService', () => {
       advanceInlineParent: jest
         .fn<AdvanceInlineParent>()
         .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
+      // Default fake: the linkage graphs these tests build are acyclic, so a
+      // tripped guard here means a false positive, not an expected diagnostic.
+      onLinkageCycle: () => {
+        throw new Error('onLinkageCycle must not be called by this test');
+      },
     });
   });
 
