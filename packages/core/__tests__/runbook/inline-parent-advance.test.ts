@@ -1,6 +1,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import {
   propagateTerminalChildUpward,
+  MAX_INLINE_PROPAGATION_CHAIN,
   type AdvanceInlineParent,
   type PropagateTerminalChildUpwardDeps,
 } from '../../src/runbook/inline-parent-advance.js';
@@ -637,5 +638,72 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     // Only the child's own record ran (level 1); the cyclic report never did.
     expect(recordChildCompletion).toHaveBeenCalledTimes(1);
     expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
+  });
+
+  // --- #602: depth cap. The visited-set cannot bound a chain of DISTINCT ids;
+  // the cap converts unbounded advance/release/reload work into a fixed bound.
+
+  /** Nth synthetic run id in a long acyclic chain: rd_ + 32 hex chars. */
+  const chainRunId = (n: number): RunId => assertRunId(`rd_${n.toString(16).padStart(32, '0')}`);
+
+  it('bounds an over-deep acyclic chain at MAX_INLINE_PROPAGATION_CHAIN', async () => {
+    // An unbounded chain of distinct ids: level n's parent is level n+1, forever.
+    const child = makeState(chainRunId(0), { parentLinkage: inlineLinkage(chainRunId(1)) });
+    let level = 1;
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>(async () => {
+      const current = level;
+      level += 1;
+      return makeState(chainRunId(current), {
+        lifecycle: 'completed',
+        parentLinkage: inlineLinkage(chainRunId(current + 1)),
+      });
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    // depth starts at 1 (the child) and grows by one per advance; the guard
+    // refuses at depth === MAX, so exactly MAX - 1 advances run.
+    expect(advanceInlineParent).toHaveBeenCalledTimes(MAX_INLINE_PROPAGATION_CHAIN - 1);
+  });
+
+  it('the cap is 64 — a documented bound, pinned so a change is deliberate', () => {
+    expect(MAX_INLINE_PROPAGATION_CHAIN).toBe(64);
+  });
+
+  it('a chain exactly at the bound propagates normally (off-by-one boundary)', async () => {
+    // MAX - 1 advances then a linkage-free root: the LAST legitimate chain. If the
+    // guard used `>` instead of `>=`, or seeded depth at 0, this would still pass —
+    // but the over-deep test above would then trip one level late. The two together
+    // pin the boundary exactly.
+    const child = makeState(chainRunId(0), { parentLinkage: inlineLinkage(chainRunId(1)) });
+    let level = 1;
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>(async () => {
+      const current = level;
+      level += 1;
+      // The final run in the chain is the root: no linkage, walk ends naturally.
+      return makeState(chainRunId(current), {
+        lifecycle: 'completed',
+        parentLinkage:
+          current === MAX_INLINE_PROPAGATION_CHAIN - 1
+            ? undefined
+            : inlineLinkage(chainRunId(current + 1)),
+      });
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('handled');
+    expect(advanceInlineParent).toHaveBeenCalledTimes(MAX_INLINE_PROPAGATION_CHAIN - 1);
   });
 });
