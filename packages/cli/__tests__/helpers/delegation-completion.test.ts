@@ -183,14 +183,11 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions.js'
 );
+// Loose arg signature avoids TS2589 (excessively deep instantiation) when
+// `toHaveBeenCalledWith` type-checks the full RunbookState argument; the return
+// type stays `SeamResult` so `mockResolvedValue` still narrows.
 const { propagateTerminalChildUpward } = core as unknown as {
-  propagateTerminalChildUpward: jest.Mock<
-    (
-      deps: unknown,
-      childState: RunbookState,
-      result: 'pass' | 'fail' | undefined,
-    ) => Promise<SeamResult>
-  >;
+  propagateTerminalChildUpward: jest.Mock<(...args: unknown[]) => Promise<SeamResult>>;
 };
 const {
   reportTerminalToDelegatingRun,

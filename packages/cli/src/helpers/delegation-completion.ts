@@ -34,9 +34,6 @@ import {
   RunbookStateManager,
   ExecutionLifecycleService,
   RunbookCompletionService,
-  SessionService,
-  exactFrame,
-  propagateTerminalChildUpward,
   type AdvanceInlineParent,
   type PropagateTerminalChildUpwardDeps,
   type RunbookState,
@@ -105,6 +102,10 @@ export function buildAdvanceInlineParent(
   commandStreamOptions?: CommandExecutionStreamOptions,
 ): AdvanceInlineParent {
   return async ({ parentRunId, parentFrameKey, parentEntry, result }) => {
+    // Core symbols used ONLY on this execution path are imported lazily too, so
+    // the module's static surface stays minimal — test doubles that mock
+    // `@rundown-org/core` need not supply `SessionService` / `exactFrame`.
+    const { SessionService, exactFrame } = await import('@rundown-org/core');
     const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
     const { getRunbookFromState } = await import('./runbook-loader.js');
     const { createBridgedEmitter } = await import('./execution-emitter.js');
@@ -196,16 +197,21 @@ export function buildAdvanceInlineParent(
  * Construct the core seam deps bag bound to one command's `cwd`, wiring the
  * CLI-supplied {@link buildAdvanceInlineParent} callable.
  *
+ * `SessionService` is imported lazily (like the callable's core symbols) so this
+ * module keeps a minimal static `@rundown-org/core` surface; the function is
+ * therefore async.
+ *
  * @param cwd - Current working directory.
  * @param output - Output emitter for streamed parent events.
  * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
  * @returns Deps for the core `propagateTerminalChildUpward` seam.
  */
-export function buildInlineParentAdvanceDeps(
+export async function buildInlineParentAdvanceDeps(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
-): PropagateTerminalChildUpwardDeps {
+): Promise<PropagateTerminalChildUpwardDeps> {
+  const { SessionService } = await import('@rundown-org/core');
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
@@ -248,8 +254,9 @@ export async function reportTerminalToDelegatingRun(
 ): Promise<DelegationPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (linkage?.kind !== 'delegation') return 'not-applicable';
+  const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    buildInlineParentAdvanceDeps(cwd, output),
+    await buildInlineParentAdvanceDeps(cwd, output),
     childState,
     result,
   );
@@ -311,11 +318,16 @@ export async function advanceParentForInlineChild(
   // report-then-collect contract that leaves a delegating parent collection
   // pending until `rd collect`. Narrow to inline and refuse anything else.
   if (linkage?.kind !== 'inline') return 'not-applicable';
+  const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
+    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
     childState,
     result,
   );
+  // Flush any buffered parent-stream output the seam produced (the callable
+  // flushes on its advance paths, but a record-only short-circuit — e.g. a
+  // 'blocked'/'cancelled' record — returns before the callable runs).
+  output.flush();
   // An inline linkage never yields the delegation-only 'reported' / 'duplicate';
   // narrow them away without a cast.
   return outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
@@ -361,11 +373,15 @@ export async function propagateChildTerminal(
 ): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (!linkage) return 'not-applicable';
+  const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
+    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
     childState,
     result,
   );
+  // Flush any buffered parent-stream output the seam produced (matches the old
+  // dispatch, where both sub-adapters flushed).
+  output.flush();
   // TerminalPropagationResult has no 'duplicate' member (the CLI never
   // distinguished it); collapse to 'reported' (finding 2). All other members are
   // shared between the seam union and TerminalPropagationResult.

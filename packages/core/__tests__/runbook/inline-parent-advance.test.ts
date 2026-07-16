@@ -6,6 +6,7 @@ import {
 } from '../../src/runbook/inline-parent-advance.js';
 import {
   assertRunId,
+  assertDelegationTokenHash,
   type RunbookState,
   type RunId,
   type DelegationLinkage,
@@ -38,8 +39,9 @@ function delegationLinkage(parentRunId: RunId = PARENT): DelegationLinkage {
     parentStep: '1',
     parentFrameKey: buildFrameKey('1'),
     parentEntry: 1,
-    tokenHash:
-      'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' as DelegationLinkage['tokenHash'],
+    tokenHash: assertDelegationTokenHash(
+      'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    ),
   };
 }
 
@@ -59,7 +61,7 @@ function makeState(id: RunId, overrides: Partial<RunbookState> = {}): RunbookSta
     schemaVersion: 1,
     frontmatterOutputs: [],
     ...overrides,
-  } as RunbookState;
+  };
 }
 
 const NEVER_ADVANCE: AdvanceInlineParent = () => {
@@ -85,7 +87,11 @@ function makeDeps(
     },
     completionService: {
       recordChildCompletion: jest
-        .fn<() => Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked'>>()
+        .fn<
+          (
+            args: unknown,
+          ) => Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked'>
+        >()
         .mockResolvedValue('recorded'),
     },
     advanceInlineParent: NEVER_ADVANCE,
@@ -125,7 +131,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
   it('delegation linkage records report-only and returns reported', async () => {
     const child = makeState(CHILD, { parentLinkage: delegationLinkage() });
     const recordChildCompletion = jest
-      .fn<() => Promise<'recorded'>>()
+      .fn<(args: unknown) => Promise<'recorded'>>()
       .mockResolvedValue('recorded');
     const result = await propagateTerminalChildUpward(
       makeDeps({ completionService: { recordChildCompletion } }),
@@ -138,7 +144,9 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
 
   it('delegation linkage returns blocked when recording is blocked', async () => {
     const child = makeState(CHILD, { parentLinkage: delegationLinkage() });
-    const recordChildCompletion = jest.fn<() => Promise<'blocked'>>().mockResolvedValue('blocked');
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'blocked'>>()
+      .mockResolvedValue('blocked');
     const result = await propagateTerminalChildUpward(
       makeDeps({ completionService: { recordChildCompletion } }),
       child,
@@ -150,7 +158,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
   it('delegation linkage returns not-applicable when recording finds no linkage', async () => {
     const child = makeState(CHILD, { parentLinkage: delegationLinkage() });
     const recordChildCompletion = jest
-      .fn<() => Promise<'not-applicable'>>()
+      .fn<(args: unknown) => Promise<'not-applicable'>>()
       .mockResolvedValue('not-applicable');
     const result = await propagateTerminalChildUpward(
       makeDeps({ completionService: { recordChildCompletion } }),
@@ -167,7 +175,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
   it('delegation linkage returns duplicate when the outcome was already recorded', async () => {
     const child = makeState(CHILD, { parentLinkage: delegationLinkage() });
     const recordChildCompletion = jest
-      .fn<() => Promise<'duplicate'>>()
+      .fn<(args: unknown) => Promise<'duplicate'>>()
       .mockResolvedValue('duplicate');
     const result = await propagateTerminalChildUpward(
       makeDeps({ completionService: { recordChildCompletion } }),
@@ -180,7 +188,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
   it('delegation linkage returns duplicate for an ordinary cancel short-circuit', async () => {
     const child = makeState(CHILD, { parentLinkage: delegationLinkage() });
     const recordChildCompletion = jest
-      .fn<() => Promise<'cancelled'>>()
+      .fn<(args: unknown) => Promise<'cancelled'>>()
       .mockResolvedValue('cancelled');
     const result = await propagateTerminalChildUpward(
       makeDeps({ completionService: { recordChildCompletion } }),
@@ -195,7 +203,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
   it('cancelled recording short-circuits to handled without advancing', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
     const recordChildCompletion = jest
-      .fn<() => Promise<'cancelled'>>()
+      .fn<(args: unknown) => Promise<'cancelled'>>()
       .mockResolvedValue('cancelled');
     const advanceInlineParent = jest.fn<AdvanceInlineParent>();
     const result = await propagateTerminalChildUpward(
@@ -209,7 +217,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
 
   it('blocked recording returns blocked without advancing', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
-    const recordChildCompletion = jest.fn<() => Promise<'blocked'>>().mockResolvedValue('blocked');
+    const recordChildCompletion = jest
+      .fn<(args: unknown) => Promise<'blocked'>>()
+      .mockResolvedValue('blocked');
     const advanceInlineParent = jest.fn<AdvanceInlineParent>();
     const result = await propagateTerminalChildUpward(
       makeDeps({ completionService: { recordChildCompletion }, advanceInlineParent }),
@@ -340,7 +350,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       .fn<(id: string) => Promise<RunbookState | null>>()
       .mockResolvedValue(parentTerminal);
     const recordChildCompletion = jest
-      .fn<() => Promise<'recorded'>>()
+      .fn<(args: unknown) => Promise<'recorded'>>()
       .mockResolvedValue('recorded');
     const result = await propagateTerminalChildUpward(
       makeDeps({
