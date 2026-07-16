@@ -4,7 +4,9 @@
 
 **Goal:** Give the parent an advisory, pull-based signal that tells it whether a delegated child's claim is still advancing the run — by recording a per-claim `lastProgressAt` on successful claim-authenticated mutation and deriving an `idle` label at read time on `rundown status` and `rundown collect` (#519).
 
-**Architecture:** Three seams, no machine state. (1) `ClaimRecord` gains one **required** field `lastProgressAt`, set to `issuedAt` at creation by `createClaimRecord`; sessions whose persisted claims lack it are **rejected** by a structural guard in `loadSession` with the existing finish/prune/restart error shape — no migration, no hydration, no shim. (2) A new `SessionService.recordClaimProgress(claimId)` refreshes exactly one claim — the one whose bearer the caller presented — inside the existing session-lock scope, and is invoked **after** a mutation commits, best-effort: the method never throws, so it cannot mask the committed mutation (RD-102). It is called by **every** claim-authenticated command that changes runbook workflow state (eight of the eleven on the `--claim-id` surface), and a fail-closed drift guard classifies all eleven and pins the set in both directions. It is deliberately NOT wired into `verifyClaimId` — nor into `stash`/`pop`, which mutate but change only session targeting — so neither a child polling `status --claim-id` nor one looping `stash`/`pop` can refresh its own mark without advancing the run. (3) A new pure module `claim-activity.ts` derives `ClaimActivity` from `(record, now, idleAfter)` with `now` injected; `rundown status` and `rundown collect` join it onto claimed/unresolved delegations at read time. Nothing expires, nothing is reclaimed, no result is synthesized.
+**Architecture:** Three seams, no machine state. (1) `ClaimRecord` gains one **required** field `lastProgressAt`, set to `issuedAt` at creation by `createClaimRecord`; sessions whose persisted claims lack it are **rejected** by a structural guard in `loadSession` with the existing finish/prune/restart error shape — no migration, no hydration, no shim. (2) A new `SessionService.recordClaimProgress(claimId)` refreshes exactly one claim — the one whose bearer the caller presented — inside the existing session-lock scope, and is invoked **after** a mutation commits, best-effort: the method never throws, so it cannot mask the committed mutation (RD-102). It is called by **every** claim-authenticated command that changes runbook workflow state (eight of the eleven on the `--claim-id` surface), and a fail-closed drift guard classifies all eleven and pins the set in both directions. It is deliberately NOT wired into `verifyClaimId` — nor into `stash`/`pop`, which mutate but change only session targeting — so neither a child polling `status --claim-id` nor one looping `stash`/`pop` can refresh its own mark without advancing the run. (3) A new pure module `claim-activity.ts` derives `ClaimActivity` from `(record, now, idleAfter)` with `now` injected; `rundown status` and `rundown collect` join it onto claimed/unresolved delegations at read time, deriving **per child** so one corrupt record cannot erase the others. Nothing expires, nothing is reclaimed, no result is synthesized.
+
+The drift guard in (2) derives its left-hand side from the **real program** (`createProgram()`, `cli.ts:72`), never from the test's own tables — a guard whose scan and whose classification come from the same source shrinks on both sides at once and can never fail.
 
 **Tech Stack:** TypeScript, Zod (persisted + output schemas), Jest (unit + integration), fast-check (property), Stryker (scoped mutation), pnpm workspaces. Packages: `@rundown-org/core` (claim shape, recording seam, pure activity module, collect read model), `@rundown-org/cli` (thin front end — status/collect rendering, the goto/abort recording call sites, and the drift guard).
 
@@ -26,11 +28,15 @@ Every task's requirements implicitly include this section. Values are copied ver
 
   The eight are the codebase's own mutating-command list — the seven pinned by the `--run` drift guard (`packages/cli/__tests__/helpers/run-option.test.ts:50`) plus `abort`, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
 
-- **`stash` / `pop` are excluded by the ANTI-FOOLING INVARIANT, not by convenience.** Both ARE claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`), so a rule keyed on "mutation" alone would sweep them in — which is precisely why the predicate is workflow state. "`lastProgressAt` means the holder advanced the _controlled run_, and stashing advances session _targeting_ — the run itself is untouched. Recording them would reopen precisely the hole that disqualified the rejected verify-path design: a child looping `stash`/`pop` would refresh itself alive forever without advancing anything, faking liveness through a mutating command instead of through a read. **Same defect, different door.**" Corroboration: `unstashForClaimId` already moves `updatedAt` (`session-service.ts:1060`) — the field this design deliberately leaves alone, precisely because it means "record written", not "run advanced".
+- **`stash` / `pop` FAIL THE PREDICATE — they are not exceptions to it.** The ANTI-FOOLING INVARIANT is why the predicate is worded as it is, and the wording is why these two fall outside the rule without any carve-out being needed. Both ARE claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`), so a rule keyed on "mutation" alone would sweep them in — which is precisely why the predicate is workflow state. "`lastProgressAt` means the holder advanced the _controlled run_, and stashing advances session _targeting_ — the run itself is untouched. Recording them would reopen precisely the hole that disqualified the rejected verify-path design: a child looping `stash`/`pop` would refresh itself alive forever without advancing anything, faking liveness through a mutating command instead of through a read. **Same defect, different door.**" Corroboration: `unstashForClaimId` already moves `updatedAt` (`session-service.ts:1060`) — the field this design deliberately leaves alone, precisely because it means "record written", not "run advanced".
 - **Recording on a claim-terminating command (`complete`, `stop`, `abort`) IS deliberately not special-cased away.** "It is a redundant write to a claim leaving the reportable population: it costs nothing, and it buys a predicate with no exceptions to remember." Do not add an exception, however harmless it looks. Contrast with `stash`/`pop`: those are not exceptions being denied — they fail the predicate outright.
 - **`status --claim-id` does not record.** Claim-authenticated but read-only: "a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected." `verifyClaimId` (`session-service.ts:361`) stays read-only and lock-free.
-- **A fail-closed drift guard pins all eleven IN BOTH DIRECTIONS** (Task 5), via two anchors that must each be **proven to bite** — "a guard that cannot fail is theatre". "The guard, not the seam's uniformity, is the guarantee", which is why the recording _seam_ may legitimately differ per command: core for six; CLI for `goto` and `abort`, whose core services are authorization gates that return `authorized`/`refused` and mutate nothing. **Restructuring those two seams is out of scope for #519.**
-- **An unparseable `lastProgressAt` THROWS.** Never classify it as `progressing`: "every `NaN` comparison is false — so `idleFor > idleAfter` would be false and a dead claim would silently classify as `progressing`. That is the single worst failure this design can have: a safety signal that fails *open*, quietly, in exactly the case it exists to catch."
+- **A fail-closed drift guard pins all eleven IN BOTH DIRECTIONS** (Task 5), and must be **proven to bite** — "a guard that cannot fail is theatre". "The guard, not the seam's uniformity, is the guarantee", which is why the recording _seam_ may legitimately differ per command: core for six; CLI for `goto` and `abort`, whose core services are authorization gates that return `authorized`/`refused` and mutate nothing. **Restructuring those two seams is out of scope for #519.** Because that sanction rests **entirely** on the guard, the guard's construction is load-bearing:
+  - **The scan's left-hand side MUST come from `createProgram()` (`packages/cli/src/cli.ts:72`)**, which registers every command. A guard that builds its program by registering the same tables it then compares against is **tautological**: a new `rundown foo --claim-id` is never registered by the test, never classified, and the suite stays green. Both sides must not shrink together, or there is no guarantee at all and the CLI silently owns the policy.
+  - **`RoleSpecificMutationCommand` is NOT the definition of "claim-authenticated workflow mutation"** and must not be typed as one. Its own TSDoc (`subprocess-mutation-boundary.ts:27-32`) defines a **subprocess-trust** concept: "commands whose only available trust is the bare direct-CLI lane". Its overlap with this plan's eight is a **coincidence**, and already an imperfect one — `abort` records but is not in the union. Treating it as both would be the "one field, two meanings" conflation this design rejects everywhere else. It appears in Task 5 only as a secondary **cross-check**, never as the anchor.
+- **A corrupt `lastProgressAt` is contained per child, never swallowed wholesale.** `claimActivity` throws (below), but a boundary that catches around the **whole list** and returns `[]` is a **worse fail-open than the NaN it exists to prevent**: one corrupt child erases every genuinely-idle sibling from the report and the parent concludes nothing needs checking. The decision, pinned at the CLI/read boundary: **derive per child, and surface an unreadable child as its own typed union member** (`kind: 'unreadable'`) that renders as needing attention. Other children stay visible; the corrupt one is loud. `status` (read-only) uses the same per-entry containment, so a corrupt record never escapes as an unhandled stack trace instead of a JSON error envelope. The path is reachable: `z.string().min(1)` admits `'not-a-date'` and Task 1's structural guard only checks key **presence**.
+- **An unparseable `lastProgressAt` THROWS — as a typed `RundownError`, not a bare `Error`.** Never classify it as `progressing`: "every `NaN` comparison is false — so `idleFor > idleAfter` would be false and a dead claim would silently classify as `progressing`. That is the single worst failure this design can have: a safety signal that fails *open*, quietly, in exactly the case it exists to catch." The throw carries `ErrorCodes.CLAIM_PROGRESS_UNREADABLE` (RD-824, added by Task 2) so callers and tests discriminate **on the code**. A bare `Error` would be distinguishable from `durationMs`'s bare `Error` — thrown from the same function — only by message substring, so a harmless reword would silently gut AC6 with every test still green.
+- **`ClaimActivity` is a `readonly interface`, not a union.** A two-member union whose variants carry **identical** fields is a boolean in costume: no caller narrows, both consumers flatten it straight back to `activity.kind === 'idle'`, and the spec's own naming table says `idle: boolean`. Type-driven dispatch means unions that force narrowing — not ceremony that doesn't. The union that **does** earn its keep is `ChildActivity` at the read boundary (`known` | `unreadable`), whose members differ in the data they carry and which callers genuinely must narrow.
 - **Recorded on success, not on attempt.** A failed mutation records nothing. "A live-but-erroring child correctly reads as idle — a true positive worth surfacing."
 - **A command refreshes only the claim whose bearer it presented.** Never another claim. `collect --claim-id <orchestrator-claim>` refreshes the orchestrator's own claim, **not** the children's. "A parent cannot vouch for a child's liveness, and must not appear to."
 - **Recording is best-effort and never masks the mutation.** Ordering is fixed: verify bearer → authorize grant → commit mutation → best-effort record progress. `recordClaimProgress` never throws and never propagates (RD-102 policy).
@@ -52,6 +58,9 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `SessionService.withLock` (`session-service.ts:251`) is `acquire` + `await using this.lock.held()` + `fn()`.
 - `unstashForClaimId` (`session-service.ts:1023`) is the verify→refresh→save template: `withLock` → `parseClaimBearer` → `loadSession` → `Object.hasOwn(session.claims, key)` → `verifyClaimSecret` → `refreshedClaimRecord` → `saveSession`.
 - `RunbookStateManager.loadSession` (`state.ts:759`) reads the file, then at `:773` runs a structural guard that throws `'Legacy session ownership format detected. Finish or prune active runbooks and restart.'`, then `SessionDataSchema.safeParse` (whose failure throws a *different*, delete-the-file message). The new guard goes **between** the legacy guard and `safeParse`, so a session missing the field gets the finish/prune/restart message rather than the delete-the-file one.
+- **The `loadSession` rejection tests live in `packages/core/__tests__/runbook/state.test.ts:820-858`** — the three `Legacy session ownership format` cases. `state-schema-version.test.ts` contains **zero** occurrences of `loadSession` (verified: `grep -c loadSession` returns 0); it owns run-state schema versioning, not session loading. Task 1 extends `state.test.ts`.
+- **`packages/claude-code-plugin/src/rdpath.ts:70-76` allow-lists session-load error messages by substring** — including `'Legacy session ownership format detected'` — to degrade gracefully instead of exploding when the session is unreadable. It does **not** match the new claim message, so `rdpath` would lose that degradation on exactly the sessions this change invalidates. Task 1 adds the new message there. The plugin package is in scope for this one line.
+- **The `--text` delegations renderer is `packages/cli/src/services/renderers/text-renderer.ts:296-314`**, not `status-builder.ts` and not `collect.ts` (both have zero rendering hits). It is a **line** format — `` `  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}` `` — so "add a column with UPPERCASE headers" does not apply; append to the line. It also carries its **own structural duplicate** of the delegation entry shape at `:62-71`, independent of `status-builder.ts:77-84`, so the fields must be added in both or the renderer cannot see them.
 - `ClaimRecordSchema` (`packages/core/src/schemas.ts:634`) is `.strict()` — an unknown key is already rejected, so adding the field to the type WITHOUT adding it to the schema would break every round-trip.
 - `rundown status` already loads `session.claims` and joins `claimKey` onto claimed delegations (`packages/cli/src/commands/status.ts:43-52` → `ActiveStatusOptions.claimKeyByChildRunId` → `status-builder.ts:373-382`). The per-entry output shape is owned by `DelegationStatusEntrySchema` (`packages/core/src/output/zod-schemas.ts:390`).
 - `rundown collect` reports a scalar `unresolved` count on the `collection_applied` and `collection_frame_not_active` outcomes (`collection-service.ts:482,531,589`). `CollectionSessionService` (`collection-service.ts:40`) extends `CommandTargetReader`, which already exposes `listOpenClaimsForParent(parentRunId)` (`command-target-resolver.ts:253`; implemented at `session-service.ts:640`) — it returns exactly the non-terminal, not-yet-`done` delegated child `ClaimRecord`s for a parent run. That is the join key for collect's per-child activity; no new read model is needed.
@@ -87,14 +96,26 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `packages/cli/src/helpers/goto-workflow.ts` — `claimId` on `GotoContext`; record after `sendAndSync` succeeds.
 - `packages/cli/src/commands/goto.ts` — thread `claimId` into the context.
 - `packages/cli/src/commands/abort.ts` — record after the cancellation commits (`:203`).
-- `packages/cli/src/commands/status.ts` — build the activity join map.
+- `packages/cli/src/commands/status.ts` — build the activity join map, containing a corrupt record per entry.
 - `packages/cli/src/helpers/status-builder.ts` — `ActiveStatusOptions.activityByChildRunId`; emit the fields.
+- `packages/cli/src/services/renderers/text-renderer.ts` — `:62-71` the renderer's own copy of the delegation entry shape; `:296-314` the `--text` delegations **line** renderer. Without this file the `--text` fields are invisible no matter what the builder emits.
+- `packages/core/src/errors/codes.ts` — `CLAIM_PROGRESS_UNREADABLE` (RD-824).
+- `packages/claude-code-plugin/src/rdpath.ts:70-76` — allow-list the new session-rejection message so `rdpath` keeps degrading gracefully.
 - `packages/cli/src/commands/collect.ts` — render `unresolvedChildren` in JSON and `--text`.
 - `packages/cli/src/schemas/output-schemas.ts` — `unresolvedChildren` on the collect response schemas.
 - `packages/cli/src/helpers/duration.ts` — **created**: `humaniseDurationMs` for `--text`.
 - `docs/spec/cli-output.md` — status delegations prose; a new `## collect` section.
 
-**Test fixtures that BREAK on the required-field change and MUST be updated (Task 1).** These are every site that constructs a `ClaimRecord` object literal (found via `grep -rn "secretHash:" packages/core/__tests__ packages/cli/__tests__`). Each needs `lastProgressAt` added:
+**Test fixtures that BREAK on the required-field change and MUST be updated (Task 1) — TWELVE files, not nine.** Every site that constructs a `ClaimRecord`. The obvious grep (`grep -rn "secretHash:"`) finds only nine, because it **misses shorthand properties** (`{ secretHash, ... }` with no colon). Use **both** forms:
+
+```bash
+grep -rln "secretHash:" packages/core/__tests__ packages/cli/__tests__          # 9 explicit-property files
+grep -rln "secretHash,\|secretHash$" packages/core/__tests__ packages/cli/__tests__  # 3 MORE, shorthand
+```
+
+The three shorthand files (`command-policy.properties.test.ts`, `delegation-exposure.properties.test.ts`, `delegation-exposure.test.ts`) are the dangerous ones: **`delegation-exposure.test.ts` builds its record for `safeParse`, so it fails at RUNTIME, not at compile time.** Step 11's typecheck is therefore *not* a complete completeness guard — Step 12's full suite run is what catches that one. Do not treat a green `check:types` as proof you found them all.
+
+Each needs `lastProgressAt` added:
 
 | File | Line | Note |
 | --- | --- | --- |
@@ -107,6 +128,9 @@ Every task's requirements implicitly include this section. Values are copied ver
 | `packages/cli/__tests__/helpers/transitions-seam.test.ts` | 171 | |
 | `packages/cli/__tests__/commands/prune.test.ts` | 716 | hand-writes a session claim with `hashClaimSecret` |
 | `packages/cli/__tests__/commands/stash-pop.test.ts` | 683 | hand-writes a session claim with `hashClaimSecret` |
+| `packages/core/__tests__/runbook/command-policy.properties.test.ts` | — | **shorthand** `secretHash,` — missed by the `secretHash:` grep |
+| `packages/core/__tests__/runbook/delegation-exposure.properties.test.ts` | — | **shorthand** `secretHash,` |
+| `packages/core/__tests__/runbook/delegation-exposure.test.ts` | — | **shorthand**; feeds `safeParse`, so it fails at RUNTIME, not compile time |
 
 Tests that mint claims through `SessionService.issueRunControlClaim` / the delegated-child mint (e.g. `lifecycle-command-service.test.ts`, the `delegation-*` suites) do **not** break — `createClaimRecord` supplies the field for them. `packages/core/.stryker-tmp/**` and `packages/*/dist/**` are build artefacts; ignore them.
 
@@ -119,8 +143,9 @@ Tests that mint claims through `SessionService.issueRunControlClaim` / the deleg
 - Modify: `packages/core/src/runbook/claim-id.ts:89-102` (interface), `:402-420` (`createClaimRecord`)
 - Modify: `packages/core/src/schemas.ts:634-643` (`ClaimRecordSchema`)
 - Modify: `packages/core/src/runbook/state.ts:759-787` (`loadSession`)
-- Modify: the nine fixture files listed in the File Structure table
-- Test: `packages/core/__tests__/runbook/delegation-schemas.test.ts` (schema), `packages/core/__tests__/runbook/state-schema-version.test.ts` (structural guard — it is the suite that already owns `loadSession` rejection behaviour)
+- Modify: the **twelve** fixture files listed in the File Structure table (nine explicit-property + three shorthand)
+- Modify: `packages/claude-code-plugin/src/rdpath.ts:70-76` (error allow-list)
+- Test: `packages/core/__tests__/runbook/delegation-schemas.test.ts` (schema), `packages/core/__tests__/runbook/state.test.ts:820-858` (structural guard — the `Legacy session ownership format` cases there are the suite that owns `loadSession` rejection behaviour)
 
 **Interfaces:**
 
@@ -230,7 +255,9 @@ Expected: PASS.
 
 - [ ] **Step 6: Write the failing structural-guard test**
 
-Add to `packages/core/__tests__/runbook/state-schema-version.test.ts` (mirror that file's existing setup for writing a raw `.rundown/session.json` and calling `manager.loadSession()`; find the pattern with `grep -n "loadSession\|session.json" packages/core/__tests__/runbook/state-schema-version.test.ts`):
+Add to `packages/core/__tests__/runbook/state.test.ts`, in the describe that owns the three `Legacy session ownership format` rejection cases (`:820-858`) — mirror their setup for writing a raw `.rundown/session.json` and calling `manager.loadSession()`.
+
+> **Not `state-schema-version.test.ts`.** That file has **zero** `loadSession` occurrences (`grep -c loadSession` → `0`); it owns run-state schema versioning. `state.test.ts:820-858` is where `loadSession` rejection actually lives, and the legacy-ownership guard your new guard sits beside is pinned there.
 
 ```typescript
   it('rejects a session whose claim records predate lastProgressAt (#519)', async () => {
@@ -266,7 +293,7 @@ Add to `packages/core/__tests__/runbook/state-schema-version.test.ts` (mirror th
 
 - [ ] **Step 7: Run the guard test to verify it fails for the right reason**
 
-Run: `pnpm --filter @rundown-org/core exec jest state-schema-version.test.ts -t "predate lastProgressAt"`
+Run: `pnpm --filter @rundown-org/core exec jest state.test.ts -t "predate lastProgressAt"`
 
 Expected: FAIL. Without the guard, `SessionDataSchema.safeParse` rejects the record (the field is now required) and `loadSession` throws the *other* message — `'Session file contains invalid runbook targeting data. Delete .rundown/session.json and restart active runbooks.'`. That is the wrong recovery path (the spec requires the finish/prune/restart shape), so the assertion fails on the message. This is precisely why the guard is a separate check and not left to Zod.
 
@@ -301,7 +328,7 @@ In `packages/core/src/runbook/state.ts`, insert this immediately **after** the e
 
 - [ ] **Step 9: Run the guard test to verify it passes**
 
-Run: `pnpm --filter @rundown-org/core exec jest state-schema-version.test.ts -t "predate lastProgressAt"`
+Run: `pnpm --filter @rundown-org/core exec jest state.test.ts -t "predate lastProgressAt"`
 
 Expected: PASS.
 
@@ -321,11 +348,26 @@ Run: `grep -rn "secretHash:" packages/core/__tests__ packages/cli/__tests__`
 
 Every hit that is a `ClaimRecord` object literal (not a `ClaimRecordSchema.safeParse({ ...validClaim, secretHash: ... })` spread, which inherits the field) needs the line. `packages/cli/__tests__/commands/prune.test.ts:716` and `packages/cli/__tests__/commands/stash-pop.test.ts:683` hand-write a session claim with `hashClaimSecret(parsedClaim.secret)` — they need it too.
 
-- [ ] **Step 11: Typecheck to prove no fixture was missed**
+- [ ] **Step 10b: Keep `rdpath` degrading gracefully on the sessions this change invalidates**
+
+`packages/claude-code-plugin/src/rdpath.ts:70-76` allow-lists session-load failures **by message substring** so `rdpath` degrades instead of exploding. It already lists `'Legacy session ownership format detected'`. The new message is not matched, so without this line `rdpath` would hard-fail on precisely the sessions this change invalidates — the plugin package is in scope for exactly this one line.
+
+Add to that `||` chain, next to the sibling legacy message:
+
+```typescript
+    message.includes('Legacy session ownership format detected') ||
+    message.includes('Legacy claim record format detected') ||
+```
+
+Then pin it. Add to `packages/claude-code-plugin/__tests__/` alongside the existing legacy-message case (find it with `grep -rn "Legacy session ownership" packages/claude-code-plugin/__tests__`), mirroring that case exactly with the new message.
+
+- [ ] **Step 11: Typecheck — a NECESSARY but NOT sufficient completeness check**
 
 Run: `pnpm run check:types`
 
-Expected: PASS. Because `lastProgressAt` is required (not optional), TypeScript flags every literal still missing it — the compile error IS the completeness guard. Do not silence any of them with a cast or `as ClaimRecord`; add the field.
+Expected: PASS. Because `lastProgressAt` is required (not optional), TypeScript flags every **statically typed** literal still missing it. Do not silence any with a cast or `as ClaimRecord`; add the field.
+
+> **A green typecheck does NOT mean you found them all.** `delegation-exposure.test.ts` builds its record for `ClaimRecordSchema.safeParse` — an untyped path, so it compiles clean and fails at **runtime**. Step 12 is the step that catches it. This is why both greps in Step 10 are mandatory rather than belt-and-braces.
 
 - [ ] **Step 12: Run both packages' full suites**
 
@@ -340,7 +382,8 @@ Expected: PASS. Any remaining failure is a fixture that constructs a claim recor
 git add packages/core/src/runbook/claim-id.ts \
   packages/core/src/schemas.ts \
   packages/core/src/runbook/state.ts \
-  packages/core/__tests__ packages/cli/__tests__
+  packages/claude-code-plugin/src/rdpath.ts \
+  packages/core/__tests__ packages/cli/__tests__ packages/claude-code-plugin/__tests__
 git commit -m "feat(core)!: add required ClaimRecord.lastProgressAt and reject sessions without it (#519)"
 ```
 
@@ -351,6 +394,7 @@ git commit -m "feat(core)!: add required ClaimRecord.lastProgressAt and reject s
 **Files:**
 
 - Create: `packages/core/src/runbook/claim-activity.ts`
+- Modify: `packages/core/src/errors/codes.ts` (add `CLAIM_PROGRESS_UNREADABLE`, RD-824 — the next free code in the DELEGATION 8xx block, which currently ends at RD-823)
 - Modify: `packages/core/src/runbook/index.ts:60` (add the export next to `claim-id.js`)
 - Test: `packages/core/__tests__/runbook/claim-activity.test.ts` (create), `packages/core/__tests__/runbook/claim-activity.properties.test.ts` (create)
 
@@ -360,8 +404,8 @@ git commit -m "feat(core)!: add required ClaimRecord.lastProgressAt and reject s
 - Produces — later tasks rely on these exact names and types:
   - `type DurationMs = number & { readonly __brand: 'DurationMs' }`
   - `function durationMs(value: number): DurationMs` — throws on non-finite / negative.
-  - `type ClaimActivity = { readonly kind: 'progressing'; readonly lastProgressAt: string; readonly idleFor: DurationMs } | { readonly kind: 'idle'; readonly lastProgressAt: string; readonly idleFor: DurationMs }`
-  - `function claimActivity(record: ClaimRecord, now: Date, idleAfter: DurationMs): ClaimActivity`
+  - `interface ClaimActivity { readonly lastProgressAt: string; readonly idleFor: DurationMs; readonly idle: boolean }` — a **readonly interface, not a union**. See the Global Constraint: identical union variants that no caller narrows are a boolean in costume, and both consumers flatten straight back to `idle`. The spec's own naming table says `idle: boolean`.
+  - `function claimActivity(record: ClaimRecord, now: Date, idleAfter: DurationMs): ClaimActivity` — throws `RundownError(ErrorCodes.CLAIM_PROGRESS_UNREADABLE)`.
   - `const DEFAULT_IDLE_AFTER_MS: DurationMs`
 
 - [ ] **Step 1: Write the failing unit test**
@@ -379,6 +423,7 @@ import {
   DEFAULT_IDLE_AFTER_MS,
   type DurationMs,
 } from '../../src/runbook/claim-activity.js';
+import { RundownError } from '../../src/errors/rundown-error.js';
 import type { ClaimRecord } from '../../src/runbook/claim-id.js';
 import { assertClaimLookupKey, assertClaimSecretHash } from '../../src/runbook/claim-id.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
@@ -400,26 +445,26 @@ function claimAt(lastProgressAt: string): ClaimRecord {
 const ONE_HOUR = durationMs(60 * 60 * 1000);
 
 describe('claimActivity (#519)', () => {
-  it('reports progressing before the threshold', () => {
+  it('reports not-idle before the threshold', () => {
     const activity = claimActivity(
       claimAt('2026-07-16T00:00:00.000Z'),
       new Date('2026-07-16T00:59:59.999Z'),
       ONE_HOUR,
     );
-    expect(activity.kind).toBe('progressing');
+    expect(activity.idle).toBe(false);
     expect(activity.idleFor).toBe(3_599_999);
     expect(activity.lastProgressAt).toBe('2026-07-16T00:00:00.000Z');
   });
 
-  it('reports progressing EXACTLY at the threshold', () => {
+  it('reports not-idle EXACTLY at the threshold', () => {
     // The boundary is strict: idle iff idleFor > idleAfter. Exactly at the
-    // threshold is still progressing. This case kills the `>` -> `>=` mutant.
+    // threshold is still not idle. This case kills the `>` -> `>=` mutant.
     const activity = claimActivity(
       claimAt('2026-07-16T00:00:00.000Z'),
       new Date('2026-07-16T01:00:00.000Z'),
       ONE_HOUR,
     );
-    expect(activity.kind).toBe('progressing');
+    expect(activity.idle).toBe(false);
     expect(activity.idleFor).toBe(3_600_000);
   });
 
@@ -429,7 +474,7 @@ describe('claimActivity (#519)', () => {
       new Date('2026-07-16T01:00:00.001Z'),
       ONE_HOUR,
     );
-    expect(activity.kind).toBe('idle');
+    expect(activity.idle).toBe(true);
     expect(activity.idleFor).toBe(3_600_001);
   });
 
@@ -441,7 +486,7 @@ describe('claimActivity (#519)', () => {
       new Date('2026-07-16T01:00:00.000Z'),
       ONE_HOUR,
     );
-    expect(activity.kind).toBe('progressing');
+    expect(activity.idle).toBe(false);
     expect(activity.idleFor).toBe(0);
   });
 
@@ -452,15 +497,25 @@ describe('claimActivity (#519)', () => {
     expect(record.lastProgressAt).toBe('2026-07-16T00:00:00.000Z');
   });
 
-  it('throws on an unparseable lastProgressAt rather than classifying as progressing (AC6)', () => {
+  it('throws CLAIM_PROGRESS_UNREADABLE on an unparseable lastProgressAt rather than reporting not-idle (AC6)', () => {
     // THE fail-open case. `Date.parse` yields NaN on a corrupt timestamp, and every
     // NaN comparison is false — so `idleFor > idleAfter` would be false and a DEAD
-    // claim would silently classify as `progressing`. That is a safety signal
-    // failing open, quietly, in exactly the case it exists to catch. Corrupt
-    // persisted state is rejected, never interpreted.
-    expect(() => claimActivity(claimAt('not-a-date'), new Date(), ONE_HOUR)).toThrow(
-      'lastProgressAt is not a parseable ISO timestamp',
-    );
+    // claim would silently classify as not-idle. That is a safety signal failing
+    // open, quietly, in exactly the case it exists to catch. Corrupt persisted state
+    // is rejected, never interpreted.
+    //
+    // Asserted on the CODE, not a message substring: `durationMs` throws a bare
+    // Error out of this same function, so a substring match is the only thing
+    // separating them — and a harmless reword would gut this test while it stays
+    // green. The code is the contract the read boundary catches on too.
+    let thrown: unknown;
+    try {
+      claimActivity(claimAt('not-a-date'), new Date(), ONE_HOUR);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(RundownError);
+    expect((thrown as RundownError).errorCode.code).toBe('RD-824');
   });
 
   it('defaults the idle threshold to one hour', () => {
@@ -500,6 +555,23 @@ Run: `pnpm --filter @rundown-org/core exec jest claim-activity.test.ts`
 
 Expected: FAIL — `Cannot find module '../../src/runbook/claim-activity.js'`.
 
+- [ ] **Step 2b: Add the `CLAIM_PROGRESS_UNREADABLE` error code**
+
+In `packages/core/src/errors/codes.ts`, add to the `ErrorCodes` object at the end of the DELEGATION 8xx block (currently ending at `RD-823` — verify with `grep -n "code: 'RD-8" packages/core/src/errors/codes.ts | tail -3` and take the next free number):
+
+```typescript
+  CLAIM_PROGRESS_UNREADABLE: {
+    code: 'RD-824',
+    category: ErrorCategory.DELEGATION,
+    title: 'Claim progress timestamp unreadable',
+    description:
+      'A claim record has a lastProgressAt that is not a parseable ISO timestamp. The claim activity signal cannot be derived, so it is reported as unreadable rather than guessed. Finish or prune active runbooks and restart.',
+    docSlug: 'claim-progress-unreadable',
+  },
+```
+
+> A typed code, not a bare `Error`, is what lets the read boundary (Tasks 6 and 7) and AC6's test discriminate this from `durationMs`'s bare `Error` — thrown out of the very same function — without matching on a message substring that a reword would silently break.
+
 - [ ] **Step 3: Write the module**
 
 Create `packages/core/src/runbook/claim-activity.ts`:
@@ -507,6 +579,7 @@ Create `packages/core/src/runbook/claim-activity.ts`:
 ```typescript
 // packages/core/src/runbook/claim-activity.ts
 
+import { RundownError } from '../errors/rundown-error.js';
 import type { ClaimRecord } from './claim-id.js';
 
 /**
@@ -548,29 +621,25 @@ export const DEFAULT_IDLE_AFTER_MS: DurationMs = durationMs(60 * 60 * 1000);
 /**
  * Derived, advisory activity of a claim at a point in time.
  *
- * A discriminated union rather than a bare boolean, per type-driven dispatch:
- * callers narrow on `kind` instead of re-deriving the comparison. Purely
- * advisory — crossing into `idle` expires nothing, reclaims nothing, and
- * synthesizes no result. A claim crosses back out of `idle` simply by its holder
- * running a mutating command.
+ * A readonly interface, deliberately NOT a discriminated union. Type-driven
+ * dispatch calls for unions whose variants carry DIFFERENT data and so force
+ * callers to narrow; a two-member union with identical fields forces nothing —
+ * every consumer flattens it straight back to a boolean, which is what this
+ * already is. The union that earns its keep in this design is `ChildActivity`
+ * at the read boundary (`known` | `unreadable`), whose members genuinely differ.
+ *
+ * Purely advisory — `idle` expires nothing, reclaims nothing, and synthesizes no
+ * result. A claim leaves `idle` simply by its holder running a command that
+ * advances the run.
  */
-export type ClaimActivity =
-  | {
-      /** The holder advanced the run within the idle threshold. */
-      readonly kind: 'progressing';
-      /** ISO timestamp of the claim's last recorded progress. */
-      readonly lastProgressAt: string;
-      /** Milliseconds elapsed since that progress. */
-      readonly idleFor: DurationMs;
-    }
-  | {
-      /** No progress has been recorded for longer than the idle threshold. */
-      readonly kind: 'idle';
-      /** ISO timestamp of the claim's last recorded progress. */
-      readonly lastProgressAt: string;
-      /** Milliseconds elapsed since that progress. */
-      readonly idleFor: DurationMs;
-    };
+export interface ClaimActivity {
+  /** ISO timestamp of the claim's last recorded progress. */
+  readonly lastProgressAt: string;
+  /** Milliseconds elapsed since that progress. */
+  readonly idleFor: DurationMs;
+  /** Advisory: no progress recorded for longer than the idle threshold. */
+  readonly idle: boolean;
+}
 
 /**
  * Classify a claim's activity at an injected point in time.
@@ -585,11 +654,16 @@ export type ClaimActivity =
  * @param now - Injected observation time.
  * @param idleAfter - Threshold past which the claim is reported idle.
  * @returns The derived advisory activity.
- * @throws {Error} When `record.lastProgressAt` is not a parseable ISO timestamp.
- *   Deliberate: `Date.parse` yields `NaN`, every `NaN` comparison is false, so
- *   `idleFor > idleAfter` would be false and a DEAD claim would silently classify
- *   as `progressing` — a safety signal failing OPEN in exactly the case it exists
- *   to catch. Corrupt persisted state is rejected, never interpreted.
+ * @throws {RundownError} `CLAIM_PROGRESS_UNREADABLE` when `record.lastProgressAt`
+ *   is not a parseable ISO timestamp. Deliberate: `Date.parse` yields `NaN`, every
+ *   `NaN` comparison is false, so `idleFor > idleAfter` would be false and a DEAD
+ *   claim would silently classify as progressing — a safety signal failing OPEN in
+ *   exactly the case it exists to catch. Corrupt persisted state is rejected, never
+ *   interpreted. TYPED rather than a bare `Error` because `durationMs` throws a bare
+ *   `Error` from this same function: with both untyped, only a message substring
+ *   would tell them apart, and a harmless reword would silently gut AC6 with every
+ *   test still green. Callers contain this PER CHILD (never around a whole list) —
+ *   see the read boundary in Tasks 6 and 7.
  */
 export function claimActivity(
   record: ClaimRecord,
@@ -598,15 +672,16 @@ export function claimActivity(
 ): ClaimActivity {
   const lastProgress = Date.parse(record.lastProgressAt);
   if (Number.isNaN(lastProgress)) {
-    throw new Error(
-      `lastProgressAt is not a parseable ISO timestamp: ${String(record.lastProgressAt)}`,
-    );
+    throw new RundownError('CLAIM_PROGRESS_UNREADABLE', {
+      claimKey: record.claimKey,
+      lastProgressAt: String(record.lastProgressAt),
+    });
   }
   const idleFor = durationMs(Math.max(0, now.getTime() - lastProgress));
   return {
-    kind: idleFor > idleAfter ? 'idle' : 'progressing',
     lastProgressAt: record.lastProgressAt,
     idleFor,
+    idle: idleFor > idleAfter,
   };
 }
 ```
@@ -671,14 +746,19 @@ describe('claimActivity properties (#519)', () => {
           new Date(nowAt),
           durationMs(threshold) as DurationMs,
         );
-        expect(activity.kind === 'progressing' || activity.kind === 'idle').toBe(true);
+        expect(typeof activity.idle).toBe('boolean');
         expect(activity.idleFor).toBeGreaterThanOrEqual(0);
         expect(Number.isFinite(activity.idleFor)).toBe(true);
       }),
     );
   });
 
-  it('kind === idle iff idleFor > idleAfter', () => {
+  it('agrees with an INDEPENDENT oracle computed from the raw inputs', () => {
+    // Deliberately NOT `expect(activity.idle).toBe(activity.idleFor > idleAfter)`.
+    // That restates the implementation character-for-character using the
+    // implementation's own output, so it holds under ANY mutation of `>` — a
+    // tautology that costs runtime and buys nothing. This oracle is derived from
+    // the raw inputs instead, so it disagrees when the comparison is mutated.
     fc.assert(
       fc.property(epochMs, epochMs, thresholdMs, (progressAt, nowAt, threshold) => {
         const idleAfter = durationMs(threshold) as DurationMs;
@@ -687,7 +767,22 @@ describe('claimActivity properties (#519)', () => {
           new Date(nowAt),
           idleAfter,
         );
-        expect(activity.kind === 'idle').toBe(activity.idleFor > idleAfter);
+        const expectedIdle = nowAt > progressAt + threshold;
+        expect(activity.idle).toBe(expectedIdle);
+      }),
+    );
+  });
+
+  it('is monotonic in the threshold: raising idleAfter never makes a claim idler', () => {
+    // A structural property with no counterpart line in the implementation:
+    // a more generous threshold can only ever reclassify idle -> not idle.
+    fc.assert(
+      fc.property(epochMs, epochMs, thresholdMs, thresholdMs, (progressAt, nowAt, a, b) => {
+        const [lower, higher] = a <= b ? [a, b] : [b, a];
+        const record = claimAt(new Date(progressAt).toISOString());
+        const strict = claimActivity(record, new Date(nowAt), durationMs(lower) as DurationMs);
+        const lenient = claimActivity(record, new Date(nowAt), durationMs(higher) as DurationMs);
+        if (!strict.idle) expect(lenient.idle).toBe(false);
       }),
     );
   });
@@ -711,12 +806,19 @@ describe('claimActivity properties (#519)', () => {
     );
   });
 
-  it('echoes lastProgressAt through unchanged', () => {
+  it('never reports idle for a claim whose progress is at or after now (skew safety)', () => {
+    // The clock-skew invariant, stated over the whole input space rather than the
+    // single unit-test point: a holder that progressed at or after the observation
+    // time can never be idle, at ANY threshold.
     fc.assert(
-      fc.property(epochMs, epochMs, thresholdMs, (progressAt, nowAt, threshold) => {
-        const iso = new Date(progressAt).toISOString();
-        const activity = claimActivity(claimAt(iso), new Date(nowAt), durationMs(threshold) as DurationMs);
-        expect(activity.lastProgressAt).toBe(iso);
+      fc.property(epochMs, fc.integer({ min: 0, max: 86_400_000 }), thresholdMs, (nowAt, skew, threshold) => {
+        const activity = claimActivity(
+          claimAt(new Date(nowAt + skew).toISOString()),
+          new Date(nowAt),
+          durationMs(threshold) as DurationMs,
+        );
+        expect(activity.idleFor).toBe(0);
+        expect(activity.idle).toBe(false);
       }),
     );
   });
@@ -733,13 +835,21 @@ Expected: PASS.
 
 - [ ] **Step 8: Run the scoped mutation gate (AC13)**
 
-Run: `pnpm run test:mutate:core -- --mutate packages/core/src/runbook/claim-activity.ts --testFiles packages/core/__tests__/runbook/claim-activity.test.ts,packages/core/__tests__/runbook/claim-activity.properties.test.ts`
+Run the **direct filter form with an explicit `--`**:
+
+```bash
+pnpm --filter @rundown-org/core test:mutate -- \
+  --mutate packages/core/src/runbook/claim-activity.ts \
+  --testFiles packages/core/__tests__/runbook/claim-activity.test.ts,packages/core/__tests__/runbook/claim-activity.properties.test.ts
+```
+
+> **NOT `pnpm run test:mutate:core -- --mutate …`.** Unlike `test:mutate:cli` (`package.json:29`), the `test:mutate:core` script (`:28`) has **no trailing `--`**, so the scoping flags are consumed by the inner `pnpm` invocation instead of reaching Stryker: the gate silently runs **unscoped** over the whole package and its result tells you nothing about this module. Verify the scoping took effect — the run should report a handful of mutants for one file, not thousands.
 
 Expected: a non-zero score with no surviving mutants — specifically:
 
-- `idleFor > idleAfter` → `>=` is killed by the "reports progressing EXACTLY at the threshold" case.
-- `idleFor > idleAfter` → `<` / `true` / `false` are killed by the before/at/after triple.
-- `Math.max(0, ...)` removal is killed by the clock-skew clamp case.
+- `idleFor > idleAfter` → `>=` is killed by the "reports not-idle EXACTLY at the threshold" case.
+- `idleFor > idleAfter` → `<` / `true` / `false` are killed by the before/at/after triple **and** by the independent-oracle property (the tautological restatement it replaced would have survived all of these).
+- `Math.max(0, ...)` removal is killed by the clock-skew clamp case and the skew-safety property.
 - `!Number.isFinite(value) || value < 0` mutants are killed by the `durationMs` rejection cases.
 - `Number.isNaN(lastProgress)` removal is killed by the unparseable-timestamp case.
 
@@ -749,6 +859,7 @@ Expected: a non-zero score with no surviving mutants — specifically:
 
 ```bash
 git add packages/core/src/runbook/claim-activity.ts \
+  packages/core/src/errors/codes.ts \
   packages/core/src/runbook/index.ts \
   packages/core/__tests__/runbook/claim-activity.test.ts \
   packages/core/__tests__/runbook/claim-activity.properties.test.ts
@@ -1143,8 +1254,8 @@ describe('progress recording across mutating seams (#519)', () => {
         (await manager.loadSession()).claims[claim.claimKey],
         new Date(),
         DEFAULT_IDLE_AFTER_MS,
-      ).kind,
-    ).toBe('idle');
+      ).idle,
+    ).toBe(true);
 
     // A fresh session presenting the bearer on a MUTATING command genuinely is the
     // new live holder making progress — so recovery is adoption, not reclamation.
@@ -1162,8 +1273,8 @@ describe('progress recording across mutating seams (#519)', () => {
         (await manager.loadSession()).claims[claim.claimKey],
         new Date(),
         DEFAULT_IDLE_AFTER_MS,
-      ).kind,
-    ).toBe('progressing');
+      ).idle,
+    ).toBe(false);
   });
 
   it('adoption does NOT self-heal via `status --claim-id` (AC9)', async () => {
@@ -1183,8 +1294,8 @@ describe('progress recording across mutating seams (#519)', () => {
         (await manager.loadSession()).claims[claim.claimKey],
         new Date(),
         DEFAULT_IDLE_AFTER_MS,
-      ).kind,
-    ).toBe('idle');
+      ).idle,
+    ).toBe(true);
   });
 });
 ```
@@ -1415,7 +1526,7 @@ git commit -m "feat: record claim progress on every command that changes runbook
 
 **Interfaces:**
 
-- Consumes: `type RoleSpecificMutationCommand` from `@rundown-org/core` (exported at `packages/core/src/runbook/index.ts:139`; declared at `subprocess-mutation-boundary.ts:33` as exactly `pass | fail | delegate | goto | complete | stop | collect`). The `register*Command` functions from `packages/cli/src/commands/*.js`. `SessionService.recordClaimProgress` (Task 3).
+- Consumes: **`createProgram()` from `packages/cli/src/cli.ts:72`** — the real program, which registers every command. `type RoleSpecificMutationCommand` from `@rundown-org/core` (declared at `subprocess-mutation-boundary.ts:33` as exactly `pass | fail | delegate | goto | complete | stop | collect`), used **only** as a secondary cross-check. `SessionService.recordClaimProgress` (Task 3).
 - Produces: no production symbols — this is the guarantee that makes the rule enforceable rather than aspirational.
 
 **Why this task exists.** The recording _seam_ differs per command: six commands record from core, while `goto` and `abort` record from the CLI (their core services are authorization gates that mutate nothing — see Background). Seam uniformity is therefore not available as the guarantee, so the guard is. This is exactly what the spec means by "the guard, not the seam's uniformity, is the guarantee", and it is why the two CLI call sites are acceptable rather than debt.
@@ -1428,39 +1539,34 @@ git commit -m "feat: record claim progress on every command that changes runbook
 | Changes session targeting only | `stash`, `pop`                                                             | **No**  | They ARE claim-authenticated mutations (`stash.ts:19`, `pop.ts:59`) but advance session _targeting_, not the run. Recording them would let a child loop `stash`/`pop` to fake liveness without advancing anything — the rejected verify-path defect through a different door. |
 | Changes nothing (read-only)    | `status`                                                                   | **No**  | A stuck child polling its own status must never refresh its own mark.                                                                                                                                                                                                   |
 
-**Two fail-closed anchors, both modelled on existing repo idioms.** Neither alone is sufficient:
+**THE ANCHOR: scan the REAL program.** The guard's left-hand side comes from `createProgram()` (`packages/cli/src/cli.ts:72`) — the same factory the shipped binary uses, which registers every command. Every command it registers with a `--claim-id` option must appear in one of the two classification tables: recording, or non-recording **with a reason**. `pass`/`fail` register `--claim-id` via `PASS_FAIL_VALUE_TAKING_OPTION_NAMES` (`transition-command.ts:92`), so the scan sees them too, as it does `abort` — claim-authenticated and mutating, but taking a token rather than `--run`.
 
-- **Anchor A (compile-time, exhaustive `Record`):** the recording table is typed `Record<RoleSpecificMutationCommand, RecordingCase>` plus an explicit `abort` entry. Core's `RoleSpecificMutationCommand` union IS the codebase's definition of a role-specific mutating command, and `MUTATION_COMMAND_ALIASES` (`subprocess-mutation-boundary.ts:66`) already uses an exhaustive `Record` over it for precisely this drift problem. Adding a member to that union without a table row is a **compile error**.
-- **Anchor B (runtime, Commander scan):** every command that registers `--claim-id` on a real program must appear in one of the two tables — recording, or non-recording **with a reason**. This catches what Anchor A cannot: `abort` (claim-authenticated and mutating, but outside the union because it takes a token, not `--run`), `stash`/`pop`/`status`, and any future claim-authenticated command. `pass`/`fail` register `--claim-id` via `PASS_FAIL_VALUE_TAKING_OPTION_NAMES` (`transition-command.ts:92`), so the scan sees them too.
+> **The single most important line in this task.** An earlier draft built the scanned program by registering the tables it then compared against. That guard is **tautological and cannot fail**: a new `rundown foo --claim-id` is never imported by the test, so it is never registered, never scanned, never classified — both sides shrink together and the suite stays green while the hole opens. Sourcing the program from `createProgram()` is what makes the left side **independent of the test's own imports**, which is the entire point. If you find yourself calling `register*Command` in this file, stop: you have rebuilt the tautology.
+>
+> This is not a stylistic preference. Spec `:103` and this plan's Global Constraints stake the acceptability of the CLI-side `goto`/`abort` seams **entirely** on this guard existing. With an inert guard there is no guarantee at all, and the CLI silently owns the policy decision of when progress is recorded.
 
-Both anchors must be **proven to bite** (Step 3) — a guard that cannot fail is theatre.
+**`RoleSpecificMutationCommand` is a CROSS-CHECK, not the definition.** An earlier draft typed the recording table `Record<RoleSpecificMutationCommand, RecordingCase>`, claiming that union "IS the codebase's definition of a role-specific mutating command". **It is not.** Its own TSDoc (`subprocess-mutation-boundary.ts:27-32`) defines a **subprocess-trust** concept — "commands whose only available trust is the bare direct-CLI lane" — and its overlap with this plan's eight is a coincidence that is **already imperfect**: `abort` records but is not a member (1 of 8 outside the union today). Binding the two would give one type two meanings, the exact conflation this design rejects for `updatedAt` / `lastProgressAt`, and the union would then drift for subprocess-trust reasons that have nothing to do with idle detection. It appears below only as a cheap cross-check that every member is classified somewhere.
+
+The anchor must be **proven to bite** (Step 3) — a guard that cannot fail is theatre.
 
 - [ ] **Step 1: Write the guard**
 
-Create `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts`. Match `run-option.test.ts`'s structure: a `registrations` table + `it.each`.
+Create `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts`. Match `run-option.test.ts`'s table + `it.each` structure, but source the scanned program from `createProgram()`.
 
 ```typescript
 // packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts
 
 import { describe, expect, it } from '@jest/globals';
-import { Command } from 'commander';
 import type { RoleSpecificMutationCommand } from '@rundown-org/core';
-import { registerPassCommand } from '../../src/commands/pass.js';
-import { registerFailCommand } from '../../src/commands/fail.js';
-import { registerCompleteCommand } from '../../src/commands/complete.js';
-import { registerStopCommand } from '../../src/commands/stop.js';
-import { registerCollectCommand } from '../../src/commands/collect.js';
-import { registerDelegateCommand } from '../../src/commands/delegate.js';
-import { registerGotoCommand } from '../../src/commands/goto.js';
-import { registerAbortCommand } from '../../src/commands/abort.js';
-import { registerStatusCommand } from '../../src/commands/status.js';
-import { registerStashCommand } from '../../src/commands/stash.js';
-import { registerPopCommand } from '../../src/commands/pop.js';
+// THE anchor. The real program factory the shipped binary uses — it registers
+// every command, so this import is what makes the scan INDEPENDENT of this
+// test's own knowledge. Never rebuild a program from register*Command here: a
+// scan fed by the classification tables can never fail (see "Why this task
+// exists"). There must be NO `register*Command` import in this file.
+import { createProgram } from '../../src/cli.js';
 
 /** How one claim-authenticated command is driven to a committed success. */
 interface RecordingCase {
-  /** Registers the command on a Commander program (for the Anchor B scan). */
-  readonly register: (program: Command) => void;
   /**
    * Drive this command to a SUCCESSFUL mutation using the supplied bearer.
    * Must arrange its own precondition and assert its own exit code, so a
@@ -1470,27 +1576,26 @@ interface RecordingCase {
 }
 
 /**
- * ANCHOR A: exhaustive over core's own definition of a role-specific mutating
- * command. `RoleSpecificMutationCommand` is the union at
- * subprocess-mutation-boundary.ts:33; this Record mirrors the idiom
- * MUTATION_COMMAND_ALIASES (:66) already uses for the same drift problem. Adding
- * a member to that union without a row here is a COMPILE ERROR.
+ * Commands that change runbook workflow state, and so record.
  *
- * `abort` is intersected in explicitly: it is claim-authenticated and mutating
- * (abort.ts:59) but sits outside the union because it takes a token argument
- * rather than --run, so no type can force it — Anchor B is what pins it.
+ * Keyed by command name and cross-checked below against BOTH the real program's
+ * --claim-id surface and core's RoleSpecificMutationCommand union. Deliberately
+ * NOT typed `Record<RoleSpecificMutationCommand, …>`: that union is a
+ * SUBPROCESS-TRUST concept (subprocess-mutation-boundary.ts:27-32 — "commands
+ * whose only available trust is the bare direct-CLI lane"), and its overlap with
+ * this set is a coincidence that is already imperfect — `abort` records but is
+ * not a member. Binding them would give one type two meanings and let the union
+ * drift this guard for reasons unrelated to idle detection.
  */
-const RECORDING_COMMANDS: Record<RoleSpecificMutationCommand, RecordingCase> & {
-  readonly abort: RecordingCase;
-} = {
-  pass: { register: registerPassCommand, driveSuccess: async (id) => driveClaimPass(id) },
-  fail: { register: registerFailCommand, driveSuccess: async (id) => driveClaimFail(id) },
-  complete: { register: registerCompleteCommand, driveSuccess: async (id) => driveClaimComplete(id) },
-  stop: { register: registerStopCommand, driveSuccess: async (id) => driveClaimStop(id) },
-  collect: { register: registerCollectCommand, driveSuccess: async (id) => driveClaimCollect(id) },
-  delegate: { register: registerDelegateCommand, driveSuccess: async (id) => driveClaimDelegate(id) },
-  goto: { register: registerGotoCommand, driveSuccess: async (id) => driveClaimGoto(id) },
-  abort: { register: registerAbortCommand, driveSuccess: async (id) => driveClaimAbort(id) },
+const RECORDING_COMMANDS: Readonly<Record<string, RecordingCase>> = {
+  pass: { driveSuccess: async (id) => driveClaimPass(id) },
+  fail: { driveSuccess: async (id) => driveClaimFail(id) },
+  complete: { driveSuccess: async (id) => driveClaimComplete(id) },
+  stop: { driveSuccess: async (id) => driveClaimStop(id) },
+  collect: { driveSuccess: async (id) => driveClaimCollect(id) },
+  delegate: { driveSuccess: async (id) => driveClaimDelegate(id) },
+  goto: { driveSuccess: async (id) => driveClaimGoto(id) },
+  abort: { driveSuccess: async (id) => driveClaimAbort(id) },
 };
 
 /**
@@ -1502,47 +1607,48 @@ const RECORDING_COMMANDS: Record<RoleSpecificMutationCommand, RecordingCase> & {
  * on one of these fails loudly, which matters because such an edit would quietly
  * reopen the anti-fooling hole and nothing else in the suite would notice.
  */
-const NON_RECORDING_CLAIM_COMMANDS: Readonly<
-  Record<string, { readonly register: (program: Command) => void; readonly reason: string }>
-> = {
+const NON_RECORDING_CLAIM_COMMANDS: Readonly<Record<string, { readonly reason: string }>> = {
   status: {
-    register: registerStatusCommand,
     reason:
       'Changes nothing (read-only). A stuck child polling its own status must never refresh its own mark.',
   },
   stash: {
-    register: registerStashCommand,
     reason:
       'Changes session targeting only, not the run. IS a claim-authenticated mutation (stash.ts:19) — which is exactly why the predicate is "changes runbook workflow state", not "mutates". Recording it would let a child loop stash/pop to fake liveness without advancing anything.',
   },
   pop: {
-    register: registerPopCommand,
     reason:
       'Changes session targeting only, not the run. IS a claim-authenticated mutation (pop.ts:59); see stash. Corroboration: unstashForClaimId already moves updatedAt ("record written"), the field this design deliberately leaves alone.',
   },
 };
 
+/**
+ * Every command the REAL program exposes with --claim-id, found by walking
+ * createProgram() recursively (subcommands included).
+ */
+function claimAuthenticatedCommandNames(): string[] {
+  const names: string[] = [];
+  const visit = (command: import('commander').Command): void => {
+    if (command.options.some((option) => option.long === '--claim-id')) {
+      names.push(command.name());
+    }
+    for (const child of command.commands) visit(child);
+  };
+  visit(createProgram());
+  return names.sort();
+}
+
 describe('claim progress recording drift guard (#519 AC4)', () => {
-  // ANCHOR B: every command exposing --claim-id must be CLASSIFIED, in one
-  // direction or the other. Both failure modes are invisible without this:
+  // THE ANCHOR: every command the real program exposes with --claim-id must be
+  // CLASSIFIED, in one direction or the other. Both failure modes are invisible
+  // without this:
   //  - a new workflow-state command that records nothing => a claim reads idle
   //    while advancing, a spurious check nobody traces back to a missing line;
   //  - a new session-targeting command that DOES record => the anti-fooling hole
   //    reopens and the idle signal can be faked.
-  // Set equality is what makes it fail closed in both directions.
-  it('classifies every command that registers --claim-id', () => {
-    const program = new Command();
-    for (const { register } of [
-      ...Object.values(RECORDING_COMMANDS),
-      ...Object.values(NON_RECORDING_CLAIM_COMMANDS),
-    ]) {
-      register(program);
-    }
-
-    const claimAuthenticated = program.commands
-      .filter((command) => command.options.some((option) => option.long === '--claim-id'))
-      .map((command) => command.name())
-      .sort();
+  // Set equality against the REAL program is what makes it fail closed in both
+  // directions. Fed from these tables instead, it could never fail at all.
+  it('classifies every command the real program registers with --claim-id', () => {
     const classified = [
       ...Object.keys(RECORDING_COMMANDS),
       ...Object.keys(NON_RECORDING_CLAIM_COMMANDS),
@@ -1550,9 +1656,30 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
     // If this fails with an EXTRA command, classify it: does it change runbook
     // workflow state (=> RECORDING_COMMANDS) or only session targeting / nothing
-    // (=> NON_RECORDING_CLAIM_COMMANDS, WITH a reason)? Do not delete the command
-    // from the scan to make this pass.
-    expect(claimAuthenticated).toEqual(classified);
+    // (=> NON_RECORDING_CLAIM_COMMANDS, WITH a reason)? Do NOT narrow the scan to
+    // make this pass — the scan is the guarantee.
+    expect(claimAuthenticatedCommandNames()).toEqual(classified);
+  });
+
+  // CROSS-CHECK (not the anchor): core's subprocess-trust union overlaps this set
+  // by coincidence. If a member of it is unclassified here, that is worth a look —
+  // but `abort` proves the two concepts are NOT the same, so the union is checked
+  // for containment only, never for equality.
+  it('classifies every RoleSpecificMutationCommand member somewhere', () => {
+    const union: readonly RoleSpecificMutationCommand[] = [
+      'pass',
+      'fail',
+      'delegate',
+      'goto',
+      'complete',
+      'stop',
+      'collect',
+    ];
+    for (const name of union) {
+      expect(
+        name in RECORDING_COMMANDS || name in NON_RECORDING_CLAIM_COMMANDS,
+      ).toBe(true);
+    }
   });
 
   it.each(Object.entries(RECORDING_COMMANDS))(
@@ -1609,7 +1736,7 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
     expect(claim.lastProgressAt).toBe('2020-01-01T00:00:00.000Z');
     // Still idle after six successful claim-authenticated mutations: the signal
     // cannot be faked by a holder that never advances the run.
-    expect(claimActivity(claim, new Date(), DEFAULT_IDLE_AFTER_MS).kind).toBe('idle');
+    expect(claimActivity(claim, new Date(), DEFAULT_IDLE_AFTER_MS).idle).toBe(true);
   });
 });
 ```
@@ -1624,18 +1751,24 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
 Run: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard.test.ts`
 
-Expected: PASS — all eight recording cases, all three non-recording cases, the stash/pop anti-fooling loop, and the classification set equality.
+Expected: PASS — all eight recording cases, all three non-recording cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set equality against the real program.
 
 - [ ] **Step 3: Prove the guard is fail-closed (do not skip)**
 
-"A guard that cannot fail is theatre" — the spec requires both anchors be **proven to bite**. Run each probe, confirm the expected failure, then revert it:
+"A guard that cannot fail is theatre" — the spec requires the anchor be **proven to bite**. Run each probe, confirm the expected failure, then revert it:
 
-1. **Anchor A (compile-time):** temporarily add `| 'noop'` to `RoleSpecificMutationCommand` in `packages/core/src/runbook/subprocess-mutation-boundary.ts:33` and run `pnpm run check:types`. Expected: a compile error on `RECORDING_COMMANDS` (missing `noop` key). Revert.
-2. **Anchor B (classification):** temporarily comment out the `status` entry in `NON_RECORDING_CLAIM_COMMANDS` and re-run the suite. Expected: the classification test FAILS with `status` present in the scan but absent from the classified list. Revert.
+1. **The anchor, unclassified-command direction:** temporarily comment out the `status` entry in `NON_RECORDING_CLAIM_COMMANDS` and re-run. Expected: the classification test FAILS — `status` is present in the `createProgram()` scan but absent from the classified list. **This is the probe the tautological draft could not pass**, because removing the entry also removed the registration that put `status` into the scan. If it does not fail, your scan is still fed by the tables: check that this file imports `createProgram` and no `register*Command`.
+2. **The anchor, new-command direction (the case that motivates the whole guard):** temporarily add a throwaway command to `createProgram()` in `packages/cli/src/cli.ts` that registers `--claim-id`:
+
+   ```typescript
+   program.command('probe-noop').option('--claim-id <id>', 'probe').action(() => {});
+   ```
+
+   Re-run. Expected: the classification test FAILS with `probe-noop` in the scan and unclassified. Revert. This simulates exactly the drift the guard exists to catch — a future `rundown foo --claim-id` that nobody remembered to classify — and it is the probe that proves the left side is genuinely independent of the test's imports.
 3. **Behaviour, positive direction:** temporarily comment out the `recordClaimProgress` call in `runTerminal` (Task 4 Step 4b) and re-run. Expected: the `complete` and `stop` cases FAIL. Revert.
 4. **Behaviour, negative direction:** temporarily add a `recordClaimProgress` call to `packages/cli/src/commands/stash.ts` (as a careless future edit would) and re-run. Expected: the `does NOT record claim progress on stash` case AND the stash/pop anti-fooling loop both FAIL. Revert. This probe is the point of the whole negative half — without it, nothing proves the guard would catch the anti-fooling hole reopening.
 
-If any probe does NOT produce its expected failure, the guard is not pinning what it claims. Fix the guard before proceeding — a green suite that cannot go red is worse than no suite, because it is trusted.
+If any probe does NOT produce its expected failure, the guard is not pinning what it claims. **Fix the guard before proceeding** — this is not a formality: a green suite that cannot go red is worse than no suite, because it is trusted, and this guard is the sole justification for letting `goto`/`abort` record from the CLI.
 
 - [ ] **Step 4: Commit**
 
@@ -1654,16 +1787,33 @@ git commit -m "test(cli): pin the claim-progress recording set with a fail-close
 - Create: `packages/cli/src/helpers/duration.ts`
 - Modify: `packages/core/src/output/zod-schemas.ts:390-433` (`DelegationStatusEntrySchema`)
 - Modify: `packages/cli/src/helpers/status-builder.ts:46-90` (`StatusOutputData.delegations`), `:275-283` (`ActiveStatusOptions`), `:356-386` (the delegations map)
+- Modify: `packages/cli/src/services/renderers/text-renderer.ts:62-71` (the renderer's **own** copy of the delegation entry shape) and `:296-314` (the `--text` delegations renderer) — **the plan previously named neither, and the `--text` fields are invisible without both**
 - Modify: `packages/cli/src/commands/status.ts:43-52` (the #531 claim join)
 - Test: `packages/cli/__tests__/commands/claim-idle-surfaces.test.ts` (create), `packages/cli/__tests__/helpers/status-builder.test.ts` (extend)
 
 **Interfaces:**
 
-- Consumes: `claimActivity`, `DEFAULT_IDLE_AFTER_MS`, `ClaimActivity`, `DurationMs` from `@rundown-org/core` (Task 2).
+- Consumes: `claimActivity`, `DEFAULT_IDLE_AFTER_MS`, `ClaimActivity`, `DurationMs`, `RundownError` from `@rundown-org/core` (Task 2).
 - Produces:
   - `packages/cli/src/helpers/duration.ts`: `function humaniseDurationMs(value: DurationMs): string`.
-  - `ActiveStatusOptions.activityByChildRunId?: ReadonlyMap<string, ClaimActivity>`.
-  - `DelegationStatusEntrySchema` gains optional `lastProgressAt: string`, `idleFor: number`, `idle: boolean` — present together, and only when `state === 'claimed'`.
+  - `packages/core/src/runbook/claim-activity.ts` also exports the read-boundary union — **this** is the union that earns its keep, unlike the flattened `ClaimActivity`, because its members carry different data and every consumer must narrow:
+
+    ```typescript
+    /**
+     * A claim's activity as seen at a read boundary.
+     *
+     * `unreadable` is a first-class member, not an error path: a corrupt
+     * `lastProgressAt` must neither be guessed at (fail-open) nor allowed to erase
+     * its siblings from the report. The reader is told this child cannot be
+     * assessed, and every other child still renders (#519).
+     */
+    export type ChildActivity =
+      | { readonly kind: 'known'; readonly activity: ClaimActivity }
+      | { readonly kind: 'unreadable' };
+    ```
+
+  - `ActiveStatusOptions.activityByChildRunId?: ReadonlyMap<string, ChildActivity>`.
+  - `DelegationStatusEntrySchema` gains optional `lastProgressAt: string`, `idleFor: number`, `idle: boolean` — present together, and only when `state === 'claimed'` — plus `activityUnreadable?: boolean` for the corrupt case.
 
 - [ ] **Step 1: Write the failing CLI JSON test**
 
@@ -1731,6 +1881,42 @@ describe('rundown status claim activity (#519)', () => {
     expect(pending!.idle).toBeUndefined();
   });
 
+  it('keeps other children visible when one claim has a corrupt lastProgressAt (JSON, AC6)', async () => {
+    // The fail-open this design must not have. `z.string().min(1)` admits
+    // 'not-a-date' and Task 1's guard only checks key PRESENCE, so this state is
+    // reachable on disk. A boundary that caught around the whole join and returned
+    // nothing would erase the healthy child too, and status would imply all is
+    // well — strictly worse than the NaN comparison AC6 rejects.
+    await setupParentWithChildren();
+    const corruptChild = await claimChild(workspace, '1.1');
+    const healthyChild = await claimChild(workspace, '1.2');
+    await backdateClaimProgress(workspace, corruptChild, 'not-a-date');
+    await backdateClaimProgress(workspace, healthyChild, '2020-01-01T00:00:00.000Z');
+
+    const status = await runCliInProcess('status', workspace);
+
+    // A read-only command must not die on corrupt advisory data...
+    expect(status.exitCode).toBe(0);
+    const detail = findDetailOutput<{
+      delegations: Array<{
+        substep: string;
+        idle?: boolean;
+        idleFor?: number;
+        activityUnreadable?: boolean;
+      }>;
+    }>(status.stdout);
+
+    // ...the corrupt child is reported as unreadable, never as a guessed value...
+    const corrupt = detail!.delegations.find((d) => d.substep === '1.1');
+    expect(corrupt!.activityUnreadable).toBe(true);
+    expect(corrupt!.idle).toBeUndefined();
+
+    // ...and its sibling is still fully visible and still reads idle.
+    const healthy = detail!.delegations.find((d) => d.substep === '1.2');
+    expect(healthy!.idle).toBe(true);
+    expect(healthy!.idleFor).toBeGreaterThan(60 * 60 * 1000);
+  });
+
   it('renders humanised idle time in --text', async () => {
     await setupParentWithChildren();
     const childClaim = await claimChild(workspace, '1.1');
@@ -1775,6 +1961,11 @@ In `packages/core/src/output/zod-schemas.ts`, inside the object (`:390-416`), af
       .boolean()
       .optional()
       .describe('Advisory idle label; nothing expires or is reclaimed at this boundary'),
+    /** The claim's lastProgressAt is corrupt, so no activity could be derived (#519) */
+    activityUnreadable: z
+      .boolean()
+      .optional()
+      .describe('The claim record has an unparseable lastProgressAt; activity cannot be derived'),
 ```
 
 Add these refines after the existing `claimKey` refines (`:426-433`), keeping the same style:
@@ -1783,12 +1974,19 @@ Add these refines after the existing `claimKey` refines (`:426-433`), keeping th
   .refine(
     (entry) =>
       entry.state === 'claimed' ||
-      (entry.lastProgressAt === undefined && entry.idleFor === undefined && entry.idle === undefined),
+      (entry.lastProgressAt === undefined &&
+        entry.idleFor === undefined &&
+        entry.idle === undefined &&
+        entry.activityUnreadable === undefined),
     {
       message: 'claim activity is only available when state is claimed',
       path: ['idle'],
     },
   )
+  .refine((entry) => !(entry.activityUnreadable === true && entry.idle !== undefined), {
+    message: 'an unreadable claim activity cannot also report an idle label',
+    path: ['activityUnreadable'],
+  })
   .refine(
     (entry) =>
       (entry.lastProgressAt === undefined) === (entry.idleFor === undefined) &&
@@ -1843,21 +2041,25 @@ In `packages/cli/src/helpers/status-builder.ts`, add to the `delegations` entry 
     idleFor?: number;
     /** Advisory idle label (#519). */
     idle?: boolean;
+    /** The claim's lastProgressAt is corrupt and its activity cannot be derived (#519). */
+    activityUnreadable?: boolean;
 ```
 
 Add to `ActiveStatusOptions` (`:275-283`):
 
 ```typescript
   /**
-   * Session claim activity join map: childRunId -> derived {@link ClaimActivity}
+   * Session claim activity join map: childRunId -> derived {@link ChildActivity}
    * (#519). Populated from the same `session.claims` pass that builds
    * {@link ActiveStatusOptions.claimKeyByChildRunId}. Advisory only — nothing
-   * expires or is reclaimed at the idle boundary.
+   * expires or is reclaimed at the idle boundary. A corrupt record arrives here as
+   * the `unreadable` member rather than being dropped, so one bad claim cannot
+   * erase its siblings from the report.
    */
-  readonly activityByChildRunId?: ReadonlyMap<string, ClaimActivity>;
+  readonly activityByChildRunId?: ReadonlyMap<string, ChildActivity>;
 ```
 
-(Import `type ClaimActivity` from `@rundown-org/core` in this file's existing import block.)
+(Import `type ChildActivity` from `@rundown-org/core` in this file's existing import block.)
 
 In the delegations map (`:373-386`), beside the `claimKey` lookup:
 
@@ -1879,13 +2081,16 @@ In the delegations map (`:373-386`), beside the `claimKey` lookup:
         state: entryState,
         ...(childRunId != null ? { childRunId } : {}),
         ...(claimKey != null ? { claimKey } : {}),
-        ...(activity != null
+        // Narrowing on `kind` is REQUIRED here — the two members carry different
+        // data. An unreadable child reports that fact rather than a guessed value.
+        ...(activity?.kind === 'known'
           ? {
-              lastProgressAt: activity.lastProgressAt,
-              idleFor: activity.idleFor,
-              idle: activity.kind === 'idle',
+              lastProgressAt: activity.activity.lastProgressAt,
+              idleFor: activity.activity.idleFor,
+              idle: activity.activity.idle,
             }
           : {}),
+        ...(activity?.kind === 'unreadable' ? { activityUnreadable: true } : {}),
         tokenHash: delegation.tokenHash,
         ...(childRunId == null && delegation.cancelledAt == null && delegation.token != null
           ? { token: delegation.token }
@@ -1907,15 +2112,31 @@ In `packages/cli/src/commands/status.ts`, extend the #531 join (`:43-52`) — on
           const session = await manager.loadSession();
           const now = new Date();
           const claimKeyByChildRunId = new Map<string, string>();
-          const activityByChildRunId = new Map<string, ClaimActivity>();
+          const activityByChildRunId = new Map<string, ChildActivity>();
           for (const claim of Object.values(session.claims).sort((a, b) =>
             a.updatedAt.localeCompare(b.updatedAt),
           )) {
             claimKeyByChildRunId.set(claim.controlledRunId, claim.claimKey);
-            activityByChildRunId.set(
-              claim.controlledRunId,
-              claimActivity(claim, now, DEFAULT_IDLE_AFTER_MS),
-            );
+            // Contained PER CLAIM. `claimActivity` throws CLAIM_PROGRESS_UNREADABLE
+            // on a corrupt timestamp, which `z.string().min(1)` admits and Task 1's
+            // presence-only guard does not catch. Two ways to get this wrong:
+            //  - no catch at all: the throw escapes a READ-ONLY command as an
+            //    unhandled stack trace instead of a JSON error envelope;
+            //  - catch around the whole LOOP: one corrupt claim erases every other
+            //    claim's activity, so genuinely idle children silently read as
+            //    having nothing to report. That is a worse fail-open than the NaN
+            //    comparison AC6 exists to reject.
+            // So: contain it here, keep every other claim intact, and surface this
+            // one as `unreadable` rather than guessing a value for it.
+            try {
+              activityByChildRunId.set(claim.controlledRunId, {
+                kind: 'known',
+                activity: claimActivity(claim, now, DEFAULT_IDLE_AFTER_MS),
+              });
+            } catch (error) {
+              if (!(error instanceof RundownError) || error.errorCode.code !== 'RD-824') throw error;
+              activityByChildRunId.set(claim.controlledRunId, { kind: 'unreadable' });
+            }
           }
           const statusOptions = { claimKeyByChildRunId, activityByChildRunId };
 ```
@@ -1925,19 +2146,72 @@ Extend the `@rundown-org/core` import at `:4`:
 ```typescript
 import {
   RunbookStateManager,
+  RundownError,
   SessionService,
   resolveCommandTarget,
   claimActivity,
   DEFAULT_IDLE_AFTER_MS,
-  type ClaimActivity,
+  type ChildActivity,
 } from '@rundown-org/core';
 ```
 
 - [ ] **Step 7: Run the JSON tests to verify they pass**
 
+Run: `pnpm --filter @rundown-org/cli exec jest claim-idle-surfaces.test.ts -t "(JSON)"`
+
+Expected: PASS — the **three JSON cases only**.
+
+> **The `--text` case is still RED here, and that is correct.** An earlier draft claimed "PASS (all four, including `--text`)" at this point while no step had touched a renderer — a green asserted for work not yet done, which trains the implementer to disbelieve the plan's expectations. `--text` goes green in Step 7b, the step that actually renders it.
+
+- [ ] **Step 7b: Render activity in the `--text` delegations renderer**
+
+**This is the step the plan previously omitted entirely.** The `--text` delegations renderer is `packages/cli/src/services/renderers/text-renderer.ts:296-314` — **not** `status-builder.ts` (which builds data, renders nothing) and **not** `collect.ts`. Verify before editing: `grep -n "Show delegations" packages/cli/src/services/renderers/text-renderer.ts`.
+
+It carries its **own structural duplicate** of the delegation entry shape at `:62-71`, independent of `status-builder.ts:77-84`. Add the fields there first or the renderer cannot see them:
+
+```typescript
+  delegations?: {
+    substep: string;
+    runbook: string;
+    state: string;
+    childRunId?: string;
+    /** Non-secret claim lookup key for claimed delegation correlation. */
+    claimKey?: string;
+    /** ISO timestamp of the claim holder's last recorded progress (#519). */
+    lastProgressAt?: string;
+    /** Milliseconds since that progress (#519). */
+    idleFor?: number;
+    /** Advisory idle label (#519). */
+    idle?: boolean;
+    /** Activity could not be derived from a corrupt record (#519). */
+    activityUnreadable?: boolean;
+    token?: string;
+  }[];
+```
+
+Then extend the line at `:312`. **This is a LINE format, not a table** — `` `  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}` `` — so the CLI Output Standards' "UPPERCASE headers, 2-space columns" guidance does not apply here; there are no headers to add a column to. Append a suffix instead:
+
+```typescript
+        // #519: advisory idle suffix. JSON carries raw `idleFor` milliseconds (the
+        // agent-facing contract); `--text` is the human format and gets it
+        // humanised. An unreadable record says so rather than showing a number it
+        // does not have.
+        const activitySuffix =
+          d.activityUnreadable === true
+            ? '  IDLE?  (unreadable progress timestamp)'
+            : d.idle === true && d.idleFor !== undefined
+              ? `  IDLE  (${humaniseDurationMs(d.idleFor as DurationMs)})`
+              : '';
+        this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}${activitySuffix}`);
+```
+
+Import `humaniseDurationMs` from `../../helpers/duration.js` and `type DurationMs` from `@rundown-org/core` (confirm the relative depth from `src/services/renderers/` before writing it).
+
+- [ ] **Step 7c: Run the `--text` test to verify it now passes**
+
 Run: `pnpm --filter @rundown-org/cli exec jest claim-idle-surfaces.test.ts -t "rundown status claim activity"`
 
-Expected: PASS (all four, including `--text`).
+Expected: PASS — all four now, including `--text`.
 
 - [ ] **Step 8: Add a status-builder unit test for the join and pin `--text` rendering**
 
@@ -1950,7 +2224,10 @@ Add to `packages/cli/__tests__/helpers/status-builder.test.ts`, mirroring the fi
       activityByChildRunId: new Map([
         [
           childRunId,
-          { kind: 'idle', lastProgressAt: '2020-01-01T00:00:00.000Z', idleFor: 99_999_999 },
+          {
+            kind: 'known',
+            activity: { lastProgressAt: '2020-01-01T00:00:00.000Z', idleFor: 99_999_999, idle: true },
+          },
         ],
       ]),
     });
@@ -1959,6 +2236,21 @@ Add to `packages/cli/__tests__/helpers/status-builder.test.ts`, mirroring the fi
     expect(entry!.idle).toBe(true);
     expect(entry!.idleFor).toBe(99_999_999);
     expect(entry!.lastProgressAt).toBe('2020-01-01T00:00:00.000Z');
+    expect(entry!.activityUnreadable).toBeUndefined();
+  });
+
+  it('reports an unreadable claim record without a guessed idle label (#519 AC6)', () => {
+    // The corrupt case must be VISIBLE and must not carry a fabricated idle value.
+    // Reporting `idle: false` here would be the fail-open AC6 exists to prevent.
+    const data = buildActiveStatus(stateWithClaimedDelegation, cwd, undefined, undefined, {
+      claimKeyByChildRunId: new Map([[childRunId, claimKey]]),
+      activityByChildRunId: new Map([[childRunId, { kind: 'unreadable' }]]),
+    });
+
+    const entry = data.delegations!.find((d) => d.childRunId === childRunId);
+    expect(entry!.activityUnreadable).toBe(true);
+    expect(entry!.idle).toBeUndefined();
+    expect(entry!.idleFor).toBeUndefined();
   });
 
   it('never attaches claim activity to a cancelled-after-claim delegation (#519)', () => {
@@ -1968,7 +2260,10 @@ Add to `packages/cli/__tests__/helpers/status-builder.test.ts`, mirroring the fi
       activityByChildRunId: new Map([
         [
           childRunId,
-          { kind: 'idle', lastProgressAt: '2020-01-01T00:00:00.000Z', idleFor: 99_999_999 },
+          {
+            kind: 'known',
+            activity: { lastProgressAt: '2020-01-01T00:00:00.000Z', idleFor: 99_999_999, idle: true },
+          },
         ],
       ]),
     });
@@ -1979,7 +2274,7 @@ Add to `packages/cli/__tests__/helpers/status-builder.test.ts`, mirroring the fi
   });
 ```
 
-Then find where `--text` renders the delegations table (`grep -rn "delegations" packages/cli/src/services/output-emitter.ts packages/cli/src/helpers/table-formatter.ts`) and add an `IDLE` column rendering `humaniseDurationMs(entry.idleFor)` when `entry.idle` is true (and a `-` otherwise). Keep UPPERCASE headers and 2-space separators per CLAUDE.md CLI Output Standards.
+> The `--text` rendering is already done in Step 7b. **Do not go looking for a delegations table in `output-emitter.ts` or `table-formatter.ts`** — an earlier draft sent readers there, and both have **zero** delegation-rendering hits. The renderer is `text-renderer.ts:296-314`, it is a **line** format with no headers, and "add an `IDLE` column with UPPERCASE headers" is inapplicable to it.
 
 - [ ] **Step 9: Run the status suites**
 
@@ -2123,6 +2418,43 @@ Add to the `collection_applied` member (`:220-232`), after `unresolved`:
       readonly unresolvedChildren: readonly UnresolvedChildActivity[];
 ```
 
+Define the member type above them — a **union**, because an unreadable child genuinely has different data (it has no `idleFor` to report) and callers must narrow rather than read a fabricated value:
+
+```typescript
+/** Fields identifying an unresolved delegated child, common to both members. */
+interface UnresolvedChildIdentity {
+  /** Parent substep id owning the delegation. */
+  readonly substep: string;
+  /** Child run identifier. */
+  readonly childRunId: RunId;
+  /** Non-secret claim lookup key. */
+  readonly claimKey: ClaimLookupKey;
+}
+
+/**
+ * Advisory activity for one unresolved delegated child (#519).
+ *
+ * `unreadable` is a first-class member rather than an error path or an omission:
+ * a corrupt `lastProgressAt` must not be guessed at (fail-open), and must not
+ * remove the child from the report either — a silently shorter list reads as
+ * "fewer children need checking", which is the same fail-open wearing a
+ * different hat.
+ */
+export type UnresolvedChildActivity =
+  | (UnresolvedChildIdentity & {
+      readonly kind: 'known';
+      /** ISO timestamp of the child holder's last recorded progress. */
+      readonly lastProgressAt: string;
+      /** Milliseconds elapsed since that progress. */
+      readonly idleFor: DurationMs;
+      /** Advisory idle label. */
+      readonly idle: boolean;
+    })
+  | (UnresolvedChildIdentity & {
+      readonly kind: 'unreadable';
+    });
+```
+
 Add the identical pair of lines to the `collection_frame_not_active` member (find it with `grep -n "collection_frame_not_active" -A 14 packages/core/src/runbook/command-policy.ts`).
 
 Import `ClaimLookupKey` and `DurationMs` in this file's existing `@rundown-org/core`-internal import block (`./claim-id.js` and `./claim-activity.js` respectively).
@@ -2140,8 +2472,9 @@ In `packages/core/src/runbook/collection-service.ts`, add a module-private helpe
  * terminal children and children whose parent substep is `done`, i.e. exactly the
  * unresolved set. `now` is read here and INJECTED into the pure `claimActivity`.
  *
- * Best-effort: a read failure yields an empty list rather than failing a
- * collection that is already committed (RD-102) (#519).
+ * Best-effort at the LIST level (a failed session read yields no list rather than
+ * failing a committed collection, RD-102) but NEVER at the per-child level: a
+ * corrupt child is reported as `unreadable` and its siblings survive (#519).
  *
  * @param sessionService - Session reader used to list the parent's open child claims.
  * @param parentRunId - Delegating run whose children to inspect.
@@ -2151,27 +2484,44 @@ async function readUnresolvedChildActivity(
   sessionService: CollectionSessionService,
   parentRunId: RunId,
 ): Promise<readonly UnresolvedChildActivity[]> {
+  let claims: readonly ClaimRecord[];
   try {
-    const claims = await sessionService.listOpenClaimsForParent(parentRunId);
-    const now = new Date();
-    return claims
-      .filter((claim) => claim.delegation !== undefined)
-      .map((claim) => {
-        const activity = claimActivity(claim, now, DEFAULT_IDLE_AFTER_MS);
-        return {
-          substep: claim.delegation!.parentStepId,
-          childRunId: claim.controlledRunId,
-          claimKey: claim.claimKey,
-          lastProgressAt: activity.lastProgressAt,
-          idleFor: activity.idleFor,
-          idle: activity.kind === 'idle',
-        };
-      })
-      .sort((left, right) => left.substep.localeCompare(right.substep));
+    // ONLY the session read is contained here. Widening this try to cover the
+    // derivation below would mean one corrupt timestamp returns [] and erases
+    // EVERY unresolved child — including the genuinely idle ones — so the parent
+    // reads "nothing to check". That is a worse fail-open than the NaN comparison
+    // AC6 exists to reject, and it is why the catch is scoped this tightly.
+    claims = await sessionService.listOpenClaimsForParent(parentRunId);
   } catch {
     // Intentionally ignored — an advisory read must never fail a committed collection.
     return [];
   }
+
+  const now = new Date();
+  return claims
+    .filter((claim) => claim.delegation !== undefined)
+    .map((claim): UnresolvedChildActivity => {
+      const base = {
+        substep: claim.delegation!.parentStepId,
+        childRunId: claim.controlledRunId,
+        claimKey: claim.claimKey,
+      };
+      try {
+        const activity = claimActivity(claim, now, DEFAULT_IDLE_AFTER_MS);
+        return {
+          kind: 'known',
+          ...base,
+          lastProgressAt: activity.lastProgressAt,
+          idleFor: activity.idleFor,
+          idle: activity.idle,
+        };
+      } catch (error) {
+        if (!(error instanceof RundownError) || error.errorCode.code !== 'RD-824') throw error;
+        // Contained per child: this one cannot be assessed, the rest still report.
+        return { kind: 'unreadable', ...base };
+      }
+    })
+    .sort((left, right) => left.substep.localeCompare(right.substep));
 }
 ```
 
@@ -2190,7 +2540,58 @@ Each gains, alongside `unresolved: drained.unresolved`:
       ),
 ```
 
-> Import `claimActivity`, `DEFAULT_IDLE_AFTER_MS` from `./claim-activity.js` and `type UnresolvedChildActivity` from `./command-policy.js` in this file's existing import block. Place the `readUnresolvedChildActivity` call AFTER the drain (so a child resolved by this very collect no longer appears) and after the Step 5 (Task 4) `recordClaimProgress` call — the ordering is: commit → record own progress → derive the children's read model.
+> Import `claimActivity`, `DEFAULT_IDLE_AFTER_MS` from `./claim-activity.js`, `RundownError` from `../errors/rundown-error.js`, `type ClaimRecord` from `./claim-id.js`, and `type UnresolvedChildActivity` from `./command-policy.js` in this file's existing import block. Place the `readUnresolvedChildActivity` call AFTER the drain (so a child resolved by this very collect no longer appears) and after the Step 5 (Task 4) `recordClaimProgress` call — the ordering is: commit → record own progress → derive the children's read model.
+
+- [ ] **Step 4b: Make the core test double able to return claims (do this BEFORE Step 5)**
+
+`packages/core/__tests__/runbook/collection-service.test.ts:193-195` stubs `listOpenClaimsForParent` as `async () => []` — **unconditionally**. Every test asserting `unresolvedChildren` content is structurally impossible against that double: the list is always empty, so a green run proves nothing and an implementer following the plan literally will burn time before noticing.
+
+Make the stub configurable, keeping its current behaviour as the default so every existing case in the file is unaffected:
+
+```typescript
+  // #519: tests that assert unresolvedChildren need to supply claims. Defaults to
+  // [] so every pre-existing case in this suite behaves exactly as before.
+  let openClaimsForParent: ClaimRecord[] = [];
+  // ...in the double:
+      async listOpenClaimsForParent() {
+        return openClaimsForParent;
+      },
+```
+
+Then a test arranges its own claims by assigning `openClaimsForParent` in the case body. Add these two cases:
+
+```typescript
+  it('reports advisory activity for each unresolved child (#519)', async () => {
+    openClaimsForParent = [claimRecordFor('1.1', '2020-01-01T00:00:00.000Z')];
+
+    const outcome = await applyCollection(collectionInput());
+
+    expect(outcome.kind).toBe('collection_applied');
+    const [child] = outcome.unresolvedChildren;
+    expect(child.kind).toBe('known');
+    expect(child.substep).toBe('1.1');
+    expect(child.idle).toBe(true);
+  });
+
+  it('keeps healthy children visible when one child has a corrupt timestamp (#519 AC6)', async () => {
+    // The decisive case: a list-level catch would return [] here and erase the
+    // healthy child, telling the parent nothing needs checking. Containment is
+    // per child precisely so that cannot happen.
+    openClaimsForParent = [
+      claimRecordFor('1.1', 'not-a-date'),
+      claimRecordFor('1.2', '2020-01-01T00:00:00.000Z'),
+    ];
+
+    const outcome = await applyCollection(collectionInput());
+
+    expect(outcome.unresolvedChildren).toHaveLength(2);
+    expect(outcome.unresolvedChildren[0]!.kind).toBe('unreadable');
+    expect(outcome.unresolvedChildren[1]!.kind).toBe('known');
+    expect(outcome.unresolvedChildren[1]!.idle).toBe(true);
+  });
+```
+
+> `claimRecordFor(substep, lastProgressAt)` is a local helper you write in this file: a `ClaimRecord` with a `delegation.parentStepId` of `substep` and the given `lastProgressAt`. Build it from the file's existing claim fixture if it has one (`grep -n "secretHash" packages/core/__tests__/runbook/collection-service.test.ts`); otherwise mirror `command-target-resolver.test.ts:73`. `collectionInput()` stands for the file's existing `applyCollection` input builder — use the real one.
 
 - [ ] **Step 5: Run the core tests to verify they pass**
 
@@ -2203,20 +2604,41 @@ Expected: PASS.
 In `packages/cli/src/schemas/output-schemas.ts`, define the entry schema above `CollectAppliedResponseSchema` (`:129`):
 
 ```typescript
-const UnresolvedChildActivitySchema = z.object({
+const UnresolvedChildIdentitySchema = {
   /** Parent substep id owning the delegation */
   substep: z.string().describe('Parent substep id owning the delegation'),
   /** Child run identifier */
   childRunId: z.string().describe('Child run identifier'),
   /** Non-secret claim lookup key */
   claimKey: z.string().describe('Non-secret claim lookup key'),
-  /** ISO timestamp of the child holder's last recorded progress */
-  lastProgressAt: z.string().describe("ISO timestamp of the child's last recorded progress"),
-  /** Milliseconds elapsed since that progress */
-  idleFor: z.number().int().nonnegative().describe('Milliseconds since the last recorded progress'),
-  /** Advisory idle label */
-  idle: z.boolean().describe('Advisory idle label; nothing expires or is reclaimed'),
-});
+};
+
+/**
+ * A discriminated union on the wire, mirroring the core type. The `unreadable`
+ * member deliberately has NO idleFor/idle: a corrupt record must not be reported
+ * with a fabricated value, and an agent reading this must narrow on `kind` rather
+ * than trusting a default (#519).
+ */
+const UnresolvedChildActivitySchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('known'),
+    ...UnresolvedChildIdentitySchema,
+    /** ISO timestamp of the child holder's last recorded progress */
+    lastProgressAt: z.string().describe("ISO timestamp of the child's last recorded progress"),
+    /** Milliseconds elapsed since that progress */
+    idleFor: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('Milliseconds since the last recorded progress'),
+    /** Advisory idle label */
+    idle: z.boolean().describe('Advisory idle label; nothing expires or is reclaimed'),
+  }),
+  z.object({
+    kind: z.literal('unreadable'),
+    ...UnresolvedChildIdentitySchema,
+  }),
+]);
 ```
 
 Add to both `CollectAppliedResponseSchema` and `CollectNotActiveResponseSchema`, after `unresolved`:
@@ -2235,7 +2657,7 @@ In `packages/cli/src/commands/collect.ts`, `renderAppliedOutcome` (`~:250`) JSON
         unresolvedChildren: outcome.unresolvedChildren,
 ```
 
-And in its `--text` branch, append an advisory line when any child is idle:
+And in its `--text` branch, append an advisory line per child needing attention. **Narrowing on `kind` is required** — the `unreadable` member has no `idleFor`, so reading it without narrowing does not compile (which is the union doing its job):
 
 ```typescript
   } else {
@@ -2244,14 +2666,24 @@ And in its `--text` branch, append an advisory line when any child is idle:
         `(${String(outcome.unresolved)} unresolved; lifecycle ${String(outcome.lifecycle)}).`,
       'success',
     );
-    for (const child of outcome.unresolvedChildren.filter((entry) => entry.idle)) {
+    for (const child of outcome.unresolvedChildren) {
       // Advisory only: idle is indistinguishable from working. Nothing is expired
       // or reclaimed — the reader decides whether to adopt the claim or abort (#519).
-      output.message(
-        `Substep ${child.substep} (claim ${child.claimKey}) has recorded no progress for ` +
-          `${humaniseDurationMs(child.idleFor)}.`,
-        'info',
-      );
+      if (child.kind === 'unreadable') {
+        // Surfaced, never silently dropped: a child that cannot be assessed is a
+        // child the reader should look at, not one to omit from the report.
+        output.message(
+          `Substep ${child.substep} (claim ${child.claimKey}) has an unreadable progress ` +
+            `timestamp; its activity cannot be assessed.`,
+          'info',
+        );
+      } else if (child.idle) {
+        output.message(
+          `Substep ${child.substep} (claim ${child.claimKey}) has recorded no progress for ` +
+            `${humaniseDurationMs(child.idleFor)}.`,
+          'info',
+        );
+      }
     }
   }
 ```
@@ -2274,13 +2706,42 @@ describe('rundown collect claim activity (#519)', () => {
 
     const action = findActionOutput<{
       unresolved: number;
-      unresolvedChildren: Array<{ substep: string; idle: boolean; idleFor: number }>;
+      unresolvedChildren: Array<{
+        kind: string;
+        substep: string;
+        idle?: boolean;
+        idleFor?: number;
+      }>;
     }>(collected.stdout);
     const child = action!.unresolvedChildren.find((c) => c.substep === '1.2');
     expect(child).toBeDefined();
+    expect(child!.kind).toBe('known');
     expect(child!.idle).toBe(true);
     // Milliseconds in JSON, matching DurationMs.
     expect(child!.idleFor).toBeGreaterThan(60 * 60 * 1000);
+  });
+
+  it('keeps healthy children visible when one child has a corrupt timestamp (JSON, AC6)', async () => {
+    // The CLI-boundary sibling of the core case: one unreadable child must not
+    // erase the report. A list-level catch would return [] and tell the parent
+    // nothing needs checking — the fail-open AC6 exists to reject.
+    const { childClaim11, childClaim12 } = await setupParentWithTwoOpenChildren();
+    await backdateClaimProgress(workspace, childClaim11, 'not-a-date');
+    await backdateClaimProgress(workspace, childClaim12, '2020-01-01T00:00:00.000Z');
+
+    const collected = await runCliInProcess('collect', workspace);
+    expect(collected.exitCode).toBe(0);
+
+    const action = findActionOutput<{
+      unresolvedChildren: Array<{ kind: string; substep: string; idle?: boolean }>;
+    }>(collected.stdout);
+    expect(action!.unresolvedChildren).toHaveLength(2);
+    const corrupt = action!.unresolvedChildren.find((c) => c.substep === '1.1');
+    expect(corrupt!.kind).toBe('unreadable');
+    expect(corrupt!.idle).toBeUndefined();
+    const healthy = action!.unresolvedChildren.find((c) => c.substep === '1.2');
+    expect(healthy!.kind).toBe('known');
+    expect(healthy!.idle).toBe(true);
   });
 
   it('reports an empty unresolvedChildren list when every child resolved (JSON)', async () => {
@@ -2315,6 +2776,8 @@ Run: `pnpm --filter @rundown-org/cli exec jest collect`
 Run: `pnpm --filter @rundown-org/core exec jest collection`
 
 Expected: PASS. `unresolvedChildren` is a required field on the two outcome members, so any core test constructing those members by literal is a compile error — fix the literal, do not make the field optional.
+
+> `setupParentWithTwoOpenChildren` is a sibling of the suite's existing parent setup — reuse `setupParentWithChildren` from `packages/cli/__tests__/integration/delegate-workflow.test.ts` and claim both children rather than writing a third fixture.
 
 - [ ] **Step 9: Commit**
 
@@ -2493,7 +2956,7 @@ Retraced against the revised (2026-07-16, commit `12146f9b3`) 13-criterion list.
 | 1 | `lastProgressAt` exists, required, `= issuedAt` at creation | Task 1 Steps 1-5 (schema + `createClaimRecord`; both production mint sites go through `createClaimRecord`) |
 | 2 | Sessions lacking it are rejected; no migration | Task 1 Steps 6-9 (structural guard in `loadSession`, finish/prune/restart message) |
 | 3 | Every successful claim-authenticated command that **changes runbook workflow state** refreshes (the eight); session-targeting-only (`stash`, `pop`), read-only (`status`), and failed mutations do not | Task 4 (six call sites covering the eight: `runTransition`, `runTerminal`, `issueDelegation`, `collectDelegationOutcomes`, `executeGoto`, `abort.ts`), whose scope note forbids both adding an exception AND extending to `stash`/`pop`; Task 4 Step 1 (`status --claim-id` anti-fooling + failed-mutation tests); Task 5 (`stash`/`pop`/`status` pinned non-recording + the stash/pop anti-fooling loop) |
-| 4 | A fail-closed drift guard **classifies all eleven** and pins the set **in both directions**, with **both anchors proven to bite** | Task 5 — the three-category classification over all eleven; Anchor A (exhaustive `Record<RoleSpecificMutationCommand, …>`, compile error on a new union member) + Anchor B (Commander `--claim-id` scan set-equality, catching `abort`, `stash`/`pop`/`status`, and anything new); Task 5 Step 3's four revert-after probes prove both anchors and both directions bite (probe 4 is the negative direction: a `recordClaimProgress` added to `stash.ts` must fail the suite) |
+| 4 | A fail-closed drift guard **classifies all eleven** and pins the set **in both directions**, **proven to bite** | Task 5 — the three-category classification over all eleven, anchored on a `--claim-id` scan of the **real** `createProgram()` (`cli.ts:72`), so the scan is independent of the test's own imports and cannot shrink with the tables; `RoleSpecificMutationCommand` appears only as a containment cross-check, never as the anchor (it is a subprocess-trust concept, and `abort` already sits outside it). Task 5 Step 3's four revert-after probes prove it bites: probe 2 (a new `--claim-id` command appears unclassified) is the one an anchor fed by its own tables could never pass; probe 4 is the negative direction (a `recordClaimProgress` added to `stash.ts` must fail the suite) |
 | 5 | A command refreshes only the claim whose bearer it presented | Task 3 Step 1 ("refreshes ONLY the presented claim"); Task 4 (every call site passes the PRESENTED `callerEvidence.claimId`, never a resolved/other claim); Task 7 Step 1 (collect refreshes the orchestrator, reports on the children) |
 | 6 | An unparseable `lastProgressAt` throws rather than classifying as `progressing` | Task 2 Step 1 (the fail-open unit test) + Step 3 (the `Number.isNaN` guard and its `@throws`) |
 | 7 | A failed recording never fails and never masks the mutation | Task 3 (`recordClaimProgress` is total by construction — the `try` wraps `withLock`); Task 3 Step 1 + Task 4 Step 1 (the two RD-102 tests) |
@@ -2506,7 +2969,7 @@ Retraced against the revised (2026-07-16, commit `12146f9b3`) 13-criterion list.
 
 **Placeholder scan.** No `TBD` / `TODO` / "add appropriate error handling". Every code step shows the exact edit. The steps that resolve a fixture by grep (Task 3 Step 1's forged bearer, Task 4 Step 1's seam fixture, Task 5 Step 1's eight `drive*` helpers, Task 6 Step 1's `findDetailOutput`, Task 7 Step 1's parent setup) each name a concrete existing file and symbol to mirror rather than leaving the setup unspecified — deliberate, because inventing a parallel fixture where the suite already has one is the failure mode those pointers prevent. Task 5's `drive*` helpers are the largest such block and are called out as the substance of that task, not boilerplate.
 
-**Type consistency.** `DurationMs` / `durationMs` / `ClaimActivity` / `claimActivity` / `DEFAULT_IDLE_AFTER_MS` are defined in Task 2 and used with exactly those names in Tasks 4, 6, 7, and 8. `progressedClaimRecord(record, now)` (Task 3) is distinct from the untouched `refreshedClaimRecord(record, now)` and moves a different field — this asymmetry is the spec's central type-safety argument and must not be collapsed. `ClaimProgressRecordResult` is defined once (Task 3) and referenced by `CollectionSessionService` (Task 4 Step 5). The four core recording call sites all gate on `outcome.kind` ∈ the committed-success members of their own union — `applied` (`runTransition`), `applied_claim`/`applied_bare` (`runTerminal`), `delegated`/`retried` (`issueDelegation`), `collection_applied` (collect) — each verified against the union declaration and each excluding the no-op members (`already_terminal`, `terminal_claim_confirmed`, `already_delegated`, `already_collected`). `ActiveStatusOptions.activityByChildRunId` (Task 6 Step 5) is keyed by `childRunId` string, matching the sibling `claimKeyByChildRunId` exactly and populated in the same loop (Task 6 Step 6). `UnresolvedChildActivity` (Task 7 Step 3) carries `idleFor: DurationMs`, which serialises to a plain number in JSON — the brand is compile-time only, so `output.json` needs no conversion, and `UnresolvedChildActivitySchema` correctly validates `z.number()`. `listOpenClaimsForParent` returns `ClaimRecord[]` whose `delegation?.parentStepId` supplies `substep`; the `.filter((claim) => claim.delegation !== undefined)` before the `!` narrows it, and `listOpenClaimsForParent` only ever returns claims with a `delegation` anyway (`session-service.ts:647` skips the rest) — the filter is the type-level proof, not a behavioural guard.
+**Type consistency.** `DurationMs` / `durationMs` / `ClaimActivity` / `ChildActivity` / `claimActivity` / `DEFAULT_IDLE_AFTER_MS` are defined in Task 2 and used with exactly those names in Tasks 4, 6, 7, and 8. `ClaimActivity` is a **readonly interface** (`lastProgressAt`, `idleFor`, `idle`) — every consumer reads `.idle` directly and none narrows, which is precisely why it is not a union. The two unions in this design earn narrowing: `ChildActivity` (`known` | `unreadable`) at the status boundary, and `UnresolvedChildActivity` (`known` | `unreadable`) at the collect boundary — their members carry different data, and an `unreadable` member has no `idleFor` to read. `progressedClaimRecord(record, now)` (Task 3) is distinct from the untouched `refreshedClaimRecord(record, now)` and moves a different field — this asymmetry is the spec's central type-safety argument and must not be collapsed. `ClaimProgressRecordResult` is defined once (Task 3) and referenced by `CollectionSessionService` (Task 4 Step 5). The four core recording call sites all gate on `outcome.kind` ∈ the committed-success members of their own union — `applied` (`runTransition`), `applied_claim`/`applied_bare` (`runTerminal`), `delegated`/`retried` (`issueDelegation`), `collection_applied` (collect) — each verified against the union declaration and each excluding the no-op members (`already_terminal`, `terminal_claim_confirmed`, `already_delegated`, `already_collected`). `ActiveStatusOptions.activityByChildRunId` (Task 6 Step 5) is keyed by `childRunId` string, matching the sibling `claimKeyByChildRunId` exactly and populated in the same loop (Task 6 Step 6). `UnresolvedChildActivity`'s `known` member (Task 7 Step 3) carries `idleFor: DurationMs`, which serialises to a plain number in JSON — the brand is compile-time only, so `output.json` needs no conversion, and `UnresolvedChildActivitySchema`'s `known` member correctly validates `z.number()`. `listOpenClaimsForParent` returns `ClaimRecord[]` whose `delegation?.parentStepId` supplies `substep`; the `.filter((claim) => claim.delegation !== undefined)` before the `!` narrows it, and `listOpenClaimsForParent` only ever returns claims with a `delegation` anyway (`session-service.ts:647` skips the rest) — the filter is the type-level proof, not a behavioural guard.
 
 **The predicate is "changes runbook workflow state", not "mutates" — do not collapse it back.** This is the single most load-bearing sentence in the plan, and the one a future reader is most likely to "simplify". `stash` and `pop` ARE claim-authenticated mutations, so the shorter phrasing sweeps them in and silently reopens the anti-fooling hole. They are **not exceptions** to the rule — that framing is also wrong, and also invites someone to "clean up the carve-out". They fail the predicate. The rule genuinely has no exception list; it has a predicate that three of the eleven commands do not satisfy. Task 5 pins all three, and probe 4 proves the pin is real.
 
@@ -2519,3 +2982,27 @@ Retraced against the revised (2026-07-16, commit `12146f9b3`) 13-criterion list.
 5. **`stash`/`pop` classification** — surfaced while designing the guard; the owner ruled they are excluded, and the spec now carries the sharper predicate and the decisive anti-fooling argument. Task 5's negative-direction coverage exists because of this.
 
 **One remaining implementation choice, unchanged and unflagged by the spec:** the status activity fields are optional-when-claimed, not required-when-claimed (unlike `claimKey`, which the #531 schema made required). The join is a read-model lookup that can legitimately miss; the "present together" refine is what keeps the trio coherent.
+
+---
+
+## Review round 2: what four reviewers found, and what changed
+
+Every item below was **verified against the tree** before the plan was edited. Recorded because several are traps a fresh implementer would otherwise re-enter — the plan previously asserted each as checked.
+
+**Two criticals, both fixed:**
+
+1. **The drift guard could not fail.** Anchor B built its Commander program by registering the very tables it then compared against, so both sides always shrank together and a new `--claim-id` command was never registered, never classified, never caught. The plan's own probe ("comment out `status`") could not fail either. **Fixed:** the scan now comes from the real `createProgram()` (`cli.ts:72`); Step 3 probe 2 adds a throwaway `--claim-id` command to prove the left side is independent. This mattered beyond the guard: spec `:103` and this plan stake the acceptability of the CLI-side `goto`/`abort` seams **entirely** on the guard, so an inert guard meant no guarantee at all and the CLI silently owning the recording policy.
+2. **The fail-open AC6 forbids, reintroduced at the collect boundary.** `try { … } catch { return []; }` around the whole derivation meant one corrupt timestamp erased **every** unresolved child, including genuinely idle ones — worse than the NaN comparison AC6 exists to reject. Reachable, since `z.string().min(1)` admits `'not-a-date'` and Task 1's guard only checks key presence. Status had no containment at all, so the throw escaped a read-only command as a stack trace. **Fixed:** containment is now **per child** on both surfaces, with an `unreadable` union member that keeps siblings visible; both paths are now tested.
+
+**Four "I checked the tree" claims that were false — each dead-ends a fresh agent:**
+
+- `state-schema-version.test.ts` has **zero** `loadSession` occurrences. The real tests are `state.test.ts:820-858`.
+- The fixture grep missed **shorthand** properties: **12** files break, not 9, and `delegation-exposure.test.ts` fails at **runtime** via `safeParse`, so a green typecheck is not the completeness guard Step 11 claimed.
+- `packages/claude-code-plugin/src/rdpath.ts:70-76` allow-lists session errors by substring and does not match the new message — `rdpath` would lose graceful degradation on exactly the sessions this change invalidates. The plan never mentioned the package.
+- The `--text` delegations renderer is `text-renderer.ts:296-314` (with its own duplicate entry shape at `:62-71`), **not** the two files the plan named (zero hits in both). It is a **line** format, so the prescribed "IDLE column with UPPERCASE headers" was inapplicable.
+
+**Plus:** Task 7's core tests were structurally impossible (the double's `listOpenClaimsForParent` returns `[]` unconditionally — now configurable in Step 4b), and Task 6 Step 7 claimed a green for a `--text` test no step had implemented (now Step 7b renders it; Step 7 expects three JSON cases).
+
+**Type and test weaknesses, all addressed:** `ClaimActivity` was a boolean in union costume (identical variants, no caller narrowing) → now a `readonly interface`, matching the spec's own `idle: boolean` naming table. The AC6 throw was a bare `Error` distinguishable from `durationMs`'s bare `Error` — thrown in the same function — only by substring, so a reword would silently gut it → now `RundownError` with `CLAIM_PROGRESS_UNREADABLE` (RD-824), asserted on the code. Three of four property tests restated the implementation and survived any mutation of `>` → replaced with an independent oracle, threshold monotonicity, and skew safety. `test:mutate:core` lacks the trailing `--` that `test:mutate:cli` has, so the AC13 gate silently ran **unscoped** → Task 2 Step 8 now uses the direct filter form.
+
+**What the reviewers confirmed holds** (do not "fix" these): the RD-102 non-masking design genuinely works — wrapping `withLock` captures both acquire failures and `parseClaimBearer` throws, so `recordClaimProgress` is total as advertised; the lock ordering checks out against the documented ABBA proof; claim tombstones survive every terminal path, so the no-exceptions rule has no hole; the #541 static-import mitigation is correct; and all 13 acceptance criteria map to tasks. The CLI-side `goto`/`abort` seam is defensible — both core services really are gates, no cleaner seam exists without restructuring, and recording inside the gate would violate "recorded on success, not on attempt" — **provided the guard is fixed**, which is why the guard's construction is now spelled out at such length.
