@@ -612,6 +612,16 @@ manifest row. Core owns URI construction (`buildArtifactUri`) and the manifest
 row shape; a scenario that duplicates either will drift silently when core
 changes.
 
+This constrains how a scenario obtains a URI it intends to _use_. It does not
+constrain a negative test that forges an artifact record as a **public input**
+in order to assert the input channel rejects it -- there, the forgery is the
+assertion rather than a seeding shortcut, so it is the point of the scenario and
+not a shortcut around capture. `forged-file-record-rejected`
+(`runbooks/artifacts/artifact-variable-review-plan.runbook.md`) is the canonical
+example: it writes a `file-artifact-record` bearing an out-of-project `file://`
+URI, feeds it through `--input-file`, and expects
+`Artifact record input for "Plan" is not trusted`. Leave it alone.
+
 | Placeholder                       | Resolves to                                          |
 | --------------------------------- | ---------------------------------------------------- |
 | `${CAPTURE_ARTIFACT:<key>}`       | The most recent `rd://artifacts/...` URI for `<key>` |
