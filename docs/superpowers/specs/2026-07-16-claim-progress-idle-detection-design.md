@@ -75,7 +75,15 @@ Recorded in `SessionService`, inside the session-lock scope that claim-authentic
 
 **A command refreshes only the claim it presents.** Progress is a property of a single claim and its holder. `rundown pass --claim-id <child-claim>` refreshes the child's claim; `rundown collect --claim-id <orchestrator-claim>` refreshes the orchestrator's own claim, **not** the child's. No command ever refreshes a claim it did not present a bearer for — a parent cannot vouch for a child's liveness, and must not appear to.
 
-**Only claim-authenticated mutating commands record progress.** `rundown pass/fail/goto/delegate/collect --claim-id` do. Bare read-only commands present no claim and cannot. `rundown status --claim-id` is claim-authenticated but read-only and deliberately **does not** record progress: a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected. Only real progress refreshes the mark, so the signal cannot be fooled. This also keeps `verifyClaimId` (`session-service.ts:361`) read-only and lock-free, as designed.
+**Every successful claim-authenticated mutation records progress — no exceptions.** The rule is uniform rather than an enumerated allow-list, because an allow-list has to be remembered: a mutating command added later would silently fail to record, and the failure mode is invisible (a claim reads idle while advancing, producing a spurious check nobody traces back). The rule is smaller than its exceptions would be.
+
+The set is the codebase's established mutating-command list — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto` (the same seven pinned by the `--run` registration drift guard at `run-option.test.ts:50`) — plus `abort`, which is claim-authenticated and mutating (`abort.ts:59`) but sits outside that guard's scope because it takes a token argument rather than `--run`.
+
+Recording on a command that terminates a claim (`complete`, `stop`, `abort`) is deliberately *not* special-cased away. It is a redundant write to a claim leaving the reportable population, costing nothing, and buying a rule with no exception list to forget.
+
+**Bare read-only commands present no claim and cannot record.** `rundown status --claim-id` is claim-authenticated but read-only and deliberately **does not** record progress: a stuck child polling its own status would otherwise refresh its claim forever and never report idle — a false negative on precisely the case being detected. Only real progress refreshes the mark, so the signal cannot be fooled. This also keeps `verifyClaimId` (`session-service.ts:361`) read-only and lock-free, as designed.
+
+**A fail-closed drift guard pins the set.** Modelled on `run-option.test.ts:50`, a test enumerates every claim-authenticated mutating command and asserts each records progress. This is what makes the uniform rule enforceable rather than aspirational, and it is why the recording *seam* may differ per command without risk: `goto`'s mutation commits in the CLI (`goto-workflow.ts:309`, via `sendAndSync`) with no core seam to hook, so `goto` dispatches into the core recording API from the CLI — permitted, since the CLI is calling a core API rather than re-implementing one. The guard, not the seam's uniformity, is the guarantee.
 
 **Recorded on success, not on attempt.** A child whose `rundown pass` fails validation proved it is alive but did not advance the run. The field means "the run advanced at T". A live-but-erroring child correctly reads as idle — a true positive worth surfacing.
 
@@ -101,6 +109,8 @@ export function claimActivity(
 
 A discriminated union rather than a bare boolean, per type-driven dispatch. Pure — no I/O, no clock read, `now` injected — so it is trivially unit- and property-testable, and cannot drift with wall-clock behaviour in tests.
 
+**An unparseable `lastProgressAt` throws.** Date arithmetic on a corrupt timestamp yields `NaN`, and every `NaN` comparison is false — so `idleFor > idleAfter` would be false and a dead claim would silently classify as `progressing`. That is the single worst failure this design can have: a safety signal that fails *open*, quietly, in exactly the case it exists to catch. Throwing is also the consistent reading of the reject-invalid-persisted-state stance: corrupt state is rejected, never interpreted.
+
 `DEFAULT_IDLE_AFTER_MS = 60 * 60 * 1000` (one hour). Kubernetes anchors at 10 minutes for a rollout; a delegated agent step legitimately runs far longer, so the default is deliberately six times more generous. The asymmetry is intentional: reporting idle too late costs a delayed check, while reporting it too early trains the reader to ignore the signal — and an advisory label that is routinely wrong is worse than no label, because it is the one failure mode that cannot be corrected by acting on it. No configuration surface in this change — the default is long enough to be safe, and adding config later is purely additive. YAGNI.
 
 ## Surfaces
@@ -109,7 +119,9 @@ Both are read-only and derived at read. Nothing is persisted, no machine state i
 
 **`rundown status`** — the delegations rows already join `claimKey` from #531 and already load `session.claims` (`status.ts:43-52`). Each claimed delegation row gains `lastProgressAt`, `idleFor`, and `idle`.
 
-**`rundown collect`** — already reports `unresolved` and is one-shot, not blocking. Each unresolved child carries the same activity data, joining `session.claims` by `controlledRunId` exactly as `status` does. A parent resuming after its child's turn therefore sees which children are not progressing without issuing a second command. Note this reports the *children's* activity; the orchestrator's own claim is refreshed by the collect itself, per Recording Progress.
+**`rundown collect`** — already reports `unresolved` and is one-shot, not blocking. Each unresolved child carries the same activity data, sourced from `listOpenClaimsForParent` on `CommandTargetReader`, which already returns exactly the unresolved delegated children. A parent resuming after its child's turn therefore sees which children are not progressing without issuing a second command. Note this reports the *children's* activity; the orchestrator's own claim is refreshed by the collect itself, per Recording Progress.
+
+**`unresolvedChildren.length` may be less than `unresolved`.** A pending, not-yet-claimed delegation counts toward `unresolved` but has no claim record and therefore no activity data. This is correct — an unclaimed delegation has no holder whose progress could be measured — and the two fields must not be assumed equal by consumers. The output schema documents the distinction.
 
 `idleFor` is milliseconds in JSON, matching `DurationMs`; `--text` renders it humanised. JSON is the contract and the default; `--text` gains a column. `docs/spec/cli-output.md` schemas are updated for both commands.
 
@@ -141,6 +153,8 @@ Recovery is unchanged and already works: **adopt** the claim by presenting its b
 - **Unit** — `claimActivity` before, after, and exactly at the threshold boundary.
 - **Property** — `idleFor` monotonic in `now`; `kind === 'idle'` iff `idleFor > idleAfter`; total over any valid ISO input.
 - **Core integration** — progress recorded on successful claim mutation; **not** recorded on `status --claim-id` (the anti-fooling invariant separating this from the rejected verify-path design); **not** recorded on failed mutation; a session-write failure neither fails nor masks the committed mutation (RD-102-shaped).
+- **Drift guard** — fail-closed, modelled on `run-option.test.ts:50`: enumerate every claim-authenticated mutating command (`pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort`) and assert each records progress, so a command added later cannot silently miss it.
+- **Corrupt timestamp** — an unparseable `lastProgressAt` throws rather than classifying as `progressing` (the fail-open case).
 - **Adoption** — a fresh session presenting the bearer on a mutating command clears idle; presenting it on `status --claim-id` does not.
 - **Structural guard** — a session whose claims lack `lastProgressAt` is rejected with the finish/prune/restart error, not migrated.
 - **CLI** — JSON path first per testing conventions, `--text` covered separately, for both `status` and `collect`.
@@ -154,15 +168,17 @@ This does not distinguish "working" from "gone" — that is unsolvable without a
 
 1. `ClaimRecord.lastProgressAt` exists, is required, and is set to `issuedAt` at claim creation.
 2. Sessions whose claims lack `lastProgressAt` are rejected with a finish/prune/restart error; no migration path exists.
-3. Successful claim-authenticated mutation refreshes `lastProgressAt`; failed mutation and `status --claim-id` do not.
-4. A command refreshes only the claim whose bearer it presented, never another claim.
-5. A failure to record progress never fails and never masks the committed mutation.
-6. `claimActivity` is pure, takes an injected `now`, and returns a discriminated union.
-7. `rundown status` and `rundown collect` surface `lastProgressAt`, `idleFor` (milliseconds in JSON), and `idle` for claimed/unresolved delegations, in JSON by default and `--text` when asked.
-8. `docs/spec/cli-output.md` documents both output schemas.
-9. Adopting a claim from a fresh session via a mutating command clears idle.
-10. No machine state, event, expiry, reclaim, or synthesized result is introduced.
-11. `claim-activity.ts` clears the scoped mutation gate via statically-imported tests.
+3. Every successful claim-authenticated mutation refreshes `lastProgressAt` — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort` — with no enumerated exceptions; failed mutation and `status --claim-id` do not.
+4. A fail-closed drift guard pins that set, so a mutating command added later cannot silently miss recording.
+5. A command refreshes only the claim whose bearer it presented, never another claim.
+6. An unparseable `lastProgressAt` throws rather than classifying as `progressing`.
+7. A failure to record progress never fails and never masks the committed mutation.
+8. `claimActivity` is pure, takes an injected `now`, and returns a discriminated union.
+9. `rundown status` and `rundown collect` surface `lastProgressAt`, `idleFor` (milliseconds in JSON), and `idle` for claimed/unresolved delegations, in JSON by default and `--text` when asked.
+10. `docs/spec/cli-output.md` documents both output schemas, including that `unresolvedChildren.length` may be less than `unresolved`.
+11. Adopting a claim from a fresh session via a mutating command clears idle.
+12. No machine state, event, expiry, reclaim, or synthesized result is introduced.
+13. `claim-activity.ts` clears the scoped mutation gate via statically-imported tests.
 
 ## References
 
