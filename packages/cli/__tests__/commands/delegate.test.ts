@@ -377,7 +377,7 @@ describe('delegate command', () => {
   });
 
   describe('delegate --run', () => {
-    it('renders CLAIM_GRANT_REQUIRED when a child claim tries to issue a parent delegation', async () => {
+    it('surfaces the terminal-claim problem when a closed child claim tries to issue (#586)', async () => {
       await setupDelegation();
       const issued = await runCliInProcess(
         await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
@@ -400,11 +400,15 @@ describe('delegate command', () => {
       expect(result.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
       expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      // `pass` drove the child terminal, so the claim resolves `terminal_claim`.
+      // The refusal names the claim's own problem rather than falling through to
+      // the active parent and reporting a missing grant for a run the caller
+      // never named (#586).
       expect(envelope).toEqual(
         expect.objectContaining({
           kind: 'error',
-          code: 'CLAIM_GRANT_REQUIRED',
-          error: expect.stringContaining('rundown delegate'),
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          error: expect.stringContaining('completed child runbook'),
         }),
       );
     });

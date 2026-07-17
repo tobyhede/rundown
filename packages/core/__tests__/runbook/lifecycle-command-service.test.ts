@@ -450,7 +450,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.parentRunId).toBe(runId);
     });
 
-    it("falls through to the active default when the claim's controlled run is terminal (#586)", async () => {
+    it('refuses a terminal claim rather than anchoring the active default (#586)', async () => {
       // The run `runId` is activated with a DELEGATE step and its run-control
       // claim, then driven terminal — so the claim resolves to `terminal_claim`,
       // NOT `claim`. A different run is the active default.
@@ -464,14 +464,29 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: runControlEvidence(runId),
       });
 
-      // The terminal claim does NOT divert the anchor: the seam falls through to
-      // the active default (`otherRunId`), and because the claim holds no
-      // `delegate-from-run` grant for it, the unchanged gate refuses. A mutant
-      // forcing `target.kind === 'claim'` true would anchor `runId` and produce a
-      // different outcome, so this assertion kills it.
-      expect(outcome.kind).toBe('refused');
-      if (outcome.kind !== 'refused') throw new Error('expected refused');
-      expect(outcome.policy.kind).toBe('claim_grant_required');
+      // The seam propagates the anchor's terminal refusal instead of anchoring
+      // the active default (`otherRunId`) and refusing about a run the caller
+      // never named. A mutant forcing the anchor's `claim` case true would
+      // anchor the terminal `runId` and issue, so this assertion kills it.
+      expect(outcome.kind).toBe('terminal_claim');
+      if (outcome.kind !== 'terminal_claim') throw new Error('expected terminal_claim');
+      expect(outcome.lifecycle).toBe('completed');
+    });
+
+    it('refuses a stale (nonexistent) claim rather than anchoring the active default (#586)', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const unknownClaimId = assertClaimId(
+        'rdclm_99999999999999999999999999999999_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+      );
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'claim_bearer', claimId: unknownClaimId },
+      });
+
+      expect(outcome.kind).toBe('stale_claim');
+      if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
+      expect(outcome.message).toContain('does not exist');
     });
 
     it('returns the canonical persisted child ref (not the authored alias) and matches the echo', async () => {
@@ -1480,6 +1495,11 @@ describe('RunbookLifecycleCommandService', () => {
         });
 
         expect(outcome.kind).toBe('error');
+        // Without the code, any error — including an unrelated throw — satisfies
+        // this test; the point is that the delegation resolver retains ownership
+        // of RD-801 (step not found) for the unparsable `--step` target.
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-801');
       });
 
       it('refuses inferred retry when the active cursor disappears during lock acquisition', async () => {

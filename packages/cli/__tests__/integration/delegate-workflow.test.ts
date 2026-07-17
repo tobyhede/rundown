@@ -559,6 +559,28 @@ describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
     expect(action).not.toBeNull();
     expect(action!.parent_run_id).toBe(parentRunId);
   }, 20_000);
+
+  it('surfaces the claim problem, not a grant refusal, for a stale claim (#586)', async () => {
+    await startForParentThenOther();
+    const unknownClaimId =
+      'rdclm_99999999999999999999999999999999_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_';
+
+    const result = await runCliInProcess(
+      ['delegate', '--step', '1.1', '--claim-id', unknownClaimId],
+      workspace,
+    );
+
+    // Before this fix the anchor discarded the claim's diagnosis and anchored the
+    // active default, so the refusal was about a run the operator never named:
+    // here ACTOR_CONTEXT_REQUIRED — the bare-invocation message telling the caller
+    // to "Pass --claim-id", which they just did. The pre-fix code varies by why the
+    // claim failed, so only the post-fix envelope is asserted.
+    expect(result.exitCode).not.toBe(0);
+    const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+    expect(payload.code).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
+    // The load-bearing assertion: the operator is told what is actually wrong.
+    expect(payload.error).toContain('does not exist');
+  }, 20_000);
 });
 
 describe('DELEGATE manual issuance requires authored DELEGATE annotation', () => {

@@ -42,6 +42,7 @@ import {
 import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
+  renderStaleClaimRefusal,
 } from '../helpers/refusal-renderers.js';
 import type {
   ResolveIssuanceAnchorOptions,
@@ -328,6 +329,15 @@ export function registerDelegateCommand(program: Command): void {
                 output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
                 process.exitCode = 1;
                 break;
+              case 'stale_claim':
+              case 'terminal_claim':
+                // Core owns the cause-specific message (shared with pass/fail).
+                // Both render as CLAIMED_RUNBOOK_UNAVAILABLE: delegate has no
+                // confirm/conflict notion for a terminal claim — there is no
+                // expected result to reconcile a lifecycle against.
+                renderStaleClaimRefusal(output, outcome.message);
+                process.exitCode = 1;
+                break;
               case 'run_target_mismatch':
                 // Fail-closed: `--run` named a run that does not own the retry
                 // token. Core owns the message (no owning-run-id echo).
@@ -428,6 +438,15 @@ export function registerDelegateCommand(program: Command): void {
             case 'unknown_run':
               // Core owns the cause-specific message (shared with pass/complete).
               output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+              process.exitCode = 1;
+              break;
+            case 'stale_claim':
+            case 'terminal_claim':
+              // Core owns the cause-specific message (shared with pass/fail).
+              // Both render as CLAIMED_RUNBOOK_UNAVAILABLE: delegate has no
+              // confirm/conflict notion for a terminal claim — there is no
+              // expected result to reconcile a lifecycle against.
+              renderStaleClaimRefusal(output, outcome.message);
               process.exitCode = 1;
               break;
             case 'invalid_index':

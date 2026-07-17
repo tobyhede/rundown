@@ -72,8 +72,16 @@ function fakeReader(options: {
       }
       return { kind: 'running', state };
     },
-    async getActiveForClaimId(_claimId) {
-      return options.claimResolution ?? { status: 'missing', claimId: _claimId };
+    async getActiveForClaimId(_claimId, readOptions) {
+      const resolution = options.claimResolution ?? { status: 'missing', claimId: _claimId };
+      // Mirror the real head's visibility rule rather than ignoring the option: a
+      // stashed claim is only visible when the caller asks for it. Without this,
+      // no fake input could distinguish `allowStashed` on from off, so the
+      // anchor's deliberate choice to leave it off would be unpinned.
+      if (resolution.status === 'unlinked' && readOptions.includeStashed) {
+        return claimed();
+      }
+      return resolution;
     },
     async verifyClaimId() {
       return { status: 'missing', claimKey: claimRecord.claimKey };
@@ -190,7 +198,7 @@ describe('resolveIssuanceAnchor', () => {
       expect(anchored.state.id).toBe(anchorRunId);
     });
 
-    it('falls through to the active default for a terminal claim', async () => {
+    it('refuses terminal_claim rather than anchoring the active default (#586)', async () => {
       const reader = fakeReader({
         active: activeRun,
         claimResolution: {
@@ -203,12 +211,34 @@ describe('resolveIssuanceAnchor', () => {
 
       const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
-      expect(anchored.kind).toBe('ok');
-      if (anchored.kind !== 'ok') throw new Error('expected ok');
-      expect(anchored.state.id).toBe(activeRunId);
+      expect(anchored.kind).toBe('terminal_claim');
+      if (anchored.kind !== 'terminal_claim') throw new Error('expected terminal_claim');
+      expect(anchored.lifecycle).toBe('completed');
+      expect(anchored.message).toContain('completed');
     });
 
-    it('falls through to the active default for a missing (stale) claim', async () => {
+    it('carries the stopped lifecycle through, not a hardcoded completed (#586)', async () => {
+      // The only other terminal case is `completed`, so without this a constant
+      // `lifecycle: 'completed'` in the anchor would pass every test.
+      const reader = fakeReader({
+        active: activeRun,
+        claimResolution: {
+          status: 'terminal',
+          claim: verifiedClaim,
+          state: { ...anchorRun, lifecycle: 'stopped' },
+          lifecycle: 'stopped',
+        },
+      });
+
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
+
+      expect(anchored.kind).toBe('terminal_claim');
+      if (anchored.kind !== 'terminal_claim') throw new Error('expected terminal_claim');
+      expect(anchored.lifecycle).toBe('stopped');
+      expect(anchored.message).toContain('stopped');
+    });
+
+    it('refuses stale_claim rather than anchoring the active default (#586)', async () => {
       const reader = fakeReader({
         active: activeRun,
         claimResolution: { status: 'missing', claimId },
@@ -216,16 +246,17 @@ describe('resolveIssuanceAnchor', () => {
 
       const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
-      expect(anchored.kind).toBe('ok');
-      if (anchored.kind !== 'ok') throw new Error('expected ok');
-      expect(anchored.state.id).toBe(activeRunId);
+      expect(anchored.kind).toBe('stale_claim');
+      if (anchored.kind !== 'stale_claim') throw new Error('expected stale_claim');
+      expect(anchored.message).toContain('does not exist');
     });
 
-    it('falls through to the active default for a stashed claim', async () => {
+    it('refuses a stashed claim with its actionable message (#586)', async () => {
       // The claim head is consulted WITHOUT `allowStashed`, so a stashed child
-      // never anchors here — it falls through and the unchanged authorization
-      // gate refuses. Pins the deliberate visibility choice: flipping
-      // `includeStashed` on would anchor the stashed run instead.
+      // never anchors here. Rather than discarding that diagnosis, the anchor
+      // surfaces it so the operator learns what to actually do. Also pins the
+      // visibility choice: flipping `allowStashed` on makes the fake resolve
+      // `claimed`, anchoring the stashed run and failing this assertion.
       const reader = fakeReader({
         active: activeRun,
         claimResolution: { status: 'unlinked', claim: verifiedClaim, reason: 'stashed' },
@@ -233,9 +264,19 @@ describe('resolveIssuanceAnchor', () => {
 
       const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
-      expect(anchored.kind).toBe('ok');
-      if (anchored.kind !== 'ok') throw new Error('expected ok');
-      expect(anchored.state.id).toBe(activeRunId);
+      expect(anchored.kind).toBe('stale_claim');
+      if (anchored.kind !== 'stale_claim') throw new Error('expected stale_claim');
+      expect(anchored.message).toContain('rundown pop');
+    });
+
+    it('refuses stale_claim even when no active default exists', async () => {
+      // The claim's own diagnosis outranks the absence of a fallback: `none`
+      // would tell the operator "no active runbook", which is not their problem.
+      const reader = fakeReader({ active: null, claimResolution: { status: 'missing', claimId } });
+
+      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
+
+      expect(anchored.kind).toBe('stale_claim');
     });
   });
 
@@ -254,14 +295,6 @@ describe('resolveIssuanceAnchor', () => {
       const reader = fakeReader({ active: null });
 
       const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: pluginEvidence });
-
-      expect(anchored.kind).toBe('none');
-    });
-
-    it('resolves none when a stale claim leaves no active default', async () => {
-      const reader = fakeReader({ active: null, claimResolution: { status: 'missing', claimId } });
-
-      const anchored = await resolveIssuanceAnchor(reader, { callerEvidence: bearerEvidence });
 
       expect(anchored.kind).toBe('none');
     });

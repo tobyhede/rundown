@@ -358,6 +358,33 @@ export type DelegationIssuanceOutcome =
       /** Operator-facing refusal message. */
       readonly message: string;
     }
+  | {
+      /**
+       * Refusal: the presented bearer claim cannot anchor issuance because it is
+       * missing, invalid for this session, stashed, or points at missing child
+       * state. Carries the resolver's cause-specific message, already redacted
+       * to the claim key.
+       */
+      readonly kind: 'stale_claim';
+      /** Bearer claim id presented by the caller. */
+      readonly claimId: ClaimId;
+      /** Operator-facing refusal message from the shared claim resolution. */
+      readonly message: string;
+    }
+  | {
+      /**
+       * Refusal: the presented bearer claim points at a terminal child runbook.
+       * Unlike pass/fail there is no confirm/conflict split — delegate has no
+       * expected result to reconcile a lifecycle against.
+       */
+      readonly kind: 'terminal_claim';
+      /** Bearer claim id presented by the caller. */
+      readonly claimId: ClaimId;
+      /** Terminal lifecycle of the claim's controlled run. */
+      readonly lifecycle: 'completed' | 'stopped';
+      /** Operator-facing refusal message from the shared claim resolution. */
+      readonly message: string;
+    }
   | { readonly kind: 'invalid_index'; readonly message: string }
   | { readonly kind: 'retry_target_required' }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
@@ -902,7 +929,18 @@ export class RunbookLifecycleCommandService {
     // re-read, not this snapshot.
     const anchored = await this.#resolveIssuanceAnchor(input);
     if (anchored.kind !== 'ok') {
-      return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
+      switch (anchored.kind) {
+        case 'unknown_run':
+        case 'stale_claim':
+        case 'terminal_claim':
+          return anchored;
+        case 'none':
+          return { kind: 'no-active-runbook' };
+        default: {
+          const _exhaustive: never = anchored;
+          return _exhaustive;
+        }
+      }
     }
     const active = anchored.state;
     const activeId = active.id;
@@ -1148,10 +1186,20 @@ export class RunbookLifecycleCommandService {
     } else {
       const anchored = await this.#resolveIssuanceAnchor(input);
       if (anchored.kind !== 'ok') {
-        if (anchored.kind === 'unknown_run') return anchored;
-        return locator.kind === 'active'
-          ? { kind: 'retry_target_required' }
-          : { kind: 'no-active-runbook' };
+        switch (anchored.kind) {
+          case 'unknown_run':
+          case 'stale_claim':
+          case 'terminal_claim':
+            return anchored;
+          case 'none':
+            return locator.kind === 'active'
+              ? { kind: 'retry_target_required' }
+              : { kind: 'no-active-runbook' };
+          default: {
+            const _exhaustive: never = anchored;
+            return _exhaustive;
+          }
+        }
       }
       // Target identification only. Every state-dependent locator decision is
       // deferred until after this run's DelegationLock is held and its state is
