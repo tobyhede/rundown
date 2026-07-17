@@ -22,7 +22,7 @@ Ground truth from the current code:
 
 The cap is threaded as an **explicit `depth: number` argument**, not derived from `visited.size`. This is load-bearing: `visited.size` grows by one distinct id per level and **saturates** in a true cycle (a 2-node cycle parks at size 2 forever), so a size-based cap is parasitic on the visited check — if `visited.has` ever fails, a size cap does not bound the walk at all, and the two "independent" guards are really one. An explicit counter increments unconditionally per level, so each guard bounds the walk on its own. Same line count; the only cost is one more argument.
 
-**Decision 2 — cap value `64`, and why only *this* walk is capped.** Legitimate inline nesting is a runbook composing a child that composes a child: a handful of levels at most, and the linkage graph is a tree by construction (a parent stamps a child's `parentLinkage.parentRunId` at launch, always pointing at an already-existing ancestor). `64` is ~2 orders of magnitude of headroom over any real chain while bounding worst-case side effects to 64 releases/reloads. It is deliberately not tuned to the JS stack limit — the constraint being bounded is I/O work per trip, not frame count.
+**Decision 2 — cap value `64`, and why only *this* walk is capped.** Legitimate inline nesting is a runbook composing a child that composes a child: a handful of levels at most, and the linkage graph is a tree by construction (a parent stamps a child's `parentLinkage.parentRunId` at launch, always pointing at an already-existing ancestor). `64` is ~2 orders of magnitude of headroom over any real chain while bounding worst-case side effects to 63 advances/releases/reloads — the guard trips at depth 64 *before* that run propagates anything, so the walk visits 64 runs but only 63 of them advance (pinned: `advanceInlineParent` is called `MAX_INLINE_PROPAGATION_CHAIN - 1` times). It is deliberately not tuned to the JS stack limit — the constraint being bounded is I/O work per trip, not frame count.
 
 `SessionService.resolveActiveInlineForceTerminalPlan` walks the same graph (`session-service.ts:777-796`) with a visited set and **no** depth cap, and this plan deliberately leaves it that way — `MAX_INLINE_PROPAGATION_CHAIN` is **not** exported to it. The two walks have different hazards: that one is an **iterative** `while` loop (no stack growth) that is documented read-only (`:755`) and performs **no writes per level** — one `manager.load` and an array push. Its visited set already terminates it on any back-edge; its only unbounded case is an acyclic chain of N distinct ids, costing N reads, which is bounded by the number of runs actually on disk. This walk recurses (stack frames) and performs **advance + release + reload — writes — per level**, so an unbounded acyclic chain is unbounded *mutation*. Sharing a constant between them would imply a shared termination rule that does not exist; bounding the read-only walk is a separate, lower-priority call and is out of scope for #602.
 
@@ -282,9 +282,10 @@ Note the `visited`/`depth` bookkeeping survives release/reload because it is a r
  * of N DISTINCT run ids costs N advances + N releases + N reloads before it ends.
  * Legitimate inline nesting is a handful of levels (a runbook composing a child
  * that composes a child), so 64 leaves ~2 orders of magnitude of headroom while
- * capping worst-case side effects at 64. Exceeding it trips the same
- * `'linkage-cycle'` disposition — on a tree-by-construction graph, a 64-deep chain
- * is corruption of the same class.
+ * bounding worst-case side effects at 63 (the 64th run trips the guard BEFORE any
+ * side effect of its own, so 64 runs are visited but only 63 advance). Exceeding
+ * it trips the same `'linkage-cycle'` disposition — on a tree-by-construction
+ * graph, a 64-deep chain is corruption of the same class.
  *
  * Deliberately NOT shared with `SessionService.resolveActiveInlineForceTerminalPlan`
  * (`session-service.ts:777-796`), which walks the same graph ITERATIVELY, read-only,
