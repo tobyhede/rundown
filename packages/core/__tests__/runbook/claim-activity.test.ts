@@ -189,6 +189,45 @@ describe('claimActivity (#519)', () => {
     expect(message).toContain(makeClaimRecord().claimKey);
   });
 
+  it('rejects a CALENDAR-INVALID lastProgressAt rather than silently normalizing it (AC6)', () => {
+    // `Date.parse` does NOT reject impossible dates — it NORMALIZES them. Verified
+    // on Node 24: '2026-02-30T00:00:00.000Z' parses to 2026-03-02, and
+    // '2026-02-31' to 2026-03-03. So a corrupt record silently becomes a real
+    // instant up to two days away, and `idleFor` is computed from a date that was
+    // never written. That is the AC6 fail-open arriving through parser leniency
+    // instead of NaN: a dead claim can read not-idle. Corrupt persisted state is
+    // rejected, never interpreted — including when the parser is willing to guess.
+    for (const corrupt of [
+      '2026-02-30T00:00:00.000Z',
+      '2026-02-31T00:00:00.000Z',
+      '2026-04-31T00:00:00.000Z',
+      '2026-00-10T00:00:00.000Z',
+      '2026-01-32T00:00:00.000Z',
+    ]) {
+      expect(() => claimActivity(claimAt(corrupt), new Date(), ONE_HOUR)).toThrow(RundownError);
+    }
+  });
+
+  it('rejects a lastProgressAt with NO offset, which would be host-timezone dependent (AC6)', () => {
+    // `Date.parse('2026-07-16T00:00:00.000')` (no Z, no offset) is interpreted in
+    // the HOST timezone per ECMA-262, so the same persisted record would yield a
+    // different `idleFor` on two machines — an environment-dependent safety signal.
+    // The writer always emits `toISOString()` (Zulu), so an offsetless value is by
+    // definition not something this system wrote: reject it.
+    expect(() => claimActivity(claimAt('2026-07-16T00:00:00.000'), new Date(), ONE_HOUR)).toThrow(
+      RundownError,
+    );
+  });
+
+  it('rejects a non-ISO but Date.parse-able lastProgressAt (AC6)', () => {
+    // `Date.parse('March 5 2026')` succeeds via legacy fallback parsing, which is
+    // implementation-defined. `lastProgressAt` is an ISO timestamp by contract; a
+    // value only a lenient parser accepts is corrupt, not merely unusual.
+    for (const corrupt of ['March 5 2026', '07/16/2026', '2026-07-16 00:00:00']) {
+      expect(() => claimActivity(claimAt(corrupt), new Date(), ONE_HOUR)).toThrow(RundownError);
+    }
+  });
+
   it('rejects an Invalid Date `now` as a CALLER error, not as an unreadable record', () => {
     // A broken clock is a code bug, not corrupt persisted data. Two things must
     // hold, and both are load-bearing:

@@ -42,6 +42,65 @@ export interface ClaimActivity {
 }
 
 /**
+ * Strict RFC 3339 / ISO 8601 instant: `YYYY-MM-DDThh:mm:ss[.frac](Z|±hh:mm)`.
+ *
+ * An OFFSET IS MANDATORY. `Date.parse` reads a date-time with no offset in the
+ * HOST timezone (ECMA-262), so the same persisted record would derive a different
+ * `idleFor` on two machines — an environment-dependent safety signal. Every value
+ * this system writes comes from `toISOString()`, so an offsetless value is by
+ * definition not one it wrote.
+ */
+const ISO_INSTANT_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Parse a claim timestamp, rejecting anything the contract does not permit.
+ *
+ * `Date.parse` ALONE IS NOT ENOUGH, and the gap is not theoretical — verified on
+ * Node 24:
+ * - It NORMALIZES impossible calendar dates rather than rejecting them:
+ *   `2026-02-30T00:00:00.000Z` becomes 2026-03-02, `2026-02-31` becomes 2026-03-03.
+ *   A corrupt record silently becomes a real instant up to two days from what was
+ *   written, and `idleFor` is then computed from a date nothing ever recorded — so a
+ *   DEAD claim can read not-idle. That is the AC6 fail-open arriving through parser
+ *   leniency instead of `NaN`, and it is the failure this module exists to prevent.
+ * - It accepts implementation-defined legacy forms (`March 5 2026`, `07/16/2026`).
+ * - It reads offsetless date-times in the host timezone (see {@link ISO_INSTANT_PATTERN}).
+ *
+ * Calendar validity is checked from the LITERAL fields, never by round-tripping the
+ * parsed instant: with an offset such as `+10:00` the UTC date legitimately differs
+ * from the written date, so comparing normalized output would reject healthy records
+ * — the mirror-image failure of libelling a live claim as corrupt.
+ *
+ * @param value - Raw persisted `lastProgressAt`.
+ * @returns Milliseconds since the epoch, or `undefined` when `value` is not a valid
+ *   strict ISO instant.
+ */
+function parseIsoInstant(value: string): number | undefined {
+  const match = ISO_INSTANT_PATTERN.exec(value);
+  if (!match) {
+    return undefined;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) {
+    return undefined;
+  }
+  // Day 0 of the NEXT month is the last day of this one, so this is leap-year
+  // correct without a special case.
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/**
  * Classify a claim's activity at an injected point in time.
  *
  * Pure: no I/O and no clock read — `now` is injected, so this cannot drift with
@@ -63,7 +122,10 @@ export interface ClaimActivity {
  *   (rethrow, caller bug), anything else (rethrow) — with no message substring
  *   anywhere.
  * @throws {RundownError} `CLAIM_PROGRESS_UNREADABLE` when `record.lastProgressAt`
- *   is not a parseable ISO timestamp. Deliberate: `Date.parse` yields `NaN`, every
+ *   is not a strict ISO instant — unparseable, calendar-invalid (`2026-02-30`),
+ *   offsetless, or a legacy form only a lenient parser accepts. See
+ *   {@link parseIsoInstant}: `Date.parse` normalizes impossible dates rather than
+ *   rejecting them, which is the same fail-open one door down. Deliberate: every
  *   `NaN` comparison is false, so `idleFor > idleAfter` would be false and a DEAD
  *   claim would silently classify as progressing — a safety signal failing OPEN in
  *   exactly the case it exists to catch. Corrupt persisted state is rejected, never
@@ -89,8 +151,8 @@ export function claimActivity(
   if (Number.isNaN(now.getTime())) {
     throw new RangeError('claimActivity requires a valid `now`; received an Invalid Date');
   }
-  const lastProgress = Date.parse(record.lastProgressAt);
-  if (Number.isNaN(lastProgress)) {
+  const lastProgress = parseIsoInstant(record.lastProgressAt);
+  if (lastProgress === undefined) {
     // Via the factory, never `new RundownError`. The factory is also where the
     // render-visible context keys are chosen, so the key-list trap is solved in
     // exactly one place.
