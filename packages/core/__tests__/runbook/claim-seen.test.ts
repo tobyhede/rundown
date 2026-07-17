@@ -3,9 +3,19 @@ import fc from 'fast-check';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ResolvedStep } from '@rundown-org/parser';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { SessionLock } from '../../src/runbook/session-lock.js';
+import { RunbookActorService } from '../../src/runbook/actor-service.js';
+import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
+import {
+  RunbookLifecycleCommandService,
+  type LifecycleTerminalReleasePolicy,
+} from '../../src/runbook/lifecycle-command-service.js';
+import { DelegationLock } from '../../src/runbook/delegation-lock.js';
+import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
 import { sessionLockPath } from '../../src/paths.js';
 import { claimActivity, DEFAULT_IDLE_AFTER_MS } from '../../src/runbook/claim-activity.js';
@@ -272,6 +282,212 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     const delegated = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
     expect(delegated.claim.lastSeenAt).toBe(delegated.claim.issuedAt);
+  });
+});
+
+describe('claim-seen recording across mutating seams (#519)', () => {
+  let testDir: string;
+  let manager: RunbookStateManager;
+  let sessionService: SessionService;
+  let seam: RunbookLifecycleCommandService;
+  let runId: RunId;
+
+  /** Two base steps so a `pass` on step 1 CONTINUEs rather than driving terminal. */
+  const seamSteps: readonly ResolvedStep[] = [
+    {
+      kind: 'base',
+      name: '1',
+      description: 'one',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    },
+    {
+      kind: 'base',
+      name: '2',
+      description: 'two',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    },
+  ];
+  const startingStep = '1';
+  const releasePolicy: LifecycleTerminalReleasePolicy = {
+    onComplete: { releaseRunbook: true },
+    onStopped: { releaseRunbook: true },
+  };
+
+  beforeEach(async () => {
+    // Mirrors the plain-seam wiring in lifecycle-command-service.test.ts's
+    // `beforeEach` — the same real services, not doubles: these cases assert that
+    // a COMMITTED mutation records, which only a real seam can produce.
+    testDir = await mkdtemp(join(tmpdir(), 'claim-seen-seam-'));
+    manager = new RunbookStateManager(testDir);
+    const actorService = new RunbookActorService(manager);
+    const lifecycleService = new ExecutionLifecycleService(manager);
+    const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    sessionService = new SessionService(manager);
+    seam = new RunbookLifecycleCommandService({
+      sessionService,
+      actorService,
+      lifecycleService,
+      completionService,
+      loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
+      loadSteps: () => seamSteps,
+      resolveChildRunbook: async () => undefined,
+      persistIssuedSubstep: async () => {},
+      findDelegationByToken: async () => undefined,
+      delegationLock: new DelegationLock(testDir),
+      completionLock: new CompletionLock(testDir),
+    });
+    const state = await manager.create({ source: 'project', path: 'seam.md' }, mockRunbook, {
+      runbookPath: 'seam.md',
+    });
+    runId = state.id;
+    await sessionService.pushRunbook(runId);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it('records progress on a SUCCESSFUL claim-authenticated pass (AC3)', async () => {
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('applied');
+
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
+
+  it('does NOT record progress on `status --claim-id` — the anti-fooling invariant', async () => {
+    // THE load-bearing test of this change. `verifyClaimId` is the read-only path
+    // `status --claim-id` takes. If a bearer presentation refreshed the mark, a
+    // stuck child polling its own status would refresh forever and never report
+    // idle — a false negative on precisely the case #519 detects. This is why the
+    // "heartbeat on every verifyClaimId" design was rejected.
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const verified = await sessionService.verifyClaimId(claimId);
+    expect(verified.status).toBe('verified');
+
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(after).toBe(before);
+  });
+
+  it('does NOT record progress on a FAILED claim-authenticated mutation (AC3)', async () => {
+    // A child whose `pass` is refused proved it is alive but did NOT advance the
+    // run. `lastSeenAt` means "the run advanced at T", so a live-but-erroring
+    // child correctly reads as idle — a true positive worth surfacing.
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    // Drive the claim's run terminal so a further transition is refused.
+    await manager.updateWithState(runId, () => ({ lifecycle: 'completed' as const }));
+    const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).not.toBe('applied');
+
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(after).toBe(before);
+  });
+
+  it('a failed progress write neither fails nor masks the committed mutation (AC7, RD-102)', async () => {
+    const { claimId } = await sessionService.issueRunControlClaim(runId);
+    const saveSpy = jest
+      .spyOn(manager, 'saveSession')
+      .mockRejectedValue(new Error('session write exploded'));
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: releasePolicy,
+    });
+
+    // The run mutation COMMITTED under RunStateLock before the session write was
+    // ever attempted. The bookkeeping failure must be invisible here.
+    expect(outcome.kind).toBe('applied');
+    saveSpy.mockRestore();
+    const state = await manager.load(runId);
+    expect(state?.step).not.toBe(startingStep);
+  });
+
+  it('adoption self-heals: a fresh session mutating with the bearer clears idle (AC11)', async () => {
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    // Backdate the mark far past the threshold — the claim reads idle.
+    const session = await manager.loadSession();
+    session.claims[claim.claimKey] = {
+      ...session.claims[claim.claimKey],
+      lastSeenAt: '2020-01-01T00:00:00.000Z',
+    };
+    await manager.saveSession(session);
+    expect(
+      claimActivity(
+        (await manager.loadSession()).claims[claim.claimKey],
+        new Date(),
+        DEFAULT_IDLE_AFTER_MS,
+      ).idle,
+    ).toBe(true);
+
+    // A fresh session presenting the bearer on a MUTATING command genuinely is the
+    // new live holder making progress — so recovery is adoption, not reclamation.
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('applied');
+
+    expect(
+      claimActivity(
+        (await manager.loadSession()).claims[claim.claimKey],
+        new Date(),
+        DEFAULT_IDLE_AFTER_MS,
+      ).idle,
+    ).toBe(false);
+  });
+
+  it('adoption does NOT self-heal via `status --claim-id` (AC11)', async () => {
+    // Reading a claim advances nothing. Adoption via status alone must not clear idle.
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const session = await manager.loadSession();
+    session.claims[claim.claimKey] = {
+      ...session.claims[claim.claimKey],
+      lastSeenAt: '2020-01-01T00:00:00.000Z',
+    };
+    await manager.saveSession(session);
+
+    await new SessionService(new RunbookStateManager(testDir)).verifyClaimId(claimId);
+
+    expect(
+      claimActivity(
+        (await manager.loadSession()).claims[claim.claimKey],
+        new Date(),
+        DEFAULT_IDLE_AFTER_MS,
+      ).idle,
+    ).toBe(true);
   });
 });
 

@@ -895,6 +895,25 @@ export class RunbookLifecycleCommandService {
    *   `persistIssuedSubstep`.
    */
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
+    const outcome = await this.#issueDelegationInner(input);
+    // Only a COMMITTED issuance/retry advanced the run (#519). `already-delegated`
+    // is an echo of a prior issuance and commits nothing new, so it records nothing.
+    // Best-effort and last: `recordClaimSeen` never throws, so it cannot mask
+    // the committed issuance (RD-102).
+    if (
+      (outcome.kind === 'delegated' || outcome.kind === 'retried') &&
+      input.callerEvidence.kind === 'claim_bearer'
+    ) {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+    return outcome;
+  }
+
+  /**
+   * Issue, echo, or retry a delegation. The un-recorded body of
+   * {@link RunbookLifecycleCommandService.issueDelegation}.
+   */
+  async #issueDelegationInner(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
 
     // Target identification only — the anchor run's id (the `--run`-named
@@ -1525,7 +1544,22 @@ export class RunbookLifecycleCommandService {
     // frontend to resolve the target first (a redundant run-state read).
     const steps = await this.#deps.loadSteps(ready.state);
 
-    return this.#drive(input, steps, ready.state, terminalReleaseMode, guardOpenChildren);
+    const outcome = await this.#drive(
+      input,
+      steps,
+      ready.state,
+      terminalReleaseMode,
+      guardOpenChildren,
+    );
+    // Ordering is fixed: verify bearer -> authorize grant -> commit mutation ->
+    // best-effort record progress (#519). Recorded on SUCCESS, not on attempt: a
+    // child whose transition is refused proved it is alive but did not advance the
+    // run, and `lastSeenAt` means "the run advanced at T". `recordClaimSeen`
+    // never throws, so this can never mask the committed transition (RD-102).
+    if (outcome.kind === 'applied' && input.callerEvidence.kind === 'claim_bearer') {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+    return outcome;
   }
 
   /**
@@ -1539,6 +1573,28 @@ export class RunbookLifecycleCommandService {
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
   async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    const outcome = await this.#runTerminalInner(input);
+    // `applied_claim` / `applied_bare` are the committed-success members.
+    // `terminal_claim_confirmed` and `already_terminal` commit nothing new, so they
+    // record nothing — "recorded on success, not on attempt" applies to no-ops too.
+    //
+    // Recording on a claim-TERMINATING command is deliberate and not special-cased
+    // away: the write is redundant (the claim is leaving the reportable population)
+    // but harmless, and it buys a predicate with no exceptions to remember (#519).
+    if (
+      (outcome.kind === 'applied_claim' || outcome.kind === 'applied_bare') &&
+      input.callerEvidence.kind === 'claim_bearer'
+    ) {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+    return outcome;
+  }
+
+  /**
+   * Force a run (or an inline chain) terminal. The un-recorded body of
+   * {@link RunbookLifecycleCommandService.runTerminal}.
+   */
+  async #runTerminalInner(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
     // Bare (no `--claim-id` / `--run`) complete/stop on a *delegation*-exposed
     // run requires named authority. resolveCommandIntent only forces a bearer for
     // the open-claims / collection-pending clauses; the authored-DELEGATE,

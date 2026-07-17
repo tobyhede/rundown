@@ -48,6 +48,8 @@ export interface GotoContext {
   actorService: RunbookActorService;
   /** Session service for tracking active/stashed runbooks */
   sessionService: SessionService;
+  /** Bearer claim id presented via `--claim-id`, when the caller named one. */
+  claimId?: ClaimId;
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
@@ -190,6 +192,7 @@ export async function buildGotoContext(
       manager,
       actorService: createCliRunbookActorService(manager),
       sessionService,
+      ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
       state: outcome.state,
       steps: [...outcome.steps],
       cwd,
@@ -312,6 +315,17 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   });
   if (!syncResult) {
     return { ok: false, error: 'Failed to initialize runbook engine', code: 'ENGINE_INIT_FAILED' };
+  }
+
+  // The GOTO committed. Record the presented bearer's progress via the core
+  // SessionService API — best-effort, never throws, so it cannot mask the
+  // committed navigation (#519, RD-102). A failed sendAndSync above returned
+  // already: recorded on success, not on attempt. `resolveRunNavigation` is an
+  // authorization gate that mutates nothing, so this call site is the CLI
+  // dispatching into core, not re-implementing it; Task 5's drift guard is what
+  // makes that sanctioned rather than debt.
+  if (ctx.claimId !== undefined) {
+    await ctx.sessionService.recordClaimSeen(ctx.claimId);
   }
 
   output.action(

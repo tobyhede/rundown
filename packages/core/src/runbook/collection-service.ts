@@ -1,7 +1,7 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { verifiedClaimContext, type CallerEvidence } from './actor-context.js';
 import { claimCanReportDelegationResult } from './claim-id.js';
-import type { ClaimRecord, VerifiedClaim } from './claim-id.js';
+import type { ClaimId, ClaimRecord, VerifiedClaim } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -28,7 +28,7 @@ import {
   SENTINEL_ENTRY,
 } from './targeting.js';
 import { countNumberedSteps } from './step-utils.js';
-import type { ReleaseRunbookResult } from './session-service.js';
+import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
@@ -53,6 +53,15 @@ export interface CollectionSessionService extends CommandTargetReader {
     runbookId: RunId,
     options?: { readonly retainClaimsAsTerminal?: boolean },
   ): Promise<ReleaseRunbookResult>;
+
+  /**
+   * Record best-effort progress for a presented bearer claim after a committed
+   * collection. Never throws (#519).
+   *
+   * @param claimId - Bearer claim id the caller presented.
+   * @returns Typed recording outcome, not consumed by the collection seam.
+   */
+  recordClaimSeen(claimId: ClaimId): Promise<ClaimSeenRecordResult>;
 }
 
 /** Dependencies used by the core collection operation. */
@@ -445,6 +454,25 @@ async function projectAndConsumeReEntryFrontier(
   return { status: 'projected', observations };
 }
 
+/**
+ * Record the ORCHESTRATOR's own claim after a committed collection — the bearer
+ * this command presented — and NEVER the children's: a parent cannot vouch for a
+ * child's liveness and must not appear to (#519 AC5). Best-effort; the callee
+ * never throws, so it cannot mask the committed collection (RD-102).
+ *
+ * Called only after the collection has committed and outside any session-lock
+ * scope: `recordClaimSeen` self-acquires the session lock, which is not
+ * reentrant.
+ *
+ * @param input - The collect operation input carrying the caller's evidence.
+ */
+async function recordPresenterProgress(
+  input: CollectDelegationOutcomesOperationInput,
+): Promise<void> {
+  if (input.callerEvidence.kind !== 'claim_bearer') return;
+  await input.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+}
+
 async function applyCollection(
   input: CollectDelegationOutcomesOperationInput,
   scope: {
@@ -531,6 +559,7 @@ async function applyCollection(
       // Intentionally ignored — see best-effort note above.
     }
     const upward = await propagateCollectTerminalUpward(input, fresh, scope.claim);
+    await recordPresenterProgress(input);
     return {
       kind: 'collection_applied',
       targetRunId: input.targetState.id,
@@ -589,6 +618,7 @@ async function applyCollection(
     };
   }
 
+  await recordPresenterProgress(input);
   return {
     kind: 'collection_applied',
     targetRunId: input.targetState.id,

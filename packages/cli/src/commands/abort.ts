@@ -223,6 +223,21 @@ export function registerAbortCommand(program: Command): void {
             //     early throw skips this.)
             await _lockGuard.release();
 
+            // 9b. The cancellation COMMITTED above. Record the presented bearer's
+            //     progress via the core SessionService API — best-effort, never
+            //     throws, so it cannot mask the committed abort (#519, RD-102).
+            //     `AbortCommandService.authorizeAbortCommand` is an authorization
+            //     gate that mutates nothing, so the CLI dispatches into core here
+            //     rather than re-implementing it; the drift guard is the guarantee.
+            //     Recorded after the lock is released: the session lock is a
+            //     DIFFERENT lock, and taking it inside the delegation-lock scope
+            //     would nest two domain locks for a bookkeeping write. The
+            //     `already_cancelled` early return commits nothing new and
+            //     correctly records nothing.
+            if (claimTarget.claimId !== undefined) {
+              await sessionService.recordClaimSeen(claimTarget.claimId);
+            }
+
             // 10. Report-only: cleanup already happened inside the lock. Active
             //     children record explicit FAIL; terminal/missing children have
             //     stale outcome rows superseded. We do NOT drain, apply, or
