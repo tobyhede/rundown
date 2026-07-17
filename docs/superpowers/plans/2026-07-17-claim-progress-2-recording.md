@@ -94,10 +94,12 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **Mutation gate imports must be STATIC.** Per #541's lesson, `claim-activity.test.ts` must import `claim-activity.js` with a top-level static `import`, or Stryker's static related-tests graph will not see the module and it will score 0.00%.
 - **TSDoc on every exported symbol** (description, `@param`, `@returns`, `@throws`) per CLAUDE.md TSDoc Standards.
 - **Branch: cut `claim-progress-recording` fresh from an updated `main`** — do NOT reuse `claim-progress-idle-detection`. That branch carries plan 1's PR; once it merges (squash-merge especially, which rewrites the commits), continuing on it would re-propose plan-1 changes in plan 2's PR or conflict outright. The original single-plan draft said "Branch is `claim-progress-idle-detection`. Do not switch or create branches" because it was one PR; three sequential PRs need three branches. Start with:
+
   ```bash
   git checkout main && git pull            # plan 1 must already be merged
   git checkout -b claim-progress-recording
   ```
+
   Then do not switch or create further branches within this plan.
 
 ---

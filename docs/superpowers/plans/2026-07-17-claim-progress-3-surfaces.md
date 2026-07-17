@@ -36,7 +36,7 @@ This plan does not compile or pass without them. If any is missing, stop and fin
 
 - **From plan 1:** `claimActivity`, `ClaimActivity`, `DEFAULT_IDLE_AFTER_MS`, `isClaimProgressUnreadable()` (from `claim-activity.ts`), plus `DurationMs` and `assertDurationMs()` (from plan 1's separate `duration.ts` module) — all reachable from `@rundown-org/core`'s barrel. Task 6 **adds** `ChildActivity` to `claim-activity.ts`; plan 1 deliberately left it out because nothing narrowed it until now.
 - **From plan 1:** `ClaimRecord.lastProgressAt`, required. Both surfaces read it.
-- **From plan 2, and this is the one people miss:** the shared test fixtures from **Task 5 Step 0** — `setupParentWithChildren` exported from `test-utils.ts` (it is nested inside a `describe` in a zero-export `.test.ts` otherwise), `readSession` **retyped** so `claims` is `Record<string, ClaimRecord>` rather than `Record<string, unknown>`, and `backdateClaimProgress`. Without the retype, every test snippet in Tasks 6 and 7 is a compile error (`Date.parse(unknown)` is TS2345). Without the extraction, the imports do not resolve.
+- **From plan 2, and this is the one people miss:** the shared test fixtures from **Task 5 Step 0** — `setupParentWithChildren` exported from `test-utils.ts` (it is nested inside a `describe` in a zero-export `.test.ts` otherwise, and gains an explicit `workspace: TestWorkspace` first parameter in the process, having nothing to close over once extracted), `claimChild(workspace, token)` (wrapping the `claim` + `findActionOutput` pair that `delegate-workflow.test.ts:236-240` open-codes, returning the bearer `claim_id`), `readSession` **retyped** so `claims` is `Record<string, ClaimRecord>` rather than `Record<string, unknown>`, and `backdateClaimProgress`. Without the retype, every test snippet in Tasks 6 and 7 is a compile error (`Date.parse(unknown)` is TS2345). Without the extraction, the imports do not resolve.
 - **From plan 2:** recording actually happens at the eight call sites — otherwise a "not idle after a mutation" assertion here would pass or fail for reasons that have nothing to do with these surfaces.
 
 Verify before starting: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard` — expected PASS.
@@ -94,10 +94,12 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **Mutation gate imports must be STATIC.** Per #541's lesson, `claim-activity.test.ts` must import `claim-activity.js` with a top-level static `import`, or Stryker's static related-tests graph will not see the module and it will score 0.00%.
 - **TSDoc on every exported symbol** (description, `@param`, `@returns`, `@throws`) per CLAUDE.md TSDoc Standards.
 - **Branch: cut `claim-progress-surfaces` fresh from an updated `main`** — do NOT reuse `claim-progress-idle-detection` or `claim-progress-recording`. Both carry merged PRs; continuing on either would re-propose their changes here or conflict. The original single-plan draft said "Branch is `claim-progress-idle-detection`. Do not switch or create branches" because it was one PR; three sequential PRs need three branches. Start with:
+
   ```bash
   git checkout main && git pull            # plans 1 AND 2 must already be merged
   git checkout -b claim-progress-surfaces
   ```
+
   Then do not switch or create further branches within this plan.
 
 ---
@@ -144,7 +146,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `packages/core/src/runbook/claim-activity.ts` — add the `ChildActivity` read-boundary union (`known` | `unreadable`) beside `ClaimActivity`. **This** is the union that earns its keep: its members carry different data, so every consumer must narrow — unlike `ClaimActivity`, whose two-variant draft was a boolean in costume.
 - `packages/core/src/output/zod-schemas.ts:390-433` — `DelegationActivitySchema` (a `z.discriminatedUnion`, both members `.strict()`) + the optional `activity` field on `DelegationStatusEntrySchema` + the claimed-only refine.
 - `packages/core/src/runbook/command-policy.ts` — `UnresolvedChildActivity` (the collect union) and its plumbing onto the collect outcomes.
-- `packages/core/src/output/output-schemas.ts` — `UnresolvedChildActivitySchema` + `unresolvedChildren` on the collect response schemas (Task 7 Step 6).
+- `packages/cli/src/schemas/output-schemas.ts` — `UnresolvedChildActivitySchema` + `unresolvedChildren` on the collect response schemas (Task 7 Step 6).
 - `packages/core/src/runbook/collection-service.ts` — derive per child, contained per child.
 - `packages/cli/src/helpers/status-builder.ts:46-90`, `:275-283`, `:356-386` — the entry shape, `ActiveStatusOptions.activityByChildRunId`, and the delegations map. Build the activity map in the **same pass** as the existing `claimKeyByChildRunId` sort, or a `controlledRunId` collision can pair one claim's key with another claim's activity.
 - `packages/cli/src/services/renderers/text-renderer.ts:62-71` **and** `:296-314` — the renderer carries its **own** structural duplicate of the delegation entry shape at `:62-71`, independent of `status-builder.ts`, so the fields must be added in both or `--text` cannot see them. It is a **line** format, not a table: append to the line; "add a column with UPPERCASE headers" does not apply.
@@ -211,16 +213,24 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 Create `packages/cli/__tests__/commands/claim-idle-surfaces.test.ts`. JSON first per CLAUDE.md Testing Conventions.
 
-`setupParentWithChildren` and `backdateClaimProgress` come from `test-utils.ts` — **Task 5 Step 0 extracts the first and writes the second**, so if you are executing tasks out of order, do that step before this one. Do **not** import them from `delegate-workflow.test.ts`: `setupParentWithChildren` is nested inside that file's `describe` and the file has zero exports, so the import cannot resolve, and importing from a `.test.ts` would re-execute its whole suite inside this one.
+`setupParentWithChildren`, `claimChild`, and `backdateClaimProgress` come from `test-utils.ts` — **Task 5 Step 0 extracts the first and writes the other two**, so if you are executing tasks out of order, do that step before this one. Do **not** import them from `delegate-workflow.test.ts`: `setupParentWithChildren` is nested inside that file's `describe` and the file has zero exports, so the import cannot resolve, and importing from a `.test.ts` would re-execute its whole suite inside this one.
+
+Two consequences of that extraction, both easy to miss:
+
+- **`setupParentWithChildren` takes `workspace` as its first parameter once extracted.** Inside `delegate-workflow.test.ts` it closes over the suite's `workspace`; a `test-utils.ts` export has nothing to close over.
+- **`claimChild(workspace, token)` takes a TOKEN, not a substep id.** Tokens are what `setupParentWithChildren` returns (`token1` / `token2`, read off the `run` event frontier); nothing maps a substep id like `'1.1'` to a claim without re-reading that frontier. It wraps the two-line `claim` + `findActionOutput` dance that `delegate-workflow.test.ts:236-240` open-codes, and returns the bearer `claim_id`.
 
 ```typescript
 import { claimKeyFromBearer } from '@rundown-org/core';
 import { validateStatusOutput } from '../helpers/schema-validator.js';
 import {
   backdateClaimProgress,
+  claimChild,
+  createTestWorkspace,
   readSession,
   runCliInProcess,
   setupParentWithChildren,
+  type TestWorkspace,
 } from '../helpers/test-utils.js';
 
 /**
@@ -232,10 +242,24 @@ type WireActivity =
   | { kind: 'known'; lastProgressAt: string; idleFor: number; idle: boolean }
   | { kind: 'unreadable' };
 
+// FILE SCOPE, deliberately: Task 7 appends a second `describe` to this file and
+// needs the same binding. A `workspace` declared inside the describe below would
+// not be visible there, and re-declaring it per suite would be two temp dirs and
+// two cleanup paths for one fixture.
+let workspace: TestWorkspace;
+
+beforeEach(async () => {
+  workspace = await createTestWorkspace();
+});
+
+afterEach(async () => {
+  await workspace.cleanup();
+});
+
 describe('rundown status claim activity (#519)', () => {
   it('surfaces lastProgressAt, idleFor and idle on a claimed delegation (JSON)', async () => {
-    const { parentRunId } = await setupParentWithChildren();
-    const childClaim = await claimChild(workspace, '1.1');
+    const { parentRunId, token1 } = await setupParentWithChildren(workspace);
+    const childClaim = await claimChild(workspace, token1);
 
     const status = await runCliInProcess('status', workspace);
     expect(status.exitCode).toBe(0);
@@ -275,8 +299,8 @@ describe('rundown status claim activity (#519)', () => {
   });
 
   it('reports idle:true once lastProgressAt is older than the one-hour threshold (JSON)', async () => {
-    await setupParentWithChildren();
-    const childClaim = await claimChild(workspace, '1.1');
+    const { token1 } = await setupParentWithChildren(workspace);
+    const childClaim = await claimChild(workspace, token1);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim), '2020-01-01T00:00:00.000Z');
 
     const status = await runCliInProcess('status', workspace);
@@ -296,7 +320,7 @@ describe('rundown status claim activity (#519)', () => {
     // ABSENT is a distinct state from `unreadable`: nothing to assess vs. cannot be
     // assessed. Flattened into optionals these would be indistinguishable, which is
     // the reason the union reaches the wire.
-    await setupParentWithChildren();
+    await setupParentWithChildren(workspace);
 
     const status = await runCliInProcess('status', workspace);
 
@@ -314,9 +338,9 @@ describe('rundown status claim activity (#519)', () => {
     // reachable on disk. A boundary that caught around the whole join and returned
     // nothing would erase the healthy child too, and status would imply all is
     // well — strictly worse than the NaN comparison AC6 rejects.
-    await setupParentWithChildren();
-    const corruptChild = await claimChild(workspace, '1.1');
-    const healthyChild = await claimChild(workspace, '1.2');
+    const { token1, token2 } = await setupParentWithChildren(workspace);
+    const corruptChild = await claimChild(workspace, token1);
+    const healthyChild = await claimChild(workspace, token2);
     await backdateClaimProgress(workspace, claimKeyFromBearer(corruptChild), 'not-a-date');
     await backdateClaimProgress(workspace, claimKeyFromBearer(healthyChild), '2020-01-01T00:00:00.000Z');
 
@@ -345,9 +369,9 @@ describe('rundown status claim activity (#519)', () => {
     // thing an agent writes — would silently drop the corrupt child, the one most
     // worth checking. With the union, `kind` is present on EVERY reported activity,
     // so the same one-liner over `kind` catches both.
-    await setupParentWithChildren();
-    const corruptChild = await claimChild(workspace, '1.1');
-    const healthyChild = await claimChild(workspace, '1.2');
+    const { token1, token2 } = await setupParentWithChildren(workspace);
+    const corruptChild = await claimChild(workspace, token1);
+    const healthyChild = await claimChild(workspace, token2);
     await backdateClaimProgress(workspace, claimKeyFromBearer(corruptChild), 'not-a-date');
     await backdateClaimProgress(workspace, claimKeyFromBearer(healthyChild), '2020-01-01T00:00:00.000Z');
 
@@ -364,8 +388,8 @@ describe('rundown status claim activity (#519)', () => {
   });
 
   it('renders humanised idle time in --text', async () => {
-    await setupParentWithChildren();
-    const childClaim = await claimChild(workspace, '1.1');
+    const { token1 } = await setupParentWithChildren(workspace);
+    const childClaim = await claimChild(workspace, token1);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim), '2020-01-01T00:00:00.000Z');
 
     const status = await runCliInProcess('status --text', workspace);
@@ -382,8 +406,8 @@ describe('rundown status claim activity (#519)', () => {
   });
 
   it('renders the unreadable marker in --text', async () => {
-    await setupParentWithChildren();
-    const childClaim = await claimChild(workspace, '1.1');
+    const { token1 } = await setupParentWithChildren(workspace);
+    const childClaim = await claimChild(workspace, token1);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim), 'not-a-date');
 
     const status = await runCliInProcess('status --text', workspace);
@@ -583,11 +607,11 @@ pnpm --filter @rundown-org/cli exec stryker run \
 
 > **An earlier draft of this step claimed `pnpm run test:mutate:cli -- --mutate <file>` "works here" because `test:mutate:cli` has the trailing `--` that `test:mutate:core` lacks (`package.json:29`). That claim is FALSE — verified by running it:**
 >
-> ```
+> ```text
 > error: too many arguments for 'run'. Expected 1 argument but got 5.
 > ```
 >
-> The root script is already `pnpm --filter @rundown-org/cli test:mutate --`, so appending your own `--` yields a **doubled** `--` forwarded literally into Stryker's Commander, which then treats every flag as a positional operand. `run` accepts one. The trailing `--` in the script does not rescue the form; it is what breaks it. **This is also the form CLAUDE.md's Development Commands section documents — it is broken there too, and is worth a separate fix.**
+> The root script is already `pnpm --filter @rundown-org/cli test:mutate --`, so appending your own `--` yields a **doubled** `--` forwarded literally into Stryker's Commander, which then treats every flag as a positional operand. `run` accepts one. The trailing `--` in the script does not rescue the form; it is what breaks it. **CLAUDE.md's Development Commands section already documents this correctly** — it recommends the `exec` form and names this one as a known trap, so there is nothing to fix there.
 >
 > Paths are **package-relative** for the same reason as core's gate (see the Global Constraint): `pnpm --filter … exec` runs with cwd = `packages/cli`, and `packages/cli/stryker.config.mjs`'s own `mutate` array is `'src/**/*.ts'`. Verified working: `--mutate src/helpers/table-formatter.ts` reports `Instrumented 1 source file(s) with 47 mutant(s)`; the repo-relative form instruments **0** and exits 0.
 
@@ -929,6 +953,7 @@ git commit -m "feat(cli): surface claim idle activity on rundown status (#519)"
         })
       | (UnresolvedChildIdentity & { readonly kind: 'unreadable' });
     ```
+
   - `collection_applied` and `collection_frame_not_active` each gain `readonly unresolvedChildren: readonly UnresolvedChildActivity[]`.
 
 - [ ] **Step 1: Make the suite's test double able to express this, THEN write the failing core tests**
@@ -1328,7 +1353,35 @@ Do the same for the `collection_frame_not_active` arm (`renderCollectOutcome`, t
 
 - [ ] **Step 7: Write and run the CLI collect tests**
 
-Add to `packages/cli/__tests__/commands/claim-idle-surfaces.test.ts`:
+Add to `packages/cli/__tests__/commands/claim-idle-surfaces.test.ts` — the file Task 6 Step 1 created, so it already binds `workspace` at **file scope** (which is why Task 6 puts it there rather than inside its `describe` — this suite needs it too) and already imports `backdateClaimProgress` / `claimChild` / `setupParentWithChildren`. Two additions to make before the snippet below compiles:
+
+- **Add `findActionOutput` to the existing `test-utils.js` import.** It is real and exported (`test-utils.ts:658`), typed `findActionOutput<T>(stdout: string): T | null` — it just is not in Task 6's import list.
+- **Write the two setups as file-local helpers.** `setupParentWithOneReportedOneOpen(workspace)` and `setupParentWithTwoOpenChildren(workspace)` do not exist anywhere; both are thin compositions of `setupParentWithChildren` + `claimChild`, and both take `workspace` and return the bearer claims they mint (`childClaim11` / `childClaim12`):
+
+```typescript
+/** Parent with 1.1 claimed-and-passed and 1.2 claimed but still open. */
+async function setupParentWithOneReportedOneOpen(
+  workspace: TestWorkspace,
+): Promise<{ childClaim11: string; childClaim12: string }> {
+  const { token1, token2 } = await setupParentWithChildren(workspace);
+  const childClaim11 = await claimChild(workspace, token1);
+  const childClaim12 = await claimChild(workspace, token2);
+  // 1.1 reports; 1.2 is left open so it is the one `collect` reports as unresolved.
+  await runCliInProcess(['pass', '--claim-id', childClaim11], workspace);
+  return { childClaim11, childClaim12 };
+}
+
+/** Parent with BOTH children claimed and neither reported. */
+async function setupParentWithTwoOpenChildren(
+  workspace: TestWorkspace,
+): Promise<{ childClaim11: string; childClaim12: string }> {
+  const { token1, token2 } = await setupParentWithChildren(workspace);
+  return {
+    childClaim11: await claimChild(workspace, token1),
+    childClaim12: await claimChild(workspace, token2),
+  };
+}
+```
 
 ```typescript
 /**
@@ -1349,7 +1402,7 @@ type WireUnresolvedChild =
 describe('rundown collect claim activity (#519)', () => {
   it('reports each unresolved child with lastProgressAt, idleFor and idle (JSON)', async () => {
     // Parent with two delegated children; 1.1 reports, 1.2 stays open and idle.
-    const { childClaim12 } = await setupParentWithOneReportedOneOpen();
+    const { childClaim12 } = await setupParentWithOneReportedOneOpen(workspace);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim12), '2020-01-01T00:00:00.000Z');
 
     const collected = await runCliInProcess('collect', workspace);
@@ -1373,7 +1426,7 @@ describe('rundown collect claim activity (#519)', () => {
     // The CLI-boundary sibling of the core case: one unreadable child must not
     // erase the report. A list-level catch would return [] and tell the parent
     // nothing needs checking — the fail-open AC6 exists to reject.
-    const { childClaim11, childClaim12 } = await setupParentWithTwoOpenChildren();
+    const { childClaim11, childClaim12 } = await setupParentWithTwoOpenChildren(workspace);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim11), 'not-a-date');
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim12), '2020-01-01T00:00:00.000Z');
 
@@ -1400,7 +1453,7 @@ describe('rundown collect claim activity (#519)', () => {
     // entry, so one predicate over the discriminant catches both the idle child
     // and the one that cannot be assessed. Flat optionals would have let
     // `filter((c) => c.idle)` drop the corrupt child silently.
-    const { childClaim11, childClaim12 } = await setupParentWithTwoOpenChildren();
+    const { childClaim11, childClaim12 } = await setupParentWithTwoOpenChildren(workspace);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim11), 'not-a-date');
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim12), '2020-01-01T00:00:00.000Z');
 
@@ -1424,7 +1477,7 @@ describe('rundown collect claim activity (#519)', () => {
   });
 
   it('renders an advisory idle line in --text', async () => {
-    const { childClaim12 } = await setupParentWithOneReportedOneOpen();
+    const { childClaim12 } = await setupParentWithOneReportedOneOpen(workspace);
     await backdateClaimProgress(workspace, claimKeyFromBearer(childClaim12), '2020-01-01T00:00:00.000Z');
 
     const collected = await runCliInProcess('collect --text', workspace);
@@ -1447,7 +1500,7 @@ Run: `pnpm --filter @rundown-org/core exec jest collection`
 
 Expected: PASS. `unresolvedChildren` is a required field on the two outcome members, so any core test constructing those members by literal is a compile error — fix the literal, do not make the field optional.
 
-> `setupParentWithTwoOpenChildren` is a sibling of the suite's existing parent setup — reuse `setupParentWithChildren` from `packages/cli/__tests__/integration/delegate-workflow.test.ts` and claim both children rather than writing a third fixture.
+> `setupParentWithTwoOpenChildren` is a sibling of the suite's existing parent setup — reuse the `setupParentWithChildren` that **Task 5 Step 0 extracts into `test-utils.ts`** (not the copy still nested in `delegate-workflow.test.ts`, which has no exports to import) and claim both children with `claimChild`, rather than writing a third fixture.
 
 - [ ] **Step 9: Commit**
 
@@ -1497,9 +1550,13 @@ An **absent** `activity` (nothing to assess) is a distinct state from
 activity, one predicate covers both children worth checking:
 `d.activity && (d.activity.kind === 'unreadable' || d.activity.idle)`.
 
-`lastProgressAt` is refreshed only by a successful claim-authenticated
-**mutation** by that claim's own bearer — `rundown status --claim-id` deliberately does **not** refresh it, so
-a stuck child polling its own status cannot mask that it is idle. `idle` is
+`lastProgressAt` is refreshed only by a successful claim-authenticated command
+that **changes runbook workflow state**, run by that claim's own bearer. The
+predicate is workflow state, not "mutation": `rundown status --claim-id`
+deliberately does **not** refresh it, so a stuck child polling its own status
+cannot mask that it is idle, and `stash` / `pop` do **not** refresh it either —
+both are claim-authenticated mutations, but they change session targeting rather
+than workflow state. `idle` is
 `true` strictly when `idleFor` exceeds a one-hour threshold; exactly at the
 threshold is not idle.
 

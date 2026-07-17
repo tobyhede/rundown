@@ -412,9 +412,10 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     --testFiles __tests__/helpers/table-formatter.test.ts
   ```
 
-  Both obvious alternatives fail, and **both fail in ways that look like
-  success** — check the `Instrumented N source file(s) with M mutant(s)` line
-  before trusting any score:
+  Both obvious alternatives are unsafe, in different ways: the first fails
+  **loudly**, the second **silently looks like success**. Check the
+  `Instrumented N source file(s) with M mutant(s)` line before trusting any
+  score:
   - `pnpm run test:mutate:<pkg> -- --mutate <file>` dies on
     `error: too many arguments for 'run'` (the script's own trailing `--`
     doubles with yours and Stryker's Commander reads every flag as a

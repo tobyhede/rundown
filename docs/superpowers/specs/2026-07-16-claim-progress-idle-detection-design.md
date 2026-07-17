@@ -156,7 +156,7 @@ This path is reachable, not hypothetical: `z.string().min(1)` admits `'not-a-dat
 
 Both are read-only and derived at read. Nothing is persisted, no machine state is added, no events fire.
 
-**`rundown status`** — the delegations rows already join `claimKey` from #531 and already load `session.claims` (`status.ts:43-52`). Each claimed delegation row gains `lastProgressAt`, `idleFor`, and `idle`, or `activityUnreadable: true` for a corrupt record — never both, since an unassessable claim has no idle label to report.
+**`rundown status`** — the delegations rows already join `claimKey` from #531 and already load `session.claims` (`status.ts:43-52`). Each claimed delegation row gains an `activity` field carrying the same `ChildActivity` union defined above: a `known` member with `lastProgressAt` / `idleFor` / `idle`, or an `unreadable` member for a corrupt record — never both, since an unassessable claim has no idle label to report. The union reaches the wire on this surface exactly as it does on `collect`; it is never flattened into an `activityUnreadable` boolean plus optional fields, which would let a consumer read a missing `idle` as "not idle".
 
 **`rundown collect`** — already reports `unresolved` and is one-shot, not blocking. Each unresolved child carries the same activity data, sourced from `listOpenClaimsForParent` on `CommandTargetReader`, which already returns exactly the unresolved delegated children. A parent resuming after its child's turn therefore sees which children are not progressing without issuing a second command. Note this reports the *children's* activity; the orchestrator's own claim is refreshed by the collect itself, per Recording Progress.
 
