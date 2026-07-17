@@ -1109,17 +1109,6 @@ Error: Runbook file not found: missing.runbook.md
 }
 ```
 
-<!--
-  RUN_TARGET_MISMATCH is intentionally NOT documented here. It is emitted by
-  `rundown delegate --retry <token> --run <rd_…>`
-  (packages/cli/src/commands/delegate.ts, case 'run_target_mismatch') when the
-  selected run does not own the token, but it is
-  NOT registered in CLISymbolicErrorCodeValues (packages/core/src/output/zod-schemas.ts),
-  so its envelope fails ErrorCodeSchema / --schema validation. Documenting it would
-  document a schema-invalid envelope. Pending the follow-up enum-registration issue
-  (see the R2 plan, Open Question 1), it is deliberately left out.
--->
-
 ### Actor context required
 
 A bare mutating command (`pass`, `fail`, `goto`, `collect`, `complete`, `stop`,
@@ -1169,6 +1158,37 @@ Code: RUN_TARGET_UNAVAILABLE
   "error": "Run rd_9e725b142d81dabcefb9e04919568fcd is not part of this session's active stack.",
   "code": "RUN_TARGET_UNAVAILABLE",
   "command": "goto"
+}
+```
+
+### Run target mismatch
+
+`rundown delegate --retry <token> --run <rd_…>` where the `--run` id is a valid
+target but is **not** the run that owns the supplied delegation token. Distinct
+from `RUN_TARGET_UNAVAILABLE`: the named run may be a perfectly healthy, running
+member of the active stack — the refusal is about token ownership, not stack
+membership. Named authority is never silently discarded, so the retry is refused
+rather than redirected to the token's real owner.
+
+The message names only the caller-supplied id. It **never** echoes the run that
+actually owns the token (accident-proofing: the caller learns their `--run` is
+wrong without learning which run to name instead).
+
+**Text:**
+
+```text
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd does not own the supplied delegation token.
+Code: RUN_TARGET_MISMATCH
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd does not own the supplied delegation token.",
+  "code": "RUN_TARGET_MISMATCH",
+  "command": "delegate"
 }
 ```
 
