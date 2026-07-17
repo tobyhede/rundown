@@ -41,6 +41,15 @@ export function makeConfig({ sandboxed }) {
   // nothing to mutation coverage.
   const sandboxMetaTestIgnore = sandboxed ? ['\\.source-text\\.test\\.ts$'] : [];
 
+  // The scenario authoring lint reads the repo-root `runbooks/` tree, which the
+  // Stryker sandbox does not contain (only `packages/cli/` is copied in). It
+  // would find zero runbooks and fail its own no-vacuous-pass guard, breaking
+  // the dry run. It lints authored data, not `src/` behaviour, so it
+  // contributes nothing to mutation coverage. Skipping it here is preferable to
+  // giving the loader an ENOENT-returns-empty fallback, which would let the
+  // lint pass vacuously everywhere.
+  const sandboxDataLintIgnore = sandboxed ? ['scenario-authoring\\.test\\.ts$'] : [];
+
   return {
     testPathIgnorePatterns: sandboxed
       ? [
@@ -49,6 +58,7 @@ export function makeConfig({ sandboxed }) {
           'integration',
           'forced-terminal-boundary\\.test\\.ts$',
           ...sandboxMetaTestIgnore,
+          ...sandboxDataLintIgnore,
         ]
       : ['/node_modules/', '<rootDir>/../../.worktrees/', '/\\.stryker-tmp/'],
     modulePathIgnorePatterns: sandboxed

@@ -90,11 +90,14 @@ export {
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {
+  resolveClaimTarget,
   resolveCommandTarget,
   resolveMutationAuthority,
   resolveTerminalTarget,
   resolveTransitionTarget,
+  type ClaimTargetResolution,
   type CommandTargetResolution,
+  type UnknownRunRefusal,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
   type MutationAuthorityResolution,
@@ -103,6 +106,11 @@ export {
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
+export {
+  resolveIssuanceAnchor,
+  type IssuanceAnchorResolution,
+  type ResolveIssuanceAnchorOptions,
+} from './issuance-anchor.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
   verifiedClaimContext,
@@ -170,11 +178,15 @@ export {
 } from './collection-service.js';
 export {
   propagateTerminalChildUpward,
+  INLINE_PARENT_CYCLE_CODE,
+  MAX_INLINE_PROPAGATION_CHAIN,
   type AdvanceInlineParent,
   type AdvanceInlineParentInput,
   type AdvanceInlineParentOutcome,
   type InlineParentAdvanceSessionService,
   type InlineParentAdvanceStateReader,
+  type LinkageCycleTrip,
+  type OnLinkageCycle,
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
@@ -190,6 +202,7 @@ export {
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
+  type ExplicitDelegationTarget,
   type FindDelegationByToken,
   type ForceAbortLinkedChildCleanupResult,
   type LifecycleLoopDirective,

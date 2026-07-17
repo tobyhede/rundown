@@ -6,24 +6,13 @@ import {
 } from '../helpers/test-utils.js';
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractFileArtifactReferences, isExistingRegularArtifactFile } from '@rundown-org/core';
 import {
-  extractFileArtifactReferences,
-  isExistingRegularArtifactFile,
-  isNodeError,
-  getErrorMessage,
-} from '@rundown-org/core';
-import {
-  extractFrontmatter,
   parseRunbookDocument,
   resolvedStepHasSubsteps,
   type ResolvedStep,
 } from '@rundown-org/parser';
-import {
-  parseScenarios,
-  getEffectiveResult,
-  type Scenario,
-  type Scenarios,
-} from '../../src/schemas/scenarios.js';
+import { getEffectiveResult, type Scenario, type Scenarios } from '../../src/schemas/scenarios.js';
 import {
   executeCommandSequence,
   extractInputFileReferences,
@@ -34,17 +23,14 @@ import {
   matchArtifactAssertions,
   matchEnteredAssertions,
   matchStepAssertions,
-  substituteArtifactUris,
   formatArtifactAssertionDescription,
   formatEnteredAssertionDescription,
   formatErrorAssertionDescription,
   formatWarningAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
-import {
-  resolveCapturedArtifactFromManifest,
-  seedScenarioArtifacts,
-} from '../../src/helpers/scenario-artifacts.js';
+import { resolveCapturedArtifactFromManifest } from '../../src/helpers/scenario-artifacts.js';
+import { loadRunbookScenarioSources, RUNBOOKS_DIR } from '../helpers/scenario-sources.js';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { assertSafeRelativeArtifactPath } from '../../src/helpers/artifact-path.js';
 import { assertContainedPath } from '../../src/helpers/path-containment.js';
@@ -61,63 +47,30 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Centralized path to runbooks directory for all test operations
-const RUNBOOKS_DIR = join(__dirname, '..', '..', '..', '..', 'runbooks');
+// Discovery is shared with the static authoring lint
+// (__tests__/schemas/scenario-authoring.test.ts) so the two cannot disagree
+// about which runbooks exist. A runbook invisible to the loader is untested by
+// both, and that silence is the failure mode the lint exists to prevent.
+const scenarioSources = loadRunbookScenarioSources();
 
-/**
- * Recursively get all files in a directory synchronously.
- */
-function getFilesSync(dir: string): string[] {
-  const entries = readdirSync(dir);
-  const files: string[] = [];
-  for (const entry of entries) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      files.push(...getFilesSync(full));
-    } else {
-      files.push(full);
-    }
-  }
-  return files;
+// A runbook whose scenarios fail schema validation must stop this suite, not
+// vanish from it. Under the strict ScenarioSchema (#498) a retired `seed:` key
+// makes parsing fail, and the previous loader discarded `errors` — so an
+// invalid runbook silently stopped being executed while the suite still went
+// green. The authoring lint reports this properly under `verify`; this throw
+// stops the suite from under-reporting its own coverage in the meantime.
+const sourcesWithErrors = scenarioSources.filter((source) => source.errors.length > 0);
+if (sourcesWithErrors.length > 0) {
+  throw new Error(
+    `Runbooks with invalid scenarios (fix them; they would otherwise be silently skipped):\n${sourcesWithErrors
+      .map((source) => `  ${source.file}: ${source.errors.join('; ')}`)
+      .join('\n')}`,
+  );
 }
 
-/**
- * Load pattern files that have scenarios defined (synchronous for test registration).
- */
-function loadPatternsWithScenariosSync(): {
-  withScenarios: { file: string; scenarios: Scenarios }[];
-  allRunbookFiles: string[];
-} {
-  let allFiles: string[];
-  try {
-    allFiles = getFilesSync(RUNBOOKS_DIR);
-  } catch (err: unknown) {
-    if (isNodeError(err) && err.code === 'ENOENT') {
-      return { withScenarios: [], allRunbookFiles: [] };
-    }
-    console.warn(`Warning: failed to load patterns: ${getErrorMessage(err)}`);
-    return { withScenarios: [], allRunbookFiles: [] };
-  }
-  const withScenarios: { file: string; scenarios: Scenarios }[] = [];
-  const allRunbookFiles: string[] = [];
-
-  for (const filePath of allFiles) {
-    if (!filePath.endsWith('.runbook.md')) continue;
-    const relativePath = filePath.substring(RUNBOOKS_DIR.length + 1);
-    allRunbookFiles.push(relativePath);
-    const content = readFileSync(filePath, 'utf-8');
-    const { frontmatter } = extractFrontmatter(content);
-    if (!frontmatter) continue;
-    const { scenarios } = parseScenarios(frontmatter);
-    if (scenarios && Object.keys(scenarios).length > 0) {
-      withScenarios.push({ file: relativePath, scenarios });
-    }
-  }
-
-  return { withScenarios, allRunbookFiles };
-}
-
-const { withScenarios: patternsWithScenarios, allRunbookFiles } = loadPatternsWithScenariosSync();
+const patternsWithScenarios: { file: string; scenarios: Scenarios }[] = scenarioSources
+  .filter((source) => source.scenarios && Object.keys(source.scenarios).length > 0)
+  .map((source) => ({ file: source.file, scenarios: source.scenarios! }));
 
 const allScenarios = patternsWithScenarios.flatMap(({ file, scenarios }) =>
   Object.entries(scenarios).map(([name, scenario]) => ({ file, name, scenario })),
@@ -333,9 +286,9 @@ function copyPatternWithDependencies(
   }
 }
 
-// `seedScenarioArtifacts` and `resolveCapturedArtifactFromManifest` are the
-// production scenario-harness helpers (also used by `rd scenario run`), imported
-// above from ../../src/helpers/scenario-artifacts.js so both harnesses share one
+// `resolveCapturedArtifactFromManifest` is the production scenario-harness
+// helper (also used by `rd scenario run`), imported above from
+// ../../src/helpers/scenario-artifacts.js so both harnesses share one
 // implementation.
 
 /**
@@ -347,12 +300,6 @@ async function executeScenario(
   workspace: TestWorkspace,
 ): Promise<void> {
   copyPatternWithDependencies(filename, scenario, workspace);
-
-  // Seed any artifacts declared by the scenario's `seed:` directive, then expose
-  // each seeded row's rd:// URI as a ${ARTIFACT:<name>} substitution token. This
-  // lets a boundary-channel scenario write `--artifacts PlanPath=${ARTIFACT:PlanPath}`.
-  const artifactUris = seedScenarioArtifacts(scenario, workspace);
-  const commands = scenario.commands.map((cmd) => substituteArtifactUris(cmd, artifactUris));
 
   const expectedResult = getEffectiveResult(scenario);
 
@@ -367,7 +314,7 @@ async function executeScenario(
   };
 
   const seqResult = await executeCommandSequence({
-    commands,
+    commands: scenario.commands,
     cwd: workspace.cwd,
     cliPath,
     quiet: true,
@@ -543,11 +490,11 @@ async function executeScenario(
  * Each scenario runs as its own test for better diagnostics and independent timeouts.
  */
 describe('scenario runner', () => {
-  it('every pattern runbook defines scenarios', () => {
-    const withScenarioFiles = new Set(patternsWithScenarios.map((p) => p.file));
-    const missing = allRunbookFiles.filter((f) => !withScenarioFiles.has(f));
-    expect(missing).toEqual([]);
-  });
+  // `every pattern runbook defines scenarios` moved to
+  // __tests__/schemas/scenario-authoring.test.ts. It is a static authoring
+  // invariant needing no execution, and it lived here — where `verify`'s
+  // --testPathIgnorePatterns='integration' cannot see it — which is exactly how
+  // it broke unnoticed during #498. This file owns execution only.
 
   if (allScenarios.length === 0) {
     it('has pattern scenarios to run', () => {

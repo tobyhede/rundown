@@ -20,6 +20,25 @@ import type { RunbookState } from './types.js';
 export type TransitionCommandName = 'pass' | 'fail';
 
 /**
+ * Refusal: the named `--run` id is not a running member of this session's
+ * default stack (unknown id, missing state file, or terminal lifecycle).
+ *
+ * The single structural declaration of this refusal. Every union that can carry
+ * a `--run` refusal — target resolution, transition targets, delegation
+ * issuance, the lifecycle outcomes — references this type rather than
+ * re-declaring the shape, so the members cannot drift apart. {@link
+ * unknownRunRefusal} is the matching single source of truth for the messages.
+ */
+export type UnknownRunRefusal = {
+  /** Discriminant. */
+  readonly kind: 'unknown_run';
+  /** Run id named by the caller. */
+  readonly runId: RunId;
+  /** Operator-facing refusal message. */
+  readonly message: string;
+};
+
+/**
  * Resolved target for any command that acts on the active or an explicitly
  * claimed runbook (goto, stop, complete, stash, status, artifact, collect).
  *
@@ -52,20 +71,18 @@ export type CommandTargetResolution =
       /** Resolved running state of the named run. */
       readonly state: RunbookState;
     }
-  | {
-      /**
-       * Refusal: the named `--run` id is not a running member of this session's
-       * default stack (unknown id, missing state file, or terminal lifecycle).
-       */
-      readonly kind: 'unknown_run';
-      /** Run id named by the caller. */
-      readonly runId: RunId;
-      /** Operator-facing refusal message. */
-      readonly message: string;
-    };
+  | UnknownRunRefusal;
 
-/** Claim-targeting outcomes only (no default-stack / open-children cases). */
-type ClaimTargetResolution = Extract<
+/**
+ * Claim-targeting outcomes only (no default-stack / open-children cases).
+ *
+ * Exhaustive for a presented bearer claim: {@link resolveClaimTarget} maps all
+ * six raw claim statuses onto exactly these three kinds. Consumers that resolve
+ * a claim and nothing else should depend on this narrow union rather than the
+ * wide {@link CommandTargetResolution}, so a `never` check makes forgetting a
+ * kind a compile error instead of a silent fall-through.
+ */
+export type ClaimTargetResolution = Extract<
   CommandTargetResolution,
   { kind: 'claim' | 'terminal_claim' | 'stale_claim' }
 >;
@@ -141,17 +158,7 @@ export type TransitionTargetResolution =
       /** Resolved running state of the named run. */
       readonly state: RunbookState;
     }
-  | {
-      /**
-       * Refusal: the named `--run` id is not a running member of this session's
-       * default stack (unknown id, missing state file, or terminal lifecycle).
-       */
-      readonly kind: 'unknown_run';
-      /** Run id named by the caller. */
-      readonly runId: RunId;
-      /** Operator-facing refusal message. */
-      readonly message: string;
-    };
+  | UnknownRunRefusal;
 
 /** Options for {@link resolveCommandTarget}. */
 export interface ResolveCommandTargetOptions {
@@ -258,7 +265,10 @@ export interface CommandTargetReader {
  *
  * Both public resolvers funnel claim-id targeting through here, so the mapping
  * from `getActiveForClaimId` statuses to user-facing outcomes is defined exactly
- * once.
+ * once. Callers that resolve only a claim (no `--run`, no default stack) should
+ * call this directly instead of {@link resolveCommandTarget}: it is the same
+ * seam, but its narrow {@link ClaimTargetResolution} return type lets them
+ * dispatch exhaustively.
  *
  * @param targetReader - Read-side dependency used to resolve the claim id
  * @param claimId - Explicit claim id from `--claim-id`
@@ -267,7 +277,7 @@ export interface CommandTargetReader {
  *   stashed child resolves as `claim` rather than `stale_claim`.
  * @returns Claim, terminal-claim, or stale-claim outcome
  */
-async function resolveClaimTarget(
+export async function resolveClaimTarget(
   targetReader: CommandTargetReader,
   claimId: ClaimId,
   options: { readonly includeStashed: boolean },
@@ -400,7 +410,7 @@ function claimAuthorizesRunMutation(claim: VerifiedClaim, state: RunbookState): 
 export function unknownRunRefusal(
   runId: RunId,
   member: Exclude<RunningStackMemberResolution, { kind: 'running' }>,
-): { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string } {
+): UnknownRunRefusal {
   switch (member.kind) {
     case 'not_on_stack':
       return {
@@ -437,8 +447,7 @@ async function resolveRunTarget(
   targetReader: CommandTargetReader,
   runId: RunId,
 ): Promise<
-  | { readonly kind: 'run'; readonly runId: RunId; readonly state: RunbookState }
-  | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
+  { readonly kind: 'run'; readonly runId: RunId; readonly state: RunbookState } | UnknownRunRefusal
 > {
   const member = await targetReader.resolveRunningStackMember(runId);
   if (member.kind !== 'running') {

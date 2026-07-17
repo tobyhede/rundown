@@ -8,6 +8,7 @@ import { resolveCommandIntent } from './command-policy.js';
 import {
   propagateTerminalChildUpward,
   type AdvanceInlineParent,
+  type OnLinkageCycle,
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
@@ -73,6 +74,13 @@ export interface RunbookCollectionServiceDependencies {
    * targets never invoke it (report-only).
    */
   readonly advanceInlineParent: AdvanceInlineParent;
+  /**
+   * Frontend-supplied diagnostic sink invoked when the upward-propagation guard
+   * trips on a corrupt linkage graph (#602). Required for the same reason
+   * `advanceInlineParent` is: the collect path can drive the seam, so it must be
+   * able to name the offending run to the operator.
+   */
+  readonly onLinkageCycle: OnLinkageCycle;
 }
 
 /** Explicit collection target resolved by a frontend adapter or another core service. */
@@ -636,15 +644,24 @@ async function propagateCollectTerminalUpward(
       sessionService: input.sessionService,
       completionService: input.completionService,
       advanceInlineParent: input.advanceInlineParent,
+      onLinkageCycle: input.onLinkageCycle,
     },
     terminalState,
     undefined,
   );
   if (linkage?.kind === 'inline') {
-    // Inline seam yields 'handled' | 'stopped' | 'blocked' | 'not-applicable';
-    // narrow away the delegation-only 'reported' / 'duplicate' without a cast.
+    // Inline seam yields 'handled' | 'stopped' | 'blocked' | 'linkage-cycle' |
+    // 'not-applicable'; narrow away the delegation-only 'reported' / 'duplicate'
+    // without a cast. `terminalInlineAdvance` has no 'linkage-cycle' member (it
+    // feeds the CLI's exit mapping only), so collapse the trip onto 'blocked' —
+    // the deliberate, fail-closed disposition documented on
+    // TerminalUpwardPropagationResult (#602).
     const inlineOutcome =
-      outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
+      outcome === 'reported' || outcome === 'duplicate'
+        ? 'not-applicable'
+        : outcome === 'linkage-cycle'
+          ? 'blocked'
+          : outcome;
     return { reportedTerminalOutcome: false, terminalInlineAdvance: inlineOutcome };
   }
   // 'recorded' → reported (true); 'duplicate'/'cancelled' → false. Preserves the

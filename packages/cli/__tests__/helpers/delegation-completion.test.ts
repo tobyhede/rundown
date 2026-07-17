@@ -19,6 +19,7 @@ import type {
   RunbookActorService as RunbookActorServiceType,
   SessionService as SessionServiceType,
   ExecutionLifecycleService as ExecutionLifecycleServiceType,
+  TerminalUpwardPropagationResult,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
@@ -47,8 +48,12 @@ const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>()
  * thin CLI adapters delegate the decision to this seam, so its mock is the sole
  * driver of adapter routing tests; the REAL seam logic is covered in
  * `packages/core/__tests__/runbook/inline-parent-advance.test.ts`.
+ *
+ * ALIASED from the core union rather than restated (#602): a hand-written copy
+ * silently rots when core gains a member, which is exactly the type pressure the
+ * seam's union is there to apply.
  */
-type SeamResult = 'handled' | 'stopped' | 'blocked' | 'reported' | 'duplicate' | 'not-applicable';
+type SeamResult = TerminalUpwardPropagationResult;
 
 // Mock @rundown-org/core. The report-only helper (Plan 5) constructs only
 // RunbookStateManager, ExecutionLifecycleService, and RunbookCompletionService;
@@ -193,7 +198,9 @@ const {
   reportTerminalToDelegatingRun,
   advanceParentForInlineChild,
   buildAdvanceInlineParent,
+  buildLinkageCycleDiagnostic,
   extractParentLinkage,
+  propagateChildTerminal,
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
   inlineAdvanceRequiresFailureExit,
@@ -244,7 +251,9 @@ function makeInlineLinkage(overrides: Partial<InlineLinkage> = {}): InlineLinkag
 interface MockOutput {
   flush: jest.Mock<() => void>;
   status: jest.Mock<(action: string, message?: string, data?: Record<string, unknown>) => void>;
-  error: jest.Mock<(message: string) => void>;
+  // Mirrors OutputEmitter.error's real (message, code, details) shape so the #602
+  // diagnostic's code + payload are type-checked at the assertion, not just matched.
+  error: jest.Mock<(message: string, code?: string, details?: Record<string, unknown>) => void>;
   warning: jest.Mock<(text: string) => void>;
 }
 
@@ -254,7 +263,7 @@ function makeOutput(): MockOutput & OutputEmitter {
   return {
     flush: mockFn<() => void>(),
     status: mockFn<(action: string, message?: string, data?: Record<string, unknown>) => void>(),
-    error: mockFn<(message: string) => void>(),
+    error: mockFn<(message: string, code?: string, details?: Record<string, unknown>) => void>(),
     warning: mockFn<(text: string) => void>(),
   } as unknown as MockOutput & OutputEmitter;
 }
@@ -436,6 +445,17 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
     expect(result).toBe('blocked');
   });
 
+  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+
   it('maps a seam not-applicable result to not-applicable', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
@@ -560,6 +580,86 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     propagateTerminalChildUpward.mockResolvedValue('reported');
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('not-applicable');
+  });
+
+  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+});
+
+describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
+  beforeEach(() => {
+    propagateTerminalChildUpward.mockReset();
+  });
+
+  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    const result = await propagateChildTerminal(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+  });
+
+  it('still collapses a seam duplicate to reported (finding 2 regression)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue('duplicate');
+    const result = await propagateChildTerminal(childState, 'pass', '/test', output);
+    expect(result).toBe('reported');
+  });
+});
+
+describe('buildLinkageCycleDiagnostic (#602)', () => {
+  // The sink RENDERS; it does not compose. Core owns the message and code (the
+  // seam's own tests pin their text), so these assert pass-through + the run id
+  // each cause carries under its own field name.
+  it('renders core-composed repeat trip verbatim, naming the repeated run', () => {
+    const output = makeOutput();
+    buildLinkageCycleDiagnostic(output)({
+      cause: 'repeat',
+      repeatedRunId: CHILD_RUN_ID,
+      code: 'INLINE_PARENT_CYCLE',
+      message: 'core-composed repeat message',
+    });
+    expect(output.error).toHaveBeenCalledWith(
+      'core-composed repeat message',
+      'INLINE_PARENT_CYCLE',
+      {
+        cause: 'repeat',
+        runId: CHILD_RUN_ID,
+      },
+    );
+  });
+
+  it('renders core-composed depth trip verbatim, naming the deepest run walked', () => {
+    const output = makeOutput();
+    buildLinkageCycleDiagnostic(output)({
+      cause: 'depth',
+      deepestRunId: CHILD_RUN_ID,
+      code: 'INLINE_PARENT_CYCLE',
+      message: 'core-composed depth message',
+    });
+    expect(output.error).toHaveBeenCalledWith(
+      'core-composed depth message',
+      'INLINE_PARENT_CYCLE',
+      {
+        cause: 'depth',
+        runId: CHILD_RUN_ID,
+      },
+    );
   });
 });
 

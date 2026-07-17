@@ -3,12 +3,10 @@ name: artifact-status-vars
 description: Status vars include artifact-record variables
 tags: [test, artifacts]
 scenarios:
-  status-shows-artifact-vars:
-    description: rd status surfaces ARTIFACTS variables as local path strings
+  artifact-var-in-scope-completes:
+    description: A produced artifact variable stays in scope across steps and the runbook completes.
     commands:
       - rd run artifact-status-vars.runbook.md --allow-all
-      - >-
-        node -e 'const { execFileSync } = require("node:child_process"); const status = JSON.parse(execFileSync("rd", ["status"], { encoding: "utf8" })); const value = status.vars && status.vars.PlanPath; if (typeof value !== "string" || value.startsWith("rd://") || !value.includes("/.rundown/work/") || !value.endsWith("/plan.json")) { console.error(JSON.stringify(status.vars)); process.exit(1); }'
       - rd complete
     expect:
       result: COMPLETE
@@ -32,4 +30,8 @@ printf '{"plan":"ok"}' > "{{ path PlanPath }}"
 - PASS COMPLETE
 - FAIL STOP
 
-The active status output should include `PlanPath`.
+The active status output should include `PlanPath`, rendered as a local path
+rather than an `rd://` URI. That payload assertion lives in
+`packages/cli/__tests__/integration/artifact-variable-inputs.test.ts` — scenario
+`commands:` assert through the scenario schema, never by inspecting CLI output
+in a shell wrapper.

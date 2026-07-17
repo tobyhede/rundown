@@ -15,6 +15,7 @@ import {
   assertRunId,
   type AdvanceInlineParent,
   type CallerEvidence,
+  type LinkageCycleTrip,
   type RunbookState,
   type RunId,
   type ReleaseRunbookResult,
@@ -207,6 +208,11 @@ describe('RunbookCollectionService', () => {
       advanceInlineParent: jest
         .fn<AdvanceInlineParent>()
         .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
+      // Default fake: the linkage graphs these tests build are acyclic, so a
+      // tripped guard here means a false positive, not an expected diagnostic.
+      onLinkageCycle: () => {
+        throw new Error('onLinkageCycle must not be called by this test');
+      },
     });
   });
 
@@ -1174,6 +1180,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1193,6 +1200,81 @@ describe('RunbookCollectionService', () => {
       expect(advanceInlineParent).toHaveBeenCalledTimes(1);
     });
 
+    it('collapses a self-linked (cyclic) inline target onto a blocked advance (#602)', async () => {
+      // The target's inline linkage points at ITSELF — corrupt persisted state.
+      // The seam's guard trips before any side effect, and collect maps the trip
+      // onto its fail-closed 'blocked' so the CLI exits non-zero.
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: { ...inlineLinkage, parentRunId: controlledRunId },
+      });
+      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent,
+        onLinkageCycle: () => {},
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.terminalInlineAdvance).toBe('blocked');
+        expect(outcome.reportedTerminalOutcome).toBe(false);
+      }
+      expect(advanceInlineParent).not.toHaveBeenCalled();
+    });
+
+    it('claim gate refuses a self-linked DELEGATION target BEFORE the #602 guard is reached', async () => {
+      // Why collect's delegation arm needs no linkage-cycle disposition of its
+      // own: it is unreachable. `claimCanReportDelegationResult` runs first, and
+      // `grantAllows`'s 'report-delegation-result' arm requires an EXACT match on
+      // grant.parentRunId === request.parentRunId (claim-id.ts) with no
+      // wildcards. Corrupting a linkage into a self-edge rewrites
+      // request.parentRunId, which then cannot match the grant minted at
+      // delegation time — so the gate denies and the seam never runs.
+      //
+      // Reaching the seam's delegation arm from collect would require forging the
+      // claim's grant to agree with the corrupted linkage — not corrupt state, a
+      // forged bearer. This test pins that ordering so nobody "fixes" the
+      // unreachable arm on the strength of reading the seam alone.
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: { ...delegationLinkage, parentRunId: controlledRunId },
+      });
+      const trips: LinkageCycleTrip[] = [];
+      const svc = new RunbookCollectionService({
+        manager,
+        actorService,
+        lifecycleService,
+        completionService,
+        sessionService,
+        advanceInlineParent: jest.fn<AdvanceInlineParent>(),
+        onLinkageCycle: (trip) => trips.push(trip),
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.reportedTerminalOutcome).toBe(false);
+      }
+      // The guard never ran: the claim gate is the prior refusal.
+      expect(trips).toEqual([]);
+    });
+
     it('reports report-only for a delegation-linked terminal target (claim gate honoured)', async () => {
       const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
       await manager.save(ancestor);
@@ -1207,6 +1289,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1245,6 +1328,7 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
+        onLinkageCycle: () => {},
       });
       const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
 

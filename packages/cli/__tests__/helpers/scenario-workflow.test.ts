@@ -112,7 +112,6 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   matchEnteredAssertions: jest.fn(),
   emitScenarioTiming: jest.fn(),
   createInProcessCommandExecutor: actualCommandSequence.createInProcessCommandExecutor,
-  substituteArtifactUris: actualCommandSequence.substituteArtifactUris,
   formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
   formatWarningAssertionDescription: actualCommandSequence.formatWarningAssertionDescription,
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
