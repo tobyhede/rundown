@@ -22,6 +22,7 @@ import {
   type ClaimRecord,
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 // RunId fixtures must be 32 lowercase hex chars (`/^rd_[a-f0-9]{32}$/`);
@@ -84,7 +85,7 @@ function pendingState(id = runIdA): RunbookState {
 
 /** Open claimed child of {@link runIdA}, used to arm the open-claims guard. */
 function openClaim(): ClaimRecord {
-  return {
+  return makeClaimRecord({
     claimKey,
     secretHash,
     controlledRunId: runIdB,
@@ -98,9 +99,7 @@ function openClaim(): ClaimRecord {
       parentEntry: 1,
     },
     grants: createRunControlGrants(runIdB),
-    issuedAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  };
+  });
 }
 
 const actorContextArb: fc.Arbitrary<ActorContext> = fc.oneof(

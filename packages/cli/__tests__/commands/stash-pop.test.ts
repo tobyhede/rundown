@@ -686,6 +686,7 @@ rd echo "hello"
           grants: createDelegatedChildGrants({ linkage }),
           issuedAt: '2026-04-28T00:00:00.000Z',
           updatedAt: '2026-04-28T00:00:00.000Z',
+          lastProgressAt: '2026-04-28T00:00:00.000Z',
         },
       },
     });

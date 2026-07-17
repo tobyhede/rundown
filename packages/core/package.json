@@ -17,6 +17,10 @@
     "./testing/effective-vars": {
       "import": "./dist/testing/effective-vars.js",
       "types": "./dist/testing/effective-vars.d.ts"
+    },
+    "./testing/claim-fixtures": {
+      "import": "./dist/testing/claim-fixtures.js",
+      "types": "./dist/testing/claim-fixtures.d.ts"
     }
   },
   "files": [

@@ -719,6 +719,7 @@ Do the thing.
               grants: createDelegatedChildGrants({ linkage }),
               issuedAt: '2026-07-03T00:00:00.000Z',
               updatedAt: '2026-07-03T00:00:00.000Z',
+              lastProgressAt: '2026-07-03T00:00:00.000Z',
             },
           },
         }),

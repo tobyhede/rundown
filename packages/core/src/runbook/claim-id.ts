@@ -101,6 +101,18 @@ export interface ClaimRecord {
   readonly issuedAt: string;
   /** ISO timestamp when this claim was last refreshed. */
   readonly updatedAt: string;
+  /**
+   * ISO timestamp when the holder last advanced the controlled run.
+   *
+   * REQUIRED. Deliberately NOT a reuse of `updatedAt`: that field means "this
+   * record was last written" (a generic write timestamp), and the day an
+   * unrelated claim write is added it would silently refresh the idle clock so a
+   * dead claim reads as live. One field, two meanings, is exactly what
+   * type-driven dispatch exists to prevent. Refreshed only by
+   * `SessionService.recordClaimProgress` after a successful claim-authenticated
+   * mutation (#519).
+   */
+  readonly lastProgressAt: string;
 }
 
 /** Claim record after bearer proof verification. */
@@ -415,6 +427,9 @@ export function createClaimRecord(input: {
     grants: input.grants,
     issuedAt: input.now,
     updatedAt: input.now,
+    // A brand-new claim has made no progress since issuance, so the idle clock
+    // starts at issuance (#519 AC1).
+    lastProgressAt: input.now,
   };
 }
 

@@ -23,6 +23,7 @@ import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import type { ResolvedRunbook } from '@rundown-org/parser';
 import { assertClaimLookupKey, assertClaimSecretHash } from '@rundown-org/core';
+import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import { assertVariant } from './assert-variant.js';
 import {
   brandDelegationTokenHashForTest,
@@ -54,7 +55,7 @@ const EXISTING_SESSION_CHILD_ID = brandRunIdForTest('rd_555555555555555555555555
 const NEW_CHILD_ID = brandRunIdForTest('rd_66666666666666666666666666666666');
 
 function claimRecord(childRunId: RunId, overrides: Record<string, unknown> = {}): ClaimRecord {
-  return {
+  return makeClaimRecord({
     claimKey: assertClaimLookupKey('rdclk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
     secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
     controlledRunId: childRunId,
@@ -68,10 +69,8 @@ function claimRecord(childRunId: RunId, overrides: Record<string, unknown> = {})
       parentEntry: 1,
     },
     grants: [],
-    issuedAt: '2026-02-27T10:00:00.000Z',
-    updatedAt: '2026-02-27T10:00:00.000Z',
     ...overrides,
-  };
+  });
 }
 
 function claimedRunbookResult(

@@ -7,6 +7,7 @@ import type {
   ClaimLookupKey,
   ClaimRecord,
   CommandTargetResolution,
+  DelegationTokenHash,
   FrameKey,
   LifecycleTransitionOutcome,
   RunId,
@@ -14,6 +15,7 @@ import type {
   TransitionObservationEvent,
 } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
+import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 // The unit-under-test (runSeamTransition, renderRefusal, renderApplied,
@@ -166,23 +168,20 @@ function makeOutput(json = true): MockOutput & OutputEmitter {
 }
 
 function claimRecord(): ClaimRecord {
-  return {
+  return makeClaimRecord({
     claimKey: TEST_CLAIM_KEY,
-    secretHash: `sha256:${'a'.repeat(64)}`,
     controlledRunId: CHILD_RUN_ID,
     delegation: {
       childRunId: CHILD_RUN_ID,
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: `sha256:${'a'.repeat(64)}` as DelegationTokenHash,
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       parentStep: '1',
-      parentFrameKey: '1',
+      parentFrameKey: '1' as FrameKey,
       parentEntry: 1,
     },
     grants: [],
-    issuedAt: '2026-07-02T00:00:00.000Z',
-    updatedAt: '2026-07-02T00:00:00.000Z',
-  } as unknown as ClaimRecord;
+  });
 }
 
 function makeState(overrides: Record<string, unknown> = {}): RunbookState {

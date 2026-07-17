@@ -776,6 +776,29 @@ export class RunbookStateManager {
       );
     }
 
+    // #519: `ClaimRecord.lastProgressAt` is required. A session persisted before
+    // it existed is INVALID, not upgradable — CLAUDE.md forbids runtime migration,
+    // fallback parsers, legacy field hydration, and warning-only adapters for
+    // persisted runbook state. This guard runs BEFORE `safeParse` purely to route
+    // this cause to the correct recovery path: Zod's failure message tells the user
+    // to delete session.json, while the sanctioned recovery here — as for the legacy
+    // ownership format above — is to finish or prune the active runbooks and restart.
+    const rawClaims = raw['claims'];
+    if (typeof rawClaims === 'object' && rawClaims !== null && !Array.isArray(rawClaims)) {
+      const missingProgress = Object.values(rawClaims as Record<string, unknown>).some(
+        (claim) =>
+          typeof claim === 'object' &&
+          claim !== null &&
+          !Array.isArray(claim) &&
+          !('lastProgressAt' in claim),
+      );
+      if (missingProgress) {
+        throw new Error(
+          'Legacy claim record format detected. Finish or prune active runbooks and restart.',
+        );
+      }
+    }
+
     const result = SessionDataSchema.safeParse(raw);
     if (!result.success) {
       throw new Error(

@@ -30,6 +30,7 @@ import type {
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { assertClaimLookupKey, assertClaimSecretHash } from '@rundown-org/core';
+import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { resolveVariables as resolveVariablesType } from '../../src/services/variable-discovery.js';
 import type {
   PreparedRunbook,
@@ -72,13 +73,11 @@ type ClaimRecordOverride = Partial<Omit<ClaimRecord, 'delegation'>> & {
 
 function claimRecord(childRunId: RunId, overrides: ClaimRecordOverride = {}): ClaimRecord {
   const { delegation: delegationOverrides, ...recordOverrides } = overrides;
-  return {
+  return makeClaimRecord({
     claimKey: assertClaimLookupKey('rdclk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
     secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
     controlledRunId: childRunId,
     grants: [],
-    issuedAt: '2026-02-27T10:00:00.000Z',
-    updatedAt: '2026-02-27T10:00:00.000Z',
     ...recordOverrides,
     delegation: {
       childRunId,
@@ -90,7 +89,7 @@ function claimRecord(childRunId: RunId, overrides: ClaimRecordOverride = {}): Cl
       parentEntry: 1,
       ...delegationOverrides,
     },
-  };
+  });
 }
 
 function claimedRunbookResult(

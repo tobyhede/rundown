@@ -8,6 +8,7 @@ import type {
   SessionService,
   StepId,
 } from '@rundown-org/core';
+import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import {
   brandDelegationTokenHashForTest,
@@ -644,9 +645,7 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
     loadSession.mockResolvedValue({
       defaultStack: [PARENT_RUNBOOK_ID],
       claims: {
-        rdclm_abcdefghijklmnopqrstu1: {
-          claimKey: 'rdclk_abcdefghijklmnopqrstu1',
-          secretHash: `sha256:${'a'.repeat(64)}`,
+        rdclm_abcdefghijklmnopqrstu1: makeClaimRecord({
           controlledRunId: CLAIMED_RUNBOOK_ID,
           delegation: {
             childRunId: CLAIMED_RUNBOOK_ID,
@@ -660,9 +659,7 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
             ),
           },
           grants: [],
-          issuedAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        } as unknown as never,
+        }),
       },
     });
 

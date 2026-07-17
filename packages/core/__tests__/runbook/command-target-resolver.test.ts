@@ -24,6 +24,7 @@ import {
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import {
@@ -68,7 +69,7 @@ const KNOWN_TRANSITION_KINDS = new Set([
 
 function makeClaim(id: ClaimId): ClaimRecord {
   const claimKey = assertClaimLookupKey(`rdclk_${id.slice('rdclm_'.length, 'rdclm_'.length + 32)}`);
-  return {
+  return makeClaimRecord({
     claimKey,
     secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
     controlledRunId: child.id,
@@ -94,9 +95,7 @@ function makeClaim(id: ClaimId): ClaimRecord {
         parentEntry: 1,
       },
     ],
-    issuedAt: '2026-05-01T00:00:00.000Z',
-    updatedAt: '2026-05-01T00:00:00.000Z',
-  };
+  });
 }
 
 function makeVerifiedClaim(record: ClaimRecord): VerifiedClaim {
