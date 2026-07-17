@@ -940,6 +940,19 @@ export class RunbookLifecycleCommandService {
     }
     await using _guard = lock.scope;
 
+    // Anchor resolution happened before the DelegationLock was acquired. A
+    // session mutation can stash or unlink the claim's controlled run in that
+    // window without taking this lock, so bearer/grant verification alone is
+    // insufficient here. Re-run the claim resolver before reading or mutating
+    // the anchored run.
+    //
+    // This NARROWS the window; it does not close it. `stashRunbook` serialises
+    // on SessionLock, not on this DelegationLock, so the two never mutually
+    // exclude — a stash can still land between this check and the write below.
+    // Closing it needs an atomic resolve-and-commit under SessionLock (#608).
+    const claimRefusal = await this.#revalidatePresentedClaim(input.callerEvidence);
+    if (claimRefusal) return claimRefusal;
+
     // Locked re-read: the authoritative state for every decision below.
     const state = await this.#deps.loadRun(activeId);
     if (!state) return { kind: 'no-active-runbook' };
@@ -1188,6 +1201,13 @@ export class RunbookLifecycleCommandService {
       return { kind: 'error', error: Errors.delegationLockTimeout(targetRunId) };
     }
     await using _guard = lock.scope;
+
+    // As on fresh issuance, the target may have become stashed or otherwise
+    // unlinked after pre-lock anchor/token resolution. Revalidate the presented
+    // claim's runnable relationship before the retry decision can mutate it.
+    // Narrows the same window the fresh path documents above; #608 closes it.
+    const claimRefusal = await this.#revalidatePresentedClaim(input.callerEvidence);
+    if (claimRefusal) return claimRefusal;
 
     const freshState = await this.#deps.loadRun(targetRunId);
     if (!freshState) {
@@ -2046,6 +2066,41 @@ export class RunbookLifecycleCommandService {
     options: ResolveIssuanceAnchorOptions,
   ): Promise<IssuanceAnchorResolution> {
     return resolveIssuanceAnchor(this.#deps.sessionService, options);
+  }
+
+  // Re-run the presented bearer's claim-target resolution without an explicit
+  // run selector. This deliberately checks the claim's own controlled-run
+  // relationship even for token retry (whose target id comes from the token):
+  // `verifyClaimId` proves only bearer authenticity, while this resolver also
+  // enforces stashed/linkage/terminal eligibility.
+  //
+  // Best-effort by construction: it reads session state that SessionLock — not
+  // the caller's DelegationLock — guards, so it cannot be atomic with the write
+  // that follows. It catches the (realistic) case where the mutation already
+  // committed, not a concurrent one racing it. See #608.
+  async #revalidatePresentedClaim(
+    callerEvidence: CallerEvidence,
+  ): Promise<
+    | Extract<IssuanceAnchorResolution, { readonly kind: 'stale_claim' | 'terminal_claim' }>
+    | undefined
+  > {
+    if (callerEvidence.kind !== 'claim_bearer') return undefined;
+
+    const resolution = await this.#resolveIssuanceAnchor({ callerEvidence });
+    switch (resolution.kind) {
+      case 'ok':
+        return undefined;
+      case 'stale_claim':
+      case 'terminal_claim':
+        return resolution;
+      case 'none':
+      case 'unknown_run':
+        throw new Error(`Claim-only issuance revalidation returned ${resolution.kind}`);
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
+    }
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed

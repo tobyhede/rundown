@@ -821,6 +821,32 @@ describe('RunbookLifecycleCommandService', () => {
         expect(outcome.token).toBe(`rdtk_${'A'.repeat(32)}`);
       });
 
+      it('refuses fresh issuance when the claim target is stashed during lock acquisition', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            // The claim resolved before the DelegationLock was acquired, but a
+            // concurrent session mutation parked its target in that window.
+            // The protected decision must revalidate claim eligibility rather
+            // than treating bearer verification alone as sufficient.
+            await sessionService.stashRunbook(runId);
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+        });
+
+        expect(outcome.kind).toBe('stale_claim');
+        if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
+        expect(outcome.message).toContain('stashed');
+        expect(persistSpy).not.toHaveBeenCalled();
+      });
+
       it('validates a fresh explicit iteration against the locked runbook reread', async () => {
         const forSteps: readonly ResolvedStep[] = [
           delegateForStep('1', [delegateSubstep('1', 'child.md')]),
@@ -1443,6 +1469,37 @@ describe('RunbookLifecycleCommandService', () => {
         const entry = persisted?.substepStates?.find((s) => s.id === '1');
         expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
         expect(entry?.delegation?.childRunId).toBe(childRunId);
+      });
+
+      it('refuses retry when the claim target is stashed during lock acquisition', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            // Simulate stashRunbook committing after anchor resolution but
+            // before retry enters its protected decision path.
+            await sessionService.stashRunbook(runId);
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: runControlEvidence(runId),
+          locator: { kind: 'step', step: first.stepId },
+        });
+
+        expect(outcome.kind).toBe('stale_claim');
+        if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
+        expect(outcome.message).toContain('stashed');
+        expect(persistSpy).not.toHaveBeenCalled();
       });
 
       it('validates a retry iteration against the locked runbook reread', async () => {
