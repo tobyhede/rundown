@@ -530,10 +530,13 @@ describe('delegate command', () => {
 
       expect(result.exitCode).not.toBe(0);
       const raw: unknown = JSON.parse(result.stdout);
-      // Error envelopes carry `error`, never `message` (json-renderer.ts maps
-      // ErrorOutput.message onto the wire as `error`). Asserting on
-      // `payload.message` reads undefined and passes vacuously — pin that here so
-      // the field name cannot silently drift back.
+      // The error event writes `error`, not `message` (json-renderer.ts maps
+      // ErrorOutput.message onto the wire as `error`), and this refusal emits no
+      // other event — the renderer accumulates, so an info-level message event
+      // would land a `message` key alongside it. Asserting on `payload.message`
+      // therefore reads undefined and passes vacuously; pin its absence here so
+      // the field name cannot silently drift back. ErrorResponseSchema is
+      // .loose() and would not catch a stray `message` on its own.
       expect(raw).not.toHaveProperty('message');
 
       const parsed = ErrorResponseSchema.safeParse(raw);
