@@ -135,7 +135,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 **Created:**
 
-- `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts` — the fail-closed guard classifying all eleven claim-authenticated commands and pinning both directions (AC4). Modelled on `run-option.test.ts:50`'s table + `it.each` structure, but — decisively unlike it — sourcing its scan from the **real** `createProgram()`.
+- `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts` — the fail-closed guard classifying all eleven claim-authenticated commands and pinning both directions (AC4), plus the two AC5 cases the `it.each` tables structurally cannot express (`collect` and `abort`). Modelled on `run-option.test.ts:50`'s table + `it.each` structure, but — decisively unlike it — sourcing its scan from the **real** `createProgram()`.
 
 **Modified — production call sites (the eight):**
 
@@ -157,7 +157,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 **Files:**
 
-- Modify: `packages/core/src/runbook/lifecycle-command-service.ts` — end of `runTransition` (`:1293-1400`, the `#drive` return at ~`:1398`), `issueDelegation` (`:841+`), and `runTerminal` (`:1417+`)
+- Modify: `packages/core/src/runbook/lifecycle-command-service.ts` — end of `runTransition` (`:1293-1404`, the `#drive` return at `:1404` — **verified**; an earlier draft said `~:1398`, which is four lines short), `issueDelegation` (`:841+`), and `runTerminal` (`:1417+`)
 - Modify: `packages/core/src/runbook/collection-service.ts:40-55` (`CollectionSessionService`) and the `collection_applied` returns (`:527`, `:585`)
 - Modify: `packages/cli/src/helpers/goto-workflow.ts:42-61` (`GotoContext`), `:159-200` (`buildGotoContext`), `:306-325` (`executeGoto`)
 - Modify: `packages/cli/src/commands/goto.ts` (thread `claimId` into `buildGotoContext`'s options — it is already parsed there for the seam)
@@ -345,7 +345,7 @@ Expected: the "records progress on a SUCCESSFUL … pass" and both adoption case
 
 - [ ] **Step 3: Record after `runTransition` commits**
 
-In `packages/core/src/runbook/lifecycle-command-service.ts`, `runTransition` currently ends (`~:1398`) with:
+In `packages/core/src/runbook/lifecycle-command-service.ts`, `runTransition` currently ends (`:1404` — verified) with:
 
 ```typescript
     return this.#drive(input, steps, ready.state, terminalReleaseMode, guardOpenChildren);
@@ -457,7 +457,9 @@ In `packages/core/src/runbook/collection-service.ts`, extend `CollectionSessionS
   }
 ```
 
-> Lift the `:239` claim id into a `presentedClaimId` local reachable from `applyCollection` (it currently lives in the calling scope — pass it in on the `scope` argument object alongside `claim`, or re-derive it from `input.callerEvidence` locally; re-deriving is one line and avoids touching the `scope` type). Only the two `collection_applied` arms record — a refusal, `already_collected`, `collection_frame_not_active`, and `collection_failed` all commit nothing.
+> Lift the `:239` claim id into a `presentedClaimId` local reachable from `applyCollection` (it currently lives in the calling scope — pass it in on the `scope` argument object alongside `claim`, or re-derive it from `input.callerEvidence` locally; re-deriving is one line and avoids touching the `scope` type). **Re-deriving type-checks**: `applyCollection`'s own parameter is `input: CollectDelegationOutcomesOperationInput` (`:440-441`, verified) — the same type the `:239` expression reads `callerEvidence` from, so the one-liner is `input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined`. Only the two `collection_applied` arms record — a refusal, `already_collected`, `collection_frame_not_active`, and `collection_failed` all commit nothing.
+>
+> **This is the DESIGN'S CANONICAL AC5 CASE, and it is pinned by Task 5, not here.** `collect` is the one seam where the presented bearer (the orchestrator's) and the claims in reach (the children's) are different records, and where `listOpenClaimsForParent` — already a `CollectionSessionService` method, sitting right there — makes "loop the children and record them all" the natural-looking wrong implementation. Nothing in this task's core suite catches that: every case here presents a bearer for the run it mutates. The case that catches it is **Task 5's `collect records ONLY the presented orchestrator claim` test**, which reuses the parent-with-claimed-children arrangement `collect` needs anyway. If you implement this step and skip that one, AC5's headline example ships unpinned.
 
 - [ ] **Step 6: Record after `goto` commits (CLI call site)**
 
@@ -538,38 +540,19 @@ For each hit, read outward to the enclosing function and check it is not inside 
 - **collect** — `collection-service.ts:517-525` calls `input.sessionService.releaseRunbook(...)`, itself a `withLock` (`session-service.ts:856`). That is **sequential, not nested**: `releaseRunbook` acquires and releases before returning, so a `recordClaimProgress` *after* it is safe. It would NOT be safe inside a callback passed to a `withLock`.
 - **abort** — `packages/cli/src/commands/abort.ts` records after `await _lockGuard.release()`. That guard is the **delegation** lock, a different lock from the session lock, so there is no reentrancy question here either way — but recording after the release is still correct, and Step 6b's comment says why.
 
-Now prove the safe case actually holds rather than assuming it, with a test that would catch a future nesting:
+**What actually catches a future nesting is Task 5's drift guard — say so, and do not build a decoy instead.** An earlier draft of this step shipped a test that called `sessionService.recordClaimProgress(...)` directly from the suite, asserted `kind === 'recorded'`, and asserted `Date.now() - started < 1_000`, under a comment claiming it "would catch a future nesting". **It would not, in either half.** It never calls any of the six wired call sites, so a call site that moves inside a `withLock` callback tomorrow leaves it green — it pins a direct API call that plan 1 already pinned. And the wall-clock bound is a flake generator: this suite runs under parallel Jest workers, where a 1-second budget on a lock acquire plus two file writes is a coin toss on a loaded CI box, so its only reliable output is noise. It is worth less than nothing: it spends the reader's trust and pins what is already pinned.
 
-```typescript
-  it('records progress without deadlocking on the session lock it already released (#519)', async () => {
-    // Guards the reentrancy hazard the totality contract HIDES: if a call site ever
-    // records from inside a held session lock, the acquire spins to the 5s deadline
-    // and returns `record-failed` — no throw, no failing assertion, just a slow
-    // command and a claim that reads idle while it is advancing. A `recorded` result
-    // here is the evidence that the lock was genuinely free.
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
-    await sessionService.releaseRunbook(runId, { retainClaimsAsTerminal: true });
+The real net is the drift guard's eight recording cases (Task 5). A nested `recordClaimProgress` degrades to `record-failed`, the mark does not move, and `records claim progress on a successful <cmd>` goes **red** for that command. That is a genuine end-to-end assertion through the real CLI, and it needs no timing bound to work: the guard asserts the timestamp advanced, not how fast.
 
-    const started = Date.now();
-    const result = await sessionService.recordClaimProgress(claimId);
+So this step is a **code review with a written verdict**, not a new test. Record your conclusion for each of the six call sites in the commit message (Step 9), naming the enclosing lock scope you found. If any call site is inside a session-lock scope, move it out — that is the whole deliverable.
 
-    // Not `record-failed`: that is what a deadlock degrades to.
-    expect(result.kind).toBe('recorded');
-    // And it must be prompt — a 5s wall means it contended with a lock it should
-    // never have been holding.
-    expect(Date.now() - started).toBeLessThan(1_000);
-    const session = await manager.loadSession();
-    expect(session.claims[claim.claimKey]).toBeDefined();
-  });
-```
-
-> `retainClaimsAsTerminal: true` is load-bearing: without it `releaseRunbook` **deletes** the claim (`session-service.ts:907-917`) and the result is `no-claim`, which would pass a naive assertion for entirely the wrong reason. See the retraction in the retained findings.
+> `retainClaimsAsTerminal: true` is load-bearing wherever a test releases a run and then expects to find its claim: without it `releaseRunbook` **deletes** the claim (`session-service.ts:907-917`) and any lookup returns `no-claim`, which passes a naive assertion for entirely the wrong reason. See the retraction in the retained findings.
 
 - [ ] **Step 7: Run the seam tests to verify they pass**
 
 Run: `pnpm --filter @rundown-org/core exec jest claim-progress.test.ts`
 
-Expected: PASS — all cases, including the three invariant guards that were already green (the anti-fooling one especially: `verifyClaimId` must still not record) and the reentrancy case from Step 6c.
+Expected: PASS — all cases, including the three invariant guards that were already green (the anti-fooling one especially: `verifyClaimId` must still not record). Step 6c adds no test; its deliverable is the written call-site verdict.
 
 - [ ] **Step 8: Run the surrounding core + CLI suites for regression**
 
@@ -592,8 +575,27 @@ git add packages/core/src/runbook/lifecycle-command-service.ts \
   packages/cli/src/commands/abort.ts \
   packages/core/__tests__/runbook/claim-progress.test.ts \
   packages/cli/__tests__
-git commit -m "feat: record claim progress on every command that changes runbook workflow state (#519)"
+git commit -m "$(cat <<'MSG'
+feat: record claim progress on every command that changes runbook workflow state (#519)
+
+Six core seams (runTransition, runTerminal, issueDelegation, collect) plus two
+CLI call sites (goto, abort) whose core services are authorization gates.
+
+Step 6c call-site lock audit — recordClaimProgress self-acquires the session
+lock and the file lock is not reentrant, so a nested call degrades silently to
+`record-failed` after a 5s stall. Enclosing scope found at each call site:
+
+  runTransition   — no session lock held (#drive's own scopes closed on return)
+  runTerminal     — no session lock held
+  issueDelegation — no session lock held
+  collect         — sequential after releaseRunbook's withLock, not nested
+  goto            — CLI, no lock held
+  abort           — after the DELEGATION lock guard released; a different lock
+MSG
+)"
 ```
+
+> Fill the audit lines in from what you actually found, not from what is printed here. If any call site turned out to be inside a session-lock scope, the deliverable was to move it — say so in the message.
 
 ---
 
@@ -602,8 +604,8 @@ git commit -m "feat: record claim progress on every command that changes runbook
 **Files:**
 
 - Create: `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts`
-- Modify: `packages/cli/__tests__/helpers/test-utils.ts` — Step 0: export the extracted `setupParentWithChildren`, retype `readSession`'s `claims` to `Record<string, ClaimRecord>`, add `backdateClaimProgress`
-- Modify: `packages/cli/__tests__/integration/delegate-workflow.test.ts:167` — Step 0: `setupParentWithChildren` moves out to `test-utils.ts`; import it from there
+- Modify: `packages/cli/__tests__/helpers/test-utils.ts` — Step 0: export the extracted `setupParentWithChildren` (**plus the four local symbols it depends on**), retype `readSession`'s `claims` to `Record<string, ClaimRecord>`, add `backdateClaimProgress`
+- Modify: `packages/cli/__tests__/integration/delegate-workflow.test.ts` — Step 0: `setupParentWithChildren` (`:167`), `buildParentDelegate` (`:127`), `findFrontierInEvents` (`:47`) and the `FrontierEntry` / `StepEnteredEvent` types (`:31`, `:37`) move out to `test-utils.ts`; the four call sites (`:222`, `:272`, `:295`, `:337`) pass `workspace` explicitly
 
 **Interfaces:**
 
@@ -634,10 +636,25 @@ The anchor must be **proven to bite** (Step 3) — a guard that cannot fail is t
 
 Three suites need the same three helpers, and none of them can use them as they stand today. Do this first; it is a prerequisite, not a tidy-up.
 
-**1. Extract `setupParentWithChildren`.** It is declared at `packages/cli/__tests__/integration/delegate-workflow.test.ts:167`, **nested inside the `describe` at `:109`**, and that file has **zero exports** — so it cannot be imported, and importing anything from a `.test.ts` would re-execute that entire suite inside the importing file. Lift it (and `issueRunControlClaim`, if it is likewise local) into `packages/cli/__tests__/helpers/test-utils.ts`, export it, and update `delegate-workflow.test.ts` to import it from there. `runCliInProcess` is already exported (`test-utils.ts:431`) — leave it alone.
+**1. Extract `setupParentWithChildren`.** It is declared at `packages/cli/__tests__/integration/delegate-workflow.test.ts:167`, **nested inside the `describe` at `:109`**, and that file has **zero exports** — so it cannot be imported, and importing anything from a `.test.ts` would re-execute that entire suite inside the importing file. Lift it into `packages/cli/__tests__/helpers/test-utils.ts`, export it, and update `delegate-workflow.test.ts` to import it from there.
+
+**It does not move as one function, and it does not move unchanged. Verified against the file:**
+
+- **It closes over `workspace`** — the `describe`-scoped `let` at `:110`, assigned in the `beforeEach` at `:113`. Nothing in its body takes a workspace parameter. Lifting it verbatim gives you `Cannot find name 'workspace'`. **Add `workspace: TestWorkspace` as its first parameter** and update the four existing call sites (`:222`, `:272`, `:295`, `:337`) to pass the suite's own `workspace`. New signature:
+
+  ```typescript
+  export async function setupParentWithChildren(
+    workspace: TestWorkspace,
+    childRef2 = 'child.runbook.md',
+  ): Promise<{ parentRunId: RunId; token1: string; token2: string; startStdout: string }>
+  ```
+
+- **Three more local symbols must move with it**, or it does not compile in its new home: `buildParentDelegate()` (`:127`, the parent runbook builder it calls), `findFrontierInEvents()` (`:47`, which reads `token1`/`token2` out of the `step_entered` event), and the two interfaces `findFrontierInEvents` is typed against — `FrontierEntry` (`:31`) and `StepEnteredEvent` (`:37`). Move all five symbols; export `setupParentWithChildren` and `FrontierEntry` (Task 5's abort arrangement reads a frontier token), and leave the other three module-private in `test-utils.ts`.
+
+- **`issueRunControlClaim` is NOT local and must not be touched.** It is already exported from `test-utils.ts:431`, and `delegate-workflow.test.ts:16` already **imports** it from there. An earlier draft said to lift it "if it is likewise local" — it is not, and following that instruction produces a duplicate-identifier collision with the existing export. `runCliInProcess` (`test-utils.ts:199`, not `:431` — that line is `issueRunControlClaim`) is likewise already exported. Leave both alone.
 
 Run: `pnpm --filter @rundown-org/cli exec jest delegate-workflow`
-Expected: PASS — the extraction is behaviour-preserving, so its own suite must stay green before anything else builds on it.
+Expected: PASS — the extraction is behaviour-preserving, so its own suite must stay green before anything else builds on it. All four call sites now pass `workspace` explicitly.
 
 **2. Retype `readSession`'s claims.** It already exists and is already exported (`test-utils.ts:227`) — **do not write a second one**, and ignore any instruction to "factor it into `test-utils.ts`". Its `claims` field is typed `Record<string, Record<string, unknown>>`, which makes every snippet in Tasks 5/6/7 a compile error: `Date.parse(claim.lastProgressAt)` passes `unknown` where `string` is required, and `claimActivity(claim, …)` passes `Record<string, unknown>` where `ClaimRecord` is required. Change the field to `Record<string, ClaimRecord>` and add `ClaimRecord` to the existing `import type { … } from '@rundown-org/core';` at `:32`.
 
@@ -691,12 +708,29 @@ Create `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts`. Matc
 // packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts
 
 import { describe, expect, it } from '@jest/globals';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   DEFAULT_IDLE_AFTER_MS,
   claimActivity,
+  claimKeyFromBearer,
   getErrorMessage,
+  type ClaimId,
+  type ClaimLookupKey,
   type RoleSpecificMutationCommand,
 } from '@rundown-org/core';
+import {
+  backdateClaimProgress,
+  createRunbook,
+  createTestWorkspace,
+  findActionOutput,
+  getActiveState,
+  issueRunControlClaim,
+  readSession,
+  runCliInProcess,
+  setupParentWithChildren,
+  type TestWorkspace,
+} from './test-utils.js';
 // THE anchor. The real program factory the shipped binary uses — it registers
 // every command, so this import is what makes the scan INDEPENDENT of this
 // test's own knowledge. Never rebuild a program from register*Command here: a
@@ -704,14 +738,45 @@ import {
 // exists"). There must be NO `register*Command` import in this file.
 import { createProgram } from '../../src/cli.js';
 
-/** How one claim-authenticated command is driven to a committed success. */
-interface RecordingCase {
+/** Backdated mark every case rewinds to, then asserts against. */
+const EPOCH = '2020-01-01T00:00:00.000Z';
+
+/**
+ * A workspace arranged so one command can reach a committed success.
+ *
+ * Carries the workspace ITSELF, not just the claim. An earlier draft split this
+ * into `arrangeFor(name) => { claimId, claimKey }` plus a driver typed
+ * `(claimId: string) => Promise<void>`, and that shape **cannot be written**:
+ * the driver has to run the CLI, `runCliInProcess` needs the workspace, and the
+ * driver had no way to reach the one `arrangeFor` had just created. `workspace`
+ * was a free variable in every test body — declared nowhere. Threading the
+ * arrangement into the driver is what closes that hole.
+ */
+interface Arrangement {
+  readonly workspace: TestWorkspace;
+  /** Bearer the command under test presents. */
+  readonly claimId: ClaimId;
+  /** Lookup key for that same bearer — what `backdateClaimProgress`/`readSession` key on. */
+  readonly claimKey: ClaimLookupKey;
   /**
-   * Drive this command to a SUCCESSFUL mutation using the supplied bearer.
-   * Must arrange its own precondition and assert its own exit code, so a
-   * silently-refused command cannot masquerade as "recorded nothing".
+   * Pending delegation token. Present ONLY for `abort`, which takes a token
+   * argument rather than `--run`. This field is why the driver takes the whole
+   * Arrangement: `driveClaimAbort` is unwritable without it, and a
+   * `(claimId) => …` signature has nowhere to put it.
    */
-  readonly driveSuccess: (claimId: string) => Promise<void>;
+  readonly token?: string;
+}
+
+/** How one claim-authenticated command is arranged and driven to a committed success. */
+interface RecordingCase {
+  /** Stand up a fresh workspace and bearer. The caller owns cleanup. */
+  readonly arrange: () => Promise<Arrangement>;
+  /**
+   * Drive this command to a SUCCESSFUL mutation with the arranged bearer.
+   * Asserts its own exit code, so a silently-refused command cannot masquerade
+   * as "recorded nothing".
+   */
+  readonly driveSuccess: (arranged: Arrangement) => Promise<void>;
 }
 
 /**
@@ -725,8 +790,9 @@ interface RecordingCase {
 interface NonRecordingCase {
   /** Why this command fails the workflow-state predicate. Surfaced on failure. */
   readonly reason: string;
+  readonly arrange: () => Promise<Arrangement>;
   /** Drive this command to a SUCCESSFUL (exit 0) invocation with the bearer. */
-  readonly driveSuccess: (claimId: string) => Promise<void>;
+  readonly driveSuccess: (arranged: Arrangement) => Promise<void>;
 }
 
 /**
@@ -742,14 +808,14 @@ interface NonRecordingCase {
  * drift this guard for reasons unrelated to idle detection.
  */
 const RECORDING_COMMANDS: Readonly<Record<string, RecordingCase>> = {
-  pass: { driveSuccess: async (id) => driveClaimPass(id) },
-  fail: { driveSuccess: async (id) => driveClaimFail(id) },
-  complete: { driveSuccess: async (id) => driveClaimComplete(id) },
-  stop: { driveSuccess: async (id) => driveClaimStop(id) },
-  collect: { driveSuccess: async (id) => driveClaimCollect(id) },
-  delegate: { driveSuccess: async (id) => driveClaimDelegate(id) },
-  goto: { driveSuccess: async (id) => driveClaimGoto(id) },
-  abort: { driveSuccess: async (id) => driveClaimAbort(id) },
+  pass: { arrange: arrangeClaimedRun, driveSuccess: driveClaimPass },
+  fail: { arrange: arrangeClaimedRun, driveSuccess: driveClaimFail },
+  complete: { arrange: arrangeClaimedRun, driveSuccess: driveClaimComplete },
+  stop: { arrange: arrangeClaimedRun, driveSuccess: driveClaimStop },
+  goto: { arrange: arrangeClaimedRun, driveSuccess: driveClaimGoto },
+  delegate: { arrange: arrangeDelegatableParent, driveSuccess: driveClaimDelegate },
+  collect: { arrange: arrangeCollectableParent, driveSuccess: driveClaimCollect },
+  abort: { arrange: arrangeAbortableParent, driveSuccess: driveClaimAbort },
 };
 
 /**
@@ -765,17 +831,20 @@ const NON_RECORDING_CLAIM_COMMANDS: Readonly<Record<string, NonRecordingCase>> =
   status: {
     reason:
       'Changes nothing (read-only). A stuck child polling its own status must never refresh its own mark.',
-    driveSuccess: async (id) => driveClaimStatus(id),
+    arrange: arrangeClaimedRun,
+    driveSuccess: driveClaimStatus,
   },
   stash: {
     reason:
       'Changes session targeting only, not the run. IS a claim-authenticated mutation (stash.ts:19) — which is exactly why the predicate is "changes runbook workflow state", not "mutates". Recording it would let a child loop stash/pop to fake liveness without advancing anything.',
-    driveSuccess: async (id) => driveClaimStash(id),
+    arrange: arrangeStashableChild,
+    driveSuccess: driveClaimStash,
   },
   pop: {
     reason:
       'Changes session targeting only, not the run. IS a claim-authenticated mutation (pop.ts:59); see stash. Corroboration: unstashForClaimId already moves updatedAt ("record written"), the field this design deliberately leaves alone.',
-    driveSuccess: async (id) => driveClaimPop(id),
+    arrange: arrangeStashableChild,
+    driveSuccess: driveClaimPop,
   },
 };
 
@@ -847,53 +916,109 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
   it.each(Object.entries(RECORDING_COMMANDS))(
     'records claim progress on a successful %s',
-    async (name, { driveSuccess }) => {
-      const { claimId, claimKey } = await arrangeFor(name);
-      await backdateClaimProgress(workspace, claimKey, '2020-01-01T00:00:00.000Z');
+    async (_name, { arrange, driveSuccess }) => {
+      const arranged = await arrange();
+      try {
+        await backdateClaimProgress(arranged.workspace, arranged.claimKey, EPOCH);
 
-      await driveSuccess(claimId);
+        await driveSuccess(arranged);
 
-      // The rule: EVERY successful claim-authenticated command that changes runbook
-      // workflow state records. Including the claim-terminating ones (complete/stop/
-      // abort), whose write is redundant but harmless and buys a predicate with no
-      // exceptions to remember.
-      const after = (await readSession(workspace)).claims[claimKey].lastProgressAt;
-      expect(Date.parse(after)).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
+        // The rule: EVERY successful claim-authenticated command that changes runbook
+        // workflow state records. Including the claim-terminating ones (complete/stop/
+        // abort), whose write is redundant but harmless and buys a predicate with no
+        // exceptions to remember.
+        const after = (await readSession(arranged.workspace)).claims[arranged.claimKey]
+          .lastProgressAt;
+        expect(Date.parse(after)).toBeGreaterThan(Date.parse(EPOCH));
+      } finally {
+        // Each case owns a whole workspace, so each case must tear one down. The
+        // suite has no `beforeEach`/`afterEach` pair to do it: the arrangements
+        // differ per command, so the workspace cannot be built before the case
+        // knows which one it is.
+        await arranged.workspace.cleanup();
+      }
     },
   );
 
   it.each(Object.entries(NON_RECORDING_CLAIM_COMMANDS))(
     'does NOT record claim progress on %s',
-    async (name, { reason, driveSuccess }) => {
-      const { claimId, claimKey } = await arrangeFor(name);
-      await backdateClaimProgress(workspace, claimKey, '2020-01-01T00:00:00.000Z');
-
-      // Drives the command to a SUCCESSFUL invocation (exit 0) — a refusal would
-      // record nothing for the wrong reason and pass this test vacuously. The
-      // driver comes from the table entry, exactly as on the recording side.
-      await driveSuccess(claimId);
-
-      // The mark must not move. `reason` documents WHY at the failure site: a
-      // reader who broke this needs the anti-fooling argument, not just a diff.
-      //
-      // Jest's `expect` takes ONE argument — `expect(actual, reason)` is Vitest
-      // syntax and does not compile here. This repo is Jest (see the `@jest/globals`
-      // import above), so the reason is carried by wrapping the failure instead.
-      const after = (await readSession(workspace)).claims[claimKey].lastProgressAt;
+    async (name, { reason, arrange, driveSuccess }) => {
+      const arranged = await arrange();
       try {
-        expect(after).toBe('2020-01-01T00:00:00.000Z');
-      } catch (error) {
-        throw new Error(
-          `${name} moved lastProgressAt but must not record.\nWhy it must not: ${reason}\n\n${getErrorMessage(error)}`,
-        );
+        await backdateClaimProgress(arranged.workspace, arranged.claimKey, EPOCH);
+
+        // Drives the command to a SUCCESSFUL invocation (exit 0) — a refusal would
+        // record nothing for the wrong reason and pass this test vacuously. The
+        // driver comes from the table entry, exactly as on the recording side.
+        await driveSuccess(arranged);
+
+        // The mark must not move. `reason` documents WHY at the failure site: a
+        // reader who broke this needs the anti-fooling argument, not just a diff.
+        //
+        // Jest's `expect` takes ONE argument — `expect(actual, reason)` is Vitest
+        // syntax and does not compile here. This repo is Jest (see the `@jest/globals`
+        // import above), so the reason is carried by wrapping the failure instead.
+        const after = (await readSession(arranged.workspace)).claims[arranged.claimKey]
+          .lastProgressAt;
+        try {
+          expect(after).toBe(EPOCH);
+        } catch (error) {
+          throw new Error(
+            `${name} moved lastProgressAt but must not record.\nWhy it must not: ${reason}\n\n${getErrorMessage(error)}`,
+          );
+        }
+      } finally {
+        await arranged.workspace.cleanup();
       }
     },
   );
 
+  it('collect records ONLY the presented orchestrator claim, never a child (AC5)', async () => {
+    // THE DESIGN'S CANONICAL AC5 CASE — "a parent cannot vouch for a child's
+    // liveness, and must not appear to" — and, like the abort case below, one the
+    // it.each above structurally cannot express: `Arrangement` carries a single
+    // claim, with no slot for "and these OTHER claims must not have moved".
+    //
+    // `collect` is where the wrong implementation looks RIGHT. The orchestrator's
+    // seam already holds `listOpenClaimsForParent` (a CollectionSessionService
+    // method, sitting right there), so "loop the open children and record them
+    // all" is a natural line to write — and it passes the generic collect case
+    // above, which only checks that the parent's own mark moved. Only this test
+    // fails on it. A parent that refreshed its children would report every stuck
+    // child as live: the exact false negative #519 exists to prevent, self-inflicted.
+    const { workspace, parentClaimId, parentClaimKey, childClaimKeys } =
+      await arrangeCollectedTrio();
+    try {
+      await backdateClaimProgress(workspace, parentClaimKey, EPOCH);
+      for (const childKey of childClaimKeys) {
+        await backdateClaimProgress(workspace, childKey, EPOCH);
+      }
+
+      expect(
+        (await runCliInProcess(['collect', '--claim-id', parentClaimId], workspace)).exitCode,
+      ).toBe(0);
+
+      const session = await readSession(workspace);
+      // The orchestrator presented its bearer and advanced its own run: mark moves.
+      expect(Date.parse(session.claims[parentClaimKey].lastProgressAt)).toBeGreaterThan(
+        Date.parse(EPOCH),
+      );
+      // The children were collected FROM, not advanced BY, this command. Their marks
+      // are frozen. UNCONDITIONAL — no `if (… !== undefined)` guard: these children
+      // reported and were retained as terminal, so a vanished record is itself a
+      // failure worth surfacing, not a reason to skip the assertion.
+      for (const childKey of childClaimKeys) {
+        expect(session.claims[childKey].lastProgressAt).toBe(EPOCH);
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it('abort records ONLY the presented parent claim, never a bystander child (AC5)', async () => {
     // THE SHARPEST AC5 CASE, and the one the it.each above structurally cannot
-    // express: `arrangeFor` returns a single { claimId, claimKey }, so it has no
-    // slot for "and this OTHER claim must not have moved". Every other recording
+    // express: `Arrangement` carries a single claim, so it has no slot for "and
+    // this OTHER claim must not have moved". Every other recording
     // command presents a bearer for the run it mutates; `abort` is the only one
     // where the presented bearer (the parent's) controls a DIFFERENT run from the
     // claims it affects. An implementation that looped over the session's claims —
@@ -923,34 +1048,42 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
     // observable form of the same invariant — it has a live claim record throughout,
     // it is not the abort's target, and no correct implementation has any reason to
     // touch it. A loop-over-all-claims implementation moves it and fails here.
-    const { parentClaimId, parentClaimKey, abortedChildClaimKey, bystanderChildClaimKey, token } =
-      await arrangeAbortableTrio();
-    await backdateClaimProgress(workspace, parentClaimKey, '2020-01-01T00:00:00.000Z');
-    await backdateClaimProgress(workspace, bystanderChildClaimKey, '2020-01-01T00:00:00.000Z');
+    const {
+      workspace,
+      parentClaimId,
+      parentClaimKey,
+      abortedChildClaimKey,
+      bystanderChildClaimKey,
+      token,
+    } = await arrangeAbortableTrio();
+    try {
+      await backdateClaimProgress(workspace, parentClaimKey, EPOCH);
+      await backdateClaimProgress(workspace, bystanderChildClaimKey, EPOCH);
 
-    // `--force` is REQUIRED: the delegation is claimed, so the bare form throws
-    // `needs_force` (abort.ts:192). This is not belt-and-braces.
-    expect(
-      (await runCliInProcess(['abort', token, '--force', '--claim-id', parentClaimId], workspace))
-        .exitCode,
-    ).toBe(0);
+      // `--force` is REQUIRED: the delegation is claimed, so the bare form throws
+      // `needs_force` (abort.ts:192). This is not belt-and-braces.
+      expect(
+        (await runCliInProcess(['abort', token, '--force', '--claim-id', parentClaimId], workspace))
+          .exitCode,
+      ).toBe(0);
 
-    const session = await readSession(workspace);
-    // The parent presented its bearer and advanced the run: its mark moves.
-    expect(Date.parse(session.claims[parentClaimKey].lastProgressAt)).toBeGreaterThan(
-      Date.parse('2020-01-01T00:00:00.000Z'),
-    );
-    // The bystander was never presented and is not the target: its mark is frozen.
-    // UNCONDITIONAL — no `if (… !== undefined)` guard. If this record has vanished,
-    // that is itself a failure worth surfacing, not a reason to skip the assertion.
-    expect(session.claims[bystanderChildClaimKey].lastProgressAt).toBe(
-      '2020-01-01T00:00:00.000Z',
-    );
-    // Pins the force-cleanup behaviour the reasoning above depends on. If a future
-    // change makes force-abort RETAIN the child's claim as a terminal tombstone,
-    // this fails — and that is the signal to add the direct "aborted child not
-    // recorded" assertion, which would become observable at that point.
-    expect(session.claims[abortedChildClaimKey]).toBeUndefined();
+      const session = await readSession(workspace);
+      // The parent presented its bearer and advanced the run: its mark moves.
+      expect(Date.parse(session.claims[parentClaimKey].lastProgressAt)).toBeGreaterThan(
+        Date.parse(EPOCH),
+      );
+      // The bystander was never presented and is not the target: its mark is frozen.
+      // UNCONDITIONAL — no `if (… !== undefined)` guard. If this record has vanished,
+      // that is itself a failure worth surfacing, not a reason to skip the assertion.
+      expect(session.claims[bystanderChildClaimKey].lastProgressAt).toBe(EPOCH);
+      // Pins the force-cleanup behaviour the reasoning above depends on. If a future
+      // change makes force-abort RETAIN the child's claim as a terminal tombstone,
+      // this fails — and that is the signal to add the direct "aborted child not
+      // recorded" assertion, which would become observable at that point.
+      expect(session.claims[abortedChildClaimKey]).toBeUndefined();
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   it('a stash/pop loop never clears idle (anti-fooling sibling of the status loop)', async () => {
@@ -961,59 +1094,251 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
     // reached through a mutating command instead of a read. Same defect, different
     // door. This is the sibling of the `status --claim-id` anti-fooling test in
     // packages/core/__tests__/runbook/claim-progress.test.ts.
-    const { claimId, claimKey } = await arrangeStashablePair();
-    await backdateClaimProgress(workspace, claimKey, '2020-01-01T00:00:00.000Z');
-    const updatedAtBefore = (await readSession(workspace)).claims[claimKey].updatedAt;
+    const { workspace, claimId, claimKey } = await arrangeStashableChild();
+    try {
+      await backdateClaimProgress(workspace, claimKey, EPOCH);
+      const updatedAtBefore = (await readSession(workspace)).claims[claimKey].updatedAt;
 
-    for (let i = 0; i < 3; i++) {
-      expect((await runCliInProcess(['stash', '--claim-id', claimId], workspace)).exitCode).toBe(0);
-      expect((await runCliInProcess(['pop', '--claim-id', claimId], workspace)).exitCode).toBe(0);
+      for (let i = 0; i < 3; i++) {
+        expect((await runCliInProcess(['stash', '--claim-id', claimId], workspace)).exitCode).toBe(
+          0,
+        );
+        expect((await runCliInProcess(['pop', '--claim-id', claimId], workspace)).exitCode).toBe(0);
+      }
+
+      const claim = (await readSession(workspace)).claims[claimKey];
+      expect(claim.lastProgressAt).toBe(EPOCH);
+      // Still idle after six successful claim-authenticated mutations: the signal
+      // cannot be faked by a holder that never advances the run.
+      expect(claimActivity(claim, new Date(), DEFAULT_IDLE_AFTER_MS).idle).toBe(true);
+
+      // THE EMPIRICAL PROOF THAT ONE FIELD COULD NOT HAVE DONE THIS JOB.
+      // `unstashForClaimId` moves `updatedAt` on every pop (session-service.ts:1060),
+      // so after this loop `updatedAt` HAS moved while `lastProgressAt` has not. Had
+      // the design reused `updatedAt` — the "obvious" economy this plan rejects — the
+      // same six commands would have refreshed the idle clock and this dead claim
+      // would read as live. The two fields mean different things, and this assertion
+      // is the only place in the suite that demonstrates it against real behaviour
+      // rather than asserting it in prose.
+      expect(claim.updatedAt).not.toBe(updatedAtBefore);
+    } finally {
+      await workspace.cleanup();
     }
-
-    const claim = (await readSession(workspace)).claims[claimKey];
-    expect(claim.lastProgressAt).toBe('2020-01-01T00:00:00.000Z');
-    // Still idle after six successful claim-authenticated mutations: the signal
-    // cannot be faked by a holder that never advances the run.
-    expect(claimActivity(claim, new Date(), DEFAULT_IDLE_AFTER_MS).idle).toBe(true);
-
-    // THE EMPIRICAL PROOF THAT ONE FIELD COULD NOT HAVE DONE THIS JOB.
-    // `unstashForClaimId` moves `updatedAt` on every pop (session-service.ts:1060),
-    // so after this loop `updatedAt` HAS moved while `lastProgressAt` has not. Had
-    // the design reused `updatedAt` — the "obvious" economy this plan rejects — the
-    // same six commands would have refreshed the idle clock and this dead claim
-    // would read as live. The two fields mean different things, and this assertion
-    // is the only place in the suite that demonstrates it against real behaviour
-    // rather than asserting it in prose.
-    expect(claim.updatedAt).not.toBe(updatedAtBefore);
   });
 });
 ```
 
-> **The `drive*` / `arrangeFor` helpers are the substance of this task, not boilerplate.** There are **eleven** of them, one per classified command — the eight `driveClaim{Pass,Fail,Complete,Stop,Collect,Delegate,Goto,Abort}` plus `driveClaimStatus` / `driveClaimStash` / `driveClaimPop` for the non-recording table. An earlier draft called an undefined `driveNonRecording(name, claimId)` from the non-recording case and gave that table no driver field at all; both tables now carry `driveSuccess`, so the two halves are symmetric and there is no name to invent.
+> **`readSession` already exists and must be RETYPED, not re-created.** `test-utils.ts:227` exports it, and its `claims` field is typed `Record<string, Record<string, unknown>>` — so `Date.parse(session.claims[k].lastProgressAt)` is a **compile error** (`unknown` is not assignable to `string`), and `claimActivity(session.claims[k], …)` is too (`Record<string, unknown>` is not a `ClaimRecord`). Every snippet in Tasks 5, 6 and 7 depends on this being fixed — Step 0.2 does it. Do **not** "factor `readSession` into `test-utils.ts`" as an earlier draft instructed: it is already there, and a second definition would collide with the export.
 >
-> **`driveClaimPop` must stash first — a single `(name, claimId)` shape could not have expressed this.** `pop` cannot exit 0 in isolation: it requires a prior `stash`, so its driver owns that ordering (`stash --claim-id`, assert 0, then `pop --claim-id`, assert 0). This is the concrete reason the non-recording side needs per-command closures rather than one generic dispatcher — the preconditions differ per command, and `:1770`'s rule that every driver assert exit 0 is unsatisfiable for `pop` without them. Both of `driveClaimPop`'s invocations must be asserted: a stash that silently refused would leave `pop` refusing too, and the case would pass vacuously twice over.
+> **`backdateClaimProgress` takes a `ClaimLookupKey`, never a bearer** (Step 0.3), and **throws** if the key is absent. An earlier draft called it with a **claimKey** in Task 5 and with the **bearer** returned by `claimChild` in Tasks 6/7 — two incompatible signatures for one shared helper, so one family of call sites was always going to backdate nothing. Convert at the call site with `claimKeyFromBearer(bearer)`, exported from core (`claim-id.ts:282`).
 >
-> **`arrangeAbortableTrio` is not `arrangeFor('abort')`.** The abort AC5 case needs THREE claims and the pending token — `{ parentClaimId, parentClaimKey, abortedChildClaimKey, bystanderChildClaimKey, token }`. `arrangeFor`'s single-claim return cannot carry that. Two children, not one: the aborted child's record is **deleted** by force-cleanup (see the test's own comment for the source trace), so the bystander is the only claim that survives the command and can carry the "did not move" assertion. `setupParentWithChildren` already stands up a multi-child parent — claim both children, abort the first, leave the second untouched. `token` is the aborted child's pending token, read from `status` output.
->
-> Each of the eight recording commands needs a workspace arranged so it reaches a _committed success_ with a bearer — `complete`/`stop` need a running claimed run; `collect` needs a parent with a reported child; `delegate` needs an authored DELEGATE step; `abort` needs a pending token. `arrangeStashablePair` needs a claimed child that is stashable and poppable. Build them on the existing integration fixtures rather than inventing new ones; `packages/cli/__tests__/commands/stash-pop.test.ts` already stands up a claimed stash/pop workspace (`:683`) — mirror it.
->
-> **`setupParentWithChildren` must be EXTRACTED before it can be reused — it is not importable today.** It is declared at `packages/cli/__tests__/integration/delegate-workflow.test.ts:167`, **nested inside the `describe` at `:109`**, and that file has **zero exports**. Importing from a `.test.ts` would also re-execute its entire suite inside this file. So Step 0 of this task is: lift `setupParentWithChildren` (and `issueRunControlClaim`, if it is likewise local) into `packages/cli/__tests__/helpers/test-utils.ts`, export it, and update `delegate-workflow.test.ts` to import it. Its suite must stay green — run `pnpm --filter @rundown-org/cli exec jest delegate-workflow` before moving on. `runCliInProcess` is already exported from `test-utils.ts` (`:431`); no work needed there.
->
-> **`readSession` already exists and must be RETYPED, not re-created.** `test-utils.ts:227` exports it, and its `claims` field is typed `Record<string, Record<string, unknown>>` — so `Date.parse(session.claims[k].lastProgressAt)` is a **compile error** (`unknown` is not assignable to `string`), and `claimActivity(session.claims[k], …)` is too (`Record<string, unknown>` is not a `ClaimRecord`). Every snippet in Tasks 5, 6 and 7 depends on this being fixed. Retype the field to `Record<string, ClaimRecord>` and add `import type { ClaimRecord } from '@rundown-org/core';` (the file already imports types from core at `:32`). This is safe — verified: the only callers that dereference `.claims[…]` are `prune.test.ts:588`, `:595`, and `:732`, and all three only assert `toBeDefined()` / `toBeUndefined()`, which compile unchanged against the narrower type. Do **not** "factor `readSession` into `test-utils.ts`" as an earlier draft instructed: it is already there, and a second definition would collide with the export.
->
-> **`backdateClaimProgress` takes a `ClaimLookupKey`, never a bearer.** This is new; write it in `test-utils.ts` beside `readSession`: read `.rundown/session.json`, set `claims[claimKey].lastProgressAt`, write it back. Signature: `backdateClaimProgress(workspace: TestWorkspace, claimKey: ClaimLookupKey, iso: string): Promise<void>`. **It must throw if the key is absent** — a helper that silently no-ops on a key it cannot find makes every idle assertion in Tasks 5/6/7 vacuously green, which is the single highest-leverage way this whole feature's test suite could lie. An earlier draft called it with a **claimKey** in Task 5 and with the **bearer** returned by `claimChild` in Tasks 6/7 — two incompatible signatures for one shared helper, so one family of call sites was always going to backdate nothing. Tasks 6/7 convert at the call site with `claimKeyFromBearer(bearer)`, exported from core (`claim-id.ts:282`).
->
-> `getErrorMessage` (never `Error.isError` directly, per CLAUDE.md Testing Conventions) is imported from `@rundown-org/core` in the block above; it renders the wrapped assertion failure in the non-recording case.
->
-> **Every `drive*` helper must assert its own exit code is 0**, on BOTH the recording and non-recording paths. On the recording path, a command that silently starts refusing would record nothing and the guard would report a _recording_ failure, sending the reader hunting in the wrong place. On the non-recording path it matters more: a refused `stash` records nothing and would pass the assertion **vacuously**, so the guard would keep reporting green while pinning nothing at all. Assert success first, then the timestamp.
->
-> `claimActivity` / `DEFAULT_IDLE_AFTER_MS` are already in the import block above — used by the stash/pop anti-fooling loop.
+> `getErrorMessage` (never `Error.isError` directly, per CLAUDE.md Testing Conventions) is imported from `@rundown-org/core` in the block above; it renders the wrapped assertion failure in the non-recording case. `claimActivity` / `DEFAULT_IDLE_AFTER_MS` are likewise already imported — used by the stash/pop anti-fooling loop.
+
+- [ ] **Step 1b: Write the arrangements and drivers — this is the bulk of the task**
+
+**Do not treat this as boilerplate under the guard.** The anchor above is the load-bearing *idea*, but these fourteen helpers are where the days go, and an earlier draft gave them one paragraph ending in "build them on the existing integration fixtures rather than inventing new ones". That is a placeholder wearing a suggestion's clothes. Each arrangement below names the fixture it mirrors and the reason its shape is what it is; each was checked against source.
+
+**Five arrangements serve eleven commands.** Every one creates its own workspace via `createTestWorkspace()` and returns it in the `Arrangement`; the caller cleans up in its `finally`.
+
+| Arrangement | Serves | Shape | Mirror |
+| --- | --- | --- | --- |
+| `arrangeClaimedRun` | `pass`, `fail`, `complete`, `stop`, `goto`, `status` | A plain 3-step runbook (`PASS CONTINUE` / `FAIL STOP`), started with `run --prompted`, plus a run-control bearer | `test-utils.ts:431` `issueRunControlClaim(workspace, state.id)` |
+| `arrangeDelegatableParent` | `delegate` | Parent with an authored DELEGATE substep, started (which **auto-issues**), plus a parent run-control bearer | `delegate-workflow.test.ts:585` "DELEGATE re-entry and retry" |
+| `arrangeCollectedTrio` | `collect`, and the collect AC5 case | Parent + two children, both claimed and passed (so outcomes are reported and collectable), plus a parent bearer and **both child claim keys** | `setupParentWithChildren` + `delegate-workflow.test.ts:228-252` |
+| `arrangeAbortableTrio` | `abort`, and the abort AC5 case | Parent + two children, **both claimed**; abort targets child 1, child 2 is the bystander | `setupParentWithChildren` + `abort.ts:192` |
+| `arrangeStashableChild` | `stash`, `pop`, and the stash/pop loop | A **claimed delegated child** — not a run-control claim (see the hard constraint below) | `stash-pop.test.ts:156-190` |
+
+**`arrangeStashableChild` MUST use a claimed delegated child, and this is not a preference.** `pop --claim-id` routes to `unstashForClaimId`, which returns `child-linkage-mismatch` when `!claim.delegation` (`session-service.ts:1136-1138`, verified). A run-control claim has no `delegation`, so `driveClaimPop` on one exits non-zero, `driveSuccess`'s exit-0 assertion fails, and both `pop` cases go red on arrival. `stash-pop.test.ts:156` ("keeps claimed delegated children out of plain pop") does exactly this setup end-to-end — parent with a delegate substep, `run --prompted`, `claim <token>`, then `stash --claim-id` / `pop --claim-id`, both exit 0. Mirror that, not the `:683` hand-written-session fixture (which fabricates a state file for a *stashed* child and is the wrong starting point for a `stash` driver).
+
+```typescript
+/** A plain claimed run: the arrangement for every command that just needs a live bearer. */
+async function arrangeClaimedRun(): Promise<Arrangement> {
+  const workspace = await createTestWorkspace();
+  // Three steps: `goto 2` needs somewhere to go, and `pass` must not drive the run
+  // terminal before `complete`/`stop` get their turn in their own arrangements.
+  const runbook = createRunbook({
+    title: 'Guarded',
+    steps: [
+      { title: 'One', pass: 'CONTINUE', fail: 'STOP', content: 'First.' },
+      { title: 'Two', pass: 'CONTINUE', fail: 'STOP', content: 'Second.' },
+      { title: 'Three', pass: 'COMPLETE', fail: 'STOP', content: 'Third.' },
+    ],
+  });
+  await writeFile(join(workspace.cwd, 'guarded.runbook.md'), runbook);
+  expect((await runCliInProcess('run --prompted guarded.runbook.md', workspace)).exitCode).toBe(0);
+
+  const state = await getActiveState(workspace);
+  expect(state).not.toBeNull();
+  const claimId = await issueRunControlClaim(workspace, state!.id);
+  return { workspace, claimId, claimKey: claimKeyFromBearer(claimId) };
+}
+
+/** Parent + two children, both claimed and passed — a collectable frame. */
+async function arrangeCollectedTrio(): Promise<
+  Arrangement & { readonly childClaimKeys: readonly ClaimLookupKey[] }
+> {
+  const workspace = await createTestWorkspace();
+  const { parentRunId, token1, token2 } = await setupParentWithChildren(workspace);
+
+  // Claim + pass BOTH children so their outcomes are reported and `collect` reaches
+  // `collection_applied` rather than refusing. This is delegate-workflow.test.ts's
+  // own happy path (:228-252) — the child claim id comes off the `claim` command's
+  // JSON `claim_id`, which is why that call must not carry --text.
+  const childClaimKeys: ClaimLookupKey[] = [];
+  for (const token of [token1, token2]) {
+    const claimed = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claimed.exitCode).toBe(0);
+    const childClaimId = String(findActionOutput(claimed.stdout)!.claim_id) as ClaimId;
+    expect((await runCliInProcess(['pass', '--claim-id', childClaimId], workspace)).exitCode).toBe(
+      0,
+    );
+    childClaimKeys.push(claimKeyFromBearer(childClaimId));
+  }
+
+  const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+  return {
+    workspace,
+    claimId: parentClaimId,
+    claimKey: claimKeyFromBearer(parentClaimId),
+    childClaimKeys,
+  };
+}
+
+/** The collect AC5 case reads the trio under its own names. */
+async function arrangeCollectableParent(): Promise<Arrangement> {
+  return arrangeCollectedTrio();
+}
+```
+
+> **`arrangeCollectedTrio` retains the child claims, and that is what makes the AC5 case observable.** `pass` on a claimed child drives it terminal through a path that passes `retainClaimsAsTerminal: true`, so both child records survive into the session the assertions read (contrast the abort case below, where force-cleanup deletes the target's record — see the retained findings). If a future change stops retaining them, the AC5 case fails on a missing key rather than passing vacuously, which is the correct direction to fail in.
+
+```typescript
+/**
+ * Parent + two claimed children, for abort. `--force` is required BECAUSE both are
+ * claimed (abort.ts:192 -> `needs_force`); the bystander needs a live claim record
+ * to carry the "did not move" assertion, which is the only reason it is claimed.
+ */
+async function arrangeAbortableTrio(): Promise<{
+  readonly workspace: TestWorkspace;
+  readonly parentClaimId: ClaimId;
+  readonly parentClaimKey: ClaimLookupKey;
+  readonly abortedChildClaimKey: ClaimLookupKey;
+  readonly bystanderChildClaimKey: ClaimLookupKey;
+  readonly token: string;
+}> {
+  const workspace = await createTestWorkspace();
+  const { parentRunId, token1, token2 } = await setupParentWithChildren(workspace);
+
+  const claimChild = async (token: string): Promise<ClaimLookupKey> => {
+    const claimed = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claimed.exitCode).toBe(0);
+    return claimKeyFromBearer(String(findActionOutput(claimed.stdout)!.claim_id) as ClaimId);
+  };
+  const abortedChildClaimKey = await claimChild(token1);
+  const bystanderChildClaimKey = await claimChild(token2);
+
+  const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+  return {
+    workspace,
+    parentClaimId,
+    parentClaimKey: claimKeyFromBearer(parentClaimId),
+    abortedChildClaimKey,
+    bystanderChildClaimKey,
+    token: token1,
+  };
+}
+
+/** The it.each abort case needs only the parent's bearer and the token. */
+async function arrangeAbortableParent(): Promise<Arrangement> {
+  const trio = await arrangeAbortableTrio();
+  return {
+    workspace: trio.workspace,
+    claimId: trio.parentClaimId,
+    claimKey: trio.parentClaimKey,
+    token: trio.token,
+  };
+}
+
+/**
+ * A claimed DELEGATED CHILD — the only claim shape `pop` accepts.
+ * `unstashForClaimId` returns `child-linkage-mismatch` when `!claim.delegation`
+ * (session-service.ts:1136-1138), so a run-control claim cannot drive `pop` to
+ * exit 0 and would fail driveSuccess's own assertion. Mirrors stash-pop.test.ts:156.
+ */
+async function arrangeStashableChild(): Promise<Arrangement> {
+  const workspace = await createTestWorkspace();
+  const { token1 } = await setupParentWithChildren(workspace);
+  const claimed = await runCliInProcess(`claim ${token1}`, workspace);
+  expect(claimed.exitCode).toBe(0);
+  const claimId = String(findActionOutput(claimed.stdout)!.claim_id) as ClaimId;
+  return { workspace, claimId, claimKey: claimKeyFromBearer(claimId) };
+}
+
+/** Parent with an authored DELEGATE substep, plus the parent's bearer. */
+async function arrangeDelegatableParent(): Promise<Arrangement> {
+  const workspace = await createTestWorkspace();
+  const { parentRunId } = await setupParentWithChildren(workspace);
+  const claimId = await issueRunControlClaim(workspace, parentRunId);
+  return { workspace, claimId, claimKey: claimKeyFromBearer(claimId) };
+}
+```
+
+**The drivers.** Each asserts its own exit code **before** the caller looks at any timestamp. On the recording path, a command that silently starts refusing records nothing and the guard reports a *recording* failure, sending the reader hunting in the wrong place. On the non-recording path it matters more: a refused `stash` records nothing and passes the assertion **vacuously**, leaving the guard green while pinning nothing.
+
+```typescript
+/** Assert one claim-authenticated invocation succeeds. */
+async function expectOk(args: readonly string[], arranged: Arrangement): Promise<void> {
+  const result = await runCliInProcess([...args, '--claim-id', arranged.claimId], arranged.workspace);
+  expect(result.exitCode).toBe(0);
+}
+
+const driveClaimPass = async (a: Arrangement): Promise<void> => expectOk(['pass'], a);
+const driveClaimFail = async (a: Arrangement): Promise<void> => expectOk(['fail'], a);
+const driveClaimComplete = async (a: Arrangement): Promise<void> => expectOk(['complete'], a);
+const driveClaimStop = async (a: Arrangement): Promise<void> => expectOk(['stop'], a);
+const driveClaimStatus = async (a: Arrangement): Promise<void> => expectOk(['status'], a);
+const driveClaimStash = async (a: Arrangement): Promise<void> => expectOk(['stash'], a);
+// `goto <step>` is a positional argument (goto.ts:28), not a flag. Step 2 exists
+// because arrangeClaimedRun authors three steps.
+const driveClaimGoto = async (a: Arrangement): Promise<void> => expectOk(['goto', '2'], a);
+const driveClaimCollect = async (a: Arrangement): Promise<void> => expectOk(['collect'], a);
+// `--retry` reaches the `retried` committed-success member. A bare `delegate` on an
+// already-auto-issued substep returns `already-delegated`, which commits nothing and
+// correctly records nothing — driving it would assert the opposite of the rule.
+const driveClaimDelegate = async (a: Arrangement): Promise<void> =>
+  expectOk(['delegate', '--step', '1.1', '--retry'], a);
+
+/**
+ * `pop` cannot exit 0 in isolation — `unstashForClaimId` requires
+ * `session.stashedRunbookId === claim.controlledRunId` (session-service.ts:1121),
+ * so its driver owns the stash→pop ordering. This is the concrete reason the
+ * non-recording table needs per-command closures rather than one generic
+ * dispatcher. BOTH invocations are asserted: a stash that silently refused would
+ * leave `pop` refusing too, and the case would pass vacuously twice over.
+ */
+const driveClaimPop = async (a: Arrangement): Promise<void> => {
+  await expectOk(['stash'], a);
+  await expectOk(['pop'], a);
+};
+
+/**
+ * `abort` takes the pending TOKEN as a positional argument — which is why
+ * `Arrangement` carries `token` and why the driver takes the whole arrangement.
+ * `--force` is required because the delegation is claimed (abort.ts:192).
+ */
+const driveClaimAbort = async (a: Arrangement): Promise<void> => {
+  expect(a.token).toBeDefined();
+  await expectOk(['abort', a.token!, '--force'], a);
+};
+```
+
+> **Naming the shape that keeps failing here.** Both of the defects this step fixes were the plan's own signature failure mode (see the retained findings): reasoning that was sound and mechanics that could not run. `arrangeFor(name)` returned no workspace to a driver that needed one; `driveClaimAbort(id)` had no token to pass. Each read as a plausible instruction and would have stopped the implementer cold. **If you change an arrangement or a driver here, run it.**
 
 - [ ] **Step 2: Run the guard**
 
 Run: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard.test.ts`
 
-Expected: PASS — all eight recording cases, all three non-recording cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set equality against the real program.
+Expected: PASS — all eight recording cases, all three non-recording cases, the `collect` and `abort` AC5 cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set equality against the real program.
 
 - [ ] **Step 3: Prove the guard is fail-closed (do not skip)**
 
@@ -1030,6 +1355,15 @@ Expected: PASS — all eight recording cases, all three non-recording cases, the
 3. **Behaviour, positive direction:** temporarily comment out the `recordClaimProgress` call in `runTerminal` (Task 4 Step 4b) and re-run. Expected: the `complete` and `stop` cases FAIL. Revert.
 4. **Behaviour, negative direction:** temporarily add a `recordClaimProgress` call to `packages/cli/src/commands/stash.ts` (as a careless future edit would) and re-run. Expected: the `does NOT record claim progress on stash` case AND the stash/pop anti-fooling loop both FAIL. Revert. This probe is the point of the whole negative half — without it, nothing proves the guard would catch the anti-fooling hole reopening.
 5. **The cross-check, exhaustiveness direction:** temporarily add a member to `RoleSpecificMutationCommand` in `packages/core/src/runbook/subprocess-mutation-boundary.ts:33` (e.g. `| 'probe-member'`) and run `pnpm run check:types`. Expected: a COMPILE error in this file — `Property 'probe-member' is missing in type ... but required in type 'Record<RoleSpecificMutationCommand, true>'`. Revert. Without this, the cross-check would be `readonly RoleSpecificMutationCommand[]`, which accepts any subset: a new union member would leave it green, and the literal would only be asserting the file against itself.
+6. **AC5, the over-recording direction:** in `applyCollection` (Task 4 Step 5), temporarily record the children alongside the orchestrator — the natural-looking wrong implementation, since `listOpenClaimsForParent` is right there on the seam:
+
+   ```typescript
+   for (const child of await input.sessionService.listOpenClaimsForParent(input.targetState.id)) {
+     await input.sessionService.recordClaimProgress(child.claimKey as unknown as ClaimId); // probe only
+   }
+   ```
+
+   Re-run. Expected: `collect records ONLY the presented orchestrator claim` FAILS, while the generic `records claim progress on a successful collect` case stays **green** — which is precisely why the AC5 case has to exist separately. Revert. (The cast is nonsense and the probe need not be well-typed; it only has to move the children's marks.)
 
 If any probe does NOT produce its expected failure, the guard is not pinning what it claims. **Fix the guard before proceeding** — this is not a formality: a green suite that cannot go red is worse than no suite, because it is trusted, and this guard is the sole justification for letting `goto`/`abort` record from the CLI.
 
@@ -1037,9 +1371,12 @@ If any probe does NOT produce its expected failure, the guard is not pinning wha
 
 ```bash
 git add packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts \
-  packages/cli/__tests__/helpers/test-utils.ts
+  packages/cli/__tests__/helpers/test-utils.ts \
+  packages/cli/__tests__/integration/delegate-workflow.test.ts
 git commit -m "test(cli): pin the claim-progress recording set with a fail-closed drift guard (#519)"
 ```
+
+> `delegate-workflow.test.ts` is in this commit because Step 0 extracted `setupParentWithChildren` out of it. Do not leave that extraction uncommitted — the guard does not compile without it.
 
 ---
 
@@ -1062,7 +1399,7 @@ Expected: PASS (format, spell, lint, build, typecheck, tests across all packages
 
 Run: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard.test.ts`
 
-Expected: PASS — all eight recording cases, all three non-recording cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set-equality against the real `createProgram()`.
+Expected: PASS — all eight recording cases, all three non-recording cases, the `collect` and `abort` AC5 cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set-equality against the real `createProgram()`.
 
 Run it after everything else has landed: it is the one test that fails if any of the eight commands lost its recording call site during the intervening work, which is exactly the drift it exists to catch.
 
@@ -1096,9 +1433,9 @@ BODY
 
 ## Self-Review
 
-**Spec coverage.** AC3, AC4, AC11 (Tasks 4–5); AC5 (Task 4's call sites + Task 5's abort bystander case). AC7 was discharged by plan 1 at the API level and is re-pinned here at each seam. One wrinkle worth knowing: an AC5 assertion also lands in **plan 3** Task 7 Step 1 (collect reports the children's activity while refreshing only the orchestrator's claim) — plan 3 does not claim AC5, which is correct (this plan discharges it), but do not read plan 3's silence as that test being optional.
+**Spec coverage.** AC3, AC4, AC11 (Tasks 4–5); AC5 (Task 4's call sites + Task 5's **two** AC5 cases — `collect`, the design's canonical example, and `abort`'s bystander). An earlier draft pinned AC5 with the abort case alone and deferred the collect case to plan 3 Task 7 Step 1 — a plan that neither claims AC5 nor has merged. `collect` is the seam where over-recording looks most natural (`listOpenClaimsForParent` sits right on the service), so it is now pinned here, in the plan that owns the criterion, on an arrangement `collect` needs anyway. Plan 3's Task 7 assertion still stands on its own; do not read this as licence to drop it. AC7 was discharged by plan 1 at the API level and is re-pinned here at each seam.
 
-**Placeholder scan.** No `TBD` / `TODO`. Every `drive*` helper is named and its preconditions stated; `driveClaimPop` must stash first, which is exactly why the non-recording table needs per-command closures rather than one `(name, claimId)` dispatcher. Every fixture pointer resolves or is explicit extraction work (Step 0).
+**Placeholder scan.** No `TBD` / `TODO`. All five arrangements and all eleven drivers are written out, not described: each arrangement names the fixture it mirrors and the source line that constrains its shape (`arrangeStashableChild` must use a delegated child because `unstashForClaimId` rejects `!claim.delegation` at `session-service.ts:1136-1138`; `driveClaimDelegate` needs `--retry` to reach `retried` rather than the no-op `already-delegated`; `driveClaimPop` must stash first). Every fixture pointer resolves or is explicit extraction work (Step 0).
 
 **Type consistency.** Consumes plan 1's `recordClaimProgress` / `ClaimProgressRecordResult` / `claimActivity` / `DEFAULT_IDLE_AFTER_MS` under exactly those names. Produces no production types. The recording call sites gate on each seam's own committed-success union members — `applied` (`runTransition`), `applied_claim`/`applied_bare` (`runTerminal`), `delegated`/`retried` (`issueDelegation`), `collection_applied` (collect) — never on the no-op members (`already_terminal`, `terminal_claim_confirmed`, `already-delegated` — hyphenated, verified — `already_collected`).
 
@@ -1110,4 +1447,12 @@ BODY
 
 **The guard's anchor is not negotiable.** The scan's left-hand side comes from the real `createProgram()`. An earlier draft built the test's program by registering the very tables it then compared against — both sides shrink together, a new `rundown foo --claim-id` is never registered and never classified, and the suite stays green while the hole opens. `RoleSpecificMutationCommand` is a **subprocess-trust** concept, not the definition of "claim-authenticated workflow mutation" (`abort` records and is outside it) — it appears only as a containment cross-check.
 
-**Editing these plans? The signature failure mode is a repair that cannot execute.** Five review rounds on the single-plan draft found the same shape repeatedly: a fix that was sound in reasoning and broken in mechanics — a drift guard whose scan was fed by its own tables, a `expect(actual, reason)` that is Vitest syntax under Jest, a mutation gate whose flags never reached Stryker, a pointer to a helper that did not exist. Each looked right and could not run. **A repair that cannot execute is worth less than the defect it replaces, because it also spends the reader's trust.** If you change a command, a probe, or a fixture pointer here, run it.
+**The guard's tables must carry BOTH halves of each case — arrangement and driver — and the driver must take the whole arrangement.** An earlier draft split them into a free-standing `arrangeFor(name) => { claimId, claimKey }` and a driver typed `(claimId: string) => Promise<void>`. It could not be written: `workspace` was a free variable in every test body, declared nowhere; the drivers had to run the CLI but had no way to reach the workspace `arrangeFor` had just made; and `driveClaimAbort` had no token, because `abort` takes one positionally and the single-claim return had no slot for it. Threading `Arrangement` (workspace + claimId + claimKey + optional token) into the driver is what closes all three at once. This is the same shape as the retraction above: plausible on the page, unrunnable in the editor.
+
+**`arrangeStashableChild` cannot use a run-control claim.** `pop --claim-id` routes to `unstashForClaimId`, which returns `child-linkage-mismatch` when `!claim.delegation` (`session-service.ts:1136-1138`, verified). A run-control claim has no delegation linkage, so both `pop` cases and the stash/pop anti-fooling loop would have gone red on arrival. Mirror `stash-pop.test.ts:156`, which stands up a real claimed delegated child end-to-end — not `:683`, which fabricates a session for an already-*stashed* child and is the wrong starting point for a `stash` driver.
+
+**`issueRunControlClaim` is already exported from `test-utils.ts:431`** and `delegate-workflow.test.ts:16` already imports it from there. An earlier draft said to lift it "if it is likewise local"; doing so produces a duplicate-identifier collision. What genuinely must move with `setupParentWithChildren` is different and larger: it closes over the `describe`-scoped `workspace` (so it needs a `workspace` parameter and four call-site updates) and calls two local symbols plus two local types (`buildParentDelegate`, `findFrontierInEvents`, `FrontierEntry`, `StepEnteredEvent`).
+
+**Do not reintroduce Step 6c's reentrancy test.** An earlier draft asserted `recordClaimProgress` returns `recorded` and completes in under a second, calling it a guard against a future call site nesting inside a session lock. It guards neither: it calls the API directly rather than through any of the six call sites (so a nested call site tomorrow leaves it green), it duplicates a contract plan 1 already pinned, and its wall-clock bound flakes under parallel Jest workers. The drift guard's eight recording cases are the real net — a nested call degrades to `record-failed`, the mark does not move, that command's case goes red. Step 6c is a code review with a written verdict in the commit message.
+
+**Editing these plans? The signature failure mode is a repair that cannot execute.** Six review rounds have now found the same shape repeatedly: a fix that was sound in reasoning and broken in mechanics — a drift guard whose scan was fed by its own tables, a `expect(actual, reason)` that is Vitest syntax under Jest, a mutation gate whose flags never reached Stryker, a pointer to a helper that did not exist, an `arrangeFor`/driver split with no way to pass the workspace, a `pop` driver aimed at a claim shape `pop` rejects. Each looked right and could not run. **A repair that cannot execute is worth less than the defect it replaces, because it also spends the reader's trust.** If you change a command, a probe, or a fixture pointer here, run it.
