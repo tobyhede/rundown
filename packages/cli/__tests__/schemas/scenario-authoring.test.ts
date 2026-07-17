@@ -27,6 +27,11 @@ import {
   type RunbookScenarioSource,
 } from '../helpers/scenario-sources.js';
 import { loadScenarioSuite } from '../../src/schemas/scenario-suite.js';
+import {
+  FABRICATION_RULES,
+  SPAWNS_SUBPROCESS,
+  usesOpaqueWrapper,
+} from '../helpers/scenario-authoring-rules.js';
 
 const sources: RunbookScenarioSource[] = loadRunbookScenarioSources();
 
@@ -49,33 +54,6 @@ const commandSites: CommandSite[] = sources.flatMap((source) =>
     })),
   ),
 );
-
-/**
- * Commands that fabricate artifact provenance. No allowlist: the #498
- * invariant is that provenance comes from a real producer's output, and there
- * is no legitimate reason for a scenario command to name an `rd://` URI, touch
- * the manifest, or re-derive the `.rd-<contextId>` directory by hand.
- */
-const FABRICATION_RULES: readonly { readonly id: string; readonly pattern: RegExp }[] = [
-  { id: 'names an rd:// URI (capture it from a producer instead)', pattern: /rd:\/\// },
-  { id: 'writes the artifact manifest (core owns manifest.jsonl)', pattern: /manifest\.jsonl/ },
-  { id: 'hand-derives the .rd-<contextId> provenance directory', pattern: /\.rd-[0-9a-z]/i },
-];
-
-/**
- * Detects a subprocess spawn inside a scenario command.
- *
- * This is `scenarios.md`'s "no hidden `rd` invocations" rule made objective. It
- * deliberately matches the *spawn*, not the token `rd`: a `\b(rd|rundown)\b`
- * test matches the path `.rundown/session.json` and would condemn the
- * fault-injection scenarios that legitimately read state files without ever
- * invoking the CLI.
- */
-const SPAWNS_SUBPROCESS = /child_process|execFileSync|execSync|spawnSync|\bspawn\(/;
-
-/** Opaque shell wrappers, which hide workflow from the scenario runner's command model. */
-const OPAQUE_WRAPPER =
-  /(^|[\s;|&(])(node|python3?|ruby|perl)\s+-[ec]\b|(^|[\s;|&(])(ba|z)?sh\s+-c\b|(^|[\s;|&(])(npm|pnpm|yarn|npx)\s|(^|[\s;|&(])eval\s/;
 
 /**
  * Scenario commands where the shell command IS the fault being injected or the
@@ -154,7 +132,7 @@ describe('scenario commands never fabricate artifact provenance (#498)', () => {
 describe('opaque shell wrappers are confined to fault injection', () => {
   it('allowlist matches the real violations exactly, with no stale entries', () => {
     const violations = commandSites
-      .filter((site) => OPAQUE_WRAPPER.test(site.command))
+      .filter((site) => usesOpaqueWrapper(site.command))
       .map((site) => site.key)
       .sort();
     const allowed = FAULT_INJECTION_ALLOWLIST.map((entry) => entry.key).sort();
@@ -196,7 +174,7 @@ describe('scenario suite files', () => {
           const failed = [
             ...FABRICATION_RULES.filter((rule) => rule.pattern.test(command)).map((r) => r.id),
             ...(SPAWNS_SUBPROCESS.test(command) ? ['spawns a subprocess'] : []),
-            ...(OPAQUE_WRAPPER.test(command) ? ['uses an opaque shell wrapper'] : []),
+            ...(usesOpaqueWrapper(command) ? ['uses an opaque shell wrapper'] : []),
           ];
           if (failed.length > 0) {
             violations.push(`${file}::${name}::${String(index)} — ${failed.join(', ')}`);

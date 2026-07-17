@@ -528,12 +528,14 @@ const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[^}]+\}/;
  * it makes the retired grammar fail loudly and name its replacement, rather than
  * keeping it working.
  *
- * Deliberately matches `[^}]+` rather than the retired grammar's narrower
- * identifier pattern, so a *malformed* retired placeholder is caught too. It
- * cannot match `${CAPTURE_ARTIFACT…}`, whose text contains `ARTIFACT:` but never
- * the required `${` immediately before it.
+ * Deliberately matches `[^}]*` rather than the retired grammar's narrower
+ * identifier pattern, so a *malformed* retired placeholder is caught too —
+ * including the empty-bodied `${ARTIFACT:}`, which is the exact spelling this
+ * detector's own error message uses to name the retirement. It cannot match
+ * `${CAPTURE_ARTIFACT…}`, whose text contains `ARTIFACT:` but never the
+ * required `${` immediately before it.
  */
-const RETIRED_ARTIFACT_PLACEHOLDER = /\$\{ARTIFACT:[^}]+\}/;
+const RETIRED_ARTIFACT_PLACEHOLDER = /\$\{ARTIFACT:[^}]*\}/;
 
 /** Global matcher for the array form, used to locate placeholders to probe. */
 const CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT_ARRAY:([^}]+)\}/g;
@@ -550,6 +552,28 @@ const CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT_ARRAY:([^}]+)\}
  * probe that survives implies a real value survives.
  */
 const ARRAY_QUOTING_PROBE = '["rd://s"]';
+
+/**
+ * Pick a probe value that does not already occur in `cmd`.
+ *
+ * The guard counts how many probes survive tokenization and compares that to the
+ * number of placeholders. Any occurrence of the probe's literal text that the
+ * guard did not itself substitute would inflate that count and reject a
+ * correctly quoted command — a collision with the guard's own instrument rather
+ * than an authoring error. Widening the probe until it is absent keeps the count
+ * attributable to substitution alone, while preserving the shell-significant
+ * characters (`"`, `[`, `]`) the probe exists to exercise.
+ *
+ * @param cmd - Command text the probe will be substituted into
+ * @returns A probe string guaranteed not to occur in `cmd`
+ */
+function uniqueArrayQuotingProbe(cmd: string): string {
+  let probe = ARRAY_QUOTING_PROBE;
+  for (let n = 0; cmd.includes(probe); n++) {
+    probe = `["rd://s${String(n)}"]`;
+  }
+  return probe;
+}
 
 /**
  * Reject an `${CAPTURE_ARTIFACT_ARRAY:<key>}` placeholder that is not shell-quoted.
@@ -575,14 +599,15 @@ const ARRAY_QUOTING_PROBE = '["rd://s"]';
 function assertArrayCapturesAreShellQuoted(cmd: string): void {
   const keys = [...cmd.matchAll(CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER)].map((m) => m[1]);
   if (keys.length === 0) return;
-  const probe = cmd.replace(CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER, ARRAY_QUOTING_PROBE);
+  const probeValue = uniqueArrayQuotingProbe(cmd);
+  const probe = cmd.replace(CAPTURE_ARTIFACT_ARRAY_PLACEHOLDER, probeValue);
   let survived: number;
   try {
     // Count probe *occurrences*, not entries containing one: two placeholders
     // can legitimately land in a single quoted argv entry.
     survived = shellParse(probe)
       .filter((entry): entry is string => typeof entry === 'string')
-      .reduce((n, entry) => n + entry.split(ARRAY_QUOTING_PROBE).length - 1, 0);
+      .reduce((n, entry) => n + entry.split(probeValue).length - 1, 0);
   } catch {
     survived = -1;
   }

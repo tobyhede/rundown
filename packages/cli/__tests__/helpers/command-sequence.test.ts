@@ -900,6 +900,28 @@ describe('retired ${ARTIFACT:} grammar (#498)', () => {
     expect(calls).toEqual([]);
   });
 
+  it('detects the retired grammar with an empty body, as the error message spells it', async () => {
+    // Regression: the detector required a non-empty body, so the exact spelling
+    // named in its own error message — ${ARTIFACT:} — passed through unnoticed.
+    const calls: string[][] = [];
+
+    await expect(
+      executeCommandSequence({
+        commands: ['rd run x.runbook.md --artifacts PlanPath=${ARTIFACT:}'],
+        cwd: process.cwd(),
+        cliPath: '/unused/cli.js',
+        quiet: true,
+        commandExecutor: {
+          runRd: async (args) => {
+            calls.push(args);
+            return { stdout: '', stderr: '', exitCode: 0 };
+          },
+        },
+      }),
+    ).rejects.toThrow(/retired.*\$\{ARTIFACT:\}.*#498/s);
+    expect(calls).toEqual([]);
+  });
+
   it('does not mistake the surviving ${CAPTURE_ARTIFACT:} grammar for the retired one', async () => {
     const resolved = await substituteCapturedArtifacts(
       'rd run x --artifacts Plan=${CAPTURE_ARTIFACT:plan.json}',
@@ -953,6 +975,32 @@ describe('${CAPTURE_ARTIFACT_ARRAY:} shell-quoting guard (#498)', () => {
 
     // The resolved JSON reaches argv intact, as a single byte-identical entry.
     expect(calls[0]).toContain('Reviews=["rd://artifacts/c/rd_1/review.json"]');
+  });
+
+  it('accepts a correctly quoted array capture even when the command already contains the probe text', async () => {
+    // Regression: the guard substituted a fixed probe value and counted its
+    // occurrences, so a command that already contained that literal text was
+    // rejected for a collision with the guard's own instrument rather than for
+    // anything the author did wrong.
+    const calls: string[][] = [];
+
+    await executeCommandSequence({
+      commands: [
+        "rd run x.runbook.md --artifacts-json 'R=${CAPTURE_ARTIFACT_ARRAY:review.json}' --input note='[\"rd://s\"]'",
+      ],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      resolveCapturedArtifact: async () => '["rd://artifacts/c/rd_1/review.json"]',
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    expect(calls[0]).toContain('R=["rd://artifacts/c/rd_1/review.json"]');
   });
 
   it('does not fire on the scalar form, which needs no quoting', async () => {

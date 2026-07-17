@@ -232,12 +232,20 @@ assert through the scenario schema (`expect.result`, `expect.steps`,
 interaction sequence.
 
 **These rules are enforced**, not advisory, by
-`packages/cli/__tests__/schemas/scenario-authoring.test.ts`. It rejects any
-scenario command that spawns a subprocess, and confines opaque wrappers to a
-small allowlist for **fault injection only** — where the shell command _is_ the
-fault being injected or the untrusted input being forged, never a workflow step
-and never an assertion. The allowlist is matched by set equality, so a stale
-entry fails the suite as loudly as an unlisted violation.
+`packages/cli/__tests__/schemas/scenario-authoring.test.ts`. It rejects a
+scenario command whose executable is an interpreter (`node`, `python3`, `sh`,
+…), a helper script (`./setup.sh`), or a package runner (`npm`, `npx`, …) — in
+any form, not only the inline `-e` / `-c` spellings — and any command whose
+inline code spawns a subprocess. Detection is anchored to the executable
+position of each operator-separated segment, so a wrapper hidden behind `&&` is
+caught while an incidental mention of `bash` inside a quoted argument is not.
+
+Those wrappers are confined to a small allowlist for **fault injection only** —
+where the shell command _is_ the fault being injected or the untrusted input
+being forged, never a workflow step and never an assertion. The allowlist is
+matched by set equality, so a stale entry fails the suite as loudly as an
+unlisted violation. The predicates themselves are unit-tested in
+`packages/cli/__tests__/schemas/scenario-authoring-rules.test.ts`.
 
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown`
 command's stdout to collect terminal state, step transitions, entered-step
