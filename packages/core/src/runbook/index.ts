@@ -57,7 +57,9 @@ export {
   RUN_ID_PREFIX,
   type RunId,
 } from './run-id.js';
+export * from './claim-activity.js';
 export * from './claim-id.js';
+export * from './duration.js';
 export * from './last-action.js';
 export * from './transition-kernel.js';
 export {
