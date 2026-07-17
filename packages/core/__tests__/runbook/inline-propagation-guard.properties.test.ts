@@ -6,13 +6,16 @@
  * acceptance criterion, "no repeated side effects", which is a claim about every
  * graph and cannot be stated by any single example.
  *
- * The model: N nodes, each with an arbitrary parent pointer (or none). This
- * generates self-loops, 2-cycles, k-cycles, lassos (a chain into a cycle), long
- * acyclic chains, and linkage-free roots — the whole space the guard must survive,
- * including shapes the real system cannot build (which is the point: the guard
- * exists for corrupt persisted state).
+ * The model: N nodes, each with an arbitrary parent pointer (or none) and its own
+ * linkage kind. This generates self-loops, 2-cycles, k-cycles, lassos (a chain
+ * into a cycle), long acyclic chains, linkage-free roots, and MIXED
+ * inline/delegation graphs — the whole space the guard must survive, including
+ * shapes the real system cannot build (which is the point: the guard exists for
+ * corrupt persisted state).
  *
- * Four properties at 200 runs each.
+ * "No repeated side effects" is asserted over all THREE of the seam's side effects
+ * — advance, release, and record — not just the advance callable: they ride one
+ * recursion, so a guard that failed to bound the walk would repeat each alike.
  */
 
 import { describe, it, expect } from '@jest/globals';
@@ -86,6 +89,26 @@ const linkageKindArb: fc.Arbitrary<'inline' | 'delegation'> = fc.constantFrom(
   'delegation',
 );
 
+/**
+ * Per-node linkage kinds, one entry per node — MIXED graphs.
+ *
+ * Inline-heavy on purpose: only the inline arm recurses, so a delegation-heavy
+ * graph ends at level 1 and never reaches the guard at depth. Weighting toward
+ * inline keeps the walk deep enough that the delegation nodes it does contain
+ * land where the guard actually has to decide.
+ */
+const mixedKindsArb = (n: number): fc.Arbitrary<readonly ('inline' | 'delegation')[]> =>
+  fc.array(
+    fc.oneof(
+      { weight: 4, arbitrary: fc.constant('inline' as const) },
+      { weight: 1, arbitrary: fc.constant('delegation' as const) },
+    ),
+    {
+      minLength: n,
+      maxLength: n,
+    },
+  );
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -135,7 +158,26 @@ interface Run {
   readonly result: TerminalUpwardPropagationResult;
   /** Every `parentRunId` passed to advanceInlineParent, in call order. */
   readonly advanced: readonly RunId[];
+  /** Every `runbookId` passed to releaseRunbook, in call order. */
+  readonly released: readonly RunId[];
+  /** Every `childState.id` passed to recordChildCompletion, in call order. */
+  readonly recorded: readonly RunId[];
 }
+
+/**
+ * Resolve node `i`'s linkage kind.
+ *
+ * `kinds` is per-NODE, not per-walk: a single shared kind can only build a
+ * uniformly-inline or uniformly-delegation graph, and the interesting graph is
+ * the MIXED one — an inline chain whose back-edge or cap lands on a delegation
+ * node. That is precisely where "the guard precedes the kind dispatch" is load
+ * bearing, and a shared kind can never construct it.
+ */
+const kindAt = (kinds: LinkageKinds, i: number): 'inline' | 'delegation' =>
+  typeof kinds === 'string' ? kinds : (kinds[i] ?? 'inline');
+
+/** Either one kind for every node, or an explicit per-node assignment. */
+type LinkageKinds = 'inline' | 'delegation' | readonly ('inline' | 'delegation')[];
 
 /**
  * Walk `graph` from node 0.
@@ -144,26 +186,40 @@ interface Run {
  * @param status - Status every parent advance reports (default `'done'`, the
  *   only status that recurses; `'active'` short-circuits, `'stopped'` exercises
  *   the severity collapse).
- * @param kind - Linkage kind every node carries (default `'inline'`;
- *   `'delegation'` takes the report-only arm, which the guard still precedes).
- * @returns The walk's result plus every parent id advanced, in call order.
+ * @param kinds - One kind for every node, or a per-node array (default
+ *   `'inline'`; `'delegation'` takes the report-only arm, which the guard still
+ *   precedes). Per-node arrays build mixed graphs.
+ * @returns The walk's result plus every id advanced, released, and recorded, in
+ *   call order.
  */
 async function walk(
   graph: LinkageGraph,
   status: 'stopped' | 'done' | 'active' = 'done',
-  kind: 'inline' | 'delegation' = 'inline',
+  kinds: LinkageKinds = 'inline',
 ): Promise<Run> {
   const advanced: RunId[] = [];
+  const released: RunId[] = [];
+  const recorded: RunId[] = [];
   const index = new Map<string, number>(graph.map((_, i) => [nodeRunId(i), i]));
   const deps: PropagateTerminalChildUpwardDeps = {
     manager: {
       load: async (id: string) => {
         const i = index.get(id);
-        return i === undefined ? null : makeState(nodeRunId(i), graph[i] ?? null, kind);
+        return i === undefined ? null : makeState(nodeRunId(i), graph[i] ?? null, kindAt(kinds, i));
       },
     },
-    sessionService: { releaseRunbook: async () => ({}) as never },
-    completionService: { recordChildCompletion: async () => 'recorded' },
+    sessionService: {
+      releaseRunbook: async (runbookId: RunId) => {
+        released.push(runbookId);
+        return {} as never;
+      },
+    },
+    completionService: {
+      recordChildCompletion: async ({ childState }: { childState: RunbookState }) => {
+        recorded.push(childState.id);
+        return 'recorded';
+      },
+    },
     advanceInlineParent: async ({ parentRunId }) => {
       advanced.push(parentRunId);
       return { status };
@@ -172,10 +228,10 @@ async function walk(
   };
   const result = await propagateTerminalChildUpward(
     deps,
-    makeState(nodeRunId(0), graph[0] ?? null, kind),
+    makeState(nodeRunId(0), graph[0] ?? null, kindAt(kinds, 0)),
     'pass',
   );
-  return { result, advanced };
+  return { result, advanced, released, recorded };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +297,58 @@ describe('inline propagation guard — properties (#602)', () => {
         expect(new Set(advanced).size).toBe(advanced.length);
       }),
       { numRuns: 200 },
+    );
+  });
+
+  it('no run is released or recorded twice — the AC binds every side effect, not just advance', async () => {
+    // 'no repeated side effects' was only ever proven for ONE of the seam's three
+    // side effects. Release and record ride the same recursion: if the visited set
+    // failed to bound the walk, a cyclic graph would re-release and re-record the
+    // same run exactly as it would re-advance it. Asserting only `advanced` left
+    // two thirds of the AC resting on a claim no property made.
+    await fc.assert(
+      fc.asyncProperty(graphArb, advanceStatusArb, async (graph, status) => {
+        const { released, recorded } = await walk(graph, status);
+        expect(new Set(released).size).toBe(released.length);
+        expect(new Set(recorded).size).toBe(recorded.length);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('a mixed inline/delegation graph is still refused and still terminates', async () => {
+    // The guard-before-kind-dispatch design point, stated over the graph that
+    // actually tests it: a walk that recurses through inline levels and meets a
+    // delegation linkage at the back-edge. A uniform-kind harness cannot build
+    // this graph, so nothing pinned the claim for it.
+    const mixedArb = fc.integer({ min: 1, max: 12 }).chain((n) =>
+      fc.tuple(
+        fc.array(fc.option(fc.integer({ min: 0, max: n - 1 }), { nil: null }), {
+          minLength: n,
+          maxLength: n,
+        }),
+        mixedKindsArb(n),
+      ),
+    );
+    await fc.assert(
+      fc.asyncProperty(mixedArb, advanceStatusArb, async ([graph, kinds], status) => {
+        const { advanced, released, recorded } = await walk(graph, status, kinds);
+        // Termination is the walk returning at all; the at-most-once claim must
+        // survive the mixed graph exactly as it does the uniform one.
+        expect(new Set(advanced).size).toBe(advanced.length);
+        expect(new Set(released).size).toBe(released.length);
+        expect(new Set(recorded).size).toBe(recorded.length);
+        // A delegation-linked ENTRY takes the report-only arm at level 1, so it
+        // drives the inline callable zero times no matter what the rest of the
+        // graph looks like. (Asserted on the entry only: `advanced` records parent
+        // ids, and a delegation-linked node's id legitimately appears there when an
+        // inline node points AT it as its parent — that advance is the inline
+        // node's, not the delegation node's.)
+        if (kindAt(kinds, 0) === 'delegation' && graph[0] !== null) {
+          expect(advanced).toEqual([]);
+        }
+      }),
+      { numRuns: 300 },
     );
   });
 
