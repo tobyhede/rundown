@@ -8,10 +8,16 @@
  *
  * The model: N nodes, each with an arbitrary parent pointer (or none) and its own
  * linkage kind. This generates self-loops, 2-cycles, k-cycles, lassos (a chain
- * into a cycle), long acyclic chains, linkage-free roots, and MIXED
- * inline/delegation graphs — the whole space the guard must survive, including
- * shapes the real system cannot build (which is the point: the guard exists for
- * corrupt persisted state).
+ * into a cycle), long acyclic chains, and linkage-free roots — the whole space the
+ * guard must survive, including shapes the real system cannot build (which is the
+ * point: the guard exists for corrupt persisted state).
+ *
+ * Mixed inline/delegation graphs are built DELIBERATELY rather than sampled: the
+ * guard trips at a node only when that node's parent is already visited, so a
+ * randomly-placed delegation linkage almost always lands somewhere the walk
+ * short-circuits before the guard can decide, and the property proves nothing.
+ * The one graph that tests "the guard precedes the kind dispatch" has the
+ * delegation linkage on the node that CLOSES the cycle.
  *
  * "No repeated side effects" is asserted over all THREE of the seam's side effects
  * — advance, release, and record — not just the advance callable: they ride one
@@ -88,26 +94,6 @@ const linkageKindArb: fc.Arbitrary<'inline' | 'delegation'> = fc.constantFrom(
   'inline',
   'delegation',
 );
-
-/**
- * Per-node linkage kinds, one entry per node — MIXED graphs.
- *
- * Inline-heavy on purpose: only the inline arm recurses, so a delegation-heavy
- * graph ends at level 1 and never reaches the guard at depth. Weighting toward
- * inline keeps the walk deep enough that the delegation nodes it does contain
- * land where the guard actually has to decide.
- */
-const mixedKindsArb = (n: number): fc.Arbitrary<readonly ('inline' | 'delegation')[]> =>
-  fc.array(
-    fc.oneof(
-      { weight: 4, arbitrary: fc.constant('inline' as const) },
-      { weight: 1, arbitrary: fc.constant('delegation' as const) },
-    ),
-    {
-      minLength: n,
-      maxLength: n,
-    },
-  );
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -316,37 +302,41 @@ describe('inline propagation guard — properties (#602)', () => {
     );
   });
 
-  it('a mixed inline/delegation graph is still refused and still terminates', async () => {
-    // The guard-before-kind-dispatch design point, stated over the graph that
-    // actually tests it: a walk that recurses through inline levels and meets a
-    // delegation linkage at the back-edge. A uniform-kind harness cannot build
-    // this graph, so nothing pinned the claim for it.
-    const mixedArb = fc.integer({ min: 1, max: 12 }).chain((n) =>
-      fc.tuple(
-        fc.array(fc.option(fc.integer({ min: 0, max: n - 1 }), { nil: null }), {
-          minLength: n,
-          maxLength: n,
-        }),
-        mixedKindsArb(n),
+  it('an inline chain whose back-edge is delegation-linked is still refused (guard precedes kind dispatch)', async () => {
+    // The graph that actually tests the design point, built deliberately rather
+    // than hoped for out of arbitrary pointers: a k-cycle 0 → 1 → … → n-1 → 0,
+    // inline all the way round EXCEPT the node that closes the loop, which is
+    // delegation-linked.
+    //
+    // The delegation node has to be the CLOSING one. The guard trips at a node
+    // only when that node's parent is already visited, and in a k-cycle walked
+    // from 0 the sole such node is n-1 (its parent is 0). Put the delegation
+    // linkage anywhere earlier and its parent is still unvisited, so the walk
+    // takes the report-only arm and returns 'reported' — no cycle reached, and
+    // the property would prove nothing.
+    //
+    // Status is pinned to 'done' for the same reason: 'active' short-circuits at
+    // level 1 and 'stopped' ends the walk before the back-edge, so neither ever
+    // reaches the guard. An arbitrary status here would silently sample mostly
+    // trivial cases.
+    const inlineCycleClosedByDelegationArb = fc.integer({ min: 1, max: 12 }).map((n) => ({
+      graph: Array.from({ length: n }, (_, i) => (i + 1) % n),
+      kinds: Array.from({ length: n }, (_, i) =>
+        i === n - 1 ? ('delegation' as const) : ('inline' as const),
       ),
-    );
+    }));
     await fc.assert(
-      fc.asyncProperty(mixedArb, advanceStatusArb, async ([graph, kinds], status) => {
-        const { advanced, released, recorded } = await walk(graph, status, kinds);
-        // Termination is the walk returning at all; the at-most-once claim must
-        // survive the mixed graph exactly as it does the uniform one.
+      fc.asyncProperty(inlineCycleClosedByDelegationArb, async ({ graph, kinds }) => {
+        const { result, advanced, released, recorded } = await walk(graph, 'done', kinds);
+        // If the kind dispatch ran FIRST, the closing node would record report-only
+        // and return 'reported', which the severity collapse turns into 'handled' —
+        // a corrupt graph reported as success. That is the regression this pins.
+        expect(result).toBe('linkage-cycle');
+        // The at-most-once claim must hold on the mixed graph exactly as it does
+        // on the uniform one.
         expect(new Set(advanced).size).toBe(advanced.length);
         expect(new Set(released).size).toBe(released.length);
         expect(new Set(recorded).size).toBe(recorded.length);
-        // A delegation-linked ENTRY takes the report-only arm at level 1, so it
-        // drives the inline callable zero times no matter what the rest of the
-        // graph looks like. (Asserted on the entry only: `advanced` records parent
-        // ids, and a delegation-linked node's id legitimately appears there when an
-        // inline node points AT it as its parent — that advance is the inline
-        // node's, not the delegation node's.)
-        if (kindAt(kinds, 0) === 'delegation' && graph[0] !== null) {
-          expect(advanced).toEqual([]);
-        }
       }),
       { numRuns: 300 },
     );
