@@ -236,9 +236,18 @@ interaction sequence.
 scenario command whose executable is an interpreter (`node`, `python3`, `sh`,
 …), a helper script (`./setup.sh`), or a package runner (`npm`, `npx`, …) — in
 any form, not only the inline `-e` / `-c` spellings — and any command whose
-inline code spawns a subprocess. Detection is anchored to the executable
-position of each operator-separated segment, so a wrapper hidden behind `&&` is
-caught while an incidental mention of `bash` inside a quoted argument is not.
+inline code spawns a subprocess.
+
+Detection is anchored to the **executable position of every command**, found by
+tokenizing with `shell-quote` — the same tokenizer the harness uses to run these
+commands, so the lint and the executor agree by construction about where a
+command begins. A wrapper is caught behind a shell operator (`&&`, `;`, `|`), on
+a second line, inside a subshell, and inside a `$( … )` or backtick substitution
+at any depth. Prefixes do not evade it: `! node …` and `FOO=bar node …` are both
+rejected. Conversely, text that only looks like a command is not one — an
+incidental `bash` in a quoted argument, a separator inside a quoted string
+(`--message "step a; node b"`), a redirection target, and a backtick inside a
+single-quoted argument (where the shell would not expand it) all pass.
 
 Those wrappers are confined to a small allowlist for **fault injection only** —
 where the shell command _is_ the fault being injected or the untrusted input

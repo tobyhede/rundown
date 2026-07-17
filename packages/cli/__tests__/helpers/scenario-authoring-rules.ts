@@ -15,6 +15,8 @@
  * @module __tests__/helpers/scenario-authoring-rules
  */
 
+import { parse as shellParse } from 'shell-quote';
+
 /** A fabrication rule: a scenario command must never match `pattern`. */
 export interface FabricationRule {
   /** Human-readable description, used as the test name and failure context. */
@@ -79,35 +81,150 @@ const WRAPPER_EXECUTABLES = new Set([
 /** Script files that would be run directly, e.g. `./setup.sh`. */
 const SCRIPT_FILE = /\.(sh|bash|zsh|js|cjs|mjs|py|rb|pl)$/;
 
-/** Strips a `!` negation prefix and any leading `FOO=bar` environment assignments. */
-const COMMAND_PREFIX = /^(?:!\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*/;
+/**
+ * Operators after which the shell begins a new command.
+ *
+ * Redirections (`>`, `<`, `>>`) are deliberately absent: `rd echo > out.txt`
+ * runs one command, and treating `>` as a boundary would read `out.txt` as an
+ * executable.
+ */
+const COMMAND_SEPARATORS: ReadonlySet<string> = new Set([';', '&&', '||', '|', '&', '(', ')']);
+
+/** An `FOO=bar` assignment prefix, which does not consume the command position. */
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * Extract the text of every command substitution the shell would actually run.
+ *
+ * Quote-aware by necessity, not by preference: inside *single* quotes `$( … )`
+ * and backticks are literal text. `delegate-claim-corruption.runbook.md:29` — an
+ * allowlisted fault injector — passes a single-quoted `node -e` argument holding
+ * JS template literals (`` `sha256:${"f".repeat(64)}` ``), which `shellParse`
+ * rejects outright as a bad substitution. A quote-blind regex hands that inner
+ * text to the parser and throws on a legitimate command, so scanning raw text
+ * for `` ` `` is not merely imprecise, it is broken.
+ *
+ * `shellParse` cannot do this for us: it reports a token's text but not the
+ * quote style that produced it, so an active `"$(node x)"` and a literal
+ * `'$(node x)'` are indistinguishable once parsed.
+ *
+ * @param command - Raw scenario command text
+ * @returns Inner text of each shell-active `$( … )` or backtick substitution
+ */
+function activeSubstitutions(command: string): string[] {
+  const found: string[] = [];
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      continue;
+    }
+    if (char === '\\') {
+      i++; // Escaped: the next character is literal whatever it is.
+      continue;
+    }
+    if (quote === '"' && char === '"') {
+      quote = undefined;
+    } else if (quote === undefined && (char === "'" || char === '"')) {
+      quote = char;
+    } else if (char === '`') {
+      const end = command.indexOf('`', i + 1);
+      if (end === -1) break;
+      found.push(command.slice(i + 1, end));
+      i = end;
+    } else if (char === '$' && command[i + 1] === '(') {
+      let depth = 1;
+      let end = i + 2;
+      for (; end < command.length && depth > 0; end++) {
+        if (command[end] === '(') depth++;
+        else if (command[end] === ')') depth--;
+      }
+      if (depth !== 0) break;
+      found.push(command.slice(i + 2, end - 1));
+      i = end - 1;
+    }
+  }
+  return found;
+}
+
+/**
+ * Extract the executable of every command in one newline-free line of shell.
+ *
+ * @param line - Shell text containing no newlines
+ * @returns The executable token of each command in the line, in order
+ */
+function headsOfLine(line: string): string[] {
+  const heads: string[] = [];
+  let atCommandStart = true;
+  for (const token of shellParse(line)) {
+    if (typeof token === 'string') {
+      // `!` negates the following command and `FOO=bar` prefixes it; neither is
+      // the executable, so the command position survives them.
+      if (!atCommandStart || token === '!' || ENV_ASSIGNMENT.test(token)) continue;
+      heads.push(token);
+      atCommandStart = false;
+    } else if ('op' in token) {
+      if (token.op === 'glob') {
+        if (atCommandStart) {
+          heads.push(token.pattern);
+          atCommandStart = false;
+        }
+      } else if (COMMAND_SEPARATORS.has(token.op)) {
+        atCommandStart = true;
+      }
+    }
+  }
+  return heads;
+}
+
+/**
+ * Extract the executable of every command a scenario command string invokes.
+ *
+ * Tokenizes with `shell-quote` — the same tokenizer
+ * (`parseRdCommandWithEnv` → `shellParse`) the harness uses to *execute* these
+ * commands — so the lint agrees with the executor by construction about where a
+ * command begins. A hand-rolled `split(/[;|&]+/)` cannot: it splits on a `;`
+ * inside a quoted argument, which both invents boundaries that the shell never
+ * sees and lets a real one hide.
+ *
+ * @param command - Scenario command string, as authored in `commands:`
+ * @returns Every executable token, including those inside command substitutions
+ */
+export function commandHeads(command: string): string[] {
+  // `shellParse` treats a newline as ordinary whitespace, so a wrapper on a
+  // second line would otherwise hide behind the first line's head.
+  const heads = command.split('\n').flatMap((line) => headsOfLine(line));
+  for (const inner of activeSubstitutions(command)) {
+    // Each substitution is strictly shorter than `command`, so this terminates.
+    heads.push(...commandHeads(inner));
+  }
+  return heads;
+}
 
 /**
  * Extract the executable a command segment invokes.
  *
- * @param segment - A single command segment, without shell operators
- * @returns The executable token, or an empty string when the segment is blank
+ * @param segment - A single command segment
+ * @returns The first executable token, or an empty string when none is found
  */
 export function commandHead(segment: string): string {
-  const withoutPrefix = segment.trim().replace(COMMAND_PREFIX, '');
-  return /^\S*/.exec(withoutPrefix)?.[0] ?? '';
+  return commandHeads(segment)[0] ?? '';
 }
 
 /**
  * Whether a scenario command invokes an interpreter, helper script, or package
  * runner — in any form, not only the inline `-e` / `-c` spellings.
  *
- * Checks each operator-separated segment, so a wrapper hidden behind `;` or `&&`
- * is caught too. Matching is anchored to the executable position rather than
- * applied to the whole string, so an incidental mention of `bash` inside a
- * quoted argument is not a violation.
+ * Checks the executable position of every command, so a wrapper is caught behind
+ * a shell operator, on a second line, or inside a `$( … )` substitution, while
+ * an incidental mention of `bash` in a quoted argument is not a violation.
  *
  * @param command - Scenario command string, as authored in `commands:`
- * @returns True when any segment invokes a wrapper
+ * @returns True when any command invokes a wrapper
  */
 export function usesOpaqueWrapper(command: string): boolean {
-  return command
-    .split(/[;|&]+/)
-    .map((segment) => commandHead(segment))
-    .some((head) => head !== '' && (WRAPPER_EXECUTABLES.has(head) || SCRIPT_FILE.test(head)));
+  return commandHeads(command).some(
+    (head) => head !== '' && (WRAPPER_EXECUTABLES.has(head) || SCRIPT_FILE.test(head)),
+  );
 }

@@ -86,6 +86,16 @@ describe('opaque wrapper detection', () => {
     // Prefixed forms must not evade the executable-position anchor.
     "! node -e 'process.exit(1)'",
     'FOO=bar node scripts/seed.js',
+    // A newline is a command separator too. `shellParse` treats it as ordinary
+    // whitespace, so without an explicit split the wrapper hides behind `rd`.
+    'rd pass\nnode scripts/seed.js',
+    'rd status\n  bash -c "echo hi"',
+    // A command substitution runs its contents as a command, at any depth.
+    'rd echo --result pass --message "$(node -e \'1\')"',
+    'rd echo --message `node -e 1`',
+    'rd echo --message "$(echo "$(python3 seed.py)")"',
+    // A subshell is a command position.
+    '(node scripts/seed.js)',
   ])('rejects %p', (command) => {
     expect(usesOpaqueWrapper(command)).toBe(true);
   });
@@ -100,8 +110,30 @@ describe('opaque wrapper detection', () => {
     // Incidental mentions in arguments are not invocations.
     'rd run x.runbook.md --input shell=bash',
     'rd echo --result pass --message "run node to debug"',
+    // A separator inside a quoted argument is not a command boundary: the shell
+    // never sees it as one, so neither may the lint. A `split(/[;|&]+/)` reads
+    // `node` and `bash` here as executables and rejects a legitimate command.
+    'rd echo --result pass --message "step a; node b to debug"',
+    'rd echo --message "use a | bash pipeline"',
+    'rd echo --message "run a && python3 it"',
+    // A redirection target is not an executable.
+    'rd echo --message hi > seed.js',
   ])('accepts %p', (command) => {
     expect(usesOpaqueWrapper(command)).toBe(false);
+  });
+
+  it('reads a single-quoted backtick as literal text, not a substitution', () => {
+    // Abridged from delegate-claim-corruption.runbook.md:29, an allowlisted
+    // fault injector. Its JS template literals sit inside a single-quoted
+    // `node -e` argument, so the shell never expands them. Re-parsing that inner
+    // text as shell throws (`Bad substitution: "f".repeat`), so a quote-blind
+    // scan for backticks crashes the lint on a legitimate command.
+    const command =
+      'node -e \'const p = `.rundown/runs/${c.controlledRunId}.json`; child.parentLinkage.tokenHash = `sha256:${"f".repeat(64)}`;\'';
+    expect(() => usesOpaqueWrapper(command)).not.toThrow();
+    // Still a wrapper — but because `node` heads it, not because of the backticks.
+    expect(usesOpaqueWrapper(command)).toBe(true);
+    expect(commandHead(command)).toBe('node');
   });
 });
 
