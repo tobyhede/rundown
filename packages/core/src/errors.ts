@@ -70,11 +70,16 @@ export function isNodeErrorCode(error: unknown, code: string): boolean {
  * explicitly. `Error.isError()` is for cross-realm NATIVE errors and would not
  * answer this question.
  *
+ * Returns a type predicate rather than a bare `boolean` (the one place this
+ * deliberately improves on its {@link isNodeErrorCode} template): at a
+ * `catch (error: unknown)` site, narrowing to `RundownError` is what unlocks
+ * `.code` / `.context` / `.toJSON()` without a cast.
+ *
  * @param error - Any thrown value.
  * @param code - The `RD-xxx` code string to match (pass `ErrorCodes.X.code`).
  * @returns True when `error` is a `RundownError` whose code matches.
  */
-export function isRundownErrorCode(error: unknown, code: string): boolean {
+export function isRundownErrorCode(error: unknown, code: string): error is RundownError {
   return error instanceof RundownError && error.code === code;
 }
 

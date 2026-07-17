@@ -76,9 +76,19 @@ describe('SessionService.recordClaimProgress (#519)', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     const result = await sessionService.recordClaimProgress(claimId);
 
-    expect(result.kind).toBe('recorded');
     const session = await manager.loadSession();
     const stored = session.claims[claim.claimKey];
+    // The WHOLE recorded contract, not just `kind`: `claimKey` and
+    // `lastProgressAt` are the fields plan 2's call sites consume, and asserting
+    // only `kind` leaves them pinned by nothing — a recorder that reported the
+    // wrong claim key, or a timestamp that disagreed with what it persisted,
+    // would pass. `toEqual` against the PERSISTED record is what ties the
+    // returned value to the write it claims to describe.
+    expect(result).toEqual({
+      kind: 'recorded',
+      claimKey: claim.claimKey,
+      lastProgressAt: stored.lastProgressAt,
+    });
     expect(Date.parse(stored.lastProgressAt)).toBeGreaterThanOrEqual(Date.parse(before));
     expect(stored.lastProgressAt).not.toBe(before);
   });
