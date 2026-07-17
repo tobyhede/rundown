@@ -356,9 +356,7 @@ splice-then-reparse is real and the requirement is otherwise held off by author
 convention alone. The follow-up issue names the guard among the things it
 removes, so the waste is tracked rather than fossilised.
 
-**Follow-up issue:** filed by the implementation plan's final task — record the
-number here on landing. Deferred work with no issue number is deleted work, so
-this deferral is not complete until the number is here.
+**Follow-up issue:** [#604](https://github.com/tobyhede/rundown/issues/604).
 
 ### 3.4 What survives
 
