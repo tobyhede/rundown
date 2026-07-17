@@ -286,7 +286,10 @@ export async function writeSession(
     stashed?: string | null;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
-    claims?: Record<string, Record<string, unknown>>;
+    // Matches `readSession`'s `claims` so a read→write round-trip type-checks.
+    // A test that fabricates a partial claim writes an invalid session anyway;
+    // the narrower type says so at compile time instead of at load time.
+    claims?: Record<string, ClaimRecord>;
   },
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};

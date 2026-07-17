@@ -681,7 +681,7 @@ rd echo "hello"
         [claimKeyFromBearer(MANUAL_CLAIM_ID)]: {
           claimKey: parsedClaim.claimKey,
           secretHash: hashClaimSecret(parsedClaim.secret),
-          controlledRunId: runbookId,
+          controlledRunId: assertRunId(runbookId),
           delegation: linkage,
           grants: createDelegatedChildGrants({ linkage }),
           issuedAt: '2026-04-28T00:00:00.000Z',

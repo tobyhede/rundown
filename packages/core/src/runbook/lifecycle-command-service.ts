@@ -912,6 +912,9 @@ export class RunbookLifecycleCommandService {
   /**
    * Issue, echo, or retry a delegation. The un-recorded body of
    * {@link RunbookLifecycleCommandService.issueDelegation}.
+   *
+   * @param input - Fresh-issuance or retry request.
+   * @returns A typed issuance outcome, before the recording tail inspects it.
    */
   async #issueDelegationInner(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
@@ -1593,6 +1596,10 @@ export class RunbookLifecycleCommandService {
   /**
    * Force a run (or an inline chain) terminal. The un-recorded body of
    * {@link RunbookLifecycleCommandService.runTerminal}.
+   *
+   * @param input - Command, caller evidence, target selector, and optional message.
+   * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome,
+   *   before the recording tail inspects it.
    */
   async #runTerminalInner(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
     // Bare (no `--claim-id` / `--run`) complete/stop on a *delegation*-exposed

@@ -83,6 +83,7 @@ export {
 export {
   SessionService,
   type ActiveInlineForceTerminalPlan,
+  type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
