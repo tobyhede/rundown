@@ -412,3 +412,4 @@ remediations
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
 linecap
 linejoin
+offsetless

@@ -248,18 +248,29 @@ function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {
  */
 export class SessionService {
   private readonly lock: SessionLock;
+  private readonly now: () => string;
 
   /**
    * Create a new SessionService.
    *
+   * `now` is the clock seam for every timestamp this service writes. It returns an
+   * ISO string rather than a `Date` because all four write sites want one, and it
+   * follows the established convention for injected clocks in this package
+   * (`RunbookActorServiceOptions.inlineLaunchNow`, defaulted at `compiler.ts:3695`).
+   * Optional and defaulted, so the 40-odd construction sites — including 16 in the
+   * CLI, which take the real clock — are unaffected.
+   *
    * @param manager - State manager for raw session and state persistence
    * @param lock - Optional pre-built session lock (defaults to one bound to `manager.cwd`)
+   * @param now - Optional clock returning an ISO instant (defaults to the wall clock)
    */
   constructor(
     private readonly manager: RunbookStateManager,
     lock?: SessionLock,
+    now?: () => string,
   ) {
     this.lock = lock ?? new SessionLock(manager.cwd);
+    this.now = now ?? (() => new Date().toISOString());
   }
 
   /**
@@ -358,7 +369,7 @@ export class SessionService {
     session: SessionData,
     runId: RunId,
   ): { readonly claimId: ClaimId; readonly claim: ClaimRecord } {
-    const now = new Date().toISOString();
+    const now = this.now();
     const parsed = parseClaimBearer(generateClaimBearer());
     const claim = createClaimRecord({
       claimKey: parsed.claimKey,
@@ -431,6 +442,35 @@ export class SessionService {
    * report and one wasted check; failing a user's `rundown pass` because a
    * bookkeeping write hiccuped would be indefensible (RD-102).
    *
+   * RECORDS THE CLOCK VERBATIM, AND DELIBERATELY DOES NOT CLAMP TO
+   * `max(existing, now)` — a backward wall-clock step overwrites `lastProgressAt`
+   * with an older value BY DESIGN. Reviewers reliably read that as a bug, so the
+   * reasoning is recorded here (#611):
+   * - Reader and writer SHARE A CLOCK. The parent's `rundown status` and the child's
+   *   mutation are processes on the same host — the lock design requires it (stale
+   *   reclamation is `kill(pid, 0)`, meaningless across hosts) and `session.json` is
+   *   a local file. A backward step moves both, so the older timestamp is the
+   *   CORRECT answer and no premature idle occurs.
+   * - The clamp would introduce the AC6 fail-open it appears to prevent. Pinning
+   *   `lastProgressAt` in the future meets `claimActivity`'s `Math.max(0, …)` skew
+   *   clamp (claim-activity.ts:161) and yields `idleFor: 0` for the whole excursion:
+   *   a DEAD claim reading as live, in exactly the case the signal exists to catch.
+   *   Corrupt persisted state is rejected, never interpreted (claim-activity.ts:129-131) —
+   *   and a max-clamp interprets.
+   * - The failure modes are asymmetric in DURATION. Un-clamped, a false idle needs a
+   *   back-and-forth excursion and self-heals on the holder's next command. Clamped,
+   *   the false not-idle lasts the whole jump and CANNOT self-heal, because it
+   *   persists precisely while nothing is happening.
+   *
+   * The counter-argument, so it is weighed rather than lost: {@link DEFAULT_IDLE_AFTER_MS}
+   * argues reporting idle EARLY is the worse error, which favours the clamp. That is
+   * threshold-tuning reasoning for the routine no-jump case, where "late" means a
+   * bounded delay — it does not sanction an unbounded dead-claim-reads-live window.
+   *
+   * Pinned by `claim-progress.test.ts` › "recordClaimProgress under backward
+   * wall-clock movement (#611 review)" — in particular "reports a DEAD claim idle
+   * after a sustained backward jump", which fails if the clamp is ever added.
+   *
    * @param claimId - Bearer claim id presented by the caller on the mutation.
    * @returns Typed recording outcome. Never rejects.
    */
@@ -446,7 +486,7 @@ export class SessionService {
         if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
           return { kind: 'no-claim' };
         }
-        const now = new Date().toISOString();
+        const now = this.now();
         session.claims[parsed.claimKey] = progressedClaimRecord(claim, now);
         await this.manager.saveSession(session);
         return { kind: 'recorded', claimKey: parsed.claimKey, lastProgressAt: now };
@@ -559,7 +599,7 @@ export class SessionService {
   async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const now = new Date().toISOString();
+      const now = this.now();
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
         const existingState = await this.manager.load(existingForDelegation.controlledRunId);
@@ -1144,7 +1184,7 @@ export class SessionService {
       }
 
       session.stashedRunbookId = undefined;
-      session.claims[parsed.claimKey] = refreshedClaimRecord(claim, new Date().toISOString());
+      session.claims[parsed.claimKey] = refreshedClaimRecord(claim, this.now());
       await this.manager.saveSession(session);
       return { status: 'restored', claim: session.claims[parsed.claimKey], state };
     });
