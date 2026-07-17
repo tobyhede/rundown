@@ -755,6 +755,18 @@ export class RunbookStateManager {
    * Load the session data from disk.
    *
    * @returns The parsed session data, or a default empty session if the file doesn't exist
+   * @throws {Error} When the persisted session is incompatible with the current
+   *   model and must NOT be adapted. Rundown never migrates persisted runbook
+   *   state, so each of these is a rejection with an explicit user recovery path,
+   *   never a hydration or a shim:
+   *   - A legacy per-agent ownership shape (`ownedRunbooks`, `stashedRunbookOwnership`,
+   *     or `stacks`) — recover by finishing or pruning active runbooks and restarting.
+   *   - A claim record predating the required `ClaimRecord.lastProgressAt` (#519) —
+   *     same recovery. Checked before schema validation purely to route this cause to
+   *     the finish/prune/restart path rather than Zod's delete-the-file message.
+   *   - A session failing `SessionDataSchema` — recover by deleting
+   *     `.rundown/session.json` and restarting active runbooks.
+   * @throws {SyntaxError} When the session file is not parseable JSON.
    */
   async loadSession(): Promise<SessionData> {
     let content: string;
