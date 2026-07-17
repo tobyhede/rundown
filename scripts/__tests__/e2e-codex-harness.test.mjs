@@ -598,7 +598,7 @@ test('Codex shell entrypoint installs the local Rundown Codex plugin and exports
   assert.match(entrypoint, /codex plugin add rundown@rundown-local/);
   assert.doesNotMatch(entrypoint, /--plugin-dir/);
   assert.match(entrypoint, /command -v rundown-mcp/);
-  assert.match(entrypoint, /Plugin:    \$PLUGIN_DIR/);
+  assert.match(entrypoint, /Plugin: {4}\$PLUGIN_DIR/);
   assert.match(entrypoint, /Marketplace: \$MARKETPLACE_ROOT\/\.agents\/plugins\/marketplace\.json/);
   assert.match(entrypoint, /MCP:/);
 
