@@ -125,7 +125,6 @@ export type RunningStackMemberResolution =
       readonly lifecycle: RunbookState['lifecycle'];
     };
 
-/** Result of restoring a stashed delegated child by claim id. */
 /**
  * Outcome of a best-effort claim-progress recording.
  *
@@ -153,6 +152,7 @@ export type ClaimProgressRecordResult =
       readonly error: unknown;
     };
 
+/** Result of restoring a stashed delegated child by claim id. */
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }

@@ -916,7 +916,7 @@ describe('RunbookStateManager', () => {
       );
 
       const session = await manager.loadSession();
-      expect(session.claims[claimKey]?.lastProgressAt).toBe('2026-07-01T00:00:00.000Z');
+      expect(session.claims[claimKey].lastProgressAt).toBe('2026-07-01T00:00:00.000Z');
     });
 
     it('loads a session with no claims at all without tripping the claim guard (#519)', async () => {

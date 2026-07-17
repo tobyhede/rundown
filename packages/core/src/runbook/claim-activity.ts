@@ -110,7 +110,7 @@ export function claimActivity(
  * The read boundaries (plan 3) contain THIS and rethrow everything else, so they
  * need one predicate rather than a hand-rolled `instanceof` plus a literal code
  * comparison at each site. Exported for exactly that reason: this design argues
- * that discrimination must not hinge on a re-wordable message, and a code literal
+ * that discrimination must not hinge on a message someone may reword, and a code literal
  * copied into every caller is the same defect one level down — `'RD-824'` is
  * re-numberable, and a renumber would silently turn contained corruption back into
  * an unhandled throw out of a read-only command. The code lives in ONE place

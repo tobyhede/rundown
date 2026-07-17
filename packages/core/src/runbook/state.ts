@@ -783,7 +783,7 @@ export class RunbookStateManager {
     // this cause to the correct recovery path: Zod's failure message tells the user
     // to delete session.json, while the sanctioned recovery here — as for the legacy
     // ownership format above — is to finish or prune the active runbooks and restart.
-    const rawClaims = raw['claims'];
+    const rawClaims = raw.claims;
     if (typeof rawClaims === 'object' && rawClaims !== null && !Array.isArray(rawClaims)) {
       const missingProgress = Object.values(rawClaims as Record<string, unknown>).some(
         (claim) =>
