@@ -966,6 +966,22 @@ export class SessionService {
   }
 
   /**
+   * Reset session targeting as the first step of an explicit prune-all operation.
+   *
+   * This deliberately does not load the existing session. `prune --all` is the
+   * recovery path for persisted session shapes that the current version rejects,
+   * so attempting to validate or adapt that data would make recovery impossible
+   * or introduce a forbidden migration. The canonical empty session is written
+   * under the session lock before run-state files are deleted, preserving prune's
+   * release-before-delete convergence guarantee.
+   *
+   * @returns A promise that resolves after the canonical empty session is persisted.
+   */
+  async resetForPruneAll(): Promise<void> {
+    await this.withLock(() => this.manager.saveSession({ defaultStack: [], claims: {} }));
+  }
+
+  /**
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release
