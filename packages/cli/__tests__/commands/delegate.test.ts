@@ -529,9 +529,26 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).not.toBe(0);
-      const payload = JSON.parse(result.stdout) as { code?: string; message?: string };
-      expect(payload.code).toBe('RUN_TARGET_MISMATCH');
-      expect(payload.message ?? '').not.toContain(parent.id);
+      const raw: unknown = JSON.parse(result.stdout);
+      // The error event writes `error`, not `message` (json-renderer.ts maps
+      // ErrorOutput.message onto the wire as `error`), and this refusal emits no
+      // other event — the renderer accumulates, so an info-level message event
+      // would land a `message` key alongside it. Asserting on `payload.message`
+      // therefore reads undefined and passes vacuously; pin its absence here so
+      // the field name cannot silently drift back. ErrorResponseSchema is
+      // .loose() and would not catch a stray `message` on its own.
+      expect(raw).not.toHaveProperty('message');
+
+      const parsed = ErrorResponseSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error('Expected a schema-valid error envelope');
+      expect(parsed.data.code).toBe('RUN_TARGET_MISMATCH');
+      // Accident barrier: the refusal names only the caller-supplied id and never
+      // echoes the token's actual owning run (lifecycle-command-service.ts).
+      // The positive assertion is what keeps the negative one honest — together
+      // they cannot both pass on a misspelled field.
+      expect(parsed.data.error).toContain(foreign);
+      expect(parsed.data.error).not.toContain(parent.id);
       // No re-mint happened: the persisted delegation still answers to the
       // original token (a bare retry of the same token still resolves it).
       const after = await getActiveState(workspace);
