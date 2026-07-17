@@ -452,18 +452,25 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
   });
 
   it('collect records ONLY the presented orchestrator claim, never a child (AC5)', async () => {
-    // THE DESIGN'S CANONICAL AC5 CASE — "a parent cannot vouch for a child's
-    // liveness, and must not appear to" — and, like the abort case below, one the
-    // it.each above structurally cannot express: `Arrangement` carries a single
-    // claim, with no slot for "and these OTHER claims must not have moved".
+    // DOCUMENTS AC5 AT THIS SEAM — it does NOT guard it, and the difference was
+    // established by running the probe rather than reasoning about it.
     //
-    // `collect` is where the wrong implementation looks RIGHT. The orchestrator's
-    // seam already holds `listOpenClaimsForParent` (a CollectionSessionService
-    // method, sitting right there), so "loop the open children and record them
-    // all" is a natural line to write — and it passes the generic collect case
-    // above, which only checks that the parent's own mark moved. Only this test
-    // fails on it. A parent that refreshed its children would report every stuck
-    // child as live: the exact false negative #519 exists to prevent, self-inflicted.
+    // The intuition says `collect` is where the wrong implementation looks right:
+    // `listOpenClaimsForParent` sits on the seam, so "loop the open children and
+    // record them all" is a natural line to write. Written out, THAT LINE DOES
+    // NOTHING. `recordClaimSeen` verifies the bearer secret, and a parent holds
+    // only child claim KEYS — never child bearers — so it returns `no-claim`; and by
+    // record time the collection has committed, so the list is empty anyway. This
+    // case cannot go red for the reason it names.
+    //
+    // Kept because it still catches a `recordClaimSeen` that stopped requiring
+    // the secret — a real regression, just not the one the intuition worries about.
+    // AC5's falsifiable case is `records the CALLER's bearer, never the bearer named
+    // as the target` in packages/core/__tests__/runbook/claim-progress.test.ts: the
+    // ONE input carrying two bearers. The CLI cannot express that divergence (one
+    // --claim-id flag populates both fields), which is why it is not in this file.
+    //
+    // "A parent cannot vouch for a child's liveness, and must not appear to."
     const {
       workspace,
       claimId: parentClaimId,
@@ -498,14 +505,19 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
   });
 
   it('abort records ONLY the presented parent claim, never a bystander child (AC5)', async () => {
-    // THE SHARPEST AC5 CASE, and the one the it.each above structurally cannot
-    // express: `Arrangement` carries a single claim, so it has no slot for "and
-    // this OTHER claim must not have moved". Every other recording command presents
-    // a bearer for the run it mutates; `abort` is the only one where the presented
-    // bearer (the parent's) controls a DIFFERENT run from the claims it affects. An
-    // implementation that looped over the session's claims — or that recorded
-    // `target.claimId` alongside `callerEvidence.claimId` — would pass every generic
-    // case in this file, because the parent's mark moves and that is all they check.
+    // DOCUMENTS AC5, like the collect case above, for the same reason: an
+    // implementation that looped the session's claims could not move any of them —
+    // `recordClaimSeen` verifies the bearer secret and this command holds no
+    // bearer but the parent's. Kept as a regression net on that API contract, not
+    // credited as AC5's guarantee. The falsifiable case is the seam-level one in
+    // packages/core/__tests__/runbook/claim-progress.test.ts.
+    //
+    // It is still the sharpest arrangement in this file, and the one the it.each
+    // above structurally cannot express: `Arrangement` carries a single claim, so it
+    // has no slot for "and this OTHER claim must not have moved". Every other
+    // recording command presents a bearer for the run it mutates; `abort` is the
+    // only one where the presented bearer (the parent's) controls a DIFFERENT run
+    // from the claims it affects.
     //
     // WHY A BYSTANDER, AND NOT THE ABORTED CHILD. The obvious test — "abort child A,
     // assert A's mark did not move" — CANNOT BE WRITTEN. Aborting a CLAIMED

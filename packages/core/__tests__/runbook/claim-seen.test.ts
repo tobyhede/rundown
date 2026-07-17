@@ -489,6 +489,67 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       ).idle,
     ).toBe(true);
   });
+
+  it("records the CALLER's bearer, never the bearer named as the target (AC5)", async () => {
+    // THE ONE PLACE THE AC5 DEFECT IS EXPRESSIBLE, and so the only test that can
+    // fail on it. `callerEvidence` and `targetSelector` are independent fields
+    // (LifecycleTransitionInput), and a `claim` selector carries a SECOND bearer —
+    // so `recordClaimSeen(input.targetSelector.claimId)` is a line someone can
+    // write, and every other AC5 test in this change stays green when they do.
+    //
+    // Why it cannot live at the CLI: one `--claim-id` flag populates both fields
+    // (transition-target.ts `transitionTargetFields`), so the drift guard can never
+    // diverge them. Why the collect/abort AC5 cases cannot catch it either:
+    // `recordClaimSeen` verifies the bearer secret, and a parent holds only
+    // child claim KEYS — never child bearers — so no implementation reachable from
+    // those seams can move another claim's mark at all.
+    //
+    // A caller cannot vouch for another claim's liveness and must not appear to.
+    //
+    // NO SIBLING CASE FOR runTerminal, AND THAT IS A FINDING, NOT AN OMISSION.
+    // Its tail is a separate line, but the divergence cannot reach a committed
+    // success there: the terminal path resolves the actor context from
+    // `callerEvidence` against the TARGET run and refuses a caller lacking
+    // `mutate-run` on it (`claim_grant_required`). Verified by running it. So at
+    // `runTerminal`, caller and target are necessarily the same claim on every
+    // `applied_*` path and the two arguments are indistinguishable.
+    //
+    // WHY THIS CASE CAN REACH `applied` WHEN THAT ONE CANNOT: the transition path
+    // builds its actor context from the TARGET's claim record for a `claim`
+    // selector and never consults `callerEvidence` for authorization. That
+    // asymmetry is what makes the presented-vs-named distinction observable here.
+    // If that gate is ever tightened to match the terminal path, this case will
+    // stop reaching `applied` — at which point the defect is not expressible at
+    // this seam either, and the honest move is to DELETE this test and record that the
+    // tails are safe by construction. Do not "fix" it by weakening the assertion.
+    const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
+      runbookPath: 'other.md',
+    });
+    // stateB is deliberately NOT pushed: claim targeting resolves through
+    // `claim.controlledRunId` -> `manager.load`, never the session stack. Pushing
+    // would make B the active runbook and give this case a second, irrelevant
+    // reason to pass.
+    const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
+    const { claimId: claimB, claim: recordB } = await sessionService.issueRunControlClaim(
+      stateB.id,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+      targetSelector: { kind: 'claim', claimId: claimB },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('applied');
+
+    const session = await manager.loadSession();
+    // The presenter is who advanced a run, so the presenter's mark moves.
+    expect(session.claims[recordA.claimKey].lastSeenAt).not.toBe(recordA.lastSeenAt);
+    // The targeted claim was NAMED, not PRESENTED. Its holder proved nothing about
+    // its own liveness, so its mark is frozen.
+    expect(session.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
+  });
 });
 
 // Bounded so every draw is a valid ISO instant, matching the arbitrary in

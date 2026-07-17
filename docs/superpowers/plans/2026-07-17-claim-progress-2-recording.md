@@ -47,7 +47,7 @@ Verbatim from `docs/superpowers/specs/2026-07-16-claim-progress-idle-detection-d
 
 - **AC3** — Every successful claim-authenticated command that changes runbook workflow state refreshes `lastProgressAt` — `pass`, `fail`, `complete`, `stop`, `collect`, `delegate`, `goto`, `abort`. Commands that change only session targeting (`stash`, `pop`), that change nothing (`status`), and mutations that fail, do not. *(Task 4, pinned by Task 5)*
 - **AC4** — A fail-closed drift guard classifies all eleven claim-authenticated commands and pins the set in both directions, so a command added later cannot silently miss recording or silently start. Its scan is sourced from the real `createProgram()`, never from the guard's own tables, and is proven to bite — including against a newly added `--claim-id` command. *(Task 5)*
-- **AC5** — A command refreshes only the claim whose bearer it presented, never another claim. *(Task 4 — the call sites must pass `input.callerEvidence.claimId`, never `target.claimId`. Task 5's abort case is the sharpest test of it.)*
+- **AC5** — A command refreshes only the claim whose bearer it presented, never another claim. *(Task 4 — the call sites must pass `input.callerEvidence.claimId`, never `target.claimId`. Pinned by the seam case `records the CALLER's bearer, never the bearer named as the target` in `claim-progress.test.ts`: the ONE place two bearers coexist in a single input, and so the only test that can fail on the defect. Task 5's `collect`/`abort` cases document AC5 but cannot falsify it — the bearer-secret check makes over-recording another claim unreachable from those seams. See Task 5 Step 3 probe 6.)*
 - **AC11** — Adopting a claim from a fresh session via a mutating command clears idle. *(Task 4)*
 
 **AC7** was satisfied by plan 1 at the API level; Task 4 re-pins it at the seam — a failed progress write must not fail or mask the committed mutation.
@@ -137,7 +137,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 **Created:**
 
-- `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts` — the fail-closed guard classifying all eleven claim-authenticated commands and pinning both directions (AC4), plus the two AC5 cases the `it.each` tables structurally cannot express (`collect` and `abort`). Modelled on `run-option.test.ts:50`'s table + `it.each` structure, but — decisively unlike it — sourcing its scan from the **real** `createProgram()`.
+- `packages/cli/__tests__/helpers/claim-progress-drift-guard.test.ts` — the fail-closed guard classifying all eleven claim-authenticated commands and pinning both directions (AC4), plus the two documentary AC5 cases the `it.each` tables structurally cannot express (`collect` and `abort` — see Task 5 Step 3 probe 6 for why they cannot falsify AC5). Modelled on `run-option.test.ts:50`'s table + `it.each` structure, but — decisively unlike it — sourcing its scan from the **real** `createProgram()`.
 
 **Modified — production call sites (the eight):**
 
@@ -151,7 +151,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 - `packages/cli/__tests__/helpers/test-utils.ts` — export the extracted `setupParentWithChildren`; **retype `readSession`'s `claims`** from `Record<string, Record<string, unknown>>` to `Record<string, ClaimRecord>` (without this, every snippet in Tasks 5/6/7 is a compile error); add `backdateClaimProgress`, which must **throw** rather than no-op on a missing key.
 - `packages/cli/__tests__/integration/delegate-workflow.test.ts` — `setupParentWithChildren` (`:167`, nested in the `describe` at `:109`, in a file with **zero exports**) moves out to `test-utils.ts` and is imported back.
-- `packages/core/__tests__/runbook/claim-progress.test.ts` — extend with the adoption cases (AC11).
+- `packages/core/__tests__/runbook/claim-progress.test.ts` — extend with the adoption cases (AC11) and the seam-level AC5 case (`records the CALLER's bearer, never the bearer named as the target`), which is where AC5 is actually falsifiable.
 
 ---
 
@@ -461,7 +461,7 @@ In `packages/core/src/runbook/collection-service.ts`, extend `CollectionSessionS
 
 > Lift the `:239` claim id into a `presentedClaimId` local reachable from `applyCollection` (it currently lives in the calling scope — pass it in on the `scope` argument object alongside `claim`, or re-derive it from `input.callerEvidence` locally; re-deriving is one line and avoids touching the `scope` type). **Re-deriving type-checks**: `applyCollection`'s own parameter is `input: CollectDelegationOutcomesOperationInput` (`:440-441`, verified) — the same type the `:239` expression reads `callerEvidence` from, so the one-liner is `input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined`. Only the two `collection_applied` arms record — a refusal, `already_collected`, `collection_frame_not_active`, and `collection_failed` all commit nothing.
 >
-> **This is the DESIGN'S CANONICAL AC5 CASE, and it is pinned by Task 5, not here.** `collect` is the one seam where the presented bearer (the orchestrator's) and the claims in reach (the children's) are different records, and where `listOpenClaimsForParent` — already a `CollectionSessionService` method, sitting right there — makes "loop the children and record them all" the natural-looking wrong implementation. Nothing in this task's core suite catches that: every case here presents a bearer for the run it mutates. The case that catches it is **Task 5's `collect records ONLY the presented orchestrator claim` test**, which reuses the parent-with-claimed-children arrangement `collect` needs anyway. If you implement this step and skip that one, AC5's headline example ships unpinned.
+> **This reads as the design's canonical AC5 case, but it CANNOT BE VIOLATED — and the plan was wrong to stake AC5 on it.** The intuition is that `collect` is the one seam where the presented bearer (the orchestrator's) and the claims in reach (the children's) are different records, with `listOpenClaimsForParent` sitting right there making "loop the children and record them all" the natural-looking wrong implementation. **Written out, that implementation does nothing.** `recordClaimProgress` verifies the bearer secret (`session-service.ts:446`) and the parent holds only child claim *keys*, so it returns `no-claim`; and by record time the collection has committed, so the list is empty anyway. Task 5's `collect records ONLY the presented orchestrator claim` test therefore documents the invariant rather than guarding it — keep it (it catches an API that stopped requiring the secret), but do not count it as AC5's pin. The falsifiable case is at `runTransition`, where `callerEvidence` and a claim `targetSelector` carry two different bearers: see the AC criteria above and Task 5 Step 3 probe 6.
 
 - [ ] **Step 6: Record after `goto` commits (CLI call site)**
 
@@ -1340,7 +1340,7 @@ const driveClaimAbort = async (a: Arrangement): Promise<void> => {
 
 Run: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard.test.ts`
 
-Expected: PASS — all eight recording cases, all three non-recording cases, the `collect` and `abort` AC5 cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set equality against the real program.
+Expected: PASS — all eight recording cases, all three non-recording cases, the `collect` and `abort` AC5 cases (which document AC5 rather than guard it — see Step 3 probe 6), the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set equality against the real program.
 
 - [ ] **Step 3: Prove the guard is fail-closed (do not skip)**
 
@@ -1357,15 +1357,19 @@ Expected: PASS — all eight recording cases, all three non-recording cases, the
 3. **Behaviour, positive direction:** temporarily comment out the `recordClaimProgress` call in `runTerminal` (Task 4 Step 4b) and re-run. Expected: the `complete` and `stop` cases FAIL. Revert.
 4. **Behaviour, negative direction:** temporarily add a `recordClaimProgress` call to `packages/cli/src/commands/stash.ts` (as a careless future edit would) and re-run. Expected: the `does NOT record claim progress on stash` case AND the stash/pop anti-fooling loop both FAIL. Revert. This probe is the point of the whole negative half — without it, nothing proves the guard would catch the anti-fooling hole reopening.
 5. **The cross-check, exhaustiveness direction:** temporarily add a member to `RoleSpecificMutationCommand` in `packages/core/src/runbook/subprocess-mutation-boundary.ts:33` (e.g. `| 'probe-member'`) and run `pnpm run check:types`. Expected: a COMPILE error in this file — `Property 'probe-member' is missing in type ... but required in type 'Record<RoleSpecificMutationCommand, true>'`. Revert. Without this, the cross-check would be `readonly RoleSpecificMutationCommand[]`, which accepts any subset: a new union member would leave it green, and the literal would only be asserting the file against itself.
-6. **AC5, the over-recording direction:** in `applyCollection` (Task 4 Step 5), temporarily record the children alongside the orchestrator — the natural-looking wrong implementation, since `listOpenClaimsForParent` is right there on the seam:
+6. **AC5, the wrong-argument direction:** in `runTransition`'s recording tail (Task 4 Step 3), temporarily record the TARGET's bearer instead of the presenter's — the exact defect AC5 names ("must pass `input.callerEvidence.claimId`, never `target.claimId`"):
 
    ```typescript
-   for (const child of await input.sessionService.listOpenClaimsForParent(input.targetState.id)) {
-     await input.sessionService.recordClaimProgress(child.claimKey as unknown as ClaimId); // probe only
+   if (outcome.kind === 'applied' && input.targetSelector.kind === 'claim') {
+     await sessionService.recordClaimProgress(input.targetSelector.claimId); // probe only
    }
    ```
 
-   Re-run. Expected: `collect records ONLY the presented orchestrator claim` FAILS, while the generic `records claim progress on a successful collect` case stays **green** — which is precisely why the AC5 case has to exist separately. Revert. (The cast is nonsense and the probe need not be well-typed; it only has to move the children's marks.)
+   Re-run `pnpm --filter @rundown-org/core exec jest claim-progress.test.ts`. Expected: `records the CALLER's bearer, never the bearer named as the target (AC5)` FAILS and **nothing else does** — that case is the only thing in the repo pinning this argument. Revert. Verified: red on the flip, green on revert.
+
+   > **RETRACTED — the probe this replaces could not fail, and the reason is worth keeping.** The original probe made `applyCollection` record its children via `listOpenClaimsForParent`, casting `child.claimKey as unknown as ClaimId`, and expected the `collect` AC5 case to go red. **It was run against the finished tree and the guard stayed green.** It is inert twice over: `recordClaimProgress` verifies the bearer secret (`session-service.ts:446`), and a parent holds only child claim *keys* — never child bearers — so the cast can only ever return `no-claim`; and by record time the collection has committed, so the open-children list is empty anyway. The same argument makes the `abort` bystander case unfalsifiable. **Those two CLI-level AC5 tests are not deleted** — they still catch a `recordClaimProgress` that stopped requiring the secret — but they DOCUMENT an invariant enforced by construction rather than guard one, and their comments now say so. AC5 is falsifiable only where two bearers coexist in one input: `LifecycleTransitionInput` carries `callerEvidence` and a `targetSelector` that names a second bearer. The CLI can never diverge them (one `--claim-id` flag populates both via `transitionTargetFields`), which is why the case lives at the core seam and not in the drift guard.
+   >
+   > **There is deliberately no `runTerminal` sibling.** Its tail is a separate line, but the divergence cannot reach a committed success there: the terminal path resolves the actor context from `callerEvidence` against the target run and refuses a caller without `mutate-run` on it (`claim_grant_required`, `lifecycle-command-service.ts:1857-1874`) — verified by running it. The transition path instead builds its actor context from the TARGET's claim for a `claim` selector and never consults `callerEvidence` (`:1334-1344`), which is the asymmetry that makes the defect observable there and only there. If that gate is ever tightened to match, the seam case stops reaching `applied`; delete it then and record that both tails are safe by construction — do not weaken its assertion to keep it green.
 
 If any probe does NOT produce its expected failure, the guard is not pinning what it claims. **Fix the guard before proceeding** — this is not a formality: a green suite that cannot go red is worse than no suite, because it is trusted, and this guard is the sole justification for letting `goto`/`abort` record from the CLI.
 
@@ -1401,7 +1405,9 @@ Expected: PASS (format, spell, lint, build, typecheck, tests across all packages
 
 Run: `pnpm --filter @rundown-org/cli exec jest claim-progress-drift-guard.test.ts`
 
-Expected: PASS — all eight recording cases, all three non-recording cases, the `collect` and `abort` AC5 cases, the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set-equality against the real `createProgram()`.
+Expected: PASS — all eight recording cases, all three non-recording cases, the `collect` and `abort` AC5 cases (documentary — see Task 5 Step 3 probe 6), the stash/pop anti-fooling loop, the `RoleSpecificMutationCommand` containment cross-check, and the classification set-equality against the real `createProgram()`.
+
+**AC5's falsifiable case is not in this suite.** It is `records the CALLER's bearer, never the bearer named as the target (AC5)` in `packages/core/__tests__/runbook/claim-progress.test.ts` — run `pnpm --filter @rundown-org/core exec jest claim-progress.test.ts` alongside the guard.
 
 Run it after everything else has landed: it is the one test that fails if any of the eight commands lost its recording call site during the intervening work, which is exactly the drift it exists to catch.
 
@@ -1435,7 +1441,7 @@ BODY
 
 ## Self-Review
 
-**Spec coverage.** AC3, AC4, AC11 (Tasks 4–5); AC5 (Task 4's call sites + Task 5's **two** AC5 cases — `collect`, the design's canonical example, and `abort`'s bystander). An earlier draft pinned AC5 with the abort case alone and deferred the collect case to plan 3 Task 7 Step 1 — a plan that neither claims AC5 nor has merged. `collect` is the seam where over-recording looks most natural (`listOpenClaimsForParent` sits right on the service), so it is now pinned here, in the plan that owns the criterion, on an arrangement `collect` needs anyway. Plan 3's Task 7 assertion still stands on its own; do not read this as licence to drop it. AC7 was discharged by plan 1 at the API level and is re-pinned here at each seam.
+**Spec coverage.** AC3, AC4, AC11 (Tasks 4–5); AC5 (Task 4's call sites, pinned by the seam case in `claim-progress.test.ts` — the only test that can fail on the defect — and documented by Task 5's `collect` / `abort` cases). Two earlier drafts got AC5's pin wrong in the same way: the first deferred it to plan 3, the second staked it on `collect`, "the seam where over-recording looks most natural". Both mistook a *plausible* defect for a *reachable* one. Over-recording another claim is unreachable from `collect` and `abort` at all — `recordClaimProgress` verifies the bearer secret and a parent holds only child claim keys — so those cases can never go red. AC5 is falsifiable only where one input carries two bearers (`callerEvidence` + a claim `targetSelector`), which is `runTransition`. Keep the `collect`/`abort` cases as documentation; do not credit them as the guarantee. AC7 was discharged by plan 1 at the API level and is re-pinned here at each seam.
 
 **Placeholder scan.** No `TBD` / `TODO`. All five arrangements and all eleven drivers are written out, not described: each arrangement names the fixture it mirrors and the source line that constrains its shape (`arrangeStashableChild` must use a delegated child because `unstashForClaimId` rejects `!claim.delegation` at `session-service.ts:1136-1138`; `driveClaimDelegate` needs `--retry` to reach `retried` rather than the no-op `already-delegated`; `driveClaimPop` must stash first). Every fixture pointer resolves or is explicit extraction work (Step 0).
 
