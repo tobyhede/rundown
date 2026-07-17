@@ -445,6 +445,24 @@ export function refreshedClaimRecord(record: ClaimRecord, now: string): ClaimRec
 }
 
 /**
+ * Return a claim record with only its progress timestamp changed.
+ *
+ * Deliberately distinct from {@link refreshedClaimRecord}: that function moves
+ * `updatedAt` ("this record was last written"), while this one moves
+ * `lastProgressAt` ("the holder advanced the controlled run"). They coincide
+ * today only by accident, and merging them would let an unrelated future claim
+ * write silently refresh the idle clock — a safety signal corrupted by an
+ * unrelated feature, with no type error to catch it (#519).
+ *
+ * @param record - Existing persisted claim record.
+ * @param now - ISO timestamp of the progress being recorded.
+ * @returns Claim record with the new `lastProgressAt`.
+ */
+export function progressedClaimRecord(record: ClaimRecord, now: string): ClaimRecord {
+  return { ...record, lastProgressAt: now };
+}
+
+/**
  * Test whether a single grant authorizes a concrete request.
  *
  * @param grant - Grant attached to a verified claim.

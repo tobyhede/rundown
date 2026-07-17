@@ -20,6 +20,7 @@ import {
   hashClaimSecret,
   parseClaimBearer,
   generateClaimBearer,
+  progressedClaimRecord,
   refreshedClaimRecord,
   verifyClaimSecret,
   type ClaimId,
@@ -125,6 +126,33 @@ export type RunningStackMemberResolution =
     };
 
 /** Result of restoring a stashed delegated child by claim id. */
+/**
+ * Outcome of a best-effort claim-progress recording.
+ *
+ * Returned rather than thrown: recording always follows an ALREADY-COMMITTED
+ * mutation, so a failure here must be observable to tests but must never
+ * propagate to the caller and mask the committed result (RD-102) (#519).
+ */
+export type ClaimProgressRecordResult =
+  | {
+      /** The presented claim's `lastProgressAt` was advanced and persisted. */
+      readonly kind: 'recorded';
+      /** Claim key whose record was advanced. */
+      readonly claimKey: ClaimLookupKey;
+      /** ISO timestamp written to `lastProgressAt`. */
+      readonly lastProgressAt: string;
+    }
+  | {
+      /** No claim matched the presented bearer (missing key or unverified secret). */
+      readonly kind: 'no-claim';
+    }
+  | {
+      /** Recording was attempted and failed. Swallowed — never propagated. */
+      readonly kind: 'record-failed';
+      /** The swallowed cause, surfaced for diagnostics and tests only. */
+      readonly error: unknown;
+    };
+
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
@@ -369,6 +397,65 @@ export class SessionService {
       return { status: 'invalid-secret', claimKey: parsed.claimKey };
     }
     return { status: 'verified', claim: verifiedClaimFromRecord(record) };
+  }
+
+  /**
+   * Record that the holder of a presented bearer claim advanced its controlled run.
+   *
+   * Follows the `unstashForClaimId` template — `withLock` -> verify bearer ->
+   * refresh -> `saveSession` — and refreshes EXACTLY the claim whose bearer the
+   * caller presented, never another: progress is a property of a single claim and
+   * its holder, and a parent cannot vouch for a child's liveness (#519).
+   *
+   * Call this ONLY after a claim-authenticated mutation has COMMITTED, and ONLY
+   * from a mutating path. Deliberately NOT wired into {@link verifyClaimId}: that
+   * would make a read-only, lock-free inspection take the session lock, and — worse
+   * — a stuck child polling `rundown status --claim-id` would refresh its own claim
+   * forever and never report idle, a false negative on precisely the case being
+   * detected.
+   *
+   * CALL ONLY OUTSIDE A HELD SESSION LOCK. This method self-acquires the session
+   * lock via `withLock`, and the underlying file lock is NOT reentrant: it reclaims
+   * a lock only when its owner is DEAD (`kill(pid, 0)` -> ESRCH). Call it from
+   * inside an existing `withLock` scope and the live owner is you — the acquire
+   * spins its jittered backoff to the full 5s deadline, throws, and the totality
+   * contract below silently converts that into `record-failed`. The symptom is a
+   * 5-second stall on every affected command plus a claim that under-reports
+   * progress, with no error anywhere: totality MASKING a deadlock rather than
+   * exposing it. Call sites must record AFTER the mutation's lock scope closes.
+   *
+   * Best-effort and TOTAL: this method never throws. The run mutation it follows
+   * lives in `.rundown/runs/` under `RunStateLock` while the claim lives in
+   * `session.json` under `SessionLock` — different files, different locks, no
+   * atomicity. Failing to record under-reports progress, costing one spurious idle
+   * report and one wasted check; failing a user's `rundown pass` because a
+   * bookkeeping write hiccuped would be indefensible (RD-102).
+   *
+   * @param claimId - Bearer claim id presented by the caller on the mutation.
+   * @returns Typed recording outcome. Never rejects.
+   */
+  async recordClaimProgress(claimId: ClaimId): Promise<ClaimProgressRecordResult> {
+    try {
+      return await this.withLock(async (): Promise<ClaimProgressRecordResult> => {
+        const parsed = parseClaimBearer(claimId);
+        const session = await this.manager.loadSession();
+        if (!Object.hasOwn(session.claims, parsed.claimKey)) {
+          return { kind: 'no-claim' };
+        }
+        const claim = session.claims[parsed.claimKey];
+        if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
+          return { kind: 'no-claim' };
+        }
+        const now = new Date().toISOString();
+        session.claims[parsed.claimKey] = progressedClaimRecord(claim, now);
+        await this.manager.saveSession(session);
+        return { kind: 'recorded', claimKey: parsed.claimKey, lastProgressAt: now };
+      });
+    } catch (error: unknown) {
+      // Intentionally swallowed — see the best-effort note above. Nothing here may
+      // reach the caller, whose mutation is already committed.
+      return { kind: 'record-failed', error };
+    }
   }
 
   /**
