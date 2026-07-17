@@ -32,6 +32,7 @@ import {
   type TerminalCommandName,
   type TransitionCommandName,
   type TransitionTargetResolution,
+  type UnknownRunRefusal,
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -337,14 +338,7 @@ export type DelegationIssuanceOutcome =
     }
   | { readonly kind: 'token-not-found'; readonly token: string }
   | { readonly kind: 'no-active-runbook' }
-  | {
-      /** The explicit `--run` target is not a running member of the session stack. */
-      readonly kind: 'unknown_run';
-      /** Run id named by the caller. */
-      readonly runId: RunId;
-      /** Operator-facing refusal message from the shared stack-member resolution. */
-      readonly message: string;
-    }
+  | UnknownRunRefusal
   | {
       /**
        * Refusal: the retry token's owning run differs from the explicit `--run`
@@ -490,14 +484,7 @@ export type LifecycleTransitionOutcome =
     }
   | { readonly kind: 'actor_context_required' }
   | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
-  | {
-      /** The explicit `--run` target is not a running member of the session stack. */
-      readonly kind: 'unknown_run';
-      /** Run id named by the caller. */
-      readonly runId: RunId;
-      /** Operator-facing refusal message from the resolver. */
-      readonly message: string;
-    }
+  | UnknownRunRefusal
   | {
       readonly kind: 'applied';
       /** Run the transition was applied to. */
@@ -592,14 +579,7 @@ export type LifecycleTerminalOutcome =
   | { readonly kind: 'actor_context_required' }
   /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
   | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
-  | {
-      /** The explicit `--run` target is not a running member of the session stack. */
-      readonly kind: 'unknown_run';
-      /** Run id named by the caller. */
-      readonly runId: RunId;
-      /** Operator-facing refusal message from the resolver. */
-      readonly message: string;
-    }
+  | UnknownRunRefusal
   | {
       /** Refused: the resolved root has reported-but-uncollected delegation outcomes. */
       readonly kind: 'delegation_collection_pending';
@@ -696,14 +676,7 @@ export type LifecycleNavigationOutcome =
       readonly lifecycle: 'completed' | 'stopped';
       readonly message: string;
     }
-  | {
-      /** The explicit `--run` target is not a running member of the session stack. */
-      readonly kind: 'unknown_run';
-      /** Run id named by the caller. */
-      readonly runId: RunId;
-      /** Operator-facing refusal message from the resolver. */
-      readonly message: string;
-    }
+  | UnknownRunRefusal
   /**
    * The run-navigation policy gate refused the caller's evidence. Carries no
    * run id (accident barrier — see the resolver member's rationale).

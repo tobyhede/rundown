@@ -2,7 +2,8 @@ import type { CallerEvidence } from './actor-context.js';
 import type { ClaimId } from './claim-id.js';
 import {
   type CommandTargetReader,
-  resolveCommandTarget,
+  type UnknownRunRefusal,
+  resolveClaimTarget,
   unknownRunRefusal,
 } from './command-target-resolver.js';
 import type { RunId } from './run-id.js';
@@ -18,7 +19,7 @@ import type { RunbookState } from './types.js';
  */
 export type IssuanceAnchorResolution =
   | { readonly kind: 'ok'; readonly state: RunbookState }
-  | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
+  | UnknownRunRefusal
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
   | {
       readonly kind: 'terminal_claim';
@@ -51,8 +52,9 @@ export interface ResolveIssuanceAnchorOptions {
  *      id refuses as `unknown_run`, carrying the same cause-specific message
  *      pass/complete refuse with).
  *   2. A presented bearer claim (no `--run`): the claim's controlled run,
- *      resolved via the same `resolveCommandTarget` seam every transition
- *      command uses (`getActiveForClaimId` -> `record.controlledRunId`). A claim
+ *      resolved via `resolveClaimTarget` — the same claim seam every transition
+ *      command funnels through (`getActiveForClaimId` -> `record.controlledRunId`),
+ *      reached directly here for its exhaustive return type. A claim
  *      unambiguously names its run, so `delegate --claim-id A` acts on A even
  *      when A is not the active default (#586). A claim that cannot anchor is
  *      the caller's real problem, so it refuses as `stale_claim` /
@@ -85,15 +87,20 @@ export async function resolveIssuanceAnchor(
     return { kind: 'ok', state: member.state };
   }
   if (callerEvidence.kind === 'claim_bearer') {
-    const target = await resolveCommandTarget(reader, { claimId: callerEvidence.claimId });
+    // The narrow claim seam, not `resolveCommandTarget`: same resolution logic,
+    // but its three-kind union makes the `never` below a compile error if a new
+    // claim outcome is ever added — the alternative is a silent fall-through to
+    // the active default, which is the #586 defect this function exists to fix.
+    const target = await resolveClaimTarget(reader, callerEvidence.claimId, {
+      includeStashed: false,
+    });
     switch (target.kind) {
       case 'claim':
         return { kind: 'ok', state: target.state };
       // A presented claim that cannot anchor is the operator's real problem.
       // Surface the resolver's cause-specific message (already redacted to the
       // claim key) instead of discarding it and refusing against an unrelated
-      // active default — that misdirection is the #586 defect in the refusal
-      // path.
+      // active default.
       case 'stale_claim':
         return { kind: 'stale_claim', claimId: target.claimId, message: target.message };
       case 'terminal_claim':
@@ -103,11 +110,10 @@ export async function resolveIssuanceAnchor(
           lifecycle: target.lifecycle,
           message: target.message,
         };
-      default:
-        // `none` / `run` / `unknown_run` are unreachable when only `claimId` is
-        // supplied; fall through to the active default rather than asserting
-        // never (the resolver's union is shared and may grow).
-        break;
+      default: {
+        const _exhaustive: never = target;
+        return _exhaustive;
+      }
     }
   }
   const active = await reader.getActive();
