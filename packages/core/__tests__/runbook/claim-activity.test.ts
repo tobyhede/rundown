@@ -208,6 +208,17 @@ describe('claimActivity (#519)', () => {
     }
     expect(thrown).toBeInstanceOf(RangeError);
     expect(isClaimProgressUnreadable(thrown)).toBe(false);
+    //  3. It must blame `now`. Type alone is NOT enough to pin this guard: delete
+    //     the guard entirely and an Invalid Date still throws a RangeError — from
+    //     `assertDurationMs`, because Math.max(0, NaN) is NaN — so the two
+    //     assertions above pass with the guard GONE. That is exactly the mutant
+    //     (`if (false)`) this case exists to kill, and only the message
+    //     distinguishes "your clock is broken" from "the duration is negative",
+    //     which is the whole reason the guard is separate. Asserting a message
+    //     here is not the message-substring discrimination this design bans:
+    //     that ban is on PRODUCTION control flow, and the ban is precisely why
+    //     the two throws must stay distinguishable to a human reader.
+    expect(getErrorMessage(thrown)).toContain('now');
   });
 
   it('isClaimProgressUnreadable rejects unrelated errors', () => {
