@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {
   ResolvedStep,
   ResolvedStepWithFor,
+  ResolvedStepWithPromptedFor,
   ResolvedStepWithSubsteps,
   Substep,
   Transitions,
@@ -110,6 +111,20 @@ function delegateForStep(name: string, substeps: readonly Substep[]): ResolvedSt
     description: `FOR step ${name}`,
     transitions: SUBSTEP_TRANSITIONS,
     forClause: { variable: 'i', start: 1, end: 10 },
+    substeps,
+  };
+}
+
+/** Build a prompted-FOR step that owns authored DELEGATE substeps. */
+function delegatePromptedForStep(
+  name: string,
+  substeps: readonly Substep[],
+): ResolvedStepWithPromptedFor {
+  return {
+    kind: 'prompted-for',
+    name,
+    description: `Prompted FOR step ${name}`,
+    transitions: SUBSTEP_TRANSITIONS,
     substeps,
   };
 }
@@ -222,6 +237,7 @@ describe('RunbookLifecycleCommandService', () => {
   type MutableIssuanceSeamDeps = {
     resolveChildRunbook: ResolveChildRunbook;
     loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
+    loadSteps: RunbookLifecycleCommandServiceDependencies['loadSteps'];
     persistIssuedSubstep: RunbookLifecycleCommandServiceDependencies['persistIssuedSubstep'];
     delegationLock: RunbookLifecycleCommandServiceDependencies['delegationLock'];
   };
@@ -375,6 +391,20 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.policy.kind).toBe('actor_context_required');
     });
 
+    it('authorizes before exposing fresh indexed-target details', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'plugin', agentId: 'a' },
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('actor_context_required');
+    });
+
     it('issues a bare delegation and persists the new substep state', async () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
 
@@ -391,6 +421,72 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await mgr.load(state.id);
       const issued = persisted?.substepStates?.find((s) => s.delegation?.token === outcome.token);
       expect(issued).toBeDefined();
+    });
+
+    it("anchors fresh issuance on the claim's controlled run, not the active default (#586)", async () => {
+      // Run `runId` is activated with an authored DELEGATE substep and its own
+      // run-control claim.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+
+      // A DIFFERENT run is then activated, so `runId` is controlled-but-not-active:
+      // getActive() now returns this run, not `runId`.
+      const otherRunId = assertRunId('rd_22222222222222222222222222222222');
+      const activeDefault = baseState({ id: otherRunId, runbookPath: 'other.md' });
+      await activate(activeDefault);
+
+      // Delegating with `runId`'s run-control claim (NO --run) must anchor on
+      // `runId` — the run the claim controls — not on the active default.
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') throw new Error('expected delegated');
+      // The load-bearing assertion: issuance anchored on the CONTROLLED run
+      // (`runId`), not the active default (`otherRunId`). Before the fix the seam
+      // anchors `otherRunId`, whose run the claim lacks a grant for, and the
+      // outcome is `refused` (claim_grant_required) — so this expectation fails.
+      expect(outcome.parentRunId).toBe(runId);
+    });
+
+    it('refuses a terminal claim rather than anchoring the active default (#586)', async () => {
+      // The run `runId` is activated with a DELEGATE step and its run-control
+      // claim, then driven terminal — so the claim resolves to `terminal_claim`,
+      // NOT `claim`. A different run is the active default.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      await manager.updateWithState(runId, () => ({ lifecycle: 'completed' as const }));
+      const otherRunId = assertRunId('rd_33333333333333333333333333333333');
+      await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      // The seam propagates the anchor's terminal refusal instead of anchoring
+      // the active default (`otherRunId`) and refusing about a run the caller
+      // never named. A mutant forcing the anchor's `claim` case true would
+      // anchor the terminal `runId` and issue, so this assertion kills it.
+      expect(outcome.kind).toBe('terminal_claim');
+      if (outcome.kind !== 'terminal_claim') throw new Error('expected terminal_claim');
+      expect(outcome.lifecycle).toBe('completed');
+    });
+
+    it('refuses a stale (nonexistent) claim rather than anchoring the active default (#586)', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const unknownClaimId = assertClaimId(
+        'rdclm_99999999999999999999999999999999_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+      );
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'claim_bearer', claimId: unknownClaimId },
+      });
+
+      expect(outcome.kind).toBe('stale_claim');
+      if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
+      expect(outcome.message).toContain('does not exist');
     });
 
     it('returns the canonical persisted child ref (not the authored alias) and matches the echo', async () => {
@@ -501,7 +597,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
-        explicitStep: '2.2',
+        explicitTarget: { stepId: '2.2' },
       });
       expect(outcome.kind).toBe('delegated');
       if (outcome.kind !== 'delegated') throw new Error('expected delegated');
@@ -572,8 +668,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
-        explicitStep: '1.1',
-        explicitIteration: 2,
+        explicitTarget: { stepId: '1.1', iteration: 2 },
       });
       expect(outcome.kind).toBe('delegated');
 
@@ -645,7 +740,7 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
-        explicitStep: '1.1',
+        explicitTarget: { stepId: '1.1' },
       });
       expect(outcome.kind).toBe('error');
       if (outcome.kind !== 'error') throw new Error('expected error');
@@ -726,6 +821,121 @@ describe('RunbookLifecycleCommandService', () => {
         expect(outcome.token).toBe(`rdtk_${'A'.repeat(32)}`);
       });
 
+      it('refuses fresh issuance when the claim target is stashed during lock acquisition', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            // The claim resolved before the DelegationLock was acquired, but a
+            // concurrent session mutation parked its target in that window.
+            // The protected decision must revalidate claim eligibility rather
+            // than treating bearer verification alone as sufficient.
+            await sessionService.stashRunbook(runId);
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+        });
+
+        expect(outcome.kind).toBe('stale_claim');
+        if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
+        expect(outcome.message).toContain('stashed');
+        expect(persistSpy).not.toHaveBeenCalled();
+      });
+
+      it('validates a fresh explicit iteration against the locked runbook reread', async () => {
+        const forSteps: readonly ResolvedStep[] = [
+          delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+        ];
+        const state = baseState();
+        await activate(state);
+        const { seam: localSeam, deps } = buildIssuanceSeam(state, forSteps);
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        const resolveExtraVars = jest.fn(async () => undefined);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            // The parsed document changes while this invocation waits. The
+            // state-dependent FOR check must use this in-lock view, not the
+            // pre-lock FOR snapshot.
+            deps.loadSteps = async () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+          explicitTarget: { stepId: '1.1', iteration: 2 },
+          resolveExtraVars,
+        });
+
+        expect(outcome.kind).toBe('invalid_index');
+        if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+        expect(outcome.message).toBe(
+          '--index requires step "1" to be a FOR step, but it is "substeps"',
+        );
+        expect(persistSpy).not.toHaveBeenCalled();
+        expect(resolveExtraVars).not.toHaveBeenCalled();
+      });
+
+      it('validates the named step rather than the first parsed step', async () => {
+        const steps: readonly ResolvedStep[] = [
+          delegateForStep('2', [delegateSubstep('1', 'other.md')]),
+          delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        ];
+        const state = baseState();
+        await activate(state);
+        const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+          explicitTarget: { stepId: '1.1', iteration: 2 },
+        });
+
+        expect(outcome.kind).toBe('invalid_index');
+      });
+
+      it('accepts explicit iterations on prompted-FOR targets', async () => {
+        const steps: readonly ResolvedStep[] = [
+          delegatePromptedForStep('1', [delegateSubstep('1', 'child.md')]),
+        ];
+        const state = baseState();
+        await activate(state);
+        const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+          explicitTarget: { stepId: '1.1', iteration: 2 },
+        });
+
+        expect(outcome.kind).toBe('delegated');
+      });
+
+      it('defers an unparsable indexed target to the delegation error contract', async () => {
+        const state = baseState();
+        await activate(state);
+        const { seam: localSeam } = buildIssuanceSeam(state, [
+          delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+        ]);
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+          explicitTarget: { stepId: 'not-a-step', iteration: 2 },
+        });
+
+        expect(outcome.kind).toBe('error');
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-814');
+      });
+
       it('maps a lock acquisition timeout to an RD-810 error outcome without persisting', async () => {
         const { seam: localSeam, deps, state } = await startSeamOnDelegateStep();
         const persistSpy = jest.fn(async () => {});
@@ -758,7 +968,7 @@ describe('RunbookLifecycleCommandService', () => {
           localSeam.issueDelegation({
             mode: 'fresh',
             callerEvidence: runControlEvidence(runId),
-            explicitStep: '1.1',
+            explicitTarget: { stepId: '1.1' },
           });
         const [a, b] = await Promise.all([issue(), issue()]);
 
@@ -842,6 +1052,63 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.token).not.toBe(first.token);
     });
 
+    it("anchors retry-step issuance on the claim's controlled run, not the active default (#586)", async () => {
+      // Fresh issuance while `runId` is still the active default: mints the token
+      // the retry below locates by step.
+      const { seam: localSeam, manager: localManager, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // A DIFFERENT run is then activated, so `runId` is controlled-but-not-active:
+      // getActive() now returns this run, not `runId`.
+      const otherRunId = assertRunId('rd_44444444444444444444444444444444');
+      await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('retried');
+      if (outcome.kind !== 'retried') throw new Error('expected retried');
+      // Anchored on the controlled run (`runId`), not the active default. Before
+      // the Step 4 fix the retry-step locator anchors the active default, whose run
+      // the claim lacks a grant for, so the outcome is `refused`.
+      expect(outcome.parentRunId).toBe(runId);
+
+      const persisted = await localManager.load(state.id);
+      const delegation = findSubstepState(
+        persisted?.substepStates ?? [],
+        '1',
+        buildFrameKey('1'),
+      )?.delegation;
+      expect(delegation?.tokenHash).toBe(outcome.tokenHash);
+      expect(delegation?.tokenHash).not.toBe(first.tokenHash);
+    });
+
+    it('authorizes before exposing retry indexed-target details', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'plugin', agentId: 'a' },
+        locator: { kind: 'step', step: first.stepId, iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('actor_context_required');
+    });
+
     it('retries the active substep via { kind: "active" }', async () => {
       const { seam: localSeam } = await startSeamOnActiveDelegateSubstep();
       const first = await localSeam.issueDelegation({
@@ -855,6 +1122,35 @@ describe('RunbookLifecycleCommandService', () => {
         locator: { kind: 'active' },
       });
       expect(retried.kind).toBe('retried');
+    });
+
+    it("anchors retry-active issuance on the claim's controlled run, not the active default (#586)", async () => {
+      // Pins the THIRD anchor call site (the inferred-`active` retry locator).
+      // Without this, reverting only that site to `getActive()` leaves the whole
+      // core suite green — the defect would be caught solely by a slow CLI
+      // integration test.
+      const { seam: localSeam } = await startSeamOnActiveDelegateSubstep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // A DIFFERENT run becomes the active default, so `runId` is
+      // controlled-but-not-active. The second run sits on no substep, so an
+      // active-default anchor cannot resolve a substep cursor at all.
+      const otherRunId = assertRunId('rd_66666666666666666666666666666666');
+      await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'active' },
+      });
+
+      expect(outcome.kind).toBe('retried');
+      if (outcome.kind !== 'retried') throw new Error('expected retried');
+      expect(outcome.parentRunId).toBe(runId);
     });
 
     it('retries a linked terminal child without allowing the stale child to re-report', async () => {
@@ -1075,8 +1371,7 @@ describe('RunbookLifecycleCommandService', () => {
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
-        explicitStep: '1.1',
-        explicitIteration: 2,
+        explicitTarget: { stepId: '1.1', iteration: 2 },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
@@ -1176,6 +1471,152 @@ describe('RunbookLifecycleCommandService', () => {
         expect(entry?.delegation?.childRunId).toBe(childRunId);
       });
 
+      it('refuses retry when the claim target is stashed during lock acquisition', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            // Simulate stashRunbook committing after anchor resolution but
+            // before retry enters its protected decision path.
+            await sessionService.stashRunbook(runId);
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: runControlEvidence(runId),
+          locator: { kind: 'step', step: first.stepId },
+        });
+
+        expect(outcome.kind).toBe('stale_claim');
+        if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
+        expect(outcome.message).toContain('stashed');
+        expect(persistSpy).not.toHaveBeenCalled();
+      });
+
+      it('validates a retry iteration against the locked runbook reread', async () => {
+        const forSteps: readonly ResolvedStep[] = [
+          delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+        ];
+        const state = baseState();
+        await activate(state);
+        const { seam: localSeam, deps } = buildIssuanceSeam(state, forSteps);
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+          explicitTarget: { stepId: '1.1', iteration: 2 },
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        const resolveOverrides = jest.fn(async () => undefined);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            deps.loadSteps = async () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: runControlEvidence(runId),
+          locator: { kind: 'step', step: '1.1', iteration: 2 },
+          resolveOverrides,
+        });
+
+        expect(outcome.kind).toBe('invalid_index');
+        if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+        expect(outcome.message).toBe(
+          '--index requires step "1" to be a FOR step, but it is "substeps"',
+        );
+        expect(persistSpy).not.toHaveBeenCalled();
+        expect(resolveOverrides).not.toHaveBeenCalled();
+      });
+
+      it('defers an unparsable indexed retry target to the delegation error contract', async () => {
+        const { seam: localSeam } = await startSeamOnDelegateStep();
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: runControlEvidence(runId),
+          locator: { kind: 'step', step: 'not-a-step', iteration: 2 },
+        });
+
+        expect(outcome.kind).toBe('error');
+        // Without the code, any error — including an unrelated throw — satisfies
+        // this test; the point is that the delegation resolver retains ownership
+        // of RD-801 (step not found) for the unparsable `--step` target.
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-801');
+      });
+
+      it('refuses inferred retry when the active cursor disappears during lock acquisition', async () => {
+        const {
+          seam: localSeam,
+          deps,
+          manager: mgr,
+          state,
+        } = await startSeamOnActiveDelegateSubstep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            await mgr.updateWithState(state.id, () => ({ substep: undefined }));
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: runControlEvidence(runId),
+          locator: { kind: 'active' },
+        });
+
+        expect(outcome.kind).toBe('retry_target_required');
+        expect(persistSpy).not.toHaveBeenCalled();
+      });
+
+      it('retries the inferred cursor that appears during lock acquisition', async () => {
+        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: runControlEvidence(runId),
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        deps.delegationLock = {
+          acquire: async () => {
+            await mgr.updateWithState(state.id, () => ({ substep: '1' }));
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: runControlEvidence(runId),
+          locator: { kind: 'active' },
+        });
+
+        expect(outcome.kind).toBe('retried');
+        if (outcome.kind !== 'retried') throw new Error('expected retried');
+        expect(outcome.stepLabel).toBe('1.1');
+      });
+
       it('maps a retry lock acquisition timeout to RD-810 without touching the delegation', async () => {
         const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
         const first = await localSeam.issueDelegation({
@@ -1227,7 +1668,7 @@ describe('RunbookLifecycleCommandService', () => {
           localSeam.issueDelegation({
             mode: 'fresh',
             callerEvidence: runControlEvidence(runId),
-            explicitStep: '1.1',
+            explicitTarget: { stepId: '1.1' },
           }),
           localSeam.issueDelegation({
             mode: 'retry',
@@ -1384,8 +1825,7 @@ describe('RunbookLifecycleCommandService', () => {
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
-        explicitStep: '1.1',
-        explicitIteration: 2,
+        explicitTarget: { stepId: '1.1', iteration: 2 },
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 

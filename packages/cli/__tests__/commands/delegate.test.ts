@@ -377,7 +377,7 @@ describe('delegate command', () => {
   });
 
   describe('delegate --run', () => {
-    it('renders CLAIM_GRANT_REQUIRED when a child claim tries to issue a parent delegation', async () => {
+    it('surfaces the terminal-claim problem when a closed child claim tries to issue (#586)', async () => {
       await setupDelegation();
       const issued = await runCliInProcess(
         await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
@@ -400,11 +400,15 @@ describe('delegate command', () => {
       expect(result.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
       expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      // `pass` drove the child terminal, so the claim resolves `terminal_claim`.
+      // The refusal names the claim's own problem rather than falling through to
+      // the active parent and reporting a missing grant for a run the caller
+      // never named (#586).
       expect(envelope).toEqual(
         expect.objectContaining({
           kind: 'error',
-          code: 'CLAIM_GRANT_REQUIRED',
-          error: expect.stringContaining('rundown delegate'),
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          error: expect.stringContaining('completed child runbook'),
         }),
       );
     });
@@ -440,6 +444,55 @@ describe('delegate command', () => {
       expect(result.exitCode).not.toBe(0);
       const payload = JSON.parse(result.stdout) as { code?: string };
       expect(payload.code).toBe('INVALID_RUN_ID');
+    });
+
+    it('surfaces RUN_TARGET_UNAVAILABLE for --index against a foreign --run, not INVALID_INDEX', async () => {
+      // The `--index` FOR-step guard validates against the ANCHORED run. A
+      // foreign `--run` anchors nothing, so the guard must be skipped and the
+      // seam's run refusal must surface. Validating against the active run here
+      // would report INVALID_INDEX about a step the operator never named —
+      // exactly the misleading-error class #586 exists to remove.
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--index', '1', '--run', foreign],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
+    it('surfaces RUN_TARGET_UNAVAILABLE for --retry --index against a foreign --run', async () => {
+      // Same guard on the retry `step` locator.
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--index', '1', '--run', foreign],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
+    it('surfaces RUN_TARGET_UNAVAILABLE for an inferred --retry against a foreign --run', async () => {
+      // The inferred-retry precondition needs the anchored run's substep cursor.
+      // A foreign `--run` anchors nothing, so the precondition defers to the
+      // seam rather than reporting INVALID_SYNTAX ("requires an active substep")
+      // about a run id that simply is not on the stack.
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(['delegate', '--retry', '--run', foreign], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
     });
 
     it('rejects both --claim-id and a malformed --run with INVALID_SYNTAX (precedence)', async () => {

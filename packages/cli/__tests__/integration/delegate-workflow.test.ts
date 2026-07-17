@@ -268,6 +268,45 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     expect(advancedParent!.step).toBe('2');
   }, 20_000);
 
+  it("delegate --claim-id anchors on the claim's controlled run when it is not the active default (#586)", async () => {
+    // Parent run A is activated with auto-issued 1.1/1.2 delegations.
+    const { parentRunId } = await setupParentWithChildren();
+
+    // Activate a DIFFERENT run so A is controlled-but-not-active: getActive() now
+    // returns this run, not A. Start it `--prompted` so it ENTERS step 1 and stays
+    // running/active WITHOUT auto-executing. A plain (non-prompted) `run` would
+    // auto-execute this single-step `pass: COMPLETE` runbook to completion and
+    // release it — restoring A as the active default and collapsing the red→green
+    // discriminator (`--prompted` = "show commands without auto-executing",
+    // run.ts:70; mirrors how setupParentWithChildren keeps the parent alive).
+    const other = createRunbook({
+      title: 'Other',
+      steps: [{ title: 'Only', pass: 'COMPLETE', command: 'rundown echo --result pass' }],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'other.runbook.md'), other);
+    const otherStart = await runCliInProcess('run --prompted runbooks/other.runbook.md', workspace);
+    expect(otherStart.exitCode).toBe(0);
+    const active = await getActiveState(workspace);
+    expect(active).not.toBeNull();
+    expect(active!.id).not.toBe(parentRunId); // A is no longer the active default
+
+    // Mint a run-control claim for A and delegate against 1.1 with it (no --run).
+    const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+    const delegated = await runCliInProcess(
+      ['delegate', '--step', '1.1', '--claim-id', parentClaimId],
+      workspace,
+    );
+
+    // After the fix: exit 0, echoing A's already-issued 1.1 delegation, anchored
+    // on A. Before the fix the seam anchors the active default `other` run — which
+    // A's claim holds no grant for — and refuses `claim_grant_required` (exit 1).
+    expect(delegated.exitCode).toBe(0);
+    const action = findActionOutput<{ action: string; parent_run_id: string }>(delegated.stdout);
+    expect(action).not.toBeNull();
+    expect(action!.action).toBe('already-delegated');
+    expect(action!.parent_run_id).toBe(parentRunId);
+  }, 20_000);
+
   it('run-targeted rd collect fails fast when persisted state.step no longer resolves to a runbook step', async () => {
     const { parentRunId } = await setupParentWithChildren();
 
@@ -383,6 +422,164 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     // The transition is complete: the parent cursor advanced to step 2.
     const afterParent = await readRunbookState(workspace, parentRunId);
     expect(afterParent?.step).toBe('2');
+  }, 20_000);
+});
+
+/**
+ * State-dependent preconditions belong in the core seam and must be evaluated
+ * against its claim-anchored, DelegationLock-scoped reread. `--claim-id A`
+ * therefore remains pinned to A even when the active default is B.
+ */
+describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  const childPass = (): string =>
+    createRunbook({
+      title: 'Child Pass',
+      steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+    });
+
+  /** Parent A: step 1 is a FOR step with a DELEGATE substep (index 1 is valid). */
+  const forParent = (): string =>
+    [
+      '# For Parent',
+      '',
+      '## 1. Process items',
+      '',
+      '- FOR i IN 1 TO 2',
+      '  - PASS ALL CONTINUE',
+      '  - FAIL ANY STOP',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Check {{i}}',
+      '',
+      '- child.runbook.md',
+      '',
+      '## 2. Done',
+      '',
+      '- PASS COMPLETE',
+      '',
+      'Done.',
+      '',
+      '```bash',
+      'rd echo --result pass',
+      '```',
+      '',
+    ].join('\n');
+
+  /** Active default B: step 1 is a plain NON-FOR command step, no substep. */
+  const plainOther = (): string =>
+    createRunbook({
+      title: 'Other',
+      steps: [{ title: 'Only', pass: 'COMPLETE', command: 'rundown echo --result pass' }],
+    });
+
+  async function startForParentThenOther(): Promise<{ parentRunId: RunId; claimId: string }> {
+    await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childPass());
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childPass());
+    await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), forParent());
+
+    const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    expect(parentState).not.toBeNull();
+    const parentRunId = parentState!.id;
+
+    // Activate B so A is controlled-but-not-active. B's step 1 is NOT a FOR step
+    // and B sits on no substep — the two conditions the CLI wrongly validated.
+    await writeFile(join(workspace.cwd, 'runbooks', 'other.runbook.md'), plainOther());
+    const otherStart = await runCliInProcess('run --prompted runbooks/other.runbook.md', workspace);
+    expect(otherStart.exitCode).toBe(0);
+    const active = await getActiveState(workspace);
+    expect(active!.id).not.toBe(parentRunId);
+
+    const claimId = await issueRunControlClaim(workspace, parentRunId);
+    return { parentRunId, claimId };
+  }
+
+  it('validates --index against the claimed run, not the active default (#586)', async () => {
+    const { parentRunId, claimId } = await startForParentThenOther();
+
+    // A's step 1 IS a FOR step, so `--index 1` is valid against A. The active
+    // default B's step 1 is NOT a FOR step: validating there yields INVALID_INDEX
+    // for a step the operator never named.
+    const delegated = await runCliInProcess(
+      ['delegate', '--step', '1.1', '--index', '1', '--claim-id', claimId],
+      workspace,
+    );
+
+    expect(delegated.stdout).not.toContain('INVALID_INDEX');
+    expect(delegated.exitCode).toBe(0);
+    const action = findActionOutput<{ parent_run_id: string }>(delegated.stdout);
+    expect(action).not.toBeNull();
+    expect(action!.parent_run_id).toBe(parentRunId);
+  }, 20_000);
+
+  it('validates inferred --retry against the claimed run, not the active default (#586)', async () => {
+    // Starting A `--prompted` already leaves it positioned on substep 1.1 with an
+    // auto-issued delegation, so no explicit issuance is needed — keeping this
+    // test independent of the `--index` defect above.
+    const { parentRunId, claimId } = await startForParentThenOther();
+
+    // Inferred retry (no token, no --step): A HAS an active substep. The active
+    // default B does not — validating there yields INVALID_SYNTAX.
+    const retried = await runCliInProcess(
+      ['delegate', '--retry', '--claim-id', claimId],
+      workspace,
+    );
+
+    expect(retried.stdout).not.toContain('INVALID_SYNTAX');
+    expect(retried.exitCode).toBe(0);
+    const action = findActionOutput<{ parent_run_id: string }>(retried.stdout);
+    expect(action).not.toBeNull();
+    expect(action!.parent_run_id).toBe(parentRunId);
+  }, 20_000);
+
+  it('validates retry --index against the claimed run, not the active default (#586)', async () => {
+    const { parentRunId, claimId } = await startForParentThenOther();
+
+    const retried = await runCliInProcess(
+      ['delegate', '--retry', '--step', '1.1', '--index', '1', '--claim-id', claimId],
+      workspace,
+    );
+
+    expect(retried.stdout).not.toContain('INVALID_INDEX');
+    expect(retried.exitCode).toBe(0);
+    const action = findActionOutput<{ parent_run_id: string }>(retried.stdout);
+    expect(action).not.toBeNull();
+    expect(action!.parent_run_id).toBe(parentRunId);
+  }, 20_000);
+
+  it('surfaces the claim problem, not a grant refusal, for a stale claim (#586)', async () => {
+    await startForParentThenOther();
+    const unknownClaimId =
+      'rdclm_99999999999999999999999999999999_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_';
+
+    const result = await runCliInProcess(
+      ['delegate', '--step', '1.1', '--claim-id', unknownClaimId],
+      workspace,
+    );
+
+    // Before this fix the anchor discarded the claim's diagnosis and anchored the
+    // active default, so the refusal was about a run the operator never named:
+    // here ACTOR_CONTEXT_REQUIRED — the bare-invocation message telling the caller
+    // to "Pass --claim-id", which they just did. The pre-fix code varies by why the
+    // claim failed, so only the post-fix envelope is asserted.
+    expect(result.exitCode).not.toBe(0);
+    const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+    expect(payload.code).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
+    // The load-bearing assertion: the operator is told what is actually wrong.
+    expect(payload.error).toContain('does not exist');
   }, 20_000);
 });
 

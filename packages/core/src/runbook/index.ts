@@ -88,11 +88,14 @@ export {
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {
+  resolveClaimTarget,
   resolveCommandTarget,
   resolveMutationAuthority,
   resolveTerminalTarget,
   resolveTransitionTarget,
+  type ClaimTargetResolution,
   type CommandTargetResolution,
+  type UnknownRunRefusal,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
   type MutationAuthorityResolution,
@@ -101,6 +104,11 @@ export {
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
+export {
+  resolveIssuanceAnchor,
+  type IssuanceAnchorResolution,
+  type ResolveIssuanceAnchorOptions,
+} from './issuance-anchor.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
   verifiedClaimContext,
@@ -188,6 +196,7 @@ export {
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
+  type ExplicitDelegationTarget,
   type FindDelegationByToken,
   type ForceAbortLinkedChildCleanupResult,
   type LifecycleLoopDirective,
