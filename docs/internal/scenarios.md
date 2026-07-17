@@ -231,6 +231,14 @@ assert through the scenario schema (`expect.result`, `expect.steps`,
 `expect.errors`, `expect.artifacts`) and keep `commands:` focused on the CLI
 interaction sequence.
 
+**These rules are enforced**, not advisory, by
+`packages/cli/__tests__/schemas/scenario-authoring.test.ts`. It rejects any
+scenario command that spawns a subprocess, and confines opaque wrappers to a
+small allowlist for **fault injection only** — where the shell command _is_ the
+fault being injected or the untrusted input being forged, never a workflow step
+and never an assertion. The allowlist is matched by set equality, so a stale
+entry fails the suite as loudly as an unlisted violation.
+
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown`
 command's stdout to collect terminal state, step transitions, entered-step
 events, delegation tokens, and claim ids. Use `--text` for human-readable
@@ -652,6 +660,33 @@ in [#498](https://github.com/tobyhede/rundown/issues/498). Both are now rejected
 outright -- `seed:` fails scenario validation as an unknown key, and
 `${ARTIFACT:...}` in a command throws before execution -- rather than being
 ignored.
+
+### `rd://` in a directive is not `rd://` in a command
+
+The same text means opposite things depending on where it lives, so do not
+review this with a text search. `grep -rn 'rd://artifacts/' runbooks/` cannot
+tell these apart, and will always report the selector fixtures as false hits:
+
+| Where                                            | Verdict                                                                                                   |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| An `ARTIFACTS` directive in the runbook **body** | The **selector language**. Legitimate: it names a _set_, resolved against whatever a real producer wrote. |
+| A scenario **command** in frontmatter            | **Fabrication.** Capture it from a producer instead.                                                      |
+
+```md
+- Matched "rd://artifacts/{{ ContextId }}/*/plan.json?source=project"  # body: fine
+```
+
+```yaml
+- rd run x.runbook.md --artifacts Plan=rd://artifacts/ctx/rd_1/plan.json # command: fabrication
+```
+
+`packages/cli/__tests__/schemas/scenario-authoring.test.ts` enforces the
+distinction correctly because it lints **parsed frontmatter values**, not file
+text: selector syntax lives on directive lines in the body, which the lint never
+reads, so it cannot false-positive. It rejects any scenario command that names
+an `rd://` URI, writes `manifest.jsonl`, or hand-derives the `.rd-<contextId>`
+directory. There is no allowlist for these -- a real producer's output is the
+only legitimate source of artifact provenance.
 
 ### Seeding a pre-existing artifact
 
