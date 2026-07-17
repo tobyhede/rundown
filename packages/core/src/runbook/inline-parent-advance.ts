@@ -180,6 +180,25 @@ export function inlineParentCycleMessage(repeatedRunId: RunId): string {
 }
 
 /**
+ * Compose the operator message for a linkage chain that outran the depth cap.
+ *
+ * Says "Parent linkage", NOT "Inline parent", for the same reason
+ * {@link inlineParentCycleMessage} does — and the reason binds this arm just as
+ * hard. The depth guard fires BEFORE the kind dispatch, so the run it stalls at
+ * may carry a DELEGATION linkage: an inline chain that reaches the cap one level
+ * below a delegation boundary trips here, and "inline" would be false of the very
+ * linkage named. The wording rule is a property of the guard's position, not of
+ * either arm; keeping the two arms' wording in lockstep is what stops the next
+ * edit from re-splitting them.
+ *
+ * @param deepestRunId - The deepest run actually walked, whose parent was never reached.
+ * @returns The operator-facing message naming the run to prune.
+ */
+export function inlineParentDepthMessage(deepestRunId: RunId): string {
+  return `Parent linkage chain from ${deepestRunId} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`;
+}
+
+/**
  * The trip that ended an upward propagation walk (#602).
  *
  * A discriminated union on `cause`, so each cause names the run it actually found
@@ -358,7 +377,7 @@ async function propagateTerminalChildUpwardInner(
       cause: 'depth',
       deepestRunId: childState.id,
       code: INLINE_PARENT_CYCLE_CODE,
-      message: `Inline parent chain from ${childState.id} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
+      message: inlineParentDepthMessage(childState.id),
     });
     return 'linkage-cycle';
   }

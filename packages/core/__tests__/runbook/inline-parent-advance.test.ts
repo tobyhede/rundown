@@ -821,8 +821,46 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       cause: 'depth',
       deepestRunId: chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1),
       code: 'INLINE_PARENT_CYCLE',
-      message: `Inline parent chain from ${chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1)} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
+      message: `Parent linkage chain from ${chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1)} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
     });
+  });
+
+  it('does not call a delegation-linked depth trip an "inline" chain (#602 review)', async () => {
+    // The depth guard fires BEFORE the kind dispatch, so the run it stalls at may
+    // carry a DELEGATION linkage — an inline chain that reaches the cap one level
+    // below a delegation boundary. `inlineParentCycleMessage`'s own TSDoc holds
+    // that wording asserting "inline" is "flatly false" for such a graph and sends
+    // the operator hunting for a composition that does not exist. That rule is a
+    // property of the guard, not of the repeat arm: it binds this arm identically.
+    const child = makeState(chainRunId(0), { parentLinkage: inlineLinkage(chainRunId(1)) });
+    let level = 1;
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>(async () => {
+      const current = level;
+      level += 1;
+      // The run the cap stalls at is delegation-linked; every level below is inline
+      // (only the inline arm recurses, so only it can carry the walk this deep).
+      return makeState(chainRunId(current), {
+        lifecycle: 'completed',
+        parentLinkage:
+          current === MAX_INLINE_PROPAGATION_CHAIN - 1
+            ? delegationLinkage(chainRunId(current + 1))
+            : inlineLinkage(chainRunId(current + 1)),
+      });
+    });
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'done' });
+    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      child,
+      'pass',
+    );
+    expect(result).toBe('linkage-cycle');
+    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
+    const [trip] = onLinkageCycle.mock.calls[0];
+    expect(trip.cause).toBe('depth');
+    expect(trip.message).not.toMatch(/inline/i);
   });
 
   it('never fires the sink on a valid acyclic chain (#602)', async () => {
