@@ -25,10 +25,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /** Repository root, derived from this file's location (packages/cli/__tests__/helpers). */
-export const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
+export const REPO_ROOT: string = join(__dirname, '..', '..', '..', '..');
 
 /** The repository's runbook tree — the sole source of frontmatter scenarios. */
-export const RUNBOOKS_DIR = join(REPO_ROOT, 'runbooks');
+export const RUNBOOKS_DIR: string = join(REPO_ROOT, 'runbooks');
 
 /**
  * Directories that never contain scenario sources subject to the authoring rules.
