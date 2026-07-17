@@ -1,23 +1,20 @@
 /**
- * Scenario-harness artifact seeding and capture resolution.
+ * Scenario-harness artifact capture resolution.
  *
- * These helpers are the production home of the `seed:` / `${ARTIFACT:<name>}` and
- * `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` machinery used by both the in-process jest
- * scenario runner and the standalone `rd scenario run` command, so the two
- * harnesses share one implementation instead of drifting. Scenario-harness only —
- * never part of runbook execution.
+ * Resolves the `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` grammar — the harness's sole
+ * artifact mechanism — for both the in-process jest scenario runner and the
+ * standalone `rd scenario run` command, so the two harnesses share one
+ * implementation instead of drifting. A scenario that needs a pre-existing
+ * artifact runs a real producer runbook first (see
+ * `runbooks/artifacts/scenario-seed-artifacts.runbook.md`) and captures the
+ * `rd://` URI that producer emitted; the harness never fabricates a URI or
+ * hand-writes a manifest row. Scenario-harness only — never part of runbook
+ * execution.
  *
  * @module helpers/scenario-artifacts
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import {
-  appendArtifactManifestRecordSync,
-  assertRunId,
-  readAllArtifactManifestRecords,
-} from '@rundown-org/core';
-import type { Scenario } from '../schemas/scenarios.js';
+import { readAllArtifactManifestRecords } from '@rundown-org/core';
 
 /** Workspace location used to resolve the artifact manifest and backing files. */
 export interface ScenarioArtifactLocation {
@@ -26,49 +23,6 @@ export interface ScenarioArtifactLocation {
 }
 
 const WORK_PATH = '.rundown/work';
-
-/**
- * Seed manifest rows for a scenario's `seed:` directive.
- *
- * Each `seed` entry writes an `rd://artifacts/...` manifest row (and a backing
- * file at its projected local path, so `exists: true` assertions and
- * `{{ path X }}` projections resolve against a real file) and returns a map of
- * artifact name to its `rd://` URI, consumed by `${ARTIFACT:<name>}` substitution.
- *
- * @param scenario - The scenario whose `seed:` directive to materialise
- * @param location - The scenario workspace location
- * @returns Map of seeded artifact name to its `rd://` URI
- */
-export function seedScenarioArtifacts(
-  scenario: Scenario,
-  location: ScenarioArtifactLocation,
-): Record<string, string> {
-  const artifactUris: Record<string, string> = {};
-  const seedRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-  const seedContextId = 'scenario-seed-context';
-  for (const entry of scenario.seed ?? []) {
-    const uri = `rd://artifacts/${seedContextId}/${seedRunId}/${entry.artifact}`;
-    appendArtifactManifestRecordSync(
-      { cwd: location.cwd, workPath: WORK_PATH },
-      {
-        uri,
-        runId: seedRunId,
-        contextId: seedContextId,
-        runbook: { source: 'project', path: 'producer.runbook.md' },
-        key: entry.artifact,
-        timestamp: '2026-05-25T00:00:00.000Z',
-      },
-    );
-    // Also materialise the backing file at the projected local path so an
-    // `exists: true` artifact assertion (file-existence) and `{{ path X }}`
-    // projection both resolve against a real file.
-    const backingDir = join(location.cwd, WORK_PATH, `.rd-${seedContextId}`, seedRunId);
-    mkdirSync(backingDir, { recursive: true });
-    writeFileSync(join(backingDir, entry.artifact), '{"seeded":true}\n');
-    artifactUris[entry.artifact] = uri;
-  }
-  return artifactUris;
-}
 
 /**
  * Resolve a `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholder from the workspace

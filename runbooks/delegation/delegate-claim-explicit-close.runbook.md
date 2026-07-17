@@ -67,8 +67,6 @@ scenarios:
       - rd run --prompted delegate-claim-explicit-close.runbook.md
       - rd claim ${TOKEN}
       - rd goto 3 --claim-id ${CLAIM_ID}
-      - >-
-        node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(".rundown/session.json","utf8")); const key="${CLAIM_ID}".replace(/^rdclm_([a-f0-9]{32})_.+$/,"rdclk_$1"); const c=s.claims[key]; const child=JSON.parse(fs.readFileSync(`.rundown/runs/${c.controlledRunId}.json`,"utf8")); const parent=JSON.parse(fs.readFileSync(`.rundown/runs/${c.delegation.parentRunId}.json`,"utf8")); if (child.step !== "3") throw new Error(`child step=${child.step}`); if (parent.step !== "1") throw new Error(`parent step=${parent.step}`);'
       - rd pass --claim-id ${CLAIM_ID}
       - rd collect --claim-id ${RUN_CLAIM_ID}
     expect:

@@ -8,11 +8,12 @@ import {
   parseFinalCliJsonObject,
   issueRunControlClaim,
   readRunbookState,
+  readSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ErrorResponseSchema } from '@rundown-org/core';
+import { assertClaimId, claimKeyFromBearer, ErrorResponseSchema } from '@rundown-org/core';
 
 describe('Delegation claim integration', () => {
   let workspace: TestWorkspace;
@@ -122,6 +123,56 @@ describe('Delegation claim integration', () => {
       }),
     );
     expect(claimOutput.token).not.toMatch(/^rdtk_[A-Za-z0-9_-]{32}$/);
+  });
+
+  it('goto --claim-id moves the claimed child cursor without moving the parent', async () => {
+    // Migrated from the `explicit-goto` scenario in
+    // runbooks/delegation/delegate-claim-explicit-close.runbook.md, which
+    // asserted this by reading .rundown/session.json and the run state files
+    // inside a `node -e` one-liner. State-file inspection belongs in jest
+    // (docs/internal/scenarios.md); the scenario retains the CLI interaction
+    // sequence and asserts through the scenario schema.
+    await writeParentRunbook('child-three-step.runbook.md');
+    await writeFile(
+      join(workspace.cwd, 'child-three-step.runbook.md'),
+      createRunbook({
+        title: 'Child Three Step',
+        steps: [
+          { title: 'One', pass: 'CONTINUE', content: 'Step one.' },
+          { title: 'Two', pass: 'CONTINUE', content: 'Step two.' },
+          { title: 'Three', pass: 'COMPLETE', content: 'Step three.' },
+        ],
+      }),
+    );
+
+    expect(runCli('run --prompted parent.runbook.md --text', workspace).exitCode).toBe(0);
+    const parentRunId = (await getActiveState(workspace))?.id;
+    expect(parentRunId).toEqual(expect.any(String));
+
+    const token = await getAutoIssuedToken();
+    const claimResult = runCli(`claim ${token}`, workspace);
+    expect(claimResult.exitCode).toBe(0);
+    const claimId = assertClaimId(
+      (parseFinalCliJsonObject(claimResult.stdout) as { claim_id: string }).claim_id,
+    );
+
+    const goto = runCli(`goto 3 --claim-id ${claimId}`, workspace);
+    expect(goto.exitCode).toBe(0);
+
+    // The claim record resolves the bearer to the child run it controls, and
+    // records the parent it was delegated from.
+    const session = await readSession(workspace);
+    const claim = session.claims[claimKeyFromBearer(claimId)] as
+      | { controlledRunId: string; delegation: { parentRunId: string } }
+      | undefined;
+    expect(claim).toBeDefined();
+    expect(claim?.delegation.parentRunId).toBe(parentRunId);
+
+    const child = await readRunbookState(workspace, claim!.controlledRunId);
+    const parent = await readRunbookState(workspace, parentRunId!);
+    // The claimed child advanced to 3; the parent's own cursor never moved.
+    expect(child?.step).toBe('3');
+    expect(parent?.step).toBe('1');
   });
 
   it('claims a delegated child resolved from the bundled runbooks directory', async () => {

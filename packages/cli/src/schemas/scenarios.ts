@@ -1,4 +1,3 @@
-import { isValidVariableName, VALID_IDENTIFIER } from '@rundown-org/core';
 import { z } from 'zod';
 
 /**
@@ -109,44 +108,16 @@ export const ScenarioExpectSchema = z.object({
  *
  * Either `result` or `expect.result` must be specified. When both are
  * present they must agree.
- */
-/**
- * Schema for a single scenario seed directive.
  *
- * `artifact` names an input artifact to seed into the manifest before the
- * scenario's commands run. The harness exposes the seeded row's `rd://` URI as a
- * `${ARTIFACT:<name>}` substitution token so a command can pass it via
- * `--artifacts`. Seed directives are a scenario-harness affordance only.
+ * Strict: unknown keys are rejected, not stripped. The retired `seed:` directive
+ * (#498) must fail at load rather than be silently dropped — a dropped `seed:`
+ * leaves its `${ARTIFACT:…}` command text unsubstituted and surfaces as a
+ * confusing `INVALID_ARTIFACT_INPUT` at run time.
  */
-export const ScenarioSeedSchema = z.object({
-  /**
-   * Artifact name to seed and expose as `${ARTIFACT:<name>}`. Constrained to the
-   * same identifier grammar as frontmatter `artifacts:` because the harness joins
-   * this name into a manifest `rd://` URI and a backing file path — path-unsafe
-   * characters (`/`, `..`) must never reach those joins. The `.refine` adds the
-   * reserved-name guard the artifact/input channels enforce via
-   * `isValidVariableName`, so prototype-pollution keys (`__proto__`,
-   * `constructor`, `prototype`) are rejected at validation time rather than later
-   * when the seeded name is wired into `--artifacts`.
-   */
-  artifact: z
-    .string()
-    .regex(VALID_IDENTIFIER, 'Scenario seed "artifact" must be a valid identifier')
-    .refine(isValidVariableName, {
-      message: 'Scenario seed "artifact" must not be a reserved name',
-    }),
-});
-
-/** A parsed scenario seed directive. */
-export type ScenarioSeed = z.infer<typeof ScenarioSeedSchema>;
-
 export const ScenarioSchema = z
-  .object({
+  .strictObject({
     /** Optional description explaining what this scenario demonstrates */
     description: z.string().optional(),
-
-    /** Optional manifest rows to seed before commands run (exposes ${ARTIFACT:<name>}) */
-    seed: z.array(ScenarioSeedSchema).optional(),
 
     /** Array of full CLI commands to execute (copy/paste ready) */
     commands: z.array(z.string()).min(1, 'Scenario must have at least one command'),

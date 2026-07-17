@@ -29,36 +29,6 @@ scenarios:
           key: plan.json
           runbook: artifact-variable-review-plan.runbook.md
           exists: true
-
-  review-plan-cross-context-uri-input:
-    description: Review-plan receives a producer-context exact rd:// Plan input and treats it as the producer artifact.
-    commands:
-      - rd run artifact-variable-write-plan.runbook.md --allow-all
-      - rd run artifact-variable-review-plan.runbook.md --artifacts Plan=${CAPTURE_ARTIFACT:plan.json} --allow-all
-    expect:
-      result: COMPLETE
-      artifacts:
-        - at: "1"
-          alias: Plan
-          key: plan.json
-          runbook: artifact-variable-review-plan.runbook.md
-          exists: true
-
-  bundled-write-review-collate-artifacts:
-    description: Write, review, and collate pass artifacts across runbook boundaries without RD-816.
-    commands:
-      - rd run artifact-variable-write-plan.runbook.md --allow-all
-      - rd run artifact-variable-review-plan.runbook.md --artifacts Plan=${CAPTURE_ARTIFACT:plan.json} --allow-all
-      - rd run artifact-variable-collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
-    expect:
-      result: COMPLETE
-      artifacts:
-        - at: "1"
-          alias: Reviews
-          key: review.json
-          count: 1
-          runbook: artifact-variable-collate.runbook.md
-          exists: true
 ---
 # Artifact Variable Write Plan
 

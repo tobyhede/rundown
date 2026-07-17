@@ -291,4 +291,53 @@ Second {{ Plan }}
     expect(pass.stdout).toContain(expectedPathSuffix);
     expect(pass.stdout).toContain('Second');
   });
+
+  it('status renders an ARTIFACTS-produced variable as a local path, never an rd:// URI', async () => {
+    // Migrated from the `status-shows-artifact-vars` scenario in
+    // runbooks/artifacts/artifact-status-vars.runbook.md, which asserted this by
+    // spawning `rd status` inside a `node -e` one-liner — a hidden CLI
+    // invocation that docs/internal/scenarios.md forbids and that the scenario
+    // authoring lint now rejects. Payload assertions belong here.
+    //
+    // Unlike the reload test above, the artifact is *produced* by the run's own
+    // ARTIFACTS clause rather than injected via --artifacts, so this covers the
+    // producer side of the projection.
+    await writeFile(
+      join(workspace.cwd, 'produce.runbook.md'),
+      `# Produce Artifact
+
+## 1. Produce an artifact variable
+
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS CONTINUE
+
+\`\`\`bash
+printf '{"plan":"ok"}' > "{{ path PlanPath }}"
+\`\`\`
+
+## 2. Pause with the artifact variable in scope
+
+- ARTIFACTS
+  - PlanPath
+- PASS COMPLETE
+- FAIL STOP
+`,
+    );
+
+    const run = await runCliInProcess(['run', 'produce.runbook.md', '--allow-all'], workspace);
+    expect(run.exitCode).toBe(0);
+
+    const status = await runCliInProcess(['status'], workspace);
+    expect(status.exitCode).toBe(0);
+    const vars = (JSON.parse(status.stdout) as { vars?: Record<string, string> }).vars;
+    const planPath = vars?.PlanPath;
+
+    expect(typeof planPath).toBe('string');
+    // Path-first: the variable projects to a real local path under the run's
+    // work dir, not the rd:// URI that identifies the artifact in the manifest.
+    expect(planPath).not.toMatch(/^rd:\/\//);
+    expect(planPath).toContain('/.rundown/work/');
+    expect(planPath).toMatch(/\/plan\.json$/);
+  });
 });

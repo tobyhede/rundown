@@ -5,11 +5,11 @@ tags: [test, artifacts]
 artifacts:
   - Reviews
 scenarios:
-  direct-uri-array-input:
-    description: Collate receives an exact rd:// review URI array from a seeded manifest row.
+  bundled-write-review-collate-artifacts:
+    description: Write, review, and collate pass artifacts across runbook boundaries without RD-816.
     commands:
-      - >-
-        node -e "const fs=require('fs'),p=require('path');const run='rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',ctx='reviewctx',key='review.json';const dir=p.join('.rundown','work','.rd-'+ctx,run);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(p.join(dir,key),'{}');const row={uri:'rd://artifacts/'+ctx+'/'+run+'/'+key,runId:run,contextId:ctx,runbook:{source:'project',path:'artifact-variable-review-plan.runbook.md'},key,timestamp:'2026-05-25T00:00:00.000Z'};fs.writeFileSync(p.join('.rundown','work','.rd-'+ctx,'manifest.jsonl'),JSON.stringify(row)+'\n');"
+      - rd run artifact-variable-write-plan.runbook.md --allow-all
+      - rd run artifact-variable-review-plan.runbook.md --artifacts Plan=${CAPTURE_ARTIFACT:plan.json} --allow-all
       - rd run artifact-variable-collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
     expect:
       result: COMPLETE

@@ -54,7 +54,6 @@ import {
   matchArtifactAssertions,
   matchEnteredAssertions,
   matchStepAssertions,
-  substituteArtifactUris,
   type ArtifactAssertionResult,
   type CapturedWarning,
   type EnteredAssertionResult,
@@ -62,10 +61,7 @@ import {
   type StepAssertionResult,
   type WarningAssertionResult,
 } from './command-sequence.js';
-import {
-  resolveCapturedArtifactFromManifest,
-  seedScenarioArtifacts,
-} from './scenario-artifacts.js';
+import { resolveCapturedArtifactFromManifest } from './scenario-artifacts.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
 import { assertContainedPath } from './path-containment.js';
 import { assertSafeRelativeArtifactPath } from './artifact-path.js';
@@ -451,19 +447,12 @@ export async function executeScenario(
       output.message('', 'info');
     }
 
-    // Seed any artifacts declared by the scenario's `seed:` directive, then expose
-    // each seeded row's rd:// URI as a ${ARTIFACT:<name>} substitution token, so a
-    // command can consume a pre-seeded artifact via --artifacts. This mirrors the
-    // in-process jest harness; both share the helpers in ./scenario-artifacts.js.
-    const artifactUris = seedScenarioArtifacts(scenario, { cwd: tmpDir });
-    const commands = scenario.commands.map((cmd) => substituteArtifactUris(cmd, artifactUris));
-
     // Execute all commands, tee child output, and capture JSON stdout.
     // Prepend the workspace bin to PATH so shell commands inside substep
     // bodies (e.g. `rd run X.md` for runbook composition) resolve `rd` to
     // the same CLI binary the scenario runner is using.
     const seqResult = await executeCommandSequence({
-      commands,
+      commands: scenario.commands,
       cwd: tmpDir,
       cliPath,
       quiet,

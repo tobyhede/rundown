@@ -231,6 +231,31 @@ assert through the scenario schema (`expect.result`, `expect.steps`,
 `expect.errors`, `expect.artifacts`) and keep `commands:` focused on the CLI
 interaction sequence.
 
+**These rules are enforced**, not advisory, by
+`packages/cli/__tests__/schemas/scenario-authoring.test.ts`. It rejects a
+scenario command whose executable is an interpreter (`node`, `python3`, `sh`,
+…), a helper script (`./setup.sh`), or a package runner (`npm`, `npx`, …) — in
+any form, not only the inline `-e` / `-c` spellings — and any command whose
+inline code spawns a subprocess.
+
+Detection is anchored to the **executable position of every command**, found by
+tokenizing with `shell-quote` — the same tokenizer the harness uses to run these
+commands, so the lint and the executor agree by construction about where a
+command begins. A wrapper is caught behind a shell operator (`&&`, `;`, `|`), on
+a second line, inside a subshell, and inside a `$( … )` or backtick substitution
+at any depth. Prefixes do not evade it: `! node …` and `FOO=bar node …` are both
+rejected. Conversely, text that only looks like a command is not one — an
+incidental `bash` in a quoted argument, a separator inside a quoted string
+(`--message "step a; node b"`), a redirection target, and a backtick inside a
+single-quoted argument (where the shell would not expand it) all pass.
+
+Those wrappers are confined to a small allowlist for **fault injection only** —
+where the shell command _is_ the fault being injected or the untrusted input
+being forged, never a workflow step and never an assertion. The allowlist is
+matched by set equality, so a stale entry fails the suite as loudly as an
+unlisted violation. The predicates themselves are unit-tested in
+`packages/cli/__tests__/schemas/scenario-authoring-rules.test.ts`.
+
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown`
 command's stdout to collect terminal state, step transitions, entered-step
 events, delegation tokens, and claim ids. Use `--text` for human-readable
@@ -602,6 +627,121 @@ expect:
     - runbook: parent.runbook.md
       action: COMPLETE
 ```
+
+## Artifact Capture
+
+A scenario command receives an artifact `rd://` URI by **capturing it from a
+prior command's output**. This is the only mechanism -- there is no seed
+directive, and scenarios must never fabricate an `rd://` URI or hand-write a
+manifest row. Core owns URI construction (`buildArtifactUri`) and the manifest
+row shape; a scenario that duplicates either will drift silently when core
+changes.
+
+This constrains how a scenario obtains a URI it intends to _use_. It does not
+constrain a negative test that forges an artifact record as a **public input**
+in order to assert the input channel rejects it -- there, the forgery is the
+assertion rather than a seeding shortcut, so it is the point of the scenario and
+not a shortcut around capture. `forged-file-record-rejected`
+(`runbooks/artifacts/artifact-variable-review-plan.runbook.md`) is the canonical
+example: it writes a `file-artifact-record` bearing an out-of-project `file://`
+URI, feeds it through `--input-file`, and expects
+`Artifact record input for "Plan" is not trusted`. Leave it alone.
+
+| Placeholder                       | Resolves to                                          |
+| --------------------------------- | ---------------------------------------------------- |
+| `${CAPTURE_ARTIFACT:<key>}`       | The most recent `rd://artifacts/...` URI for `<key>` |
+| `${CAPTURE_ARTIFACT_ARRAY:<key>}` | A JSON array of every matching URI for `<key>`       |
+
+**The array form must be single-quoted.** It resolves to JSON containing double
+quotes, and placeholders are substituted into command text that is then
+tokenized by the shell. Unquoted, the shell strips those quotes and
+`["rd://a","rd://b"]` arrives as the invalid `[rd://a,rd://b]`. Quote the whole
+assignment:
+
+```yaml
+- rundown run collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
+```
+
+This is enforced, not advisory -- an unquoted array placeholder is rejected
+before the command runs. The scalar form needs no quoting: its values cannot
+contain a shell metacharacter.
+
+Both are resolved from the artifact manifest immediately before each command
+runs, so they see rows that earlier commands in the same scenario actually
+produced. Recency is by manifest row `timestamp`, with within-context append
+order breaking ties; a scalar pick whose latest-timestamp rows span more than
+one context is ambiguous and raises an error rather than guessing.
+
+An earlier `${ARTIFACT:<name>}` grammar and its `seed:` directive were retired
+in [#498](https://github.com/tobyhede/rundown/issues/498). Both are now rejected
+outright -- `seed:` fails scenario validation as an unknown key, and
+`${ARTIFACT:...}` in a command throws before execution -- rather than being
+ignored.
+
+### `rd://` in a directive is not `rd://` in a command
+
+The same text means opposite things depending on where it lives, so do not
+review this with a text search. `grep -rn 'rd://artifacts/' runbooks/` cannot
+tell these apart, and will always report the selector fixtures as false hits:
+
+| Where                                            | Verdict                                                                                                   |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| An `ARTIFACTS` directive in the runbook **body** | The **selector language**. Legitimate: it names a _set_, resolved against whatever a real producer wrote. |
+| A scenario **command** in frontmatter            | **Fabrication.** Capture it from a producer instead.                                                      |
+
+```md
+- Matched "rd://artifacts/{{ ContextId }}/*/plan.json?source=project"  # body: fine
+```
+
+```yaml
+- rundown run x.runbook.md --artifacts Plan=rd://artifacts/ctx/rd_1/plan.json # command: fabrication
+```
+
+`packages/cli/__tests__/schemas/scenario-authoring.test.ts` enforces the
+distinction correctly because it lints **parsed frontmatter values**, not file
+text: selector syntax lives on directive lines in the body, which the lint never
+reads, so it cannot false-positive. It rejects any scenario command that names
+an `rd://` URI, writes `manifest.jsonl`, or hand-derives the `.rd-<contextId>`
+directory. There is no allowlist for these -- a real producer's output is the
+only legitimate source of artifact provenance.
+
+### Seeding a pre-existing artifact
+
+When a scenario needs an artifact to "already exist", run a real producer
+runbook as its first command and capture the artifact it emits:
+
+```yaml
+scenarios:
+  consume-plan-artifact:
+    commands:
+      - rundown run scenario-seed-artifacts.runbook.md --allow-all
+      - "rundown run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
+    expect:
+      result: COMPLETE
+```
+
+`runbooks/artifacts/scenario-seed-artifacts.runbook.md` is the shared
+deterministic seeder; it emits keys `PlanPath` and `plan.json` through the real
+`ARTIFACTS` production path. Any producer runbook works -- the seeder is a
+convenience, not a special case. The producer needs `--allow-all` because it
+writes its backing files from a bash block.
+
+The producer runbook is staged automatically: the harness scans command strings
+for `*.runbook.md` references and copies them into the scenario workspace.
+
+### Asserting on a captured artifact
+
+A naked `ARTIFACTS` alias fed an exact `rd://` URI surfaces the **injected
+record's key**, while the record's **provenance stays the producer's**. Two
+consequences for `expect.artifacts` entries:
+
+- `key:` matches the consumer's alias mapping, as authored in the consuming
+  runbook.
+- `runbook:` filters the **emitting event's** runbook -- _not_ the record's
+  provenance. Adding `runbook: <consumer>` to an assertion over an injected
+  record does not scope it "to the consumer's row"; the row's provenance is the
+  producer's either way. Disambiguate consumer from producer by `alias:`
+  instead, and give the seeder's aliases distinct names from the consumer's.
 
 ## Dependency Copying and Path Safety
 
