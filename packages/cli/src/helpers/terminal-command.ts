@@ -351,7 +351,12 @@ export async function finalizeAppliedClaimTerminal(
       cwd,
       output,
     );
-    propagatedInlineTerminal = propagation === 'stopped';
+    // 'blocked' is fail-closed: the seam could not propagate (corrupt linkage
+    // graph per #602, or a command-infrastructure failure), so the parent's true
+    // state is unknown. Exiting 0 would contradict the diagnostic the seam just
+    // emitted. Matches the execution path's rule (`execution.ts` treats
+    // 'stopped' and 'blocked' alike).
+    propagatedInlineTerminal = propagation === 'stopped' || propagation === 'blocked';
   }
 
   return renderRequestedExit || propagatedInlineTerminal;

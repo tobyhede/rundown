@@ -428,6 +428,30 @@ describe('finalizeAppliedClaimTerminal', () => {
 
     expect(exitError).toBe(true);
   });
+
+  it('propagates a BLOCKED inline parent into a non-zero exit (#602)', async () => {
+    // 'blocked' is the seam's fail-closed disposition — it is what a tripped
+    // linkage guard ('linkage-cycle') collapses to at this adapter, and what a
+    // command-infrastructure failure already collapsed to before #602. Exiting 0
+    // here would print INLINE_PARENT_CYCLE on a SUCCESS exit: the diagnostic says
+    // "corrupt state, prune the run" while the process says "all good". The
+    // execution path already fails closed on 'blocked' (execution.ts:417); this
+    // path must agree.
+    const { output } = recordingEmitter(true);
+    const propagate: ChildTerminalPropagator = async () => 'blocked';
+
+    const exitError = await finalizeAppliedClaimTerminal(
+      output,
+      'complete',
+      managerReturning(inlineChildState()),
+      APPLIED_COMPLETE,
+      '/cwd',
+      undefined,
+      propagate,
+    );
+
+    expect(exitError).toBe(true);
+  });
 });
 
 describe('handleTerminalRecovery', () => {

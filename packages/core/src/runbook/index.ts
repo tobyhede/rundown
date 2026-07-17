@@ -176,11 +176,15 @@ export {
 } from './collection-service.js';
 export {
   propagateTerminalChildUpward,
+  INLINE_PARENT_CYCLE_CODE,
+  MAX_INLINE_PROPAGATION_CHAIN,
   type AdvanceInlineParent,
   type AdvanceInlineParentInput,
   type AdvanceInlineParentOutcome,
   type InlineParentAdvanceSessionService,
   type InlineParentAdvanceStateReader,
+  type LinkageCycleTrip,
+  type OnLinkageCycle,
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';

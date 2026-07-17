@@ -6,6 +6,7 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
+import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
 import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
 import { classifyDelegationExposureDetail } from './delegation-exposure.js';
@@ -1873,8 +1874,10 @@ export class RunbookLifecycleCommandService {
         return {
           kind: 'inline_plan_unavailable',
           reason: 'inline-cycle',
-          message: `Inline parent cycle detected at ${plan.repeatedRunId}`,
-          code: 'INLINE_PARENT_CYCLE',
+          // Shared with the propagation guard's trip (#602): one fact, one
+          // wording, one code — see `inlineParentCycleMessage`.
+          message: inlineParentCycleMessage(plan.repeatedRunId),
+          code: INLINE_PARENT_CYCLE_CODE,
         };
       case 'resolved':
         break;

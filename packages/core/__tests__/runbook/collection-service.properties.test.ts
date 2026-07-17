@@ -113,6 +113,10 @@ describe('RunbookCollectionService properties', () => {
             'advanceInlineParent must not be called: properties assert pre-terminal behaviour',
           ),
         ),
+      // These properties never reach the upward walk, so the guard cannot trip.
+      onLinkageCycle: () => {
+        throw new Error('onLinkageCycle must not be called: no walk runs on these paths');
+      },
     });
   });
 

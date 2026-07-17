@@ -36,6 +36,7 @@ import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
   buildAdvanceInlineParent,
+  buildLinkageCycleDiagnostic,
   type DrivenRunPropagation,
 } from '../helpers/delegation-completion.js';
 
@@ -477,6 +478,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     sessionService: ctx.sessionService,
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
+    onLinkageCycle: buildLinkageCycleDiagnostic(output),
   });
 
   const outcome = await collectionService.collectDelegationOutcomes({
