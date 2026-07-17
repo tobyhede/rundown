@@ -650,7 +650,7 @@ tokenized by the shell. Unquoted, the shell strips those quotes and
 assignment:
 
 ```yaml
-- rd run collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
+- rundown run collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
 ```
 
 This is enforced, not advisory -- an unquoted array placeholder is rejected
@@ -685,7 +685,7 @@ tell these apart, and will always report the selector fixtures as false hits:
 ```
 
 ```yaml
-- rd run x.runbook.md --artifacts Plan=rd://artifacts/ctx/rd_1/plan.json # command: fabrication
+- rundown run x.runbook.md --artifacts Plan=rd://artifacts/ctx/rd_1/plan.json # command: fabrication
 ```
 
 `packages/cli/__tests__/schemas/scenario-authoring.test.ts` enforces the
@@ -705,8 +705,8 @@ runbook as its first command and capture the artifact it emits:
 scenarios:
   consume-plan-artifact:
     commands:
-      - rd run scenario-seed-artifacts.runbook.md --allow-all
-      - "rd run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
+      - rundown run scenario-seed-artifacts.runbook.md --allow-all
+      - "rundown run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
     expect:
       result: COMPLETE
 ```

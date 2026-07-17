@@ -58,7 +58,7 @@ resolving the `${ARTIFACT:<name>}` grammar.
 - **Command-text-layer splicing.** Values are spliced into command strings and
   re-parsed by `parseRdCommandWithEnv`. This is exactly how `${ARTIFACT:PlanPath}`
   collapsed to the empty string and produced `INVALID_ARTIFACT_INPUT` when the
-  production `rd scenario run` path lacked the substitution wiring — the defect
+  production `rundown scenario run` path lacked the substitution wiring — the defect
   whose unblock fix this issue follows up.
 
 ### 1.2 The same defect, authored in YAML
@@ -79,7 +79,7 @@ the harness") and none of its intent.
 
 ### 1.3 What this design does and does not fix
 
-#498's "Why it's fragile" lists four items. This design lands **three**:
+\#498's "Why it's fragile" lists four items. This design lands **three**:
 
 | # | Item                        | Landed? |
 | - | --------------------------- | ------- |
@@ -151,7 +151,7 @@ runbook". It is a runbook.
 A new fixture, `runbooks/artifacts/scenario-seed-artifacts.runbook.md`, declares
 an `ARTIFACTS` block with explicit keys and writes deterministic content into the
 projected paths. Running it
-(`rd run scenario-seed-artifacts.runbook.md --allow-all`) drives the genuine
+(`rundown run scenario-seed-artifacts.runbook.md --allow-all`) drives the genuine
 production path — `ARTIFACTS` directive resolution → artifact service →
 `buildArtifactUri` → manifest append — so the seeded row is, by construction,
 exactly what production emits. There is nothing left to keep in sync.
@@ -167,7 +167,7 @@ does not. `scenario-seed-artifacts` names what it is. `copy-runbooks.js:44-51`
 throws on a duplicate relative path; no `*seed*` runbook exists today, so there
 is no collision.
 
-**Rejected: a bespoke `rd seed-artifact` CLI command.** CLAUDE.md is explicit
+**Rejected: a bespoke `rundown seed-artifact` CLI command.** CLAUDE.md is explicit
 that the CLI is a thin wrapper and that runbook logic does not live in it. A
 harness-only command that mints artifacts outside the state machine would be a
 parallel artifact-production path — precisely the "shadow implementation"
@@ -214,8 +214,8 @@ strictly less capable spelling of two lines that scenarios can already write:
 
 ```yaml
 commands:
-  - rd run scenario-seed-artifacts.runbook.md --allow-all
-  - "rd run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
+  - rundown run scenario-seed-artifacts.runbook.md --allow-all
+  - "rundown run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
 ```
 
 A `seed:` field redefined as "a producer command to run first" would be an alias
@@ -238,7 +238,7 @@ the precondition, which is *more* honest documentation, not less. YAGNI wins.
 (`command-sequence.ts:1459-1475`) scans command strings for `*.runbook.md`, and
 both harnesses stage what it finds (`scenario-workflow.ts:372,405-409`;
 `scenario-runner.test.ts:301-313`). Adding
-`rd run scenario-seed-artifacts.runbook.md --allow-all` to `commands:`
+`rundown run scenario-seed-artifacts.runbook.md --allow-all` to `commands:`
 auto-stages the seeder. The migration is pure YAML plus deletions.
 
 #### 3.2.1 Removal must be **enforced**, not silent
@@ -339,7 +339,7 @@ union of two.
 
 So the sequencing is not "defer the hard part" — it is "remove the thing that
 made the hard part hard". Being honest about what it still costs: deferring means
-#498's fragility item 1 is **not fixed** by this change (§1.3). The deferral is
+\#498's fragility item 1 is **not fixed** by this change (§1.3). The deferral is
 defensible, and now cheaper to discharge, but it is not free.
 
 #### 3.3.2 The §3.7 quoting guard is deliberate throwaway
@@ -396,7 +396,8 @@ preserved here.
 (`artifact-variable-write-plan.runbook.md:33-45`) is **byte-identical** to
 `review-plan-uri-input` (`:19-31`): same two commands, same `expect` block, zero
 differences outside the `description:` string. It has never exercised
-cross-context anything. Both of its `rd run` invocations execute in the *same*
+cross-context anything. Both of its `rundown run` invocations execute in the
+*same*
 context — which is exactly why it is identical. This predates #498 and is
 unrelated to seeding; it is in scope only because this design is the first thing
 to look closely at these fixtures.
@@ -441,7 +442,7 @@ not own its output: it splices a value into command text and hands it to
 `parseRdCommandWithEnv` (`command-sequence.ts:1652`), which runs `shellParse`
 (`:349`). The value must survive **that** tokenizer:
 
-```
+```text
 ∀ resolved value v accepted by the §3.7 quoting guard, ∀ placeholder position:
   parseRdCommandWithEnv(await substituteCapturedArtifacts(cmd, () => v))
     contains v as exactly one argv entry, byte-identical
@@ -531,7 +532,7 @@ This guard is **deliberate throwaway** — see §3.3.2.
 | `substituteArtifactUris` (`${ARTIFACT:}`)     | `packages/cli/src/helpers/command-sequence.ts:454-479` |
 | `ScenarioSeedSchema`, `ScenarioSeed`          | `packages/cli/src/schemas/scenarios.ts:113-141` |
 | `seed` field on `ScenarioSchema`              | `packages/cli/src/schemas/scenarios.ts:148-149` |
-| Seed wiring (`rd scenario run`)               | `packages/cli/src/helpers/scenario-workflow.ts:454-459` |
+| Seed wiring (`rundown scenario run`)               | `packages/cli/src/helpers/scenario-workflow.ts:454-459` |
 | Seed wiring (jest runner)                     | `packages/cli/__tests__/integration/scenario-runner.test.ts:351-355` |
 
 **Added:**
@@ -600,7 +601,7 @@ disk by the build the scenario harness requires, and a bare
 ## 6. Risks
 
 - **`--allow-all` on the seeder command.** The seeder writes its backing files
-  from a bash block, so its `rd run` needs `--allow-all`, matching
+  from a bash block, so its `rundown run` needs `--allow-all`, matching
   `artifact-variable-write-plan.runbook.md:9`. The consumer command keeps its
   existing (absent) policy flags. This widens the seeder command's policy only.
 - **The seeder publishes to end users.** It lands in `dist/runbooks/` and

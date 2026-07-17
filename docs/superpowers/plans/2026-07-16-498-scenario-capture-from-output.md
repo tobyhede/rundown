@@ -144,7 +144,7 @@ collision.
 - Consumes: nothing from earlier tasks.
 - Produces: `runbooks/artifacts/scenario-seed-artifacts.runbook.md`, a runbook
   staged by filename reference from any scenario `commands:` entry. Running
-  `rd run scenario-seed-artifacts.runbook.md --allow-all` appends exactly two
+  `rundown run scenario-seed-artifacts.runbook.md --allow-all` appends exactly two
   manifest rows and terminates `COMPLETE`:
   - key `PlanPath` (alias `PlanPathSeed`), file content `{"seeded":true}`
   - key `plan.json` (alias `PlanJsonSeed`), file content `{"seeded":true}`
@@ -354,7 +354,7 @@ it is being retired.
 this plan initially missed**. It is byte-identical to `review-plan-uri-input`
 (`:19-31`) — same two commands, same `expect` block, zero differences outside the
 `description:` string. It has never tested cross-context anything; both of its
-`rd run` invocations execute in the *same* context, which is exactly why it is
+`rundown run` invocations execute in the *same* context, which is exactly why it is
 identical.
 
 **Decision: delete it.** The alternative — give it a genuinely distinct producer
@@ -714,9 +714,9 @@ export const ScenarioSchema = z
 ```
 
 Add this TSDoc line to the block already documenting `ScenarioSchema`
-(`scenarios.ts:105-112`), immediately before its closing ` */`:
+(`scenarios.ts:105-112`), immediately before its closing `*/`:
 
-```
+```ts
  * Strict: unknown keys are rejected, not stripped. The retired `seed:` directive
  * (#498) must fail at load rather than be silently dropped — a dropped `seed:`
  * leaves its `${ARTIFACT:…}` command text unsubstituted and surfaces as a
@@ -826,7 +826,7 @@ after token substitution so it sees the final command text.
 Update the TSDoc on `substituteCapturedArtifacts` (`command-sequence.ts:493-507`)
 — its comparison to the deleted grammar is now dangling. Change:
 
-```
+```ts
  * `${CAPTURE_ARTIFACT:<key>}` is replaced by the `rd://` URI of the most recent
  * manifest row for `<key>`; `${CAPTURE_ARTIFACT_ARRAY:<key>}` is replaced by a
  * JSON array of all such URIs. Unlike `${ARTIFACT:…}` (pre-seeded), these are
@@ -837,7 +837,7 @@ Update the TSDoc on `substituteCapturedArtifacts` (`command-sequence.ts:493-507`
 
 To:
 
-```
+```ts
  * `${CAPTURE_ARTIFACT:<key>}` is replaced by the `rd://` URI of the most recent
  * manifest row for `<key>`; `${CAPTURE_ARTIFACT_ARRAY:<key>}` is replaced by a
  * JSON array of all such URIs. This is the sole artifact grammar: values are
@@ -911,7 +911,7 @@ Replace the module TSDoc (lines 1-11):
  */
 ```
 
-- [ ] **Step 8: Unwire seeding from the `rd scenario run` workflow**
+- [ ] **Step 8: Unwire seeding from the `rundown scenario run` workflow**
 
 In `packages/cli/src/helpers/scenario-workflow.ts`:
 
@@ -1092,7 +1092,7 @@ does not own its output. It splices a value into command text and hands it to
 (`:349`). The value must survive **that** tokenizer. The invariant that matters is
 therefore **composed**, not internal:
 
-```
+```text
 ∀ resolved value v accepted by the quoting guard, ∀ placeholder position:
   parseRdCommandWithEnv(await substituteCapturedArtifacts(cmd, () => v))
     contains v as exactly one argv entry, byte-identical
@@ -1260,7 +1260,7 @@ tempting guard is a regex asserting the placeholder is wrapped in single quotes,
 e.g. `/'\$\{CAPTURE_ARTIFACT_ARRAY:[^}]+\}'/`. **It false-rejects both real call
 sites.** They quote the *whole assignment*, not the placeholder:
 
-```
+```text
 --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}'
 ```
 
@@ -1711,7 +1711,7 @@ tokenised by the shell. Unquoted, the shell strips those quotes and
 assignment:
 
 ```yaml
-- rd run collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
+- rundown run collate.runbook.md --artifacts-json 'Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}' --allow-all
 ```
 
 This is enforced, not advisory — an unquoted array placeholder is rejected before
@@ -1738,8 +1738,8 @@ as its first command and capture the artifact it emits:
 scenarios:
   consume-plan-artifact:
     commands:
-      - rd run scenario-seed-artifacts.runbook.md --allow-all
-      - "rd run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
+      - rundown run scenario-seed-artifacts.runbook.md --allow-all
+      - "rundown run execute-plan.runbook.md --artifacts PlanPath=${CAPTURE_ARTIFACT:PlanPath}"
     expect:
       result: COMPLETE
 ```
@@ -1810,7 +1810,7 @@ bullet under "Out of scope".
 
 Run:
 
-```bash
+````bash
 gh issue create \
   --title "Scenario harness: thread a typed ScenarioContext through executeCommandSequence" \
   --body "$(cat <<'EOF'
@@ -1892,7 +1892,7 @@ Most of what made this refactor look expensive is already gone.
 `packages/cli/__tests__/helpers/command-sequence.properties.test.ts` (added by
 #498) states the invariant this refactor must establish:
 
-```
+```text
 ∀ resolved value v accepted by the quoting guard, ∀ placeholder position:
   parseRdCommandWithEnv(await substituteCapturedArtifacts(cmd, () => v))
     contains v as exactly one argv entry, byte-identical
@@ -1909,7 +1909,7 @@ should go red under this refactor, which is the signal to delete it.
 Design context: `docs/superpowers/specs/2026-07-16-scenario-capture-from-output-design.md` §3.3.
 EOF
 )"
-```
+````
 
 - [ ] **Step 2: Record the issue number in the spec's deferral**
 
@@ -1951,16 +1951,16 @@ equally good alternative, since it only sees tracked files.
       exists.
 - [ ] **Single placeholder/capture mechanism; `${ARTIFACT:}` retired** —
 
-      ```bash
-      grep -rn 'ARTIFACT:' --include='*.ts' --include='*.md' \
-        --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
-        packages/ runbooks/ \
-        | grep -v CAPTURE_ARTIFACT \
-        | grep -v RETIRED_ARTIFACT_PLACEHOLDER
-      ```
+  ```bash
+  grep -rn 'ARTIFACT:' --include='*.ts' --include='*.md' \
+    --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
+    packages/ runbooks/ \
+    | grep -v CAPTURE_ARTIFACT \
+    | grep -v RETIRED_ARTIFACT_PLACEHOLDER
+  ```
 
-      Every remaining hit must be part of the retirement tombstone (its TSDoc,
-      its error message, or its two tests). No hit may be a live use.
+  Every remaining hit must be part of the retirement tombstone (its TSDoc, its
+  error message, or its two tests). No hit may be a live use.
 
 - [ ] **The retirement fails loudly, not silently** — `seed:` is rejected by
       `ScenarioSchema` (strict) and `${ARTIFACT:}` in a command throws before
@@ -1969,26 +1969,26 @@ equally good alternative, since it only sees tracked files.
       `packages/cli/__tests__/helpers/command-sequence.test.ts`.
 - [ ] **No fabricated URIs or hand-built manifest rows** —
 
-      ```bash
-      grep -rn 'rd://artifacts/' \
-        --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
-        runbooks/
-      grep -rn 'manifest.jsonl' \
-        --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
-        runbooks/
-      ```
+  ```bash
+  grep -rn 'rd://artifacts/' \
+    --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
+    runbooks/
+  grep -rn 'manifest.jsonl' \
+    --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
+    runbooks/
+  ```
 
-      Both return nothing.
+  Both return nothing.
 
 - [ ] **No dead symbols** —
 
-      ```bash
-      grep -rn 'seedScenarioArtifacts\|substituteArtifactUris\|ScenarioSeedSchema' \
-        --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
-        packages/ runbooks/
-      ```
+  ```bash
+  grep -rn 'seedScenarioArtifacts\|substituteArtifactUris\|ScenarioSeedSchema' \
+    --exclude-dir=dist --exclude-dir=.stryker-tmp --exclude-dir=node_modules \
+    packages/ runbooks/
+  ```
 
-      Returns nothing.
+  Returns nothing.
 
 - [ ] **Scenarios migrated and green under both harnesses** —
       `pnpm run build && pnpm run test:scenarios:raw` passes, and
