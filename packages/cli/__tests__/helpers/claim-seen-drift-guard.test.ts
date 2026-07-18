@@ -34,7 +34,7 @@ import { createProgram } from '../../src/cli.js';
 const EPOCH = '2020-01-01T00:00:00.000Z';
 
 /**
- * A workspace arranged so one command can reach a committed success.
+ * A workspace arranged so one command can exercise its intended claim-id role.
  *
  * Carries the workspace ITSELF, not just the claim: the drivers have to run the
  * CLI, and `runCliInProcess` needs the workspace the arrangement just created.
@@ -53,32 +53,31 @@ interface Arrangement {
   readonly token?: string;
 }
 
-/** How one claim-authenticated command is arranged and driven to a committed success. */
+/** How one bearer-authority command is arranged and invoked. */
 interface RecordingCase {
   /** Stand up a fresh workspace and bearer. The caller owns cleanup. */
   readonly arrange: () => Promise<Arrangement>;
   /**
-   * Drive this command to a SUCCESSFUL mutation with the arranged bearer.
-   * Asserts its own exit code, so a silently-refused command cannot masquerade
-   * as "recorded nothing".
+   * Drive the command through its intended bearer-authority path. The observable
+   * result may be a mutation or an authorized no-op; liveness was already proved
+   * before either outcome.
    */
-  readonly driveSuccess: (arranged: Arrangement) => Promise<void>;
+  readonly driveInvocation: (arranged: Arrangement) => Promise<void>;
 }
 
 /**
  * A claim-authenticated command that must NOT record, and how to drive it.
  *
- * `driveSuccess` is REQUIRED here for the same reason it is on RecordingCase, and
- * it matters more: a refused command records nothing and would pass the
- * non-recording assertion VACUOUSLY, leaving the guard green while pinning
- * nothing. Each driver asserts its own exit code is 0 first.
+ * `driveInvocation` matters most here: a refused command records nothing and
+ * would pass the non-recording assertion vacuously, leaving the guard green
+ * while pinning nothing. Each driver asserts its own exit code is 0 first.
  */
 interface NonRecordingCase {
   /** Why this claim is a target rather than attributable presenter authority. */
   readonly reason: string;
   readonly arrange: () => Promise<Arrangement>;
-  /** Drive this command to a SUCCESSFUL (exit 0) invocation with the bearer. */
-  readonly driveSuccess: (arranged: Arrangement) => Promise<void>;
+  /** Drive this command to a successful target-selection invocation. */
+  readonly driveInvocation: (arranged: Arrangement) => Promise<void>;
 }
 
 /** A plain claimed run: the arrangement for every command that just needs a live bearer. */
@@ -189,7 +188,7 @@ async function arrangeAbortableParent(): Promise<Arrangement> {
  * A claimed DELEGATED CHILD — the only claim shape `pop` accepts.
  * `unstashForClaimId` returns `child-linkage-mismatch` when `!claim.delegation`,
  * so a run-control claim cannot drive `pop` to exit 0 and would fail
- * driveSuccess's own assertion.
+ * the invocation driver's own assertion.
  */
 async function arrangeStashableChild(): Promise<Arrangement> {
   const workspace = await createTestWorkspace();
@@ -219,7 +218,7 @@ async function expectOk(args: readonly string[], arranged: Arrangement): Promise
  * Assert a claim-authenticated invocation that COMMITS and then exits non-zero.
  *
  * `fail` and `stop` drive the run terminal through a FAIL transition, and the CLI
- * maps a stopped runbook to exit 1 — that is the committed-success path for these
+ * maps a stopped runbook to exit 1 — that is the applied terminal path for these
  * two, not a refusal. Exit code alone therefore cannot discriminate here (a
  * refusal is non-zero too), so this asserts the committed action block instead:
  * the refusal path throws an error envelope and emits no action at all. Without
@@ -291,14 +290,14 @@ const driveClaimAbort = async (a: Arrangement): Promise<void> => {
  * unrelated to idle detection.
  */
 const RECORDING_COMMANDS: Readonly<Record<string, RecordingCase>> = {
-  pass: { arrange: arrangeClaimedRun, driveSuccess: driveClaimPass },
-  fail: { arrange: arrangeClaimedRun, driveSuccess: driveClaimFail },
-  complete: { arrange: arrangeClaimedRun, driveSuccess: driveClaimComplete },
-  stop: { arrange: arrangeClaimedRun, driveSuccess: driveClaimStop },
-  goto: { arrange: arrangeClaimedRun, driveSuccess: driveClaimGoto },
-  delegate: { arrange: arrangeDelegatableParent, driveSuccess: driveClaimDelegate },
-  collect: { arrange: arrangeCollectableParent, driveSuccess: driveClaimCollect },
-  abort: { arrange: arrangeAbortableParent, driveSuccess: driveClaimAbort },
+  pass: { arrange: arrangeClaimedRun, driveInvocation: driveClaimPass },
+  fail: { arrange: arrangeClaimedRun, driveInvocation: driveClaimFail },
+  complete: { arrange: arrangeClaimedRun, driveInvocation: driveClaimComplete },
+  stop: { arrange: arrangeClaimedRun, driveInvocation: driveClaimStop },
+  goto: { arrange: arrangeClaimedRun, driveInvocation: driveClaimGoto },
+  delegate: { arrange: arrangeDelegatableParent, driveInvocation: driveClaimDelegate },
+  collect: { arrange: arrangeCollectableParent, driveInvocation: driveClaimCollect },
+  abort: { arrange: arrangeAbortableParent, driveInvocation: driveClaimAbort },
 };
 
 /**
@@ -315,19 +314,19 @@ const NON_RECORDING_CLAIM_COMMANDS: Readonly<Record<string, NonRecordingCase>> =
     reason:
       'Its help says "Target a claimed delegated child runbook": the claim names another holder as a target, so the presenter cannot vouch for that child\'s liveness.',
     arrange: arrangeClaimedRun,
-    driveSuccess: driveClaimStatus,
+    driveInvocation: driveClaimStatus,
   },
   stash: {
     reason:
       'Its help says "Target a claimed delegated child runbook": the claim is target selection, not bearer authority attributable to the presenter.',
     arrange: arrangeStashableChild,
-    driveSuccess: driveClaimStash,
+    driveInvocation: driveClaimStash,
   },
   pop: {
     reason:
       'Its help says "Target a claimed delegated child runbook": an orchestrator naming a child cannot refresh that child\'s liveness mark.',
     arrange: arrangeStashableChild,
-    driveSuccess: driveClaimPop,
+    driveInvocation: driveClaimPop,
   },
 };
 
@@ -402,13 +401,13 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
     Object.entries(RECORDING_COMMANDS),
   )('records claim liveness when %s presents bearer authority', async (_name, {
     arrange,
-    driveSuccess,
+    driveInvocation,
   }) => {
     const arranged = await arrange();
     try {
       await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
 
-      await driveSuccess(arranged);
+      await driveInvocation(arranged);
 
       // The rule: every command that presents the claim as its holder's authority
       // records that holder as seen. Terminal commands record too; the eventual
@@ -429,7 +428,7 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
   )('does NOT record claim liveness when %s uses a target selector', async (name, {
     reason,
     arrange,
-    driveSuccess,
+    driveInvocation,
   }) => {
     const arranged = await arrange();
     try {
@@ -437,7 +436,7 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
 
       // Drives the command to a successful invocation (exit 0) — a refusal would
       // leave the mark unchanged for the wrong reason and pass vacuously.
-      await driveSuccess(arranged);
+      await driveInvocation(arranged);
 
       // The mark must not move. `reason` documents WHY at the failure site: a
       // reader who broke this needs the anti-fooling argument, not just a diff.

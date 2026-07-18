@@ -405,6 +405,34 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.policy.kind).toBe('actor_context_required');
     });
 
+    it('does not record when the presented bearer lacks the delegation grant', async () => {
+      const { seam: localSeam, manager: mgr } = await startSeamOnDelegateStep();
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      session.claims[claimKey] = {
+        ...session.claims[claimKey],
+        grants: session.claims[claimKey].grants.filter(
+          (grant) => grant.action !== 'delegate-from-run',
+        ),
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
+      };
+      await mgr.saveSession(session);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: evidence,
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('claim_grant_required');
+      expect((await mgr.loadSession()).claims[claimKey].lastSeenAt).toBe(
+        '2020-01-01T00:00:00.000Z',
+      );
+    });
+
     it('issues a bare delegation and persists the new substep state', async () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
 
@@ -555,10 +583,19 @@ describe('RunbookLifecycleCommandService', () => {
     it('refuses a bare issue when the run has pending uncollected outcomes', async () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamWithCollectionPending();
       const before = await mgr.load(state.id);
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      session.claims[claimKey] = {
+        ...session.claims[claimKey],
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
+      };
+      await mgr.saveSession(session);
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: runControlEvidence(runId),
+        callerEvidence: evidence,
       });
 
       expect(outcome.kind).toBe('refused');
@@ -567,6 +604,9 @@ describe('RunbookLifecycleCommandService', () => {
 
       const after = await mgr.load(state.id);
       expect(after?.substepStates).toEqual(before?.substepStates); // no mutation
+      expect(Date.parse((await mgr.loadSession()).claims[claimKey].lastSeenAt)).toBeGreaterThan(
+        Date.parse('2020-01-01T00:00:00.000Z'),
+      );
     });
 
     it('refuses a positional confirmation (requestedRunbook, no --step) when collection is pending', async () => {
@@ -4084,12 +4124,24 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
+        const evidence = runControlEvidence(ROOT);
+        if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+        const claimKey = claimKeyFromBearer(evidence.claimId);
+        const session = await manager.loadSession();
+        session.claims[claimKey] = {
+          ...session.claims[claimKey],
+          lastSeenAt: '2020-01-01T00:00:00.000Z',
+        };
+        await manager.saveSession(session);
         const out = await seam.runTerminal({
           command: 'stop',
-          callerEvidence: runControlEvidence(ROOT),
+          callerEvidence: evidence,
           targetSelector: { kind: 'default' },
         });
         expect(out.kind).toBe('delegation_collection_pending');
+        expect(
+          Date.parse((await manager.loadSession()).claims[claimKey].lastSeenAt),
+        ).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
       });
 
       it('run-control claim terminal refuses when the resolved root is collection pending', async () => {
@@ -4121,6 +4173,7 @@ describe('RunbookLifecycleCommandService', () => {
         session.claims[claimKey] = {
           ...claim,
           grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+          lastSeenAt: '2020-01-01T00:00:00.000Z',
         };
         await manager.saveSession(session);
         installResolvedPlan(root, [root]);
@@ -4136,6 +4189,9 @@ describe('RunbookLifecycleCommandService', () => {
           claimId: evidence.claimId,
           runId: ROOT,
         });
+        expect((await manager.loadSession()).claims[claimKey].lastSeenAt).toBe(
+          '2020-01-01T00:00:00.000Z',
+        );
       });
 
       it('refuses a bare direct-CLI stop on a collection-pending (delegating) root — ambient trust removed (#460)', async () => {

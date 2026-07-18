@@ -981,6 +981,14 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+
+    // Exact bearer/grant authorization is the liveness proof. Observe it before
+    // command policy can refuse for collection state and before any validation,
+    // no-op resolution, or persistence. No SessionLock is held here.
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     const policy = resolveCommandIntent({
       actorContext: authority.actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
@@ -988,15 +996,6 @@ export class RunbookLifecycleCommandService {
       targetState: state,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
-
-    // The verified bearer and authorized delegation grant establish that the
-    // presenter is alive before issuance resolution or persistence. Recording
-    // is total, so a bookkeeping failure cannot prevent or mask the operation
-    // that follows (RD-102). This call is outside SessionLock; DelegationLock is
-    // a distinct domain lock and the session lock is not re-entered here.
-    if (input.callerEvidence.kind === 'claim_bearer') {
-      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
-    }
 
     // Validate authored target details only after authorization succeeds. This
     // still uses the locked document, while avoiding disclosure of a named
@@ -1284,6 +1283,14 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+
+    // Retry bearer/grant authorization independently proves liveness before
+    // command policy, validation, or persistence. The total recorder cannot
+    // prevent or mask any later refusal/outcome (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     const policy = resolveCommandIntent({
       actorContext: authority.actorContext,
       intent: {
@@ -1296,13 +1303,6 @@ export class RunbookLifecycleCommandService {
       targetState: freshState,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
-
-    // Retry authorization is independently bearer/grant gated. Observe the
-    // presented holder before any retry validation or persistence; even an
-    // authorized no-op or later failure is evidence of liveness (#519).
-    if (input.callerEvidence.kind === 'claim_bearer') {
-      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
-    }
 
     // As on the fresh path, authorization precedes authored-step validation so
     // an unauthorized retry cannot probe whether a named step is iterable.
@@ -1957,16 +1957,18 @@ export class RunbookLifecycleCommandService {
           })
         : undefined;
 
+    const presenterAuthorized = descendantAuthority || authority?.kind === 'verified';
+    // Bearer/grant authorization is complete before command policy evaluates
+    // collection state. Record now so an authorized policy refusal or no-op still
+    // observes the holder. No SessionLock is held; the total write is non-masking.
+    if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     if (plan.targetState.lifecycle !== 'running') {
       // Preserve the pre-existing already-terminal outcome even when authority
       // is absent. When the presented bearer did authorize this resolved chain,
       // however, the no-op still proves that holder alive.
-      if (
-        input.callerEvidence.kind === 'claim_bearer' &&
-        (descendantAuthority || authority?.kind === 'verified')
-      ) {
-        await sessionService.recordClaimSeen(input.callerEvidence.claimId);
-      }
       await sessionService.releaseRunbooks(plan.releaseRunIds);
       return {
         kind: 'already_terminal',
@@ -2038,13 +2040,6 @@ export class RunbookLifecycleCommandService {
         const _exhaustive: never = policy;
         return _exhaustive;
       }
-    }
-
-    // The bearer and terminal-force grant are authorized before observing the
-    // holder. This is outside SessionLock; the best-effort total write cannot
-    // block or mask the force/no-op that follows (RD-102).
-    if (input.callerEvidence.kind === 'claim_bearer') {
-      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
     const eventType = terminalForceEvent(input.command);

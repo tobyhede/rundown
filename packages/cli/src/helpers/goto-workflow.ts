@@ -14,7 +14,6 @@ import {
   deriveGotoActionBlock,
   type RunbookStateManager,
   type RunbookActorService,
-  type SessionService,
   type LifecycleNavigationOutcome,
   type ResolvedStep,
   type StepId,
@@ -46,8 +45,6 @@ export interface GotoContext {
   manager: RunbookStateManager;
   /** Actor service for managing XState actor lifecycle */
   actorService: RunbookActorService;
-  /** Session service for tracking active/stashed runbooks */
-  sessionService: SessionService;
   /** Bearer claim id presented via `--claim-id`, when the caller named one. */
   claimId?: ClaimId;
   /** Current active runbook state */
@@ -185,13 +182,20 @@ export async function buildGotoContext(
     return outcome;
   }
 
+  // Core has verified the presented bearer and authorized its navigation grant.
+  // Observe the holder before CLI target validation: a malformed/missing target
+  // is later than the liveness proof. No SessionLock is held, and recording is
+  // total so it cannot block or mask validation/dispatch (RD-102).
+  if (options.claimId !== undefined) {
+    await sessionService.recordClaimSeen(options.claimId);
+  }
+
   return {
     kind: 'ready',
     ctx: {
       output,
       manager,
       actorService: createCliRunbookActorService(manager),
-      sessionService,
       ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
       state: outcome.state,
       steps: [...outcome.steps],
@@ -308,14 +312,6 @@ export function validateGotoTarget(
  */
 export async function executeGoto(ctx: GotoContext, target: StepId): Promise<GotoExecutionResult> {
   const { output, manager, actorService, state, steps, cwd } = ctx;
-
-  // `buildGotoContext` already verified the bearer and authorized its navigation
-  // grant. Observe the presented holder before dispatch: a later refusal, null
-  // result, or throw does not undo that liveness proof. No SessionLock is held,
-  // and the total recorder cannot block or mask navigation (RD-102).
-  if (ctx.claimId !== undefined) {
-    await ctx.sessionService.recordClaimSeen(ctx.claimId);
-  }
 
   const syncResult = await actorService.sendAndSync(state.id, steps, {
     type: 'GOTO',
