@@ -159,6 +159,16 @@ export function registerAbortCommand(program: Command): void {
                 }
               }
 
+              // Bearer verification and the parent abort grant succeeded. Record
+              // the presented orchestrator now, before the pure cancellation and
+              // persistence: even an already-cancelled no-op proves liveness.
+              // DelegationLock is held, but SessionLock is not; recordClaimSeen
+              // self-acquires that distinct lock and is total, so a failed mark
+              // cannot block or mask the abort outcome (RD-102).
+              if (claimTarget.claimId !== undefined) {
+                await sessionService.recordClaimSeen(claimTarget.claimId);
+              }
+
               // 5. Call abortDelegation() pure function (frame-scoped)
               abortResult = abortDelegation({
                 parentState: freshParent,
@@ -222,21 +232,6 @@ export function registerAbortCommand(program: Command): void {
             //     (The `await using` guard above re-releases idempotently if an
             //     early throw skips this.)
             await _lockGuard.release();
-
-            // 9b. The cancellation COMMITTED above. Record the presented bearer's
-            //     progress via the core SessionService API — best-effort, never
-            //     throws, so it cannot mask the committed abort (#519, RD-102).
-            //     `AbortCommandService.authorizeAbortCommand` is an authorization
-            //     gate that mutates nothing, so the CLI dispatches into core here
-            //     rather than re-implementing it; the drift guard is the guarantee.
-            //     Recorded after the lock is released: the session lock is a
-            //     DIFFERENT lock, and taking it inside the delegation-lock scope
-            //     would nest two domain locks for a bookkeeping write. The
-            //     `already_cancelled` early return commits nothing new and
-            //     correctly records nothing.
-            if (claimTarget.claimId !== undefined) {
-              await sessionService.recordClaimSeen(claimTarget.claimId);
-            }
 
             // 10. Report-only: cleanup already happened inside the lock. Active
             //     children record explicit FAIL; terminal/missing children have

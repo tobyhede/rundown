@@ -459,7 +459,7 @@ export async function issueRunControlClaim(
  * @param iso - Timestamp to write, or any string when testing the corrupt path.
  * @throws If `claimKey` is absent from the session — see below.
  */
-export async function backdateClaimProgress(
+export async function backdateClaimSeen(
   workspace: TestWorkspace,
   claimKey: ClaimLookupKey,
   iso: string,
@@ -473,7 +473,7 @@ export async function backdateClaimProgress(
   // the single highest-leverage way this feature's test suite could lie to us.
   if (claim === undefined) {
     throw new Error(
-      `backdateClaimProgress: no claim '${claimKey}' in session. ` +
+      `backdateClaimSeen: no claim '${claimKey}' in session. ` +
         `Did you pass a bearer (rdclm_…) instead of a lookup key (rdclk_…)? ` +
         `Convert with claimKeyFromBearer().`,
     );

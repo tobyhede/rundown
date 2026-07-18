@@ -12,7 +12,7 @@ import {
 } from '@rundown-org/core';
 import type { Command } from 'commander';
 import {
-  backdateClaimProgress,
+  backdateClaimSeen,
   createRunbook,
   createTestWorkspace,
   findActionOutput,
@@ -43,7 +43,7 @@ interface Arrangement {
   readonly workspace: TestWorkspace;
   /** Bearer the command under test presents. */
   readonly claimId: ClaimId;
-  /** Lookup key for that same bearer — what `backdateClaimProgress`/`readSession` key on. */
+  /** Lookup key for that same bearer — what `backdateClaimSeen`/`readSession` key on. */
   readonly claimKey: ClaimLookupKey;
   /**
    * Pending delegation token. Present ONLY for `abort`, which takes a token
@@ -74,7 +74,7 @@ interface RecordingCase {
  * nothing. Each driver asserts its own exit code is 0 first.
  */
 interface NonRecordingCase {
-  /** Why this command fails the workflow-state predicate. Surfaced on failure. */
+  /** Why this claim is a target rather than attributable presenter authority. */
   readonly reason: string;
   readonly arrange: () => Promise<Arrangement>;
   /** Drive this command to a SUCCESSFUL (exit 0) invocation with the bearer. */
@@ -249,11 +249,11 @@ const driveClaimStash = async (a: Arrangement): Promise<void> => expectOk(['stas
 // arrangeClaimedRun authors three steps.
 const driveClaimGoto = async (a: Arrangement): Promise<void> => expectOk(['goto', '2'], a);
 const driveClaimCollect = async (a: Arrangement): Promise<void> => expectOk(['collect'], a);
-// `--retry` reaches the `retried` committed-success member. A bare `delegate` on an
-// already-auto-issued substep returns `already-delegated`, which commits nothing and
-// correctly records nothing — driving it would assert the opposite of the rule.
+// The arranged parent already auto-issued this substep, so this drives the
+// `already-delegated` no-op. Authorization still proves the bearer holder alive;
+// the no-op outcome is deliberately irrelevant to the mark.
 const driveClaimDelegate = async (a: Arrangement): Promise<void> =>
-  expectOk(['delegate', '--step', '1.1', '--retry'], a);
+  expectOk(['delegate', '--step', '1.1'], a);
 
 /**
  * `pop` cannot exit 0 in isolation — `unstashForClaimId` requires
@@ -279,7 +279,7 @@ const driveClaimAbort = async (a: Arrangement): Promise<void> => {
 };
 
 /**
- * Commands that change runbook workflow state, and so record.
+ * Commands whose presented bearer is authority attributable to its own holder.
  *
  * Keyed by command name and cross-checked below against BOTH the real program's
  * --claim-id surface and core's RoleSpecificMutationCommand union. Deliberately
@@ -302,8 +302,8 @@ const RECORDING_COMMANDS: Readonly<Record<string, RecordingCase>> = {
 };
 
 /**
- * Claim-authenticated commands that do NOT change runbook workflow state, and so
- * do NOT record. These are NOT exceptions to the rule — they fail its predicate.
+ * Commands whose `--claim-id` names another agent's claim as a target selector.
+ * They do not record because the presenter cannot vouch for that holder (AC5).
  *
  * Listed rather than omitted, because a non-recording classification is a
  * DECISION the guard pins in BOTH directions: a future edit that starts recording
@@ -313,19 +313,19 @@ const RECORDING_COMMANDS: Readonly<Record<string, RecordingCase>> = {
 const NON_RECORDING_CLAIM_COMMANDS: Readonly<Record<string, NonRecordingCase>> = {
   status: {
     reason:
-      'Changes nothing (read-only). A stuck child polling its own status must never refresh its own mark.',
+      'Its help says "Target a claimed delegated child runbook": the claim names another holder as a target, so the presenter cannot vouch for that child\'s liveness.',
     arrange: arrangeClaimedRun,
     driveSuccess: driveClaimStatus,
   },
   stash: {
     reason:
-      'Changes session targeting only, not the run. IS a claim-authenticated mutation (stash.ts:19) — which is exactly why the predicate is "changes runbook workflow state", not "mutates". Recording it would let a child loop stash/pop to fake liveness without advancing anything.',
+      'Its help says "Target a claimed delegated child runbook": the claim is target selection, not bearer authority attributable to the presenter.',
     arrange: arrangeStashableChild,
     driveSuccess: driveClaimStash,
   },
   pop: {
     reason:
-      'Changes session targeting only, not the run. IS a claim-authenticated mutation (pop.ts:59); see stash. Corroboration: unstashForClaimId already moves updatedAt ("record written"), the field this design deliberately leaves alone.',
+      'Its help says "Target a claimed delegated child runbook": an orchestrator naming a child cannot refresh that child\'s liveness mark.',
     arrange: arrangeStashableChild,
     driveSuccess: driveClaimPop,
   },
@@ -347,14 +347,14 @@ function claimAuthenticatedCommandNames(): string[] {
   return names.sort();
 }
 
-describe('claim progress recording drift guard (#519 AC4)', () => {
+describe('claim liveness recording drift guard (#519 AC4)', () => {
   // THE ANCHOR: every command the real program exposes with --claim-id must be
   // CLASSIFIED, in one direction or the other. Both failure modes are invisible
   // without this:
-  //  - a new workflow-state command that records nothing => a claim reads idle
-  //    while advancing, a spurious check nobody traces back to a missing line;
-  //  - a new session-targeting command that DOES record => the anti-fooling hole
-  //    reopens and the idle signal can be faked.
+  //  - a new bearer-authority command that records nothing => a live claimant can
+  //    read idle because its presentation was never observed;
+  //  - a new target-selector command that DOES record => one agent can falsely
+  //    vouch for another claim's liveness.
   // Set equality against the REAL program is what makes it fail closed in both
   // directions. Fed from these tables instead, it could never fail at all.
   it('classifies every command the real program registers with --claim-id', () => {
@@ -363,10 +363,11 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       ...Object.keys(NON_RECORDING_CLAIM_COMMANDS),
     ].sort();
 
-    // If this fails with an EXTRA command, classify it: does it change runbook
-    // workflow state (=> RECORDING_COMMANDS) or only session targeting / nothing
-    // (=> NON_RECORDING_CLAIM_COMMANDS, WITH a reason)? Do NOT narrow the scan to
-    // make this pass — the scan is the guarantee.
+    // If this fails with an EXTRA command, classify the presented claim: is it
+    // bearer authority attributable to its own holder (=> RECORDING_COMMANDS),
+    // or another holder's target selector (=> NON_RECORDING_CLAIM_COMMANDS, WITH
+    // a reason)? Help text is intended-use evidence for that attribution. Do not
+    // narrow the scan to make this pass — the scan is the guarantee.
     expect(claimAuthenticatedCommandNames()).toEqual(classified);
   });
 
@@ -399,17 +400,19 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
   it.each(
     Object.entries(RECORDING_COMMANDS),
-  )('records claim progress on a successful %s', async (_name, { arrange, driveSuccess }) => {
+  )('records claim liveness when %s presents bearer authority', async (_name, {
+    arrange,
+    driveSuccess,
+  }) => {
     const arranged = await arrange();
     try {
-      await backdateClaimProgress(arranged.workspace, arranged.claimKey, EPOCH);
+      await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
 
       await driveSuccess(arranged);
 
-      // The rule: EVERY successful claim-authenticated command that changes runbook
-      // workflow state records. Including the claim-terminating ones (complete/stop/
-      // abort), whose write is redundant but harmless and buys a predicate with no
-      // exceptions to remember.
+      // The rule: every command that presents the claim as its holder's authority
+      // records that holder as seen. Terminal commands record too; the eventual
+      // run outcome does not change what authorization already proved.
       const after = (await readSession(arranged.workspace)).claims[arranged.claimKey].lastSeenAt;
       expect(Date.parse(after)).toBeGreaterThan(Date.parse(EPOCH));
     } finally {
@@ -423,13 +426,17 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
   it.each(
     Object.entries(NON_RECORDING_CLAIM_COMMANDS),
-  )('does NOT record claim progress on %s', async (name, { reason, arrange, driveSuccess }) => {
+  )('does NOT record claim liveness when %s uses a target selector', async (name, {
+    reason,
+    arrange,
+    driveSuccess,
+  }) => {
     const arranged = await arrange();
     try {
-      await backdateClaimProgress(arranged.workspace, arranged.claimKey, EPOCH);
+      await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
 
-      // Drives the command to a SUCCESSFUL invocation (exit 0) — a refusal would
-      // record nothing for the wrong reason and pass this test vacuously.
+      // Drives the command to a successful invocation (exit 0) — a refusal would
+      // leave the mark unchanged for the wrong reason and pass vacuously.
       await driveSuccess(arranged);
 
       // The mark must not move. `reason` documents WHY at the failure site: a
@@ -459,14 +466,13 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
     // `listOpenClaimsForParent` sits on the seam, so "loop the open children and
     // record them all" is a natural line to write. Written out, THAT LINE DOES
     // NOTHING. `recordClaimSeen` verifies the bearer secret, and a parent holds
-    // only child claim KEYS — never child bearers — so it returns `no-claim`; and by
-    // record time the collection has committed, so the list is empty anyway. This
-    // case cannot go red for the reason it names.
+    // only child claim KEYS — never child bearers — so it returns `no-claim`.
+    // This case cannot go red for the reason it names.
     //
     // Kept because it still catches a `recordClaimSeen` that stopped requiring
     // the secret — a real regression, just not the one the intuition worries about.
     // AC5's falsifiable case is `records the CALLER's bearer, never the bearer named
-    // as the target` in packages/core/__tests__/runbook/claim-progress.test.ts: the
+    // as the target` in packages/core/__tests__/runbook/claim-seen.test.ts: the
     // ONE input carrying two bearers. The CLI cannot express that divergence (one
     // --claim-id flag populates both fields), which is why it is not in this file.
     //
@@ -478,9 +484,9 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       childClaimKeys,
     } = await arrangeCollectedTrio();
     try {
-      await backdateClaimProgress(workspace, parentClaimKey, EPOCH);
+      await backdateClaimSeen(workspace, parentClaimKey, EPOCH);
       for (const childKey of childClaimKeys) {
-        await backdateClaimProgress(workspace, childKey, EPOCH);
+        await backdateClaimSeen(workspace, childKey, EPOCH);
       }
 
       expect(
@@ -488,11 +494,11 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       ).toBe(0);
 
       const session = await readSession(workspace);
-      // The orchestrator presented its bearer and advanced its own run: mark moves.
+      // The orchestrator presented its own bearer authority: its mark moves.
       expect(Date.parse(session.claims[parentClaimKey].lastSeenAt)).toBeGreaterThan(
         Date.parse(EPOCH),
       );
-      // The children were collected FROM, not advanced BY, this command. Their marks
+      // The children were targets of collection, not presenters. Their marks
       // are frozen. UNCONDITIONAL — no `if (… !== undefined)` guard: these children
       // reported and were retained as terminal, so a vanished record is itself a
       // failure worth surfacing, not a reason to skip the assertion.
@@ -510,7 +516,7 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
     // `recordClaimSeen` verifies the bearer secret and this command holds no
     // bearer but the parent's. Kept as a regression net on that API contract, not
     // credited as AC5's guarantee. The falsifiable case is the seam-level one in
-    // packages/core/__tests__/runbook/claim-progress.test.ts.
+    // packages/core/__tests__/runbook/claim-seen.test.ts.
     //
     // It is still the sharpest arrangement in this file, and the one the it.each
     // above structurally cannot express: `Arrangement` carries a single claim, so it
@@ -538,8 +544,8 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       token,
     } = await arrangeAbortableTrio();
     try {
-      await backdateClaimProgress(workspace, parentClaimKey, EPOCH);
-      await backdateClaimProgress(workspace, bystanderChildClaimKey, EPOCH);
+      await backdateClaimSeen(workspace, parentClaimKey, EPOCH);
+      await backdateClaimSeen(workspace, bystanderChildClaimKey, EPOCH);
 
       // `--force` is REQUIRED: the delegation is claimed, so the bare form throws
       // `needs_force`. This is not belt-and-braces.
@@ -549,7 +555,7 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
       ).toBe(0);
 
       const session = await readSession(workspace);
-      // The parent presented its bearer and advanced the run: its mark moves.
+      // The parent presented its own bearer authority: its mark moves.
       expect(Date.parse(session.claims[parentClaimKey].lastSeenAt)).toBeGreaterThan(
         Date.parse(EPOCH),
       );
@@ -567,17 +573,14 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
     }
   });
 
-  it('a stash/pop loop never clears idle (anti-fooling sibling of the status loop)', async () => {
-    // The decisive argument for excluding stash/pop. Both ARE claim-authenticated
-    // mutations, so a rule keyed on "mutation" would record them — and then a child
-    // could loop them to refresh itself alive forever WITHOUT advancing the run.
-    // That is the exact hole that disqualified the rejected verify-path design,
-    // reached through a mutating command instead of a read. Same defect, different
-    // door. This is the sibling of the `status --claim-id` anti-fooling test in
-    // packages/core/__tests__/runbook/claim-progress.test.ts.
+  it('a stash/pop target-selector loop never clears the child claim idle mark', async () => {
+    // Stash and pop both describe `--claim-id` as targeting a claimed child.
+    // Even though they mutate session targeting, the orchestrator presenting the
+    // selector cannot establish that the child's own holder is alive. This is the
+    // sibling of the status target-selector test in claim-seen.test.ts.
     const { workspace, claimId, claimKey } = await arrangeStashableChild();
     try {
-      await backdateClaimProgress(workspace, claimKey, EPOCH);
+      await backdateClaimSeen(workspace, claimKey, EPOCH);
       const updatedAtBefore = (await readSession(workspace)).claims[claimKey].updatedAt;
 
       for (let i = 0; i < 3; i++) {
@@ -589,8 +592,8 @@ describe('claim progress recording drift guard (#519 AC4)', () => {
 
       const claim = (await readSession(workspace)).claims[claimKey];
       expect(claim.lastSeenAt).toBe(EPOCH);
-      // Still idle after six successful claim-authenticated mutations: the signal
-      // cannot be faked by a holder that never advances the run.
+      // Still idle after six successful target-selector mutations: a parent
+      // cannot make a dead child read alive by repeatedly naming it.
       expect(claimActivity(claim, new Date(), DEFAULT_IDLE_AFTER_MS).idle).toBe(true);
 
       // THE EMPIRICAL PROOF THAT ONE FIELD COULD NOT HAVE DONE THIS JOB.

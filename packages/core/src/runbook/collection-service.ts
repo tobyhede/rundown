@@ -55,8 +55,8 @@ export interface CollectionSessionService extends CommandTargetReader {
   ): Promise<ReleaseRunbookResult>;
 
   /**
-   * Record best-effort progress for a presented bearer claim after a committed
-   * collection. Never throws (#519).
+   * Record best-effort liveness for a presented bearer claim after collection
+   * authorization and before the operation. Never throws (#519).
    *
    * @param claimId - Bearer claim id the caller presented.
    * @returns Typed recording outcome, not consumed by the collection seam.
@@ -294,6 +294,12 @@ export async function collectDelegationOutcomes(
   });
   if (policy.kind !== 'allowed') return policy;
 
+  // The orchestrator's presented bearer and collect grant are now authorized.
+  // Observe that holder before validation, no-op detection, or dispatch: each is
+  // later than the liveness proof. No SessionLock is held, and the total recorder
+  // cannot block or mask the collection outcome (RD-102).
+  await recordPresenterLiveness(input);
+
   const stepName = input.stepName ?? input.targetState.step;
   const step = findCollectionStep(input.steps, stepName);
 
@@ -455,18 +461,16 @@ async function projectAndConsumeReEntryFrontier(
 }
 
 /**
- * Record the ORCHESTRATOR's own claim after a committed collection — the bearer
- * this command presented — and NEVER the children's: a parent cannot vouch for a
- * child's liveness and must not appear to (#519 AC5). Best-effort; the callee
- * never throws, so it cannot mask the committed collection (RD-102).
+ * Record the ORCHESTRATOR's own presented bearer after authorization and NEVER
+ * the children's: a parent cannot vouch for a child's liveness (#519 AC5).
+ * Best-effort and total, so failure cannot mask the later collection (RD-102).
  *
- * Called only after the collection has committed and outside any session-lock
- * scope: `recordClaimSeen` self-acquires the session lock, which is not
- * reentrant.
+ * Called outside any session-lock scope: `recordClaimSeen` self-acquires the
+ * session lock, which is not reentrant.
  *
  * @param input - The collect operation input carrying the caller's evidence.
  */
-async function recordPresenterProgress(
+async function recordPresenterLiveness(
   input: CollectDelegationOutcomesOperationInput,
 ): Promise<void> {
   if (input.callerEvidence.kind !== 'claim_bearer') return;
@@ -559,7 +563,6 @@ async function applyCollection(
       // Intentionally ignored — see best-effort note above.
     }
     const upward = await propagateCollectTerminalUpward(input, fresh, scope.claim);
-    await recordPresenterProgress(input);
     return {
       kind: 'collection_applied',
       targetRunId: input.targetState.id,
@@ -618,7 +621,6 @@ async function applyCollection(
     };
   }
 
-  await recordPresenterProgress(input);
   return {
     kind: 'collection_applied',
     targetRunId: input.targetState.id,

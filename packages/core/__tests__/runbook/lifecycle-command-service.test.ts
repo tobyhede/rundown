@@ -3335,9 +3335,12 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = buildSpanSeam(terminalSteps);
       await activate(substepRunning());
 
-      // Pass-through prototype spies: jest records a global invocation order,
-      // which pins that the span's CompletionLock release happened strictly
-      // before the terminal release's SessionLock acquire.
+      // Pass-through prototype spies: jest records a global invocation order.
+      // The first SessionLock acquisition is the pre-dispatch liveness mark;
+      // the last is terminal release. Pin both sides of CompletionLock so the
+      // recorder cannot become reentrant and terminal release cannot restore
+      // the ABBA inversion.
+      const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
       const sessionAcquireSpy = jest.spyOn(SessionLock.prototype, 'acquire');
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
@@ -3348,12 +3351,18 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('done');
       expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
-      // The span's lock closed BEFORE the terminal release took the SessionLock.
+      // Recording takes SessionLock before the completion span; terminal release
+      // takes it only after that span closes.
+      const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
       const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
-      const sessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
+      const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
+      const releaseSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder.at(-1);
+      expect(completionAcquire).toBeDefined();
       expect(completionRelease).toBeDefined();
-      expect(sessionAcquire).toBeDefined();
-      expect(sessionAcquire).toBeGreaterThan(completionRelease);
+      expect(recordingSessionAcquire).toBeDefined();
+      expect(releaseSessionAcquire).toBeDefined();
+      expect(recordingSessionAcquire).toBeLessThan(completionAcquire);
+      expect(releaseSessionAcquire).toBeGreaterThan(completionRelease);
     });
 
     it('reaches terminal without a lock timeout while a bare guarded write contends', async () => {

@@ -290,6 +290,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   let manager: RunbookStateManager;
   let sessionService: SessionService;
   let seam: RunbookLifecycleCommandService;
+  let actorService: RunbookActorService;
   let runId: RunId;
 
   /** Two base steps so a `pass` on step 1 CONTINUEs rather than driving terminal. */
@@ -325,7 +326,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // a COMMITTED mutation records, which only a real seam can produce.
     testDir = await mkdtemp(join(tmpdir(), 'claim-seen-seam-'));
     manager = new RunbookStateManager(testDir);
-    const actorService = new RunbookActorService(manager);
+    actorService = new RunbookActorService(manager);
     const lifecycleService = new ExecutionLifecycleService(manager);
     const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
     sessionService = new SessionService(manager);
@@ -356,7 +357,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  it('records progress on a SUCCESSFUL claim-authenticated pass (AC3)', async () => {
+  it('records liveness on an authorized claim-authenticated pass (AC3)', async () => {
     const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -373,12 +374,10 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
   });
 
-  it('does NOT record progress on `status --claim-id` — the anti-fooling invariant', async () => {
-    // THE load-bearing test of this change. `verifyClaimId` is the read-only path
-    // `status --claim-id` takes. If a bearer presentation refreshed the mark, a
-    // stuck child polling its own status would refresh forever and never report
-    // idle — a false negative on precisely the case #519 detects. This is why the
-    // "heartbeat on every verifyClaimId" design was rejected.
+  it('does NOT record liveness when a claim is verified only as a target selector', async () => {
+    // `status --claim-id` names another agent's claim as a target. Verification
+    // alone cannot attribute the invocation to that claim's holder: a parent
+    // reading a child must not vouch for the child's liveness (AC5).
     const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -390,10 +389,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(after).toBe(before);
   });
 
-  it('does NOT record progress on a FAILED claim-authenticated mutation (AC3)', async () => {
-    // A child whose `pass` is refused proved it is alive but did NOT advance the
-    // run. `lastSeenAt` means "the run advanced at T", so a live-but-erroring
-    // child correctly reads as idle — a true positive worth surfacing.
+  it('records liveness when an authorized claim-authenticated mutation is refused (AC3)', async () => {
+    // The verified bearer and authorized grant prove the holder is alive before
+    // the terminal-state refusal decides that the run cannot advance.
     const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
     // Drive the claim's run terminal so a further transition is refused.
     await manager.updateWithState(runId, () => ({ lifecycle: 'completed' as const }));
@@ -407,6 +405,68 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       terminalPolicy: releasePolicy,
     });
     expect(outcome.kind).not.toBe('applied');
+
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
+
+  it('records liveness when open delegated children refuse an authorized transition', async () => {
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+      runbookPath: 'child.md',
+      parentLinkage: linkageFor(runId, 'a'),
+    });
+    assertClaimed(await sessionService.claimRunbook(child.id, linkageFor(runId, 'a')));
+    const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'run', runId },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('open_delegated_children');
+
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
+
+  it('records liveness before a post-authorization mutation dispatch throws', async () => {
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    jest.spyOn(actorService, 'sendAndSync').mockRejectedValueOnce(new Error('dispatch exploded'));
+
+    await expect(
+      seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'claim_bearer', claimId },
+        targetSelector: { kind: 'claim', claimId },
+        terminalPolicy: releasePolicy,
+      }),
+    ).rejects.toThrow('dispatch exploded');
+
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
+
+  it('does not record when the presented bearer lacks a grant for the target run', async () => {
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
+      runbookPath: 'foreign.md',
+    });
+    await sessionService.pushRunbook(foreign.id);
+    const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'run', runId: foreign.id },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('claim_grant_required');
 
     const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     expect(after).toBe(before);
@@ -425,8 +485,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       terminalPolicy: releasePolicy,
     });
 
-    // The run mutation COMMITTED under RunStateLock before the session write was
-    // ever attempted. The bookkeeping failure must be invisible here.
+    // Recording is attempted before dispatch and is total. The bookkeeping
+    // failure must be invisible to the mutation that follows it.
     expect(outcome.kind).toBe('applied');
     saveSpy.mockRestore();
     const state = await manager.load(runId);
@@ -450,8 +510,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       ).idle,
     ).toBe(true);
 
-    // A fresh session presenting the bearer on a MUTATING command genuinely is the
-    // new live holder making progress — so recovery is adoption, not reclamation.
+    // A fresh session presenting the bearer as authorized mutation authority is
+    // the new live holder — so recovery is adoption, not reclamation.
     const outcome = await seam.runTransition({
       command: 'pass',
       callerEvidence: { kind: 'claim_bearer', claimId },
@@ -470,7 +530,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('adoption does NOT self-heal via `status --claim-id` (AC11)', async () => {
-    // Reading a claim advances nothing. Adoption via status alone must not clear idle.
+    // Status names the claim as another agent's target; it cannot establish that
+    // the claim's own holder is alive.
     const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
     const session = await manager.loadSession();
     session.claims[claim.claimKey] = {
@@ -507,12 +568,12 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // A caller cannot vouch for another claim's liveness and must not appear to.
     //
     // NO SIBLING CASE FOR runTerminal, AND THAT IS A FINDING, NOT AN OMISSION.
-    // Its tail is a separate line, but the divergence cannot reach a committed
-    // success there: the terminal path resolves the actor context from
+    // The divergence cannot reach an authorized terminal outcome there: the
+    // terminal path resolves the actor context from
     // `callerEvidence` against the TARGET run and refuses a caller lacking
     // `mutate-run` on it (`claim_grant_required`). Verified by running it. So at
-    // `runTerminal`, caller and target are necessarily the same claim on every
-    // `applied_*` path and the two arguments are indistinguishable.
+    // `runTerminal`, caller and target are necessarily the same claim wherever
+    // recording is reached, so the two arguments are indistinguishable.
     //
     // WHY THIS CASE CAN REACH `applied` WHEN THAT ONE CANNOT: the transition path
     // builds its actor context from the TARGET's claim record for a `claim`
@@ -520,8 +581,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // asymmetry is what makes the presented-vs-named distinction observable here.
     // If that gate is ever tightened to match the terminal path, this case will
     // stop reaching `applied` — at which point the defect is not expressible at
-    // this seam either, and the honest move is to DELETE this test and record that the
-    // tails are safe by construction. Do not "fix" it by weakening the assertion.
+    // this seam either, and the honest move is to DELETE this test and record that
+    // the seam is safe by construction. Do not "fix" it by weakening the assertion.
     const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
       runbookPath: 'other.md',
     });
@@ -544,7 +605,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(outcome.kind).toBe('applied');
 
     const session = await manager.loadSession();
-    // The presenter is who advanced a run, so the presenter's mark moves.
+    // The presenter is the holder observed alive, so its mark moves.
     expect(session.claims[recordA.claimKey].lastSeenAt).not.toBe(recordA.lastSeenAt);
     // The targeted claim was NAMED, not PRESENTED. Its holder proved nothing about
     // its own liveness, so its mark is frozen.

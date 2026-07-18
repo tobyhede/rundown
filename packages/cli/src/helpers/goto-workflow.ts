@@ -309,23 +309,20 @@ export function validateGotoTarget(
 export async function executeGoto(ctx: GotoContext, target: StepId): Promise<GotoExecutionResult> {
   const { output, manager, actorService, state, steps, cwd } = ctx;
 
+  // `buildGotoContext` already verified the bearer and authorized its navigation
+  // grant. Observe the presented holder before dispatch: a later refusal, null
+  // result, or throw does not undo that liveness proof. No SessionLock is held,
+  // and the total recorder cannot block or mask navigation (RD-102).
+  if (ctx.claimId !== undefined) {
+    await ctx.sessionService.recordClaimSeen(ctx.claimId);
+  }
+
   const syncResult = await actorService.sendAndSync(state.id, steps, {
     type: 'GOTO',
     target,
   });
   if (!syncResult) {
     return { ok: false, error: 'Failed to initialize runbook engine', code: 'ENGINE_INIT_FAILED' };
-  }
-
-  // The GOTO committed. Record the presented bearer's progress via the core
-  // SessionService API — best-effort, never throws, so it cannot mask the
-  // committed navigation (#519, RD-102). A failed sendAndSync above returned
-  // already: recorded on success, not on attempt. `resolveRunNavigation` is an
-  // authorization gate that mutates nothing, so this call site is the CLI
-  // dispatching into core, not re-implementing it; Task 5's drift guard is what
-  // makes that sanctioned rather than debt.
-  if (ctx.claimId !== undefined) {
-    await ctx.sessionService.recordClaimSeen(ctx.claimId);
   }
 
   output.action(

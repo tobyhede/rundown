@@ -895,28 +895,6 @@ export class RunbookLifecycleCommandService {
    *   `persistIssuedSubstep`.
    */
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
-    const outcome = await this.#issueDelegationInner(input);
-    // Only a COMMITTED issuance/retry advanced the run (#519). `already-delegated`
-    // is an echo of a prior issuance and commits nothing new, so it records nothing.
-    // Best-effort and last: `recordClaimSeen` never throws, so it cannot mask
-    // the committed issuance (RD-102).
-    if (
-      (outcome.kind === 'delegated' || outcome.kind === 'retried') &&
-      input.callerEvidence.kind === 'claim_bearer'
-    ) {
-      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
-    }
-    return outcome;
-  }
-
-  /**
-   * Issue, echo, or retry a delegation. The un-recorded body of
-   * {@link RunbookLifecycleCommandService.issueDelegation}.
-   *
-   * @param input - Fresh-issuance or retry request.
-   * @returns A typed issuance outcome, before the recording tail inspects it.
-   */
-  async #issueDelegationInner(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
 
     // Target identification only — the anchor run's id (the `--run`-named
@@ -1010,6 +988,15 @@ export class RunbookLifecycleCommandService {
       targetState: state,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
+
+    // The verified bearer and authorized delegation grant establish that the
+    // presenter is alive before issuance resolution or persistence. Recording
+    // is total, so a bookkeeping failure cannot prevent or mask the operation
+    // that follows (RD-102). This call is outside SessionLock; DelegationLock is
+    // a distinct domain lock and the session lock is not re-entered here.
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
 
     // Validate authored target details only after authorization succeeds. This
     // still uses the locked document, while avoiding disclosure of a named
@@ -1310,6 +1297,13 @@ export class RunbookLifecycleCommandService {
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
 
+    // Retry authorization is independently bearer/grant gated. Observe the
+    // presented holder before any retry validation or persistence; even an
+    // authorized no-op or later failure is evidence of liveness (#519).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     // As on the fresh path, authorization precedes authored-step validation so
     // an unauthorized retry cannot probe whether a named step is iterable.
     if (locator.kind === 'step' && locator.iteration !== undefined) {
@@ -1517,6 +1511,15 @@ export class RunbookLifecycleCommandService {
       actorContext,
     });
 
+    // Target resolution runs the transition policy after bearer/grant
+    // authorization. At this point the presented holder has been seen alive,
+    // regardless of whether policy refuses the transition or dispatch later
+    // fails. The recorder is total and self-locking, and no SessionLock is held
+    // on this path, so failure cannot block or mask the mutation (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     const checked = this.#asRefusal(resolution);
     if (!checked.ready) return checked.outcome;
     // The ready resolution carries the resolved run (claim / default / run),
@@ -1547,22 +1550,7 @@ export class RunbookLifecycleCommandService {
     // frontend to resolve the target first (a redundant run-state read).
     const steps = await this.#deps.loadSteps(ready.state);
 
-    const outcome = await this.#drive(
-      input,
-      steps,
-      ready.state,
-      terminalReleaseMode,
-      guardOpenChildren,
-    );
-    // Ordering is fixed: verify bearer -> authorize grant -> commit mutation ->
-    // best-effort record progress (#519). Recorded on SUCCESS, not on attempt: a
-    // child whose transition is refused proved it is alive but did not advance the
-    // run, and `lastSeenAt` means "the run advanced at T". `recordClaimSeen`
-    // never throws, so this can never mask the committed transition (RD-102).
-    if (outcome.kind === 'applied' && input.callerEvidence.kind === 'claim_bearer') {
-      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
-    }
-    return outcome;
+    return this.#drive(input, steps, ready.state, terminalReleaseMode, guardOpenChildren);
   }
 
   /**
@@ -1576,32 +1564,6 @@ export class RunbookLifecycleCommandService {
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
   async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
-    const outcome = await this.#runTerminalInner(input);
-    // `applied_claim` / `applied_bare` are the committed-success members.
-    // `terminal_claim_confirmed` and `already_terminal` commit nothing new, so they
-    // record nothing — "recorded on success, not on attempt" applies to no-ops too.
-    //
-    // Recording on a claim-TERMINATING command is deliberate and not special-cased
-    // away: the write is redundant (the claim is leaving the reportable population)
-    // but harmless, and it buys a predicate with no exceptions to remember (#519).
-    if (
-      (outcome.kind === 'applied_claim' || outcome.kind === 'applied_bare') &&
-      input.callerEvidence.kind === 'claim_bearer'
-    ) {
-      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
-    }
-    return outcome;
-  }
-
-  /**
-   * Force a run (or an inline chain) terminal. The un-recorded body of
-   * {@link RunbookLifecycleCommandService.runTerminal}.
-   *
-   * @param input - Command, caller evidence, target selector, and optional message.
-   * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome,
-   *   before the recording tail inspects it.
-   */
-  async #runTerminalInner(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
     // Bare (no `--claim-id` / `--run`) complete/stop on a *delegation*-exposed
     // run requires named authority. resolveCommandIntent only forces a bearer for
     // the open-claims / collection-pending clauses; the authored-DELEGATE,
@@ -1813,6 +1775,11 @@ export class RunbookLifecycleCommandService {
       case 'terminal_claim_confirmed':
         // Idempotent no-op: child already terminal. Still release with retain so a
         // later --claim-id can confirm/conflict again (item 4, second site).
+        // The resolver verified and authorized the bearer before confirming the
+        // prior terminal outcome, so the presentation still proves liveness.
+        if (input.callerEvidence.kind === 'claim_bearer') {
+          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+        }
         await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
         return {
           kind: 'terminal_claim_confirmed',
@@ -1821,6 +1788,11 @@ export class RunbookLifecycleCommandService {
           command: resolution.command,
         };
       case 'terminal_claim_conflict':
+        // A confirmed terminal conflict is also post-authorization evidence from
+        // the claim's holder, despite refusing the requested terminal result.
+        if (input.callerEvidence.kind === 'claim_bearer') {
+          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+        }
         await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
         return {
           kind: 'terminal_claim_conflict',
@@ -1854,6 +1826,13 @@ export class RunbookLifecycleCommandService {
     const isRunControlClaim = resolution.claim.delegation === undefined;
     if (isRunControlClaim) {
       return this.#driveTerminalBare(input, state);
+    }
+
+    // `resolveTerminalTarget` verified the bearer and its mutate-run grant.
+    // Observe that holder before dispatch; SessionLock is not held here and the
+    // total recorder cannot mask a later terminal failure (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
     const steps = await this.#deps.loadSteps(state);
@@ -1950,18 +1929,6 @@ export class RunbookLifecycleCommandService {
       }
     }
 
-    if (plan.targetState.lifecycle !== 'running') {
-      // Resolved but already terminal: release the chain (explicit teardown) and
-      // report the no-op. The root is terminal, so retaining vs deleting the
-      // tombstone is moot — keep the existing bulk release.
-      await sessionService.releaseRunbooks(plan.releaseRunIds);
-      return {
-        kind: 'already_terminal',
-        targetRunId: plan.targetState.id,
-        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
-      };
-    }
-
     // Gate the resolved ROOT before forcing. A run-control claim for an inline
     // descendant may also force the inline chain it is currently executing; that
     // is the same active inline execution, not authority over an unrelated run.
@@ -1989,6 +1956,25 @@ export class RunbookLifecycleCommandService {
             intent: 'terminal-run-force',
           })
         : undefined;
+
+    if (plan.targetState.lifecycle !== 'running') {
+      // Preserve the pre-existing already-terminal outcome even when authority
+      // is absent. When the presented bearer did authorize this resolved chain,
+      // however, the no-op still proves that holder alive.
+      if (
+        input.callerEvidence.kind === 'claim_bearer' &&
+        (descendantAuthority || authority?.kind === 'verified')
+      ) {
+        await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+      }
+      await sessionService.releaseRunbooks(plan.releaseRunIds);
+      return {
+        kind: 'already_terminal',
+        targetRunId: plan.targetState.id,
+        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      };
+    }
+
     if (authority?.kind === 'refused') {
       return authority.policy.kind === 'claim_grant_required' &&
         input.callerEvidence.kind === 'claim_bearer'
@@ -2052,6 +2038,13 @@ export class RunbookLifecycleCommandService {
         const _exhaustive: never = policy;
         return _exhaustive;
       }
+    }
+
+    // The bearer and terminal-force grant are authorized before observing the
+    // holder. This is outside SessionLock; the best-effort total write cannot
+    // block or mask the force/no-op that follows (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
     const eventType = terminalForceEvent(input.command);

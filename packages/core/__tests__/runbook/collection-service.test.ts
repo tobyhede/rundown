@@ -320,6 +320,9 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '2',
     });
+    // Authorization established orchestrator liveness before this idempotent
+    // no-op was discovered.
+    expect(recordClaimSeenSpy).toHaveBeenCalledWith(claimId);
   });
 
   it('applies reported delegation outcomes through the state machine', async () => {
