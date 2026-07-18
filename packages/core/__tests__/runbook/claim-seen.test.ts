@@ -177,9 +177,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     const { claimId } = await sessionService.issueRunControlClaim(runId);
     const saveSpy = jest.spyOn(manager, 'saveSession').mockRejectedValue(new Error('disk on fire'));
 
-    // The mutation this recording follows is ALREADY committed. A bookkeeping
-    // hiccup must never surface as a failure, or it would mask the committed
-    // result (RD-102). The method is total by construction.
+    // This best-effort recording precedes the subsequent mutation. A bookkeeping
+    // hiccup must neither prevent that mutation nor mask its eventual outcome
+    // (RD-102). The method is total by construction.
     const result = await sessionService.recordClaimSeen(claimId);
 
     expect(result.kind).toBe('record-failed');
@@ -202,7 +202,8 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     // Operationally the most likely of the three: SessionLock retries with
     // jittered backoff bounded to 5s before failing, so a contended session is a
     // real source of acquisition failure — and it must cost one under-reported
-    // observation mark, never a failed `rundown pass` whose mutation already committed.
+    // observation mark, never prevent the subsequent `rundown pass` mutation or
+    // mask its eventual outcome.
     const { claimId } = await sessionService.issueRunControlClaim(runId);
     const acquireSpy = jest
       .spyOn(sessionLock, 'acquire')
@@ -218,9 +219,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     // The fourth throw site, and the one most likely to fire in practice: THIS VERY
     // PLAN makes `loadSession` throw on a class of sessions it previously accepted
     // (the structural guard). A recorder that survives a save failure but dies on a
-    // load failure would surface as a failed `rundown pass` whose mutation had
-    // already committed — the exact RD-102 defect, arriving through the one door
-    // this plan just installed.
+    // load failure would prevent the subsequent `rundown pass` mutation or mask
+    // its eventual outcome — the exact RD-102 defect, arriving through the one
+    // door this plan just installed.
     const { claimId } = await sessionService.issueRunControlClaim(runId);
     const loadSpy = jest
       .spyOn(manager, 'loadSession')
