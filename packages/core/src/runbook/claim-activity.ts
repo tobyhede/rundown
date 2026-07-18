@@ -29,11 +29,11 @@ export const DEFAULT_IDLE_AFTER_MS: DurationMs = assertDurationMs(60 * 60 * 1000
  * at the read boundary (`known` | `unreadable`), whose members genuinely differ.
  *
  * Purely advisory — `idle` expires nothing, reclaims nothing, and synthesizes no
- * result. A claim leaves `idle` simply by its holder running a command that
- * advances the run.
+ * result. A claim leaves `idle` simply by its holder presenting its bearer as
+ * authority and passing bearer verification plus relevant grant authorization.
  */
 export interface ClaimActivity {
-  /** ISO timestamp when the claim holder was last seen advancing the run. */
+  /** ISO timestamp of the claim holder's last authorized bearer presentation. */
   readonly lastSeenAt: string;
   /** Milliseconds elapsed since that observation. */
   readonly idleFor: DurationMs;

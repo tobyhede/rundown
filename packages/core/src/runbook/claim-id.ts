@@ -102,15 +102,16 @@ export interface ClaimRecord {
   /** ISO timestamp when this claim was last refreshed. */
   readonly updatedAt: string;
   /**
-   * ISO timestamp when the holder was last seen advancing the controlled run.
+   * ISO timestamp when the claim holder was last seen presenting its bearer as
+   * authority after bearer verification and relevant grant authorization.
    *
    * REQUIRED. Deliberately NOT a reuse of `updatedAt`: that field means "this
    * record was last written" (a generic write timestamp), and the day an
    * unrelated claim write is added it would silently refresh the idle clock so a
    * dead claim reads as live. One field, two meanings, is exactly what
    * type-driven dispatch exists to prevent. Refreshed only by
-   * `SessionService.recordClaimSeen` after a successful claim-authenticated
-   * mutation (#519).
+   * `SessionService.recordClaimSeen` at that authorization seam; the subsequent
+   * mutation need not commit, advance, or succeed (#519).
    */
   readonly lastSeenAt: string;
 }
@@ -449,13 +450,14 @@ export function refreshedClaimRecord(record: ClaimRecord, now: string): ClaimRec
  *
  * Deliberately distinct from {@link refreshedClaimRecord}: that function moves
  * `updatedAt` ("this record was last written"), while this one moves
- * `lastSeenAt` ("the holder advanced the controlled run"). They coincide
- * today only by accident, and merging them would let an unrelated future claim
- * write silently refresh the idle clock — a safety signal corrupted by an
- * unrelated feature, with no type error to catch it (#519).
+ * `lastSeenAt` ("the holder presented its bearer as authority after bearer and
+ * grant authorization"). They coincide today only by accident, and merging them
+ * would let an unrelated future claim write silently refresh the idle clock — a
+ * safety signal corrupted by an unrelated feature, with no type error to catch
+ * it (#519).
  *
  * @param record - Existing persisted claim record.
- * @param now - ISO timestamp of the observation being recorded.
+ * @param now - ISO timestamp of the post-authorization holder observation.
  * @returns Claim record with the new `lastSeenAt`.
  */
 export function seenClaimRecord(record: ClaimRecord, now: string): ClaimRecord {

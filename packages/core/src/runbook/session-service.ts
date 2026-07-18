@@ -128,15 +128,16 @@ export type RunningStackMemberResolution =
 /**
  * Outcome of a best-effort claim last-seen recording.
  *
- * Returned rather than thrown: recording always follows an ALREADY-COMMITTED
- * mutation, so a failure here must be observable to tests but must never
- * propagate to the caller and mask the committed result (RD-102) (#519).
+ * Returned rather than thrown: recording follows bearer verification and grant
+ * authorization but is independent of the subsequent mutation outcome. A
+ * failure here must be observable to tests but must never propagate, block the
+ * protected mutation, or mask its result (RD-102) (#519).
  */
 export type ClaimSeenRecordResult =
   | {
-      /** The presented claim's `lastSeenAt` was advanced and persisted. */
+      /** The presented claim holder's sighting was persisted to `lastSeenAt`. */
       readonly kind: 'recorded';
-      /** Claim key whose record was advanced. */
+      /** Claim key whose record was updated. */
       readonly claimKey: ClaimLookupKey;
       /** ISO timestamp written to `lastSeenAt`. */
       readonly lastSeenAt: string;
@@ -411,19 +412,23 @@ export class SessionService {
   }
 
   /**
-   * Record that the holder of a presented bearer claim advanced its controlled run.
+   * Record that a claim holder was seen alive by presenting its bearer as authority.
    *
-   * Follows the `unstashForClaimId` template — `withLock` -> verify bearer ->
-   * refresh -> `saveSession` — and refreshes EXACTLY the claim whose bearer the
-   * caller presented, never another: the observation belongs to a single claim and
-   * its holder, and a parent cannot vouch for a child's liveness (#519).
+   * Refreshes EXACTLY the claim whose bearer the caller presented, never another:
+   * the observation belongs to a single claim and its holder, and a parent cannot
+   * vouch for a child's liveness (#519). When caller-versus-target attribution is
+   * uncertain, the system under-reports rather than let one actor refresh another
+   * actor's claim. The implementation follows the `unstashForClaimId` template —
+   * `withLock` -> verify bearer -> refresh -> `saveSession`.
    *
-   * Call this ONLY after a claim-authenticated mutation has COMMITTED, and ONLY
-   * from a mutating path. Deliberately NOT wired into {@link verifyClaimId}: that
-   * would make a read-only, lock-free inspection take the session lock, and — worse
-   * — a stuck child polling `rundown status --claim-id` would refresh its own claim
-   * forever and never report idle, a false negative on precisely the case being
-   * detected.
+   * Call this only after the presented bearer has passed verification and its
+   * relevant grant has authorized the operation. That authorization proves holder
+   * liveness; the subsequent mutation need not commit, advance, or succeed.
+   * Deliberately NOT wired into {@link SessionService.verifyClaimId}: `status`,
+   * `stash`, and `pop` verify a claim as a target selector but cannot prove its
+   * holder was the presenter. Recording there would erase caller-versus-target
+   * attribution and let a parent refresh a child's claim, so those paths
+   * deliberately under-report instead.
    *
    * CALL ONLY OUTSIDE A HELD SESSION LOCK. This method self-acquires the session
    * lock via `withLock`, and the underlying file lock is NOT reentrant: it reclaims
@@ -433,24 +438,25 @@ export class SessionService {
    * contract below silently converts that into `record-failed`. The symptom is a
    * 5-second stall on every affected command plus a stale last-seen timestamp,
    * with no error anywhere: totality MASKING a deadlock rather than
-   * exposing it. Call sites must record AFTER the mutation's lock scope closes.
+   * exposing it. Call sites must record only when no session-lock scope is held.
    *
-   * Best-effort and TOTAL: this method never throws. The run mutation it follows
+   * Best-effort and TOTAL: this method never throws. The protected run mutation
    * lives in `.rundown/runs/` under `RunStateLock` while the claim lives in
    * `session.json` under `SessionLock` — different files, different locks, no
-   * atomicity. Failing to record leaves an older observation, costing one spurious idle
-   * report and one wasted check; failing a user's `rundown pass` because a
+   * atomicity. Failing to record leaves an older observation, costing one spurious
+   * idle report and one wasted check; it must neither prevent a subsequent mutation
+   * nor mask that mutation's outcome. Failing a user's `rundown pass` because a
    * bookkeeping write hiccuped would be indefensible (RD-102).
    *
    * RECORDS THE CLOCK VERBATIM, AND DELIBERATELY DOES NOT CLAMP TO
    * `max(existing, now)` — a backward wall-clock step overwrites `lastSeenAt`
    * with an older value BY DESIGN. Reviewers reliably read that as a bug, so the
    * reasoning is recorded here (#611):
-   * - Reader and writer SHARE A CLOCK. The parent's `rundown status` and the child's
-   *   mutation are processes on the same host — the lock design requires it (stale
-   *   reclamation is `kill(pid, 0)`, meaningless across hosts) and `session.json` is
-   *   a local file. A backward step moves both, so the older timestamp is the
-   *   CORRECT answer and no premature idle occurs.
+   * - Reader and writer SHARE A CLOCK. The parent's `rundown status` and the
+   *   holder's authorized command are processes on the same host — the lock design
+   *   requires it (stale reclamation is `kill(pid, 0)`, meaningless across hosts)
+   *   and `session.json` is a local file. A backward step moves both, so the older
+   *   timestamp is the CORRECT answer and no premature idle occurs.
    * - The clamp would introduce the AC6 fail-open it appears to prevent. Pinning
    *   `lastSeenAt` in the future meets `claimActivity`'s `Math.max(0, …)` skew
    *   clamp (claim-activity.ts:161) and yields `idleFor: 0` for the whole excursion:
@@ -458,7 +464,8 @@ export class SessionService {
    *   Corrupt persisted state is rejected, never interpreted (claim-activity.ts:129-131) —
    *   and a max-clamp interprets.
    * - The failure modes are asymmetric in DURATION. Un-clamped, a false idle needs a
-   *   back-and-forth excursion and self-heals on the holder's next command. Clamped,
+   *   back-and-forth excursion and self-heals on the holder's next authorized
+   *   presentation. Clamped,
    *   the false not-idle lasts the whole jump and CANNOT self-heal, because it
    *   persists precisely while nothing is happening.
    *
@@ -471,7 +478,7 @@ export class SessionService {
    * wall-clock movement (#611 review)" — in particular "reports a DEAD claim idle
    * after a sustained backward jump", which fails if the clamp is ever added.
    *
-   * @param claimId - Bearer claim id presented by the caller on the mutation.
+   * @param claimId - Bearer claim id presented by the authorized caller.
    * @returns Typed recording outcome. Never rejects.
    */
   async recordClaimSeen(claimId: ClaimId): Promise<ClaimSeenRecordResult> {
@@ -493,7 +500,7 @@ export class SessionService {
       });
     } catch (error: unknown) {
       // Intentionally swallowed — see the best-effort note above. Nothing here may
-      // reach the caller, whose mutation is already committed.
+      // reach the caller, block the protected mutation, or mask its outcome.
       return { kind: 'record-failed', error };
     }
   }
