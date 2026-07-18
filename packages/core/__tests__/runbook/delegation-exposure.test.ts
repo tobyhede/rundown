@@ -19,6 +19,7 @@ import {
   buildResolvedCompletion,
 } from '../../src/runbook/targeting.js';
 import type { RunbookState } from '../../src/runbook/types.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import {
   makeBaseStep,
@@ -90,7 +91,7 @@ function plainState(overrides: Partial<RunbookState> = {}): RunbookState {
 }
 
 function openClaim(): ClaimRecord {
-  return {
+  return makeClaimRecord({
     claimKey,
     secretHash,
     controlledRunId: childRunId,
@@ -104,9 +105,7 @@ function openClaim(): ClaimRecord {
       parentEntry: 1,
     },
     grants: createRunControlGrants(childRunId),
-    issuedAt: '2026-07-03T00:00:00.000Z',
-    updatedAt: '2026-07-03T00:00:00.000Z',
-  };
+  });
 }
 
 function stateWithPendingOutcome(): RunbookState {

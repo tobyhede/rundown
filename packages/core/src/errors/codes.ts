@@ -372,6 +372,14 @@ export const ErrorCodes = {
       'Cannot retry a delegation while its child run is still linked. Use `rundown abort <token> --claim-id <claim_id> --force` first to stop and record the child failure before retrying.',
     docSlug: 'delegation-in-flight',
   },
+  CLAIM_SEEN_UNREADABLE: {
+    code: 'RD-824',
+    category: ErrorCategory.DELEGATION,
+    title: 'Claim seen timestamp unreadable',
+    description:
+      'A claim record has a lastSeenAt that is not a parseable ISO timestamp. The claim activity signal cannot be derived, so it is reported as unreadable rather than guessed. Finish or prune active runbooks and restart.',
+    docSlug: 'claim-seen-unreadable',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

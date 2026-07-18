@@ -857,6 +857,83 @@ describe('RunbookStateManager', () => {
       await expect(manager.loadSession()).rejects.toThrow(/Legacy session ownership format/);
     });
 
+    it('rejects a session whose claim records predate lastSeenAt (#519)', async () => {
+      // A pre-#519 claim record: structurally a valid claim in every other respect,
+      // but with no `lastSeenAt`. CLAUDE.md forbids migrating persisted state —
+      // the guard REJECTS it with the finish/prune/restart recovery path, exactly as
+      // the legacy-ownership guard does. It is never hydrated, defaulted, or shimmed.
+      await mkdir(join(testDir, '.rundown'), { recursive: true });
+      const claimKey = `rdclk_${'a'.repeat(32)}`;
+      const runId = `rd_${'0'.repeat(32)}`;
+      await writeFile(
+        join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({
+          defaultStack: [runId],
+          claims: {
+            [claimKey]: {
+              claimKey,
+              secretHash: `sha256:${'b'.repeat(64)}`,
+              controlledRunId: runId,
+              grants: [{ action: 'mutate-run', runId }],
+              issuedAt: '2026-07-01T00:00:00.000Z',
+              updatedAt: '2026-07-01T00:00:00.000Z',
+            },
+          },
+        }),
+      );
+
+      await expect(manager.loadSession()).rejects.toThrow(
+        'Legacy claim record format detected. Finish or prune active runbooks and restart.',
+      );
+    });
+
+    it('accepts a session whose claim records carry lastSeenAt (#519)', async () => {
+      // The guard's NEGATIVE case, and it is not symmetry for its own sake: without
+      // it, `.some(...)` -> `.every(...)`, dropping the `!Array.isArray(rawClaims)`
+      // check, and dropping the `claim !== null` check are all mutants that the
+      // rejection case above CANNOT kill — a guard that throws unconditionally
+      // passes it. This is the case that proves the guard discriminates rather than
+      // merely fires.
+      await mkdir(join(testDir, '.rundown'), { recursive: true });
+      const claimKey = `rdclk_${'a'.repeat(32)}`;
+      const runId = `rd_${'0'.repeat(32)}`;
+      await writeFile(
+        join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({
+          defaultStack: [runId],
+          claims: {
+            [claimKey]: {
+              claimKey,
+              secretHash: `sha256:${'b'.repeat(64)}`,
+              controlledRunId: runId,
+              grants: [{ action: 'mutate-run', runId }],
+              issuedAt: '2026-07-01T00:00:00.000Z',
+              updatedAt: '2026-07-01T00:00:00.000Z',
+              lastSeenAt: '2026-07-01T00:00:00.000Z',
+            },
+          },
+        }),
+      );
+
+      const session = await manager.loadSession();
+      expect(session.claims[claimKey].lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
+    });
+
+    it('loads a session with no claims at all without tripping the claim guard (#519)', async () => {
+      // `claims: {}` must load cleanly: `.some()` over an empty object is false. This
+      // kills the `.some` -> `.every` mutant specifically — `.every` over an empty
+      // object is TRUE, so the mutant would throw on every claimless session, which
+      // is the overwhelmingly common case.
+      await mkdir(join(testDir, '.rundown'), { recursive: true });
+      await writeFile(
+        join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({ defaultStack: [], claims: {} }),
+      );
+
+      const session = await manager.loadSession();
+      expect(session.claims).toEqual({});
+    });
+
     it('load returns null for nonexistent runbook', async () => {
       const result = await manager.load('nonexistent-id');
       expect(result).toBeNull();

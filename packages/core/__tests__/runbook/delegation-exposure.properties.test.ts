@@ -21,6 +21,7 @@ import {
   buildResolvedCompletion,
 } from '../../src/runbook/targeting.js';
 import type { RunbookState, SubstepState } from '../../src/runbook/types.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import {
   makeBaseStep,
@@ -109,15 +110,13 @@ function makeOpenClaim(index: number): ClaimRecord {
     parentFrameKey: buildFrameKey('1'),
     parentEntry: 1,
   };
-  return {
+  return makeClaimRecord({
     claimKey: index === 0 ? claimKeyA : claimKeyB,
     secretHash,
     controlledRunId: childRunId,
     delegation: linkage,
     grants: createDelegatedChildGrants({ linkage }),
-    issuedAt: '2026-07-03T00:00:00.000Z',
-    updatedAt: '2026-07-03T00:00:00.000Z',
-  };
+  });
 }
 
 function delegationSubstepRecord(noise: ExposureNoise): SubstepState {

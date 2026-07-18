@@ -567,6 +567,50 @@ Active step.
       expect(result.stderr).toBe('');
     });
 
+    it('soft-fails legacy claim record format when RD_WORK_PATH is set', async () => {
+      // #519 made ClaimRecord.lastSeenAt required, so state.ts rejects a
+      // session whose claims predate it with 'Legacy claim record format
+      // detected'. Without this message in the allow-list, rdpath would hard-fail
+      // on exactly the sessions that change invalidates, instead of degrading to
+      // a path with no context segment.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      const claimKey = `rdclk_${'a'.repeat(32)}`;
+      const runId = `rd_${'0'.repeat(32)}`;
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify(
+          {
+            defaultStack: [runId],
+            claims: {
+              [claimKey]: {
+                claimKey,
+                secretHash: `sha256:${'b'.repeat(64)}`,
+                controlledRunId: runId,
+                grants: [{ action: 'mutate-run', runId }],
+                issuedAt: '2026-07-01T00:00:00.000Z',
+                updatedAt: '2026-07-01T00:00:00.000Z',
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
     it('soft-fails corrupt JSON session.json when RD_WORK_PATH is set', async () => {
       // A session.json that is not valid JSON at all triggers a SyntaxError,
       // which isRecoverableActiveStateLookupError catches by error.name.

@@ -396,45 +396,47 @@ model, flag reference, and discovery rules.
 
 ## Development Commands
 
-```bash
-pnpm run build         # Build all packages
-pnpm test              # Fast: unit tests, all packages in parallel
-pnpm run test:unit     # Same as pnpm test
-pnpm run test:integration  # Integration tests in parallel
-pnpm run test:all      # Full suite: unit → integration → property → perf
-pnpm run test:coverage # Test coverage across all packages
-pnpm run verify        # Pre-PR: check format, spell, lint, test (MUST run before push)
-pnpm run lint          # Lint all packages (biome + eslint)
-pnpm run check:lint:fast   # Fast lint (biome only)
-pnpm run check:lint:typed  # Typed lint (eslint only)
-pnpm run check:complexity  # Standalone complexity checks (biome + eslint)
-pnpm run fix:lint      # Auto-fix lint issues
-pnpm run fix:lint:fast # Auto-fix biome lint issues
-pnpm run fix:lint:typed # Auto-fix eslint lint issues
-pnpm run format        # Format all packages
-pnpm run check:format  # Check formatting
-pnpm run check:spell   # Check spelling across all packages
-pnpm run test:mutate   # Mutation testing (all packages, sequential)
-pnpm run test:mutate:parser  # Mutation testing for parser only
-pnpm run test:mutate:core    # Mutation testing for core only
-pnpm run test:mutate:cli     # Mutation testing for cli only
-pnpm run test:mutate:cli:dry # Verify CLI Stryker/Jest dry run only
-pnpm run test:mutate:plugin  # Mutation testing for plugin only
-pnpm run test:mutate:cli -- --mutate <file> --testFiles <test>  # Scoped CLI Stryker run
-pnpm run test:property # Property-based tests
-pnpm run test:perf     # Performance benchmarks
-pnpm run plugin:dev       # Build + launch Claude Code with the local plugin via --plugin-dir
-pnpm run plugin:dev -- --no-build              # Skip rebuild (faster iteration)
-pnpm run plugin:dev -- -- --debug hooks,plugins # Forward flags to claude
-pnpm run verify:claude    # Docker: verify CLI+plugin install (local build)
-pnpm run verify:claude:npm  # Docker: verify install from npm registry
-pnpm run test:e2e                              # Docker: E2E plugin workflow test
-pnpm run test:e2e:shell                        # Docker: interactive Claude Code session (test-app fixture)
-pnpm run test:e2e:shell -- ~/path/to/project    # Docker: interactive session with mounted project
-pnpm run test:e2e:shell -- --bash              # Docker: bash shell for debugging
-pnpm run test:e2e:shell -- --no-build          # Docker: skip rebuild (cached image)
-pnpm run test:e2e:build                        # Docker: build E2E test image
-```
+All package scripts live in `package.json` — run `pnpm run` to list them
+(`build`, `test`, `test:unit`/`integration`/`all`/`coverage`/`property`/`perf`,
+`lint`, `check:*`, `fix:*`, `format`, `test:mutate:*`, `verify:claude*`,
+`test:e2e*`). The one hard rule and the non-obvious invocations:
+
+- **`pnpm run verify`** — pre-PR gate (format, spell, lint, test). **MUST run
+  before every push.**
+- **Scoped Stryker run** (any package) — use `exec`, and pass
+  **package-relative** paths:
+
+  ```bash
+  pnpm --filter @rundown-org/cli exec stryker run \
+    --mutate src/helpers/table-formatter.ts \
+    --testFiles __tests__/helpers/table-formatter.test.ts
+  ```
+
+  Both obvious alternatives are unsafe, in different ways: the first fails
+  **loudly**, the second **silently looks like success**. Check the
+  `Instrumented N source file(s) with M mutant(s)` line before trusting any
+  score:
+  - `pnpm run test:mutate:<pkg> -- --mutate <file>` dies on
+    `error: too many arguments for 'run'` (the script's own trailing `--`
+    doubles with yours and Stryker's Commander reads every flag as a
+    positional), or silently runs **unscoped** where the script has no `--`.
+  - Repo-relative paths (`--mutate packages/cli/src/x.ts`) match nothing:
+    `pnpm --filter … exec` runs with cwd = the package dir, so Stryker reports
+    `Instrumented 0 source file(s) with 0 mutant(s)` and **exits 0** — a gate
+    that cannot fail. Each `stryker.config.mjs`'s own `mutate` array is
+    package-relative (`'src/**/*.ts'`) for the same reason, as is
+    `.github/workflows/mutation-pr.yml:96` (`sed "s#^${PKG_DIR}/##"`).
+
+  Note `incremental: true`: a stale `reports/stryker-incremental.json` can print
+  a plausible aggregate over a zero-mutant run. Also note **core is excluded
+  from the per-PR mutation matrix** (`mutation-pr.yml:34-42`) and that workflow
+  is `continue-on-error`, so a scoped run you do by hand is the only mutation
+  signal a core PR gets.
+
+- `pnpm run plugin:dev -- --no-build` (skip rebuild) /
+  `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).
+- `pnpm run test:e2e:shell -- <path>` (mount a project) / `-- --bash` (debug
+  shell) / `-- --no-build` (cached image).
 
 ## Testing Conventions
 

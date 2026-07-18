@@ -10,10 +10,17 @@ import {
   SessionDataSchema,
 } from '../../src/schemas.js';
 import { DelegationStatusEntrySchema, StatusResponseSchema } from '../../src/output/zod-schemas.js';
+import {
+  assertClaimLookupKey,
+  assertClaimSecretHash,
+  createClaimRecord,
+} from '../../src/runbook/claim-id.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 const PARENT_RUN_ID = `rd_${'1'.repeat(32)}`;
 const CHILD_RUN_ID = `rd_${'2'.repeat(32)}`;
+const OTHER_CHILD_RUN_ID = `rd_${'3'.repeat(32)}`;
 
 describe('AncestorSnapshotSchema', () => {
   it('accepts valid ancestor snapshot', () => {
@@ -361,10 +368,37 @@ describe('ClaimRecordSchema', () => {
     ],
     issuedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:01.000Z',
+    lastSeenAt: '2026-07-16T00:00:00.000Z',
   };
 
   it('accepts a complete proof-backed claim record with explicit grants', () => {
     expect(ClaimRecordSchema.safeParse(validClaim).success).toBe(true);
+  });
+
+  it('rejects a claim record with no lastSeenAt (#519)', () => {
+    // `lastSeenAt` is REQUIRED — an optional field with a fallback would be
+    // legacy-field hydration, which CLAUDE.md forbids.
+    const { lastSeenAt: _omitted, ...withoutLastSeen } = validClaim;
+    expect(ClaimRecordSchema.safeParse(withoutLastSeen).success).toBe(false);
+  });
+
+  it('rejects a claim record with an empty lastSeenAt (#519)', () => {
+    expect(ClaimRecordSchema.safeParse({ ...validClaim, lastSeenAt: '' }).success).toBe(false);
+  });
+
+  it('sets lastSeenAt to issuedAt at claim creation (#519)', () => {
+    const now = '2026-07-16T12:00:00.000Z';
+    const record = createClaimRecord({
+      claimKey: assertClaimLookupKey(validClaim.claimKey),
+      secretHash: assertClaimSecretHash(validClaim.secretHash),
+      controlledRunId: assertRunId(validClaim.controlledRunId),
+      grants: [{ action: 'mutate-run', runId: assertRunId(validClaim.controlledRunId) }],
+      now,
+    });
+    // A brand-new holder was last seen at issuance, so the idle clock starts
+    // there rather than at zero/undefined.
+    expect(record.lastSeenAt).toBe(now);
+    expect(record.lastSeenAt).toBe(record.issuedAt);
   });
 
   it('rejects persisted reusable bearer claim ids', () => {
@@ -467,10 +501,37 @@ describe('SessionDataSchema claims registry', () => {
           grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
           issuedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
+          lastSeenAt: '2026-05-01T00:00:01.000Z',
         },
       },
     });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts the same claim record shape when the map key MATCHES claimKey (positive control)', () => {
+    // The negative control's twin. `rejects claim records whose map key differs
+    // from claimKey` asserts success === false — which a record missing ANY
+    // required field also satisfies, so on its own it cannot tell "rejected for
+    // the key mismatch" from "rejected because the fixture rotted". This case is
+    // the discriminator: identical shape, key mismatch removed, MUST parse. If a
+    // required field goes missing from the fixture, THIS case goes red and names
+    // the real cause. Do not delete it to "reduce duplication" — the duplication
+    // is the mechanism (#519).
+    const result = SessionDataSchema.safeParse({
+      defaultStack: [PARENT_RUN_ID],
+      claims: {
+        rdclk_11111111111111111111111111111111: {
+          claimKey: 'rdclk_11111111111111111111111111111111', // matches the map key
+          secretHash: `sha256:${'a'.repeat(64)}`,
+          controlledRunId: CHILD_RUN_ID,
+          grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
+          issuedAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:01.000Z',
+          lastSeenAt: '2026-05-01T00:00:01.000Z',
+        },
+      },
+    });
+    expect(result.success).toBe(true);
   });
 
   it('rejects two claim records controlling the same run', () => {
@@ -485,6 +546,7 @@ describe('SessionDataSchema claims registry', () => {
       grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
       issuedAt: '2026-05-01T00:00:00.000Z',
       updatedAt: '2026-05-01T00:00:01.000Z',
+      lastSeenAt: '2026-05-01T00:00:01.000Z',
     });
     const result = SessionDataSchema.safeParse({
       defaultStack: [PARENT_RUN_ID],
@@ -494,6 +556,35 @@ describe('SessionDataSchema claims registry', () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts two claim records controlling DIFFERENT runs (positive control)', () => {
+    // Twin of `rejects two claim records controlling the same run`, for the same
+    // reason: proves that rejection is caused by the shared controlledRunId and
+    // not by a fixture that quietly stopped being a valid claim record.
+    const record = (claimKey: string, runId: string) => ({
+      claimKey,
+      secretHash: `sha256:${'a'.repeat(64)}`,
+      controlledRunId: runId,
+      grants: [{ action: 'mutate-run', runId }],
+      issuedAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:01.000Z',
+      lastSeenAt: '2026-05-01T00:00:01.000Z',
+    });
+    const result = SessionDataSchema.safeParse({
+      defaultStack: [PARENT_RUN_ID],
+      claims: {
+        rdclk_11111111111111111111111111111111: record(
+          'rdclk_11111111111111111111111111111111',
+          CHILD_RUN_ID,
+        ),
+        rdclk_22222222222222222222222222222222: record(
+          'rdclk_22222222222222222222222222222222',
+          OTHER_CHILD_RUN_ID,
+        ),
+      },
+    });
+    expect(result.success).toBe(true);
   });
 });
 

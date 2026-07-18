@@ -4,11 +4,10 @@ import { resolveIssuanceAnchor } from '../../src/runbook/issuance-anchor.js';
 import {
   assertClaimId,
   assertClaimLookupKey,
-  assertClaimSecretHash,
   type ClaimIdResolution,
-  type ClaimRecord,
   type VerifiedClaim,
 } from '../../src/runbook/claim-id.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import type { CallerEvidence } from '../../src/runbook/actor-context.js';
 import type { RunbookState } from '../../src/runbook/types.js';
@@ -38,14 +37,15 @@ const namedRun = { id: namedRunId, lifecycle: 'running' } as RunbookState;
 const terminalNamedRun = { ...namedRun, lifecycle: 'completed' } as RunbookState;
 
 const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
-const claimRecord: ClaimRecord = {
+// Via `makeClaimRecord`, not a literal: this suite only cares about the anchor
+// fields (`controlledRunId`, `grants`) — the rest of the shape is incidental, and
+// spelling it out here is what made `lastSeenAt` becoming required a manual
+// sweep across every suite that had its own copy (#519).
+const claimRecord = makeClaimRecord({
   claimKey,
-  secretHash: assertClaimSecretHash(`sha256:${'a'.repeat(64)}`),
   controlledRunId: anchorRunId,
   grants: [{ action: 'delegate-from-run', runId: anchorRunId }],
-  issuedAt: '2026-07-16T00:00:00.000Z',
-  updatedAt: '2026-07-16T00:00:00.000Z',
-};
+});
 const verifiedClaim: VerifiedClaim = {
   claimKey,
   controlledRunId: anchorRunId,

@@ -20,6 +20,7 @@ import {
   hashClaimSecret,
   parseClaimBearer,
   generateClaimBearer,
+  seenClaimRecord,
   refreshedClaimRecord,
   verifyClaimSecret,
   type ClaimId,
@@ -124,6 +125,34 @@ export type RunningStackMemberResolution =
       readonly lifecycle: RunbookState['lifecycle'];
     };
 
+/**
+ * Outcome of a best-effort claim last-seen recording.
+ *
+ * Returned rather than thrown: recording follows bearer verification and grant
+ * authorization but is independent of the subsequent mutation outcome. A
+ * failure here must be observable to tests but must never propagate, block the
+ * protected mutation, or mask its result (RD-102) (#519).
+ */
+export type ClaimSeenRecordResult =
+  | {
+      /** The presented claim holder's sighting was persisted to `lastSeenAt`. */
+      readonly kind: 'recorded';
+      /** Claim key whose record was updated. */
+      readonly claimKey: ClaimLookupKey;
+      /** ISO timestamp written to `lastSeenAt`. */
+      readonly lastSeenAt: string;
+    }
+  | {
+      /** No claim matched the presented bearer (missing key or unverified secret). */
+      readonly kind: 'no-claim';
+    }
+  | {
+      /** Recording was attempted and failed. Swallowed — never propagated. */
+      readonly kind: 'record-failed';
+      /** The swallowed cause, surfaced for diagnostics and tests only. */
+      readonly error: unknown;
+    };
+
 /** Result of restoring a stashed delegated child by claim id. */
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
@@ -220,18 +249,29 @@ function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {
  */
 export class SessionService {
   private readonly lock: SessionLock;
+  private readonly now: () => string;
 
   /**
    * Create a new SessionService.
    *
+   * `now` is the clock seam for every timestamp this service writes. It returns an
+   * ISO string rather than a `Date` because all four write sites want one, and it
+   * follows the established convention for injected clocks in this package
+   * (`RunbookActorServiceOptions.inlineLaunchNow`, defaulted at `compiler.ts:3695`).
+   * Optional and defaulted, so the 40-odd construction sites — including 16 in the
+   * CLI, which take the real clock — are unaffected.
+   *
    * @param manager - State manager for raw session and state persistence
    * @param lock - Optional pre-built session lock (defaults to one bound to `manager.cwd`)
+   * @param now - Optional clock returning an ISO instant (defaults to the wall clock)
    */
   constructor(
     private readonly manager: RunbookStateManager,
     lock?: SessionLock,
+    now?: () => string,
   ) {
     this.lock = lock ?? new SessionLock(manager.cwd);
+    this.now = now ?? (() => new Date().toISOString());
   }
 
   /**
@@ -330,7 +370,7 @@ export class SessionService {
     session: SessionData,
     runId: RunId,
   ): { readonly claimId: ClaimId; readonly claim: ClaimRecord } {
-    const now = new Date().toISOString();
+    const now = this.now();
     const parsed = parseClaimBearer(generateClaimBearer());
     const claim = createClaimRecord({
       claimKey: parsed.claimKey,
@@ -369,6 +409,100 @@ export class SessionService {
       return { status: 'invalid-secret', claimKey: parsed.claimKey };
     }
     return { status: 'verified', claim: verifiedClaimFromRecord(record) };
+  }
+
+  /**
+   * Record that a claim holder was seen alive by presenting its bearer as authority.
+   *
+   * Refreshes EXACTLY the claim whose bearer the caller presented, never another:
+   * the observation belongs to a single claim and its holder, and a parent cannot
+   * vouch for a child's liveness (#519). When caller-versus-target attribution is
+   * uncertain, the system under-reports rather than let one actor refresh another
+   * actor's claim. The implementation follows the `unstashForClaimId` template —
+   * `withLock` -> verify bearer -> refresh -> `saveSession`.
+   *
+   * Call this only after the presented bearer has passed verification and its
+   * relevant grant has authorized the operation. That authorization proves holder
+   * liveness; the subsequent mutation need not commit, advance, or succeed.
+   * Deliberately NOT wired into {@link SessionService.verifyClaimId}: `status`,
+   * `stash`, and `pop` verify a claim as a target selector but cannot prove its
+   * holder was the presenter. Recording there would erase caller-versus-target
+   * attribution and let a parent refresh a child's claim, so those paths
+   * deliberately under-report instead.
+   *
+   * CALL ONLY OUTSIDE A HELD SESSION LOCK. This method self-acquires the session
+   * lock via `withLock`, and the underlying file lock is NOT reentrant: it reclaims
+   * a lock only when its owner is DEAD (`kill(pid, 0)` -> ESRCH). Call it from
+   * inside an existing `withLock` scope and the live owner is you — the acquire
+   * spins its jittered backoff to the full 5s deadline, throws, and the totality
+   * contract below silently converts that into `record-failed`. The symptom is a
+   * 5-second stall on every affected command plus a stale last-seen timestamp,
+   * with no error anywhere: totality MASKING a deadlock rather than
+   * exposing it. Call sites must record only when no session-lock scope is held.
+   *
+   * Best-effort and TOTAL: this method never throws. The protected run mutation
+   * lives in `.rundown/runs/` under `RunStateLock` while the claim lives in
+   * `session.json` under `SessionLock` — different files, different locks, no
+   * atomicity. Failing to record leaves an older observation, costing one spurious
+   * idle report and one wasted check; it must neither prevent a subsequent mutation
+   * nor mask that mutation's outcome. Failing a user's `rundown pass` because a
+   * bookkeeping write hiccuped would be indefensible (RD-102).
+   *
+   * RECORDS THE CLOCK VERBATIM, AND DELIBERATELY DOES NOT CLAMP TO
+   * `max(existing, now)` — a backward wall-clock step overwrites `lastSeenAt`
+   * with an older value BY DESIGN. Reviewers reliably read that as a bug, so the
+   * reasoning is recorded here (#611):
+   * - Reader and writer SHARE A CLOCK. The parent's `rundown status` and the
+   *   holder's authorized command are processes on the same host — the lock design
+   *   requires it (stale reclamation is `kill(pid, 0)`, meaningless across hosts)
+   *   and `session.json` is a local file. A backward step moves both, so the older
+   *   timestamp is the CORRECT answer and no premature idle occurs.
+   * - The clamp would introduce the AC6 fail-open it appears to prevent. Pinning
+   *   `lastSeenAt` in the future meets `claimActivity`'s `Math.max(0, …)` skew
+   *   clamp (claim-activity.ts:161) and yields `idleFor: 0` for the whole excursion:
+   *   a DEAD claim reading as live, in exactly the case the signal exists to catch.
+   *   Corrupt persisted state is rejected, never interpreted (claim-activity.ts:129-131) —
+   *   and a max-clamp interprets.
+   * - The failure modes are asymmetric in DURATION. Un-clamped, a false idle needs a
+   *   back-and-forth excursion and self-heals on the holder's next authorized
+   *   presentation. Clamped,
+   *   the false not-idle lasts the whole jump and CANNOT self-heal, because it
+   *   persists precisely while nothing is happening.
+   *
+   * The counter-argument, so it is weighed rather than lost: {@link DEFAULT_IDLE_AFTER_MS}
+   * argues reporting idle EARLY is the worse error, which favours the clamp. That is
+   * threshold-tuning reasoning for the routine no-jump case, where "late" means a
+   * bounded delay — it does not sanction an unbounded dead-claim-reads-live window.
+   *
+   * Pinned by `claim-seen.test.ts` › "recordClaimSeen under backward
+   * wall-clock movement (#611 review)" — in particular "reports a DEAD claim idle
+   * after a sustained backward jump", which fails if the clamp is ever added.
+   *
+   * @param claimId - Bearer claim id presented by the authorized caller.
+   * @returns Typed recording outcome. Never rejects.
+   */
+  async recordClaimSeen(claimId: ClaimId): Promise<ClaimSeenRecordResult> {
+    try {
+      return await this.withLock(async (): Promise<ClaimSeenRecordResult> => {
+        const parsed = parseClaimBearer(claimId);
+        const session = await this.manager.loadSession();
+        if (!Object.hasOwn(session.claims, parsed.claimKey)) {
+          return { kind: 'no-claim' };
+        }
+        const claim = session.claims[parsed.claimKey];
+        if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
+          return { kind: 'no-claim' };
+        }
+        const now = this.now();
+        session.claims[parsed.claimKey] = seenClaimRecord(claim, now);
+        await this.manager.saveSession(session);
+        return { kind: 'recorded', claimKey: parsed.claimKey, lastSeenAt: now };
+      });
+    } catch (error: unknown) {
+      // Intentionally swallowed — see the best-effort note above. Nothing here may
+      // reach the caller, block the protected mutation, or mask its outcome.
+      return { kind: 'record-failed', error };
+    }
   }
 
   /**
@@ -472,7 +606,7 @@ export class SessionService {
   async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const now = new Date().toISOString();
+      const now = this.now();
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
         const existingState = await this.manager.load(existingForDelegation.controlledRunId);
@@ -839,6 +973,22 @@ export class SessionService {
   }
 
   /**
+   * Reset session targeting as the first step of an explicit prune-all operation.
+   *
+   * This deliberately does not load the existing session. `prune --all` is the
+   * recovery path for persisted session shapes that the current version rejects,
+   * so attempting to validate or adapt that data would make recovery impossible
+   * or introduce a forbidden migration. The canonical empty session is written
+   * under the session lock before run-state files are deleted, preserving prune's
+   * release-before-delete convergence guarantee.
+   *
+   * @returns A promise that resolves after the canonical empty session is persisted.
+   */
+  async resetForPruneAll(): Promise<void> {
+    await this.withLock(() => this.manager.saveSession({ defaultStack: [], claims: {} }));
+  }
+
+  /**
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release
@@ -1057,7 +1207,7 @@ export class SessionService {
       }
 
       session.stashedRunbookId = undefined;
-      session.claims[parsed.claimKey] = refreshedClaimRecord(claim, new Date().toISOString());
+      session.claims[parsed.claimKey] = refreshedClaimRecord(claim, this.now());
       await this.manager.saveSession(session);
       return { status: 'restored', claim: session.claims[parsed.claimKey], state };
     });

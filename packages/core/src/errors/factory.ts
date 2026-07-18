@@ -116,6 +116,26 @@ export const Errors = {
       message: `child run ${childRunId} is still linked; run "rundown abort <token> --claim-id <claim_id> --force" before retrying`,
     }),
 
+  claimSeenUnreadable: (claimKey: string, lastSeenAt: string): RundownError =>
+    new RundownError('CLAIM_SEEN_UNREADABLE', {
+      // These keys are NOT arbitrary — `RundownError.formatMessage` renders a
+      // fixed twelve-key list (rundown-error.ts:99-134) and a key outside it lands
+      // in `context`, reachable only via toJSON() and INVISIBLE in `error.message`.
+      // `ErrorContext`'s index signature (:32) means TypeScript will not warn you.
+      //
+      // `value` renders as the quoted primary identifier. `childId` does NOT also
+      // render: the primary identifier is `value ?? scenario ?? argName ?? childId
+      // ?? agentId`, so only ONE wins and `value` shadows it. It is kept as the
+      // conventional structured correlation slot (readable via toJSON), and the
+      // claim key reaches the MESSAGE via `message` — the same shape the sibling
+      // delegation factories use. Without it, AC6's "loud" error would name the
+      // corrupt value with nothing to correlate it to, on the very surface plan 3
+      // renders to agents.
+      value: lastSeenAt,
+      childId: claimKey,
+      message: `claim ${claimKey}`,
+    }),
+
   delegationAlreadyResolved: (step: string): RundownError =>
     new RundownError('DELEGATION_ALREADY_RESOLVED', { step }),
 

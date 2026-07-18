@@ -755,6 +755,18 @@ export class RunbookStateManager {
    * Load the session data from disk.
    *
    * @returns The parsed session data, or a default empty session if the file doesn't exist
+   * @throws {Error} When the persisted session is incompatible with the current
+   *   model and must NOT be adapted. Rundown never migrates persisted runbook
+   *   state, so each of these is a rejection with an explicit user recovery path,
+   *   never a hydration or a shim:
+   *   - A legacy per-agent ownership shape (`ownedRunbooks`, `stashedRunbookOwnership`,
+   *     or `stacks`) — recover by finishing or pruning active runbooks and restarting.
+   *   - A claim record predating the required `ClaimRecord.lastSeenAt` (#519) —
+   *     same recovery. Checked before schema validation purely to route this cause to
+   *     the finish/prune/restart path rather than Zod's delete-the-file message.
+   *   - A session failing `SessionDataSchema` — recover by deleting
+   *     `.rundown/session.json` and restarting active runbooks.
+   * @throws {SyntaxError} When the session file is not parseable JSON.
    */
   async loadSession(): Promise<SessionData> {
     let content: string;
@@ -774,6 +786,29 @@ export class RunbookStateManager {
       throw new Error(
         'Legacy session ownership format detected. Finish or prune active runbooks and restart.',
       );
+    }
+
+    // #519: `ClaimRecord.lastSeenAt` is required. A session persisted before
+    // it existed is INVALID, not upgradable — CLAUDE.md forbids runtime migration,
+    // fallback parsers, legacy field hydration, and warning-only adapters for
+    // persisted runbook state. This guard runs BEFORE `safeParse` purely to route
+    // this cause to the correct recovery path: Zod's failure message tells the user
+    // to delete session.json, while the sanctioned recovery here — as for the legacy
+    // ownership format above — is to finish or prune the active runbooks and restart.
+    const rawClaims = raw.claims;
+    if (typeof rawClaims === 'object' && rawClaims !== null && !Array.isArray(rawClaims)) {
+      const missingLastSeen = Object.values(rawClaims as Record<string, unknown>).some(
+        (claim) =>
+          typeof claim === 'object' &&
+          claim !== null &&
+          !Array.isArray(claim) &&
+          !('lastSeenAt' in claim),
+      );
+      if (missingLastSeen) {
+        throw new Error(
+          'Legacy claim record format detected. Finish or prune active runbooks and restart.',
+        );
+      }
     }
 
     const result = SessionDataSchema.safeParse(raw);

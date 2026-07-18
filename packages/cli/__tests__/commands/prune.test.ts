@@ -395,6 +395,29 @@ describe('prune command', () => {
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(0);
     });
+
+    it('recovers from a legacy claim record that predates lastSeenAt', async () => {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const started = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      expect(started.exitCode).toBe(0);
+
+      const sessionPath = join(workspace.cwd, '.rundown', 'session.json');
+      const raw = JSON.parse(await readFile(sessionPath, 'utf8')) as {
+        claims: Record<string, Record<string, unknown>>;
+        [key: string]: unknown;
+      };
+      expect(Object.keys(raw.claims)).toHaveLength(1);
+      for (const claim of Object.values(raw.claims)) {
+        delete claim.lastSeenAt;
+      }
+      await writeFile(sessionPath, JSON.stringify(raw), 'utf8');
+
+      const result = await runCliInProcess('prune --all', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(await listRunbookStates(workspace)).toEqual([]);
+      await expect(manager.loadSession()).resolves.toEqual({ defaultStack: [], claims: {} });
+    });
   });
 
   describe('--dry-run flag', () => {
@@ -719,6 +742,7 @@ Do the thing.
               grants: createDelegatedChildGrants({ linkage }),
               issuedAt: '2026-07-03T00:00:00.000Z',
               updatedAt: '2026-07-03T00:00:00.000Z',
+              lastSeenAt: '2026-07-03T00:00:00.000Z',
             },
           },
         }),

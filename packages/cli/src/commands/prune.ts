@@ -54,13 +54,18 @@ export function registerPruneCommand(program: Command): void {
           const sessionService = new SessionService(manager);
           const states = await manager.list();
           const allIds = await listAllRunIds(cwd);
-          let activeState: Awaited<ReturnType<typeof sessionService.getActive>>;
-          try {
-            activeState = await sessionService.getActive();
-          } catch {
-            activeState = null;
+          let activeState: Awaited<ReturnType<typeof sessionService.getActive>> = null;
+          let stashedId: Awaited<ReturnType<typeof sessionService.getStashedRunbookId>> = null;
+          // `--all` is the recovery path for incompatible persisted sessions.
+          // It does not need targeting metadata because every state file is selected.
+          if (!options.all) {
+            try {
+              activeState = await sessionService.getActive();
+            } catch {
+              activeState = null;
+            }
+            stashedId = await sessionService.getStashedRunbookId();
           }
-          const stashedId = await sessionService.getStashedRunbookId();
 
           // Default to --completed --stopped (all terminal runs) if no filter flags provided
           const hasFilter =
@@ -121,6 +126,10 @@ export function registerPruneCommand(program: Command): void {
 
           const allItems: PruneRow[] = [...enrichedItems, ...invalidEnrichedItems];
 
+          if (options.all && !options.dryRun) {
+            await sessionService.resetForPruneAll();
+          }
+
           // Define columns once for reuse
           const columns = [
             { header: 'ID', key: 'id' as const },
@@ -168,13 +177,15 @@ export function registerPruneCommand(program: Command): void {
           // with no state file.)
           const loadedRunIdsToDelete = toDelete.map((state) => state.id);
           const prunedIds = [...loadedRunIdsToDelete, ...invalidToDelete];
-          // Removes each id from defaultStack/stash and deletes claim records
-          // pointing at it, all under one SessionLock acquisition.
-          await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
-          // Tombstone GC only for ids that are NOT parseable RunIds (invalid
-          // state files) — releaseRunbooks already deleted claims for the
-          // valid RunIds.
-          await sessionService.pruneClaimsForChildren(prunedIds.filter((id) => !isRunId(id)));
+          // Selective prune removes each id from targeting under one lock.
+          // `--all` already replaced all targeting with a canonical empty session.
+          if (!options.all) {
+            await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
+            // Tombstone GC only for ids that are NOT parseable RunIds (invalid
+            // state files) — releaseRunbooks already deleted claims for the
+            // valid RunIds.
+            await sessionService.pruneClaimsForChildren(prunedIds.filter((id) => !isRunId(id)));
+          }
           // Perform deletion (state files last — see the ordering note above).
           for (const id of loadedRunIdsToDelete) {
             await manager.delete(id);

@@ -19,6 +19,7 @@ import {
   type ClaimRecord,
   type RunbookState,
 } from '../../src/runbook/index.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -54,7 +55,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
 }
 
 function claimRecord(): ClaimRecord {
-  return {
+  return makeClaimRecord({
     claimKey,
     secretHash: assertClaimSecretHash(`sha256:${'b'.repeat(64)}`),
     controlledRunId: childRunId,
@@ -80,9 +81,7 @@ function claimRecord(): ClaimRecord {
         parentEntry: 1,
       },
     ],
-    issuedAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  };
+  });
 }
 
 function verifiedRunContext(

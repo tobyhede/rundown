@@ -77,6 +77,7 @@ delegatable
 deps
 deserialized
 dirfd
+discriminable
 documentational
 dogfood
 dogfooded
@@ -92,6 +93,7 @@ fdisk
 featurebranch
 finalvars
 footgun
+forgeable
 frontmatter
 generalises
 gitdir
@@ -100,6 +102,7 @@ gopls
 handlebars
 hono
 hostnames
+humaniser
 idempotently
 iife
 initialisation
@@ -409,3 +412,4 @@ remediations
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
 linecap
 linejoin
+offsetless
