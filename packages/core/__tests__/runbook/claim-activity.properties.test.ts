@@ -4,13 +4,13 @@ import fc from 'fast-check';
 // every call site here is correctly typed without an annotation or a cast. Adding
 // `as DurationMs` would trip `@typescript-eslint/no-unnecessary-type-assertion`
 // (an ERROR here) and fail `pnpm run verify`.
-import { claimActivity, isClaimProgressUnreadable } from '../../src/runbook/claim-activity.js';
+import { claimActivity, isClaimSeenUnreadable } from '../../src/runbook/claim-activity.js';
 import { assertDurationMs } from '../../src/runbook/duration.js';
 import type { ClaimRecord } from '../../src/runbook/claim-id.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 
-function claimAt(lastProgressAt: string): ClaimRecord {
-  return makeClaimRecord({ lastProgressAt });
+function claimAt(lastSeenAt: string): ClaimRecord {
+  return makeClaimRecord({ lastSeenAt });
 }
 
 // Bounded so every timestamp is a valid ISO string and every difference fits
@@ -19,7 +19,7 @@ const epochMs = fc.integer({ min: 0, max: 4_102_444_800_000 });
 const thresholdMs = fc.integer({ min: 0, max: 86_400_000 });
 
 /**
- * `now`, generated RELATIONALLY: an offset around `progressAt + threshold` rather
+ * `now`, generated RELATIONALLY: an offset around `seenAt + threshold` rather
  * than an independent absolute instant.
  *
  * This is the difference between a property that tests the boundary and one that
@@ -35,11 +35,11 @@ const thresholdMs = fc.integer({ min: 0, max: 86_400_000 });
 const offsetAroundThreshold = fc.integer({ min: -2, max: 2 });
 
 describe('claimActivity properties (#519)', () => {
-  it('is total over any valid ISO lastProgressAt and any valid now', () => {
+  it('is total over any valid ISO lastSeenAt and any valid now', () => {
     fc.assert(
-      fc.property(epochMs, epochMs, thresholdMs, (progressAt, nowAt, threshold) => {
+      fc.property(epochMs, epochMs, thresholdMs, (seenAt, nowAt, threshold) => {
         const activity = claimActivity(
-          claimAt(new Date(progressAt).toISOString()),
+          claimAt(new Date(seenAt).toISOString()),
           new Date(nowAt),
           assertDurationMs(threshold),
         );
@@ -57,14 +57,14 @@ describe('claimActivity properties (#519)', () => {
     // tautology that costs runtime and buys nothing. This oracle is derived from
     // the raw inputs instead, so it disagrees when the comparison is mutated.
     fc.assert(
-      fc.property(epochMs, epochMs, thresholdMs, (progressAt, nowAt, threshold) => {
+      fc.property(epochMs, epochMs, thresholdMs, (seenAt, nowAt, threshold) => {
         const idleAfter = assertDurationMs(threshold);
         const activity = claimActivity(
-          claimAt(new Date(progressAt).toISOString()),
+          claimAt(new Date(seenAt).toISOString()),
           new Date(nowAt),
           idleAfter,
         );
-        const expectedIdle = nowAt > progressAt + threshold;
+        const expectedIdle = nowAt > seenAt + threshold;
         expect(activity.idle).toBe(expectedIdle);
       }),
     );
@@ -73,18 +73,18 @@ describe('claimActivity properties (#519)', () => {
   it('agrees with the oracle AT the decision boundary, where off-by-one lives', () => {
     // The property above draws `nowAt` independently across a range ~50,000x the
     // threshold's, so every draw lands in the far field and the boundary is never
-    // sampled. This one generates `now` RELATIVE to `progressAt + threshold`, so
+    // sampled. This one generates `now` RELATIVE to `seenAt + threshold`, so
     // every draw is within +/-2ms of the decision point.
     //
     // This is what makes the `>` -> `>=` mutant reachable in the property suite:
     // that mutant differs from the original at EXACTLY ONE instant
     // (idleFor === idleAfter), and offset 0 hits it on essentially every run.
     fc.assert(
-      fc.property(epochMs, thresholdMs, offsetAroundThreshold, (progressAt, threshold, offset) => {
+      fc.property(epochMs, thresholdMs, offsetAroundThreshold, (seenAt, threshold, offset) => {
         const idleAfter = assertDurationMs(threshold);
-        const nowAt = progressAt + threshold + offset;
+        const nowAt = seenAt + threshold + offset;
         const activity = claimActivity(
-          claimAt(new Date(progressAt).toISOString()),
+          claimAt(new Date(seenAt).toISOString()),
           new Date(nowAt),
           idleAfter,
         );
@@ -99,9 +99,9 @@ describe('claimActivity properties (#519)', () => {
     // A structural property with no counterpart line in the implementation:
     // a more generous threshold can only ever reclassify idle -> not idle.
     fc.assert(
-      fc.property(epochMs, epochMs, thresholdMs, thresholdMs, (progressAt, nowAt, a, b) => {
+      fc.property(epochMs, epochMs, thresholdMs, thresholdMs, (seenAt, nowAt, a, b) => {
         const [lower, higher] = a <= b ? [a, b] : [b, a];
-        const record = claimAt(new Date(progressAt).toISOString());
+        const record = claimAt(new Date(seenAt).toISOString());
         const strict = claimActivity(record, new Date(nowAt), assertDurationMs(lower));
         const lenient = claimActivity(record, new Date(nowAt), assertDurationMs(higher));
         if (!strict.idle) expect(lenient.idle).toBe(false);
@@ -116,8 +116,8 @@ describe('claimActivity properties (#519)', () => {
         epochMs,
         fc.integer({ min: 0, max: 86_400_000 }),
         thresholdMs,
-        (progressAt, nowAt, delta, threshold) => {
-          const record = claimAt(new Date(progressAt).toISOString());
+        (seenAt, nowAt, delta, threshold) => {
+          const record = claimAt(new Date(seenAt).toISOString());
           const idleAfter = assertDurationMs(threshold);
           const earlier = claimActivity(record, new Date(nowAt), idleAfter);
           const later = claimActivity(record, new Date(nowAt + delta), idleAfter);
@@ -128,7 +128,7 @@ describe('claimActivity properties (#519)', () => {
     );
   });
 
-  it('ALWAYS throws CLAIM_PROGRESS_UNREADABLE for an unparseable lastProgressAt (AC6)', () => {
+  it('ALWAYS throws CLAIM_SEEN_UNREADABLE for an unparseable lastSeenAt (AC6)', () => {
     // AC6 is the failure this design calls "the single worst it can have", and every
     // OTHER property here builds its record via `new Date(x).toISOString()` — so
     // every generated timestamp is parseable and the RD-824 branch is UNREACHABLE
@@ -149,34 +149,34 @@ describe('claimActivity properties (#519)', () => {
           // Never a silent classification: the fail-open this AC exists to prevent
           // is `idle: false` on a dead claim, and `NaN > x` is false, so a missing
           // throw would present exactly as a healthy claim.
-          expect(isClaimProgressUnreadable(thrown)).toBe(true);
+          expect(isClaimSeenUnreadable(thrown)).toBe(true);
         },
       ),
     );
   });
 
-  it('passes lastProgressAt through verbatim, never a reformatted or substituted value', () => {
+  it('passes lastSeenAt through verbatim, never a reformatted or substituted value', () => {
     // The unit suite asserts this at ONE point, where `claimAt` gives `updatedAt` and
-    // `lastProgressAt` the SAME string — so that assertion cannot tell the two fields
+    // `lastSeenAt` the SAME string — so that assertion cannot tell the two fields
     // apart, and a `record.updatedAt` mutant survives it. Here they are forced to
     // differ, so the field the implementation reads is observable.
     fc.assert(
-      fc.property(epochMs, epochMs, thresholdMs, (progressAt, nowAt, threshold) => {
-        const iso = new Date(progressAt).toISOString();
+      fc.property(epochMs, epochMs, thresholdMs, (seenAt, nowAt, threshold) => {
+        const iso = new Date(seenAt).toISOString();
         const record = makeClaimRecord({
-          lastProgressAt: iso,
+          lastSeenAt: iso,
           // A DIFFERENT instant, so reading the wrong field is observable.
-          updatedAt: new Date(progressAt + 1).toISOString(),
+          updatedAt: new Date(seenAt + 1).toISOString(),
         });
         const activity = claimActivity(record, new Date(nowAt), assertDurationMs(threshold));
-        expect(activity.lastProgressAt).toBe(iso);
+        expect(activity.lastSeenAt).toBe(iso);
       }),
     );
   });
 
-  it('never reports idle for a claim whose progress is at or after now (skew safety)', () => {
+  it('never reports idle for a claim whose observation is at or after now (skew safety)', () => {
     // The clock-skew invariant, stated over the whole input space rather than the
-    // single unit-test point: a holder that progressed at or after the observation
+    // single unit-test point: a holder seen at or after the observation
     // time can never be idle, at ANY threshold.
     fc.assert(
       fc.property(

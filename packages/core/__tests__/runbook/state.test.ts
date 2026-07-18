@@ -857,9 +857,9 @@ describe('RunbookStateManager', () => {
       await expect(manager.loadSession()).rejects.toThrow(/Legacy session ownership format/);
     });
 
-    it('rejects a session whose claim records predate lastProgressAt (#519)', async () => {
+    it('rejects a session whose claim records predate lastSeenAt (#519)', async () => {
       // A pre-#519 claim record: structurally a valid claim in every other respect,
-      // but with no `lastProgressAt`. CLAUDE.md forbids migrating persisted state —
+      // but with no `lastSeenAt`. CLAUDE.md forbids migrating persisted state —
       // the guard REJECTS it with the finish/prune/restart recovery path, exactly as
       // the legacy-ownership guard does. It is never hydrated, defaulted, or shimmed.
       await mkdir(join(testDir, '.rundown'), { recursive: true });
@@ -887,7 +887,7 @@ describe('RunbookStateManager', () => {
       );
     });
 
-    it('accepts a session whose claim records carry lastProgressAt (#519)', async () => {
+    it('accepts a session whose claim records carry lastSeenAt (#519)', async () => {
       // The guard's NEGATIVE case, and it is not symmetry for its own sake: without
       // it, `.some(...)` -> `.every(...)`, dropping the `!Array.isArray(rawClaims)`
       // check, and dropping the `claim !== null` check are all mutants that the
@@ -909,14 +909,14 @@ describe('RunbookStateManager', () => {
               grants: [{ action: 'mutate-run', runId }],
               issuedAt: '2026-07-01T00:00:00.000Z',
               updatedAt: '2026-07-01T00:00:00.000Z',
-              lastProgressAt: '2026-07-01T00:00:00.000Z',
+              lastSeenAt: '2026-07-01T00:00:00.000Z',
             },
           },
         }),
       );
 
       const session = await manager.loadSession();
-      expect(session.claims[claimKey].lastProgressAt).toBe('2026-07-01T00:00:00.000Z');
+      expect(session.claims[claimKey].lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
     });
 
     it('loads a session with no claims at all without tripping the claim guard (#519)', async () => {

@@ -761,7 +761,7 @@ export class RunbookStateManager {
    *   never a hydration or a shim:
    *   - A legacy per-agent ownership shape (`ownedRunbooks`, `stashedRunbookOwnership`,
    *     or `stacks`) — recover by finishing or pruning active runbooks and restarting.
-   *   - A claim record predating the required `ClaimRecord.lastProgressAt` (#519) —
+   *   - A claim record predating the required `ClaimRecord.lastSeenAt` (#519) —
    *     same recovery. Checked before schema validation purely to route this cause to
    *     the finish/prune/restart path rather than Zod's delete-the-file message.
    *   - A session failing `SessionDataSchema` — recover by deleting
@@ -788,7 +788,7 @@ export class RunbookStateManager {
       );
     }
 
-    // #519: `ClaimRecord.lastProgressAt` is required. A session persisted before
+    // #519: `ClaimRecord.lastSeenAt` is required. A session persisted before
     // it existed is INVALID, not upgradable — CLAUDE.md forbids runtime migration,
     // fallback parsers, legacy field hydration, and warning-only adapters for
     // persisted runbook state. This guard runs BEFORE `safeParse` purely to route
@@ -797,14 +797,14 @@ export class RunbookStateManager {
     // ownership format above — is to finish or prune the active runbooks and restart.
     const rawClaims = raw.claims;
     if (typeof rawClaims === 'object' && rawClaims !== null && !Array.isArray(rawClaims)) {
-      const missingProgress = Object.values(rawClaims as Record<string, unknown>).some(
+      const missingLastSeen = Object.values(rawClaims as Record<string, unknown>).some(
         (claim) =>
           typeof claim === 'object' &&
           claim !== null &&
           !Array.isArray(claim) &&
-          !('lastProgressAt' in claim),
+          !('lastSeenAt' in claim),
       );
-      if (missingProgress) {
+      if (missingLastSeen) {
         throw new Error(
           'Legacy claim record format detected. Finish or prune active runbooks and restart.',
         );

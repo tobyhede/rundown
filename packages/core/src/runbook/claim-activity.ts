@@ -33,11 +33,11 @@ export const DEFAULT_IDLE_AFTER_MS: DurationMs = assertDurationMs(60 * 60 * 1000
  * advances the run.
  */
 export interface ClaimActivity {
-  /** ISO timestamp of the claim's last recorded progress. */
-  readonly lastProgressAt: string;
-  /** Milliseconds elapsed since that progress. */
+  /** ISO timestamp when the claim holder was last seen advancing the run. */
+  readonly lastSeenAt: string;
+  /** Milliseconds elapsed since that observation. */
   readonly idleFor: DurationMs;
-  /** Advisory: no progress recorded for longer than the idle threshold. */
+  /** Advisory: the holder has not been seen for longer than the idle threshold. */
   readonly idle: boolean;
 }
 
@@ -72,7 +72,7 @@ const ISO_INSTANT_PATTERN =
  * from the written date, so comparing normalized output would reject healthy records
  * — the mirror-image failure of libelling a live claim as corrupt.
  *
- * @param value - Raw persisted `lastProgressAt`.
+ * @param value - Raw persisted `lastSeenAt`.
  * @returns Milliseconds since the epoch, or `undefined` when `value` is not a valid
  *   strict ISO instant.
  */
@@ -105,11 +105,11 @@ function parseIsoInstant(value: string): number | undefined {
  *
  * Pure: no I/O and no clock read — `now` is injected, so this cannot drift with
  * wall-clock behaviour in tests. Idle is strictly `idleFor > idleAfter`; exactly
- * at the threshold is still not idle. A `lastProgressAt` in the future
+ * at the threshold is still not idle. A `lastSeenAt` in the future
  * (writer/reader clock skew) clamps to zero rather than reporting a negative
  * duration.
  *
- * @param record - Persisted claim record carrying `lastProgressAt`.
+ * @param record - Persisted claim record carrying `lastSeenAt`.
  * @param now - Injected observation time. MUST be a valid Date.
  * @param idleAfter - Threshold past which the claim is reported idle.
  * @returns The derived advisory activity.
@@ -121,13 +121,13 @@ function parseIsoInstant(value: string): number | undefined {
  *   discriminates the three throws BY TYPE — `RundownError` (contain), `RangeError`
  *   (rethrow, caller bug), anything else (rethrow) — with no message substring
  *   anywhere.
- * @throws {RundownError} `CLAIM_PROGRESS_UNREADABLE` when `record.lastProgressAt`
+ * @throws {RundownError} `CLAIM_SEEN_UNREADABLE` when `record.lastSeenAt`
  *   is not a strict ISO instant — unparseable, calendar-invalid (`2026-02-30`),
  *   offsetless, or a legacy form only a lenient parser accepts. See
  *   {@link parseIsoInstant}: `Date.parse` normalizes impossible dates rather than
  *   rejecting them, which is the same fail-open one door down. Deliberate: every
  *   `NaN` comparison is false, so `idleFor > idleAfter` would be false and a DEAD
- *   claim would silently classify as progressing — a safety signal failing OPEN in
+ *   claim would silently classify as live — a safety signal failing OPEN in
  *   exactly the case it exists to catch. Corrupt persisted state is rejected, never
  *   interpreted. TYPED rather than a bare `Error` because `assertDurationMs` throws
  *   from this same function: with both untyped, only a message substring would tell
@@ -144,30 +144,30 @@ export function claimActivity(
   // NaN, so without this guard the failure surfaces from `assertDurationMs` as
   // "DurationMs must be a non-negative finite number" — a message that blames the
   // duration and sends the reader hunting in the wrong place. It must NOT be
-  // reported as CLAIM_PROGRESS_UNREADABLE either: that would blame this child's
+  // reported as CLAIM_SEEN_UNREADABLE either: that would blame this child's
   // record for the caller's broken clock. A RangeError is right — this is a code
   // bug (every call site injects `new Date()`), and the read boundaries
   // deliberately rethrow it rather than labelling a child `unreadable`.
   if (Number.isNaN(now.getTime())) {
     throw new RangeError('claimActivity requires a valid `now`; received an Invalid Date');
   }
-  const lastProgress = parseIsoInstant(record.lastProgressAt);
-  if (lastProgress === undefined) {
+  const lastSeen = parseIsoInstant(record.lastSeenAt);
+  if (lastSeen === undefined) {
     // Via the factory, never `new RundownError`. The factory is also where the
     // render-visible context keys are chosen, so the key-list trap is solved in
     // exactly one place.
-    throw Errors.claimProgressUnreadable(record.claimKey, record.lastProgressAt);
+    throw Errors.claimSeenUnreadable(record.claimKey, record.lastSeenAt);
   }
-  const idleFor = assertDurationMs(Math.max(0, now.getTime() - lastProgress));
+  const idleFor = assertDurationMs(Math.max(0, now.getTime() - lastSeen));
   return {
-    lastProgressAt: record.lastProgressAt,
+    lastSeenAt: record.lastSeenAt,
     idleFor,
     idle: idleFor > idleAfter,
   };
 }
 
 /**
- * Narrow an unknown error to the "claim progress unreadable" case (#519).
+ * Narrow an unknown error to the "claim seen timestamp unreadable" case (#519).
  *
  * The read boundaries (plan 3) contain THIS and rethrow everything else, so they
  * need one predicate rather than a hand-rolled `instanceof` plus a literal code
@@ -176,15 +176,15 @@ export function claimActivity(
  * copied into every caller is the same defect one level down — `'RD-824'` is
  * re-numberable, and a renumber would silently turn contained corruption back into
  * an unhandled throw out of a read-only command. The code lives in ONE place
- * (`ErrorCodes.CLAIM_PROGRESS_UNREADABLE`) and callers ask this question instead.
+ * (`ErrorCodes.CLAIM_SEEN_UNREADABLE`) and callers ask this question instead.
  *
  * Built on the generic {@link isRundownErrorCode} rather than hand-rolling the
  * `instanceof` + code comparison, so the "discriminate on the code, never on a
  * message" guarantee has ONE implementation for RD-824 and every code after it.
  *
  * @param error - Any thrown value.
- * @returns True when `error` is the typed CLAIM_PROGRESS_UNREADABLE RundownError.
+ * @returns True when `error` is the typed CLAIM_SEEN_UNREADABLE RundownError.
  */
-export function isClaimProgressUnreadable(error: unknown): error is RundownError {
-  return isRundownErrorCode(error, ErrorCodes.CLAIM_PROGRESS_UNREADABLE.code);
+export function isClaimSeenUnreadable(error: unknown): error is RundownError {
+  return isRundownErrorCode(error, ErrorCodes.CLAIM_SEEN_UNREADABLE.code);
 }

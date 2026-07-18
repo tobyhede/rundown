@@ -102,17 +102,17 @@ export interface ClaimRecord {
   /** ISO timestamp when this claim was last refreshed. */
   readonly updatedAt: string;
   /**
-   * ISO timestamp when the holder last advanced the controlled run.
+   * ISO timestamp when the holder was last seen advancing the controlled run.
    *
    * REQUIRED. Deliberately NOT a reuse of `updatedAt`: that field means "this
    * record was last written" (a generic write timestamp), and the day an
    * unrelated claim write is added it would silently refresh the idle clock so a
    * dead claim reads as live. One field, two meanings, is exactly what
    * type-driven dispatch exists to prevent. Refreshed only by
-   * `SessionService.recordClaimProgress` after a successful claim-authenticated
+   * `SessionService.recordClaimSeen` after a successful claim-authenticated
    * mutation (#519).
    */
-  readonly lastProgressAt: string;
+  readonly lastSeenAt: string;
 }
 
 /** Claim record after bearer proof verification. */
@@ -427,9 +427,9 @@ export function createClaimRecord(input: {
     grants: input.grants,
     issuedAt: input.now,
     updatedAt: input.now,
-    // A brand-new claim has made no progress since issuance, so the idle clock
-    // starts at issuance (#519 AC1).
-    lastProgressAt: input.now,
+    // A brand-new holder was last seen at issuance, so the idle clock starts
+    // there (#519 AC1).
+    lastSeenAt: input.now,
   };
 }
 
@@ -445,21 +445,21 @@ export function refreshedClaimRecord(record: ClaimRecord, now: string): ClaimRec
 }
 
 /**
- * Return a claim record with only its progress timestamp changed.
+ * Return a claim record with only its last-seen timestamp changed.
  *
  * Deliberately distinct from {@link refreshedClaimRecord}: that function moves
  * `updatedAt` ("this record was last written"), while this one moves
- * `lastProgressAt` ("the holder advanced the controlled run"). They coincide
+ * `lastSeenAt` ("the holder advanced the controlled run"). They coincide
  * today only by accident, and merging them would let an unrelated future claim
  * write silently refresh the idle clock — a safety signal corrupted by an
  * unrelated feature, with no type error to catch it (#519).
  *
  * @param record - Existing persisted claim record.
- * @param now - ISO timestamp of the progress being recorded.
- * @returns Claim record with the new `lastProgressAt`.
+ * @param now - ISO timestamp of the observation being recorded.
+ * @returns Claim record with the new `lastSeenAt`.
  */
-export function progressedClaimRecord(record: ClaimRecord, now: string): ClaimRecord {
-  return { ...record, lastProgressAt: now };
+export function seenClaimRecord(record: ClaimRecord, now: string): ClaimRecord {
+  return { ...record, lastSeenAt: now };
 }
 
 /**

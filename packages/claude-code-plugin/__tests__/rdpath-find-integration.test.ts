@@ -568,7 +568,7 @@ Active step.
     });
 
     it('soft-fails legacy claim record format when RD_WORK_PATH is set', async () => {
-      // #519 made ClaimRecord.lastProgressAt required, so state.ts rejects a
+      // #519 made ClaimRecord.lastSeenAt required, so state.ts rejects a
       // session whose claims predate it with 'Legacy claim record format
       // detected'. Without this message in the allow-list, rdpath would hard-fail
       // on exactly the sessions that change invalidates, instead of degrading to

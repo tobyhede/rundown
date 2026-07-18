@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   claimActivity,
-  isClaimProgressUnreadable,
+  isClaimSeenUnreadable,
   DEFAULT_IDLE_AFTER_MS,
 } from '../../src/runbook/claim-activity.js';
 import { assertDurationMs } from '../../src/runbook/duration.js';
@@ -14,8 +14,8 @@ import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 // Reuses the shared factory rather than spelling the record shape out again —
 // this suite would otherwise be a thirteenth hand-maintained fixture, i.e.
 // exactly the problem that factory exists to end.
-function claimAt(lastProgressAt: string): ClaimRecord {
-  return makeClaimRecord({ lastProgressAt });
+function claimAt(lastSeenAt: string): ClaimRecord {
+  return makeClaimRecord({ lastSeenAt });
 }
 
 const ONE_HOUR = assertDurationMs(60 * 60 * 1000);
@@ -29,7 +29,7 @@ describe('claimActivity (#519)', () => {
     );
     expect(activity.idle).toBe(false);
     expect(activity.idleFor).toBe(3_599_999);
-    expect(activity.lastProgressAt).toBe('2026-07-16T00:00:00.000Z');
+    expect(activity.lastSeenAt).toBe('2026-07-16T00:00:00.000Z');
   });
 
   it('reports not-idle EXACTLY at the threshold', () => {
@@ -54,7 +54,7 @@ describe('claimActivity (#519)', () => {
     expect(activity.idleFor).toBe(3_600_001);
   });
 
-  it('clamps a future lastProgressAt to zero idle rather than reporting negative', () => {
+  it('clamps a future lastSeenAt to zero idle rather than reporting negative', () => {
     // Clock skew between the writer and the reader must not produce a negative
     // duration; the holder cannot be "less than zero" idle.
     const activity = claimActivity(
@@ -66,7 +66,7 @@ describe('claimActivity (#519)', () => {
     expect(activity.idleFor).toBe(0);
   });
 
-  it('reports zero idle when now EQUALS lastProgressAt', () => {
+  it('reports zero idle when now EQUALS lastSeenAt', () => {
     // Distinct from the skew clamp above: that one exercises Math.max's negative
     // branch, this one its identity path. Together they pin both sides of the clamp.
     const activity = claimActivity(
@@ -81,7 +81,7 @@ describe('claimActivity (#519)', () => {
   it('treats every non-zero elapsed as idle when idleAfter is zero', () => {
     // `assertDurationMs(0)` is legal, so a zero threshold is a reachable input. This is a
     // SECOND, independent killer of `>` -> `>=`: at zero, the mutant reports idle
-    // for a claim whose progress is this instant.
+    // for a claim whose observation is this instant.
     const zero = assertDurationMs(0);
     expect(
       claimActivity(claimAt('2026-07-16T00:00:00.000Z'), new Date('2026-07-16T00:00:00.000Z'), zero)
@@ -94,7 +94,7 @@ describe('claimActivity (#519)', () => {
   });
 
   it('parses a non-Zulu ISO offset rather than treating it as unreadable', () => {
-    // `lastProgressAt` is `z.string().min(1)` on disk — nothing constrains it to
+    // `lastSeenAt` is `z.string().min(1)` on disk — nothing constrains it to
     // Zulu, and `Date.parse` accepts offsets. The property suite generates ONLY
     // Zulu (it builds via `.toISOString()`), so this input class is unreachable
     // there. A lexical comparison, or a parser that rejected offsets, would send a
@@ -136,10 +136,10 @@ describe('claimActivity (#519)', () => {
     const record = claimAt('2026-07-16T00:00:00.000Z');
     const now = new Date('2026-07-16T00:30:00.000Z');
     expect(claimActivity(record, now, ONE_HOUR)).toEqual(claimActivity(record, now, ONE_HOUR));
-    expect(record.lastProgressAt).toBe('2026-07-16T00:00:00.000Z');
+    expect(record.lastSeenAt).toBe('2026-07-16T00:00:00.000Z');
   });
 
-  it('throws CLAIM_PROGRESS_UNREADABLE on an unparseable lastProgressAt rather than reporting not-idle (AC6)', () => {
+  it('throws CLAIM_SEEN_UNREADABLE on an unparseable lastSeenAt rather than reporting not-idle (AC6)', () => {
     // THE fail-open case. `Date.parse` yields NaN on a corrupt timestamp, and every
     // NaN comparison is false — so `idleFor > idleAfter` would be false and a DEAD
     // claim would silently classify as not-idle. That is a safety signal failing
@@ -158,9 +158,9 @@ describe('claimActivity (#519)', () => {
     expect(thrown).toBeInstanceOf(RundownError);
     // The predicate the read boundaries actually use — pinned on the same throw
     // they contain, so the guard and the containment cannot drift apart.
-    expect(isClaimProgressUnreadable(thrown)).toBe(true);
+    expect(isClaimSeenUnreadable(thrown)).toBe(true);
     // The code literal is pinned HERE and nowhere else in the codebase: production
-    // asks `isClaimProgressUnreadable`. This line is the deliberate place a
+    // asks `isClaimSeenUnreadable`. This line is the deliberate place a
     // renumber has to be acknowledged.
     expect((thrown as RundownError).code).toBe('RD-824');
   });
@@ -189,7 +189,7 @@ describe('claimActivity (#519)', () => {
     expect(message).toContain(makeClaimRecord().claimKey);
   });
 
-  it('rejects a CALENDAR-INVALID lastProgressAt rather than silently normalizing it (AC6)', () => {
+  it('rejects a CALENDAR-INVALID lastSeenAt rather than silently normalizing it (AC6)', () => {
     // `Date.parse` does NOT reject impossible dates — it NORMALIZES them. Verified
     // on Node 24: '2026-02-30T00:00:00.000Z' parses to 2026-03-02, and
     // '2026-02-31' to 2026-03-03. So a corrupt record silently becomes a real
@@ -208,7 +208,7 @@ describe('claimActivity (#519)', () => {
     }
   });
 
-  it('rejects a lastProgressAt with NO offset, which would be host-timezone dependent (AC6)', () => {
+  it('rejects a lastSeenAt with NO offset, which would be host-timezone dependent (AC6)', () => {
     // `Date.parse('2026-07-16T00:00:00.000')` (no Z, no offset) is interpreted in
     // the HOST timezone per ECMA-262, so the same persisted record would yield a
     // different `idleFor` on two machines — an environment-dependent safety signal.
@@ -219,9 +219,9 @@ describe('claimActivity (#519)', () => {
     );
   });
 
-  it('rejects a non-ISO but Date.parse-able lastProgressAt (AC6)', () => {
+  it('rejects a non-ISO but Date.parse-able lastSeenAt (AC6)', () => {
     // `Date.parse('March 5 2026')` succeeds via legacy fallback parsing, which is
-    // implementation-defined. `lastProgressAt` is an ISO timestamp by contract; a
+    // implementation-defined. `lastSeenAt` is an ISO timestamp by contract; a
     // value only a lenient parser accepts is corrupt, not merely unusual.
     for (const corrupt of ['March 5 2026', '07/16/2026', '2026-07-16 00:00:00']) {
       expect(() => claimActivity(claimAt(corrupt), new Date(), ONE_HOUR)).toThrow(RundownError);
@@ -231,7 +231,7 @@ describe('claimActivity (#519)', () => {
   it('rejects an Invalid Date `now` as a CALLER error, not as an unreadable record', () => {
     // A broken clock is a code bug, not corrupt persisted data. Two things must
     // hold, and both are load-bearing:
-    //  1. It must NOT be CLAIM_PROGRESS_UNREADABLE — that would blame this child's
+    //  1. It must NOT be CLAIM_SEEN_UNREADABLE — that would blame this child's
     //     record for the caller's bug and send the reader to the wrong place (and
     //     the read boundaries would silently swallow it as `unreadable`).
     //  2. It must be discriminable BY TYPE, not by message. `RangeError` is the
@@ -246,7 +246,7 @@ describe('claimActivity (#519)', () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(RangeError);
-    expect(isClaimProgressUnreadable(thrown)).toBe(false);
+    expect(isClaimSeenUnreadable(thrown)).toBe(false);
     //  3. It must blame `now`. Type alone is NOT enough to pin this guard: delete
     //     the guard entirely and an Invalid Date still throws a RangeError — from
     //     `assertDurationMs`, because Math.max(0, NaN) is NaN — so the two
@@ -260,24 +260,24 @@ describe('claimActivity (#519)', () => {
     expect(getErrorMessage(thrown)).toContain('now');
   });
 
-  it('isClaimProgressUnreadable rejects unrelated errors', () => {
+  it('isClaimSeenUnreadable rejects unrelated errors', () => {
     // Guards the guard: it must not swallow an assertDurationMs RangeError or a
     // plain Error, or the read boundaries would contain bugs as though they were
     // corrupt data.
     expect(
-      isClaimProgressUnreadable(new RangeError('DurationMs must be a non-negative finite number')),
+      isClaimSeenUnreadable(new RangeError('DurationMs must be a non-negative finite number')),
     ).toBe(false);
-    expect(isClaimProgressUnreadable(new Error('unrelated'))).toBe(false);
-    expect(isClaimProgressUnreadable(undefined)).toBe(false);
+    expect(isClaimSeenUnreadable(new Error('unrelated'))).toBe(false);
+    expect(isClaimSeenUnreadable(undefined)).toBe(false);
   });
 
   it('is a RundownError with a DIFFERENT code, and the predicate still says no', () => {
     // The predicate must discriminate on the CODE, not merely on `instanceof
     // RundownError`. Without this case, `error instanceof RundownError && <code
     // check>` -> `error instanceof RundownError` survives: every RundownError would
-    // report as claim-progress-unreadable, and plan 3's read boundary would contain
+    // report as claim-seen-unreadable, and plan 3's read boundary would contain
     // unrelated failures as though a child's record were corrupt.
-    expect(isClaimProgressUnreadable(Errors.noActiveRunbook())).toBe(false);
+    expect(isClaimSeenUnreadable(Errors.noActiveRunbook())).toBe(false);
   });
 
   it('defaults the idle threshold to one hour', () => {

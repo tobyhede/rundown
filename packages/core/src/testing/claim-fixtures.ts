@@ -33,7 +33,7 @@ export function makeClaimRecord(overrides: Partial<ClaimRecord> = {}): ClaimReco
     grants: [{ action: 'mutate-run', runId: DEFAULT_RUN_ID }],
     issuedAt: DEFAULT_AT,
     updatedAt: DEFAULT_AT,
-    lastProgressAt: DEFAULT_AT,
+    lastSeenAt: DEFAULT_AT,
     ...overrides,
   };
 }

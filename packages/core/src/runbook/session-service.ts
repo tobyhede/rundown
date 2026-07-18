@@ -20,7 +20,7 @@ import {
   hashClaimSecret,
   parseClaimBearer,
   generateClaimBearer,
-  progressedClaimRecord,
+  seenClaimRecord,
   refreshedClaimRecord,
   verifyClaimSecret,
   type ClaimId,
@@ -126,20 +126,20 @@ export type RunningStackMemberResolution =
     };
 
 /**
- * Outcome of a best-effort claim-progress recording.
+ * Outcome of a best-effort claim last-seen recording.
  *
  * Returned rather than thrown: recording always follows an ALREADY-COMMITTED
  * mutation, so a failure here must be observable to tests but must never
  * propagate to the caller and mask the committed result (RD-102) (#519).
  */
-export type ClaimProgressRecordResult =
+export type ClaimSeenRecordResult =
   | {
-      /** The presented claim's `lastProgressAt` was advanced and persisted. */
+      /** The presented claim's `lastSeenAt` was advanced and persisted. */
       readonly kind: 'recorded';
       /** Claim key whose record was advanced. */
       readonly claimKey: ClaimLookupKey;
-      /** ISO timestamp written to `lastProgressAt`. */
-      readonly lastProgressAt: string;
+      /** ISO timestamp written to `lastSeenAt`. */
+      readonly lastSeenAt: string;
     }
   | {
       /** No claim matched the presented bearer (missing key or unverified secret). */
@@ -415,7 +415,7 @@ export class SessionService {
    *
    * Follows the `unstashForClaimId` template — `withLock` -> verify bearer ->
    * refresh -> `saveSession` — and refreshes EXACTLY the claim whose bearer the
-   * caller presented, never another: progress is a property of a single claim and
+   * caller presented, never another: the observation belongs to a single claim and
    * its holder, and a parent cannot vouch for a child's liveness (#519).
    *
    * Call this ONLY after a claim-authenticated mutation has COMMITTED, and ONLY
@@ -431,19 +431,19 @@ export class SessionService {
    * inside an existing `withLock` scope and the live owner is you — the acquire
    * spins its jittered backoff to the full 5s deadline, throws, and the totality
    * contract below silently converts that into `record-failed`. The symptom is a
-   * 5-second stall on every affected command plus a claim that under-reports
-   * progress, with no error anywhere: totality MASKING a deadlock rather than
+   * 5-second stall on every affected command plus a stale last-seen timestamp,
+   * with no error anywhere: totality MASKING a deadlock rather than
    * exposing it. Call sites must record AFTER the mutation's lock scope closes.
    *
    * Best-effort and TOTAL: this method never throws. The run mutation it follows
    * lives in `.rundown/runs/` under `RunStateLock` while the claim lives in
    * `session.json` under `SessionLock` — different files, different locks, no
-   * atomicity. Failing to record under-reports progress, costing one spurious idle
+   * atomicity. Failing to record leaves an older observation, costing one spurious idle
    * report and one wasted check; failing a user's `rundown pass` because a
    * bookkeeping write hiccuped would be indefensible (RD-102).
    *
    * RECORDS THE CLOCK VERBATIM, AND DELIBERATELY DOES NOT CLAMP TO
-   * `max(existing, now)` — a backward wall-clock step overwrites `lastProgressAt`
+   * `max(existing, now)` — a backward wall-clock step overwrites `lastSeenAt`
    * with an older value BY DESIGN. Reviewers reliably read that as a bug, so the
    * reasoning is recorded here (#611):
    * - Reader and writer SHARE A CLOCK. The parent's `rundown status` and the child's
@@ -452,7 +452,7 @@ export class SessionService {
    *   a local file. A backward step moves both, so the older timestamp is the
    *   CORRECT answer and no premature idle occurs.
    * - The clamp would introduce the AC6 fail-open it appears to prevent. Pinning
-   *   `lastProgressAt` in the future meets `claimActivity`'s `Math.max(0, …)` skew
+   *   `lastSeenAt` in the future meets `claimActivity`'s `Math.max(0, …)` skew
    *   clamp (claim-activity.ts:161) and yields `idleFor: 0` for the whole excursion:
    *   a DEAD claim reading as live, in exactly the case the signal exists to catch.
    *   Corrupt persisted state is rejected, never interpreted (claim-activity.ts:129-131) —
@@ -467,16 +467,16 @@ export class SessionService {
    * threshold-tuning reasoning for the routine no-jump case, where "late" means a
    * bounded delay — it does not sanction an unbounded dead-claim-reads-live window.
    *
-   * Pinned by `claim-progress.test.ts` › "recordClaimProgress under backward
+   * Pinned by `claim-seen.test.ts` › "recordClaimSeen under backward
    * wall-clock movement (#611 review)" — in particular "reports a DEAD claim idle
    * after a sustained backward jump", which fails if the clamp is ever added.
    *
    * @param claimId - Bearer claim id presented by the caller on the mutation.
    * @returns Typed recording outcome. Never rejects.
    */
-  async recordClaimProgress(claimId: ClaimId): Promise<ClaimProgressRecordResult> {
+  async recordClaimSeen(claimId: ClaimId): Promise<ClaimSeenRecordResult> {
     try {
-      return await this.withLock(async (): Promise<ClaimProgressRecordResult> => {
+      return await this.withLock(async (): Promise<ClaimSeenRecordResult> => {
         const parsed = parseClaimBearer(claimId);
         const session = await this.manager.loadSession();
         if (!Object.hasOwn(session.claims, parsed.claimKey)) {
@@ -487,9 +487,9 @@ export class SessionService {
           return { kind: 'no-claim' };
         }
         const now = this.now();
-        session.claims[parsed.claimKey] = progressedClaimRecord(claim, now);
+        session.claims[parsed.claimKey] = seenClaimRecord(claim, now);
         await this.manager.saveSession(session);
-        return { kind: 'recorded', claimKey: parsed.claimKey, lastProgressAt: now };
+        return { kind: 'recorded', claimKey: parsed.claimKey, lastSeenAt: now };
       });
     } catch (error: unknown) {
       // Intentionally swallowed — see the best-effort note above. Nothing here may

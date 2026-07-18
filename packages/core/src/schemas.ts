@@ -640,7 +640,7 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z
     grants: z.array(ClaimGrantSchema).min(1),
     issuedAt: z.string().min(1),
     updatedAt: z.string().min(1),
-    lastProgressAt: z.string().min(1),
+    lastSeenAt: z.string().min(1),
   })
   .strict()
   .superRefine((claim, ctx) => {

@@ -368,25 +368,25 @@ describe('ClaimRecordSchema', () => {
     ],
     issuedAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:01.000Z',
-    lastProgressAt: '2026-07-16T00:00:00.000Z',
+    lastSeenAt: '2026-07-16T00:00:00.000Z',
   };
 
   it('accepts a complete proof-backed claim record with explicit grants', () => {
     expect(ClaimRecordSchema.safeParse(validClaim).success).toBe(true);
   });
 
-  it('rejects a claim record with no lastProgressAt (#519)', () => {
-    // `lastProgressAt` is REQUIRED — an optional field with a fallback would be
+  it('rejects a claim record with no lastSeenAt (#519)', () => {
+    // `lastSeenAt` is REQUIRED — an optional field with a fallback would be
     // legacy-field hydration, which CLAUDE.md forbids.
-    const { lastProgressAt: _omitted, ...withoutProgress } = validClaim;
-    expect(ClaimRecordSchema.safeParse(withoutProgress).success).toBe(false);
+    const { lastSeenAt: _omitted, ...withoutLastSeen } = validClaim;
+    expect(ClaimRecordSchema.safeParse(withoutLastSeen).success).toBe(false);
   });
 
-  it('rejects a claim record with an empty lastProgressAt (#519)', () => {
-    expect(ClaimRecordSchema.safeParse({ ...validClaim, lastProgressAt: '' }).success).toBe(false);
+  it('rejects a claim record with an empty lastSeenAt (#519)', () => {
+    expect(ClaimRecordSchema.safeParse({ ...validClaim, lastSeenAt: '' }).success).toBe(false);
   });
 
-  it('sets lastProgressAt to issuedAt at claim creation (#519)', () => {
+  it('sets lastSeenAt to issuedAt at claim creation (#519)', () => {
     const now = '2026-07-16T12:00:00.000Z';
     const record = createClaimRecord({
       claimKey: assertClaimLookupKey(validClaim.claimKey),
@@ -395,10 +395,10 @@ describe('ClaimRecordSchema', () => {
       grants: [{ action: 'mutate-run', runId: assertRunId(validClaim.controlledRunId) }],
       now,
     });
-    // A brand-new claim has, by definition, made no progress since issuance —
-    // so the idle clock starts at issuance, not at zero/undefined.
-    expect(record.lastProgressAt).toBe(now);
-    expect(record.lastProgressAt).toBe(record.issuedAt);
+    // A brand-new holder was last seen at issuance, so the idle clock starts
+    // there rather than at zero/undefined.
+    expect(record.lastSeenAt).toBe(now);
+    expect(record.lastSeenAt).toBe(record.issuedAt);
   });
 
   it('rejects persisted reusable bearer claim ids', () => {
@@ -501,7 +501,7 @@ describe('SessionDataSchema claims registry', () => {
           grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
           issuedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
-          lastProgressAt: '2026-05-01T00:00:01.000Z',
+          lastSeenAt: '2026-05-01T00:00:01.000Z',
         },
       },
     });
@@ -527,7 +527,7 @@ describe('SessionDataSchema claims registry', () => {
           grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
           issuedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
-          lastProgressAt: '2026-05-01T00:00:01.000Z',
+          lastSeenAt: '2026-05-01T00:00:01.000Z',
         },
       },
     });
@@ -546,7 +546,7 @@ describe('SessionDataSchema claims registry', () => {
       grants: [{ action: 'mutate-run', runId: CHILD_RUN_ID }],
       issuedAt: '2026-05-01T00:00:00.000Z',
       updatedAt: '2026-05-01T00:00:01.000Z',
-      lastProgressAt: '2026-05-01T00:00:01.000Z',
+      lastSeenAt: '2026-05-01T00:00:01.000Z',
     });
     const result = SessionDataSchema.safeParse({
       defaultStack: [PARENT_RUN_ID],
@@ -569,7 +569,7 @@ describe('SessionDataSchema claims registry', () => {
       grants: [{ action: 'mutate-run', runId }],
       issuedAt: '2026-05-01T00:00:00.000Z',
       updatedAt: '2026-05-01T00:00:01.000Z',
-      lastProgressAt: '2026-05-01T00:00:01.000Z',
+      lastSeenAt: '2026-05-01T00:00:01.000Z',
     });
     const result = SessionDataSchema.safeParse({
       defaultStack: [PARENT_RUN_ID],

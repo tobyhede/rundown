@@ -39,7 +39,7 @@ const terminalNamedRun = { ...namedRun, lifecycle: 'completed' } as RunbookState
 const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
 // Via `makeClaimRecord`, not a literal: this suite only cares about the anchor
 // fields (`controlledRunId`, `grants`) — the rest of the shape is incidental, and
-// spelling it out here is what made `lastProgressAt` becoming required a manual
+// spelling it out here is what made `lastSeenAt` becoming required a manual
 // sweep across every suite that had its own copy (#519).
 const claimRecord = makeClaimRecord({
   claimKey,
