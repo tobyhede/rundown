@@ -614,6 +614,109 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
     expect(session.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
   });
+
+  it('records liveness for an authorized claim-authenticated navigation', async () => {
+    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const before = claim.lastSeenAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.resolveRunNavigation({
+      command: 'goto',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+    });
+
+    expect(outcome.kind).toBe('allowed');
+    const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
+
+  it('does not record navigation liveness for stale, missing, or policy-refused targets', async () => {
+    const { claimId } = await sessionService.issueRunControlClaim(runId);
+    const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
+      runbookPath: 'foreign.md',
+    });
+    await sessionService.pushRunbook(foreign.id);
+    const recordSpy = jest.spyOn(sessionService, 'recordClaimSeen');
+
+    const refused = await seam.resolveRunNavigation({
+      command: 'goto',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'run', runId: foreign.id },
+    });
+    expect(refused.kind).toBe('actor_context_required');
+
+    const staleClaimId = assertClaimId(
+      'rdclm_00000000000000000000000000000000_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+    );
+    const stale = await seam.resolveRunNavigation({
+      command: 'goto',
+      callerEvidence: { kind: 'claim_bearer', claimId: staleClaimId },
+      targetSelector: { kind: 'claim', claimId: staleClaimId },
+    });
+    expect(stale.kind).toBe('stale_claim');
+
+    await sessionService.popRunbook();
+    await sessionService.popRunbook();
+    const none = await seam.resolveRunNavigation({
+      command: 'goto',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'default' },
+    });
+    expect(none.kind).toBe('none');
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
+  it('records neither claim when navigation presenter lacks a grant for another claim target', async () => {
+    const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
+      runbookPath: 'other.md',
+    });
+    const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
+    const { claimId: claimB, claim: recordB } = await sessionService.issueRunControlClaim(
+      stateB.id,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.resolveRunNavigation({
+      command: 'goto',
+      callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+      targetSelector: { kind: 'claim', claimId: claimB },
+    });
+
+    // Navigation policy remains target-derived until #613, so the command is
+    // still allowed. Liveness attribution independently requires presenter A's
+    // authority for B and therefore records neither bearer.
+    expect(outcome.kind).toBe('allowed');
+    const session = await manager.loadSession();
+    expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
+    expect(session.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
+  });
+
+  it('attributes terminal liveness to caller A rather than selected claim B (AC5)', async () => {
+    const linkage = linkageFor(runId, 'a');
+    const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+      runbookPath: 'child.md',
+      parentLinkage: linkage,
+    });
+    const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
+    const { claimId: claimB, claim: recordB } = assertClaimed(
+      await sessionService.claimRunbook(child.id, linkage),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTerminal({
+      command: 'complete',
+      callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+      targetSelector: { kind: 'claim', claimId: claimB },
+    });
+
+    expect(outcome.kind).toBe('applied_claim');
+    const after = await manager.loadSession();
+    expect(Date.parse(after.claims[recordA.claimKey].lastSeenAt)).toBeGreaterThan(
+      Date.parse(recordA.lastSeenAt),
+    );
+    expect(after.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
+  });
 });
 
 // Bounded so every draw is a valid ISO instant, matching the arbitrary in

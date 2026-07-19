@@ -45,8 +45,6 @@ export interface GotoContext {
   manager: RunbookStateManager;
   /** Actor service for managing XState actor lifecycle */
   actorService: RunbookActorService;
-  /** Bearer claim id presented via `--claim-id`, when the caller named one. */
-  claimId?: ClaimId;
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
@@ -164,7 +162,7 @@ export async function buildGotoContext(
     readonly commandStreamOptions?: CommandExecutionStreamOptions;
   } = {},
 ): Promise<BuildGotoContextResult> {
-  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
+  const { manager, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
   const outcome = await seam.resolveRunNavigation({
     command: 'goto',
@@ -182,21 +180,12 @@ export async function buildGotoContext(
     return outcome;
   }
 
-  // Core has verified the presented bearer and authorized its navigation grant.
-  // Observe the holder before CLI target validation: a malformed/missing target
-  // is later than the liveness proof. No SessionLock is held, and recording is
-  // total so it cannot block or mask validation/dispatch (RD-102).
-  if (options.claimId !== undefined) {
-    await sessionService.recordClaimSeen(options.claimId);
-  }
-
   return {
     kind: 'ready',
     ctx: {
       output,
       manager,
       actorService: createCliRunbookActorService(manager),
-      ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
       state: outcome.state,
       steps: [...outcome.steps],
       cwd,

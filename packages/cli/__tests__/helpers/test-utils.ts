@@ -484,16 +484,23 @@ export async function backdateClaimSeen(
 
 /** Frontier entry emitted inside a STEP_ENTERED event for a DELEGATE step. */
 export interface FrontierEntry {
+  /** Qualified id of the delegated substep represented by this frontier entry. */
   id: string;
+  /** Runbook reference delegated to the child. */
   runbook: string;
+  /** Secret delegation token the child presents when claiming the work. */
   token: string;
 }
 
 /** Subset of the `step_entered` event shape the delegation tests care about. */
 export interface StepEnteredEvent {
+  /** Event discriminator; `step_entered` identifies the event this helper accepts. */
   type?: string;
+  /** Delegated work made claimable when the entered step has a DELEGATE frontier. */
   delegateFrontier?: FrontierEntry[];
+  /** Human-readable name of the step that was entered. */
   stepName?: string;
+  /** Execution position of the entered step, including substep or loop coordinates when present. */
   position?: unknown;
 }
 

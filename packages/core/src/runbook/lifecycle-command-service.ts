@@ -1709,6 +1709,17 @@ export class RunbookLifecycleCommandService {
       if (refusal) return refusal;
     }
 
+    const presenterAuthority =
+      input.callerEvidence.kind === 'claim_bearer'
+        ? await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: state,
+            request: { action: 'mutate-run', runId: state.id },
+            intent: 'run-navigation',
+          })
+        : undefined;
+    const presenterAuthorized = presenterAuthority?.kind === 'verified';
+
     const actorContext =
       resolution.kind === 'claim'
         ? verifiedClaimContext({
@@ -1719,18 +1730,9 @@ export class RunbookLifecycleCommandService {
             },
             claim: resolution.claim,
           })
-        : await (async (): Promise<ActorContext> => {
-            if (input.callerEvidence.kind !== 'claim_bearer') {
-              return UNKNOWN_ACTOR_CONTEXT;
-            }
-            const authority = await this.#resolveMutationActorContext({
-              callerEvidence: input.callerEvidence,
-              targetState: state,
-              request: { action: 'mutate-run', runId: state.id },
-              intent: 'run-navigation',
-            });
-            return authority.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT;
-          })();
+        : presenterAuthority?.kind === 'verified'
+          ? presenterAuthority.actorContext
+          : UNKNOWN_ACTOR_CONTEXT;
 
     const policy = resolveCommandIntent({
       actorContext,
@@ -1743,6 +1745,10 @@ export class RunbookLifecycleCommandService {
       // role gate (navigation is exempt from the collection guards); carry no
       // run id (accident barrier).
       return { kind: 'actor_context_required' };
+    }
+
+    if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
     return {
