@@ -1,0 +1,156 @@
+---
+// TEST-ONLY isolated page (not linked from any shipped route). It boots a
+// WebContainer, installs sql.js, and proves the SQLite substrate choice in the
+// REAL WebContainer runtime:
+//   1. WASM sql.js runs and persists a database across three sequential Node
+//      processes sharing the WebContainer filesystem (the demo's process model).
+//   2. Native `node:sqlite` is a stub there (constructed instances have no
+//      working methods), so the native adapter must never be selected.
+//   3. The positive selection marker (`SHELL` = jsh) holds in the runtime, so
+//      `selectStorageRuntime` picks sql.js by a positive signal, not by native
+//      failure.
+// The empirical findings in the design spec are the record; this page is the
+// cheap, reproducible guard that a WebContainer runtime change re-validates.
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SQLite substrate probe</title>
+  </head>
+  <body>
+    <h1>SQLite substrate probe</h1>
+    <pre id="probe-status">booting</pre>
+    <pre id="probe-result"></pre>
+    <pre id="probe-detail"></pre>
+
+    <script type="module">
+      import { WebContainer } from '@webcontainer/api';
+
+      const statusEl = document.getElementById('probe-status');
+      const resultEl = document.getElementById('probe-result');
+      const detailEl = document.getElementById('probe-detail');
+      const setStatus = (s) => (statusEl.textContent = s);
+
+      // A single probe script driven by a phase argument. Persists a sql.js
+      // database to ./db.bin, loaded/exported each phase, mirroring the demo's
+      // one-process-per-command model.
+      const PROBE_JS = `
+import initSqlJs from 'sql.js';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+
+const phase = process.argv[2];
+const DB = './db.bin';
+const SQL = await initSqlJs();
+
+function load() {
+  return existsSync(DB) ? new SQL.Database(readFileSync(DB)) : new SQL.Database();
+}
+function save(db) {
+  writeFileSync(DB, Buffer.from(db.export()));
+}
+
+if (phase === 'create') {
+  const db = load();
+  db.run('CREATE TABLE t (n INTEGER)');
+  db.run('INSERT INTO t VALUES (1)');
+  save(db);
+  console.log('created');
+} else if (phase === 'append') {
+  const db = load();
+  db.run('INSERT INTO t VALUES (10)');
+  save(db);
+  console.log('appended');
+} else if (phase === 'read') {
+  const db = load();
+  const stmt = db.prepare('SELECT sum(n) AS total FROM t');
+  stmt.step();
+  console.log('total=' + stmt.getAsObject().total);
+}
+`;
+
+      // Native-SQLite + marker probe. In WebContainer, node:sqlite is a stub:
+      // constructing a DatabaseSync yields no working methods. Also reports the
+      // SHELL marker used for positive sql.js selection.
+      const NATIVE_JS = `
+let nativeWorks = false;
+try {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE t (x)');
+  nativeWorks = true;
+} catch {
+  nativeWorks = false;
+}
+console.log('native_works=' + nativeWorks);
+console.log('shell=' + (process.env.SHELL ?? ''));
+`;
+
+      async function run(container, cmd, args) {
+        const proc = await container.spawn(cmd, args);
+        let out = '';
+        const reader = proc.output.getReader();
+        (async () => {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            out += value;
+          }
+        })();
+        const code = await proc.exit;
+        return { out, code };
+      }
+
+      try {
+        setStatus('booting webcontainer');
+        const container = await WebContainer.boot();
+
+        setStatus('mounting');
+        await container.mount({
+          'package.json': {
+            file: { contents: JSON.stringify({ name: 'probe', type: 'module' }) },
+          },
+          'probe.mjs': { file: { contents: PROBE_JS } },
+          'native.mjs': { file: { contents: NATIVE_JS } },
+        });
+
+        setStatus('installing sql.js');
+        const install = await run(container, 'npm', ['install', 'sql.js@^1.14.1']);
+        if (install.code !== 0) {
+          throw new Error('npm install sql.js failed: ' + install.out);
+        }
+
+        setStatus('running native + marker probe');
+        const native = await run(container, 'node', ['native.mjs']);
+
+        setStatus('running sql.js persistence probe');
+        await run(container, 'node', ['probe.mjs', 'create']);
+        await run(container, 'node', ['probe.mjs', 'append']);
+        const read = await run(container, 'node', ['probe.mjs', 'read']);
+
+        const persistedTotal = /total=(\d+)/.exec(read.out)?.[1];
+        const nativeWorks = /native_works=(true|false)/.exec(native.out)?.[1];
+        const shell = /shell=(.*)/.exec(native.out)?.[1] ?? '';
+
+        const sqljsPersists = persistedTotal === '11';
+        const nativeStubbed = nativeWorks === 'false';
+        const markerHolds = /(^|\\/)jsh$/.test(shell.trim());
+
+        detailEl.textContent = JSON.stringify(
+          { persistedTotal, nativeWorks, shell, sqljsPersists, nativeStubbed, markerHolds },
+          null,
+          2,
+        );
+
+        resultEl.textContent =
+          sqljsPersists && nativeStubbed && markerHolds ? 'PASS' : 'FAIL';
+        setStatus('done');
+      } catch (err) {
+        resultEl.textContent = 'FAIL';
+        detailEl.textContent = 'error: ' + (err && err.message ? err.message : String(err));
+        setStatus('error');
+      }
+    </script>
+  </body>
+</html>
