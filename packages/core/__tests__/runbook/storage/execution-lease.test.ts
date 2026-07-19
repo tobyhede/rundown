@@ -358,3 +358,40 @@ describe('default contention policy and finite wait', () => {
     expect(Date.now() - start).toBeLessThan(300);
   });
 });
+
+describe('self-abandon to recovery after a mid-effect failure', () => {
+  it('moves this process own effect_started attempt to recovery_pending', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const started = await lease.markEffectStarted(acquired.value);
+    if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
+
+    const result = await lease.abandonToRecovery(started.value, 'effect_boundary_crossed');
+    expect(result.kind).toBe('recovery_required');
+
+    // The run stays owned (blocked) until recovery commits; only the phase moved.
+    const pending = await store.readPendingRecovery(state.id);
+    expect(pending?.epoch).toBe(started.value.epoch);
+    expect(pending?.reason).toBe('effect_boundary_crossed');
+    const row = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :id')
+        .get<{ exec_token: string | null }>({ id: state.id }),
+    );
+    expect(row?.exec_token).not.toBeNull();
+  });
+
+  it('refuses a second abandon of an attempt no longer effect_started', async () => {
+    const { captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const started = await lease.markEffectStarted(acquired.value);
+    if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
+
+    const first = await lease.abandonToRecovery(started.value, 'owner_dead');
+    expect(first.kind).toBe('recovery_required');
+    const second = await lease.abandonToRecovery(started.value, 'owner_dead');
+    expect(second.kind).toBe('execution_in_progress');
+  });
+});

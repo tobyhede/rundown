@@ -43,6 +43,7 @@ import {
   assertLinkageVersion,
   assertExecutionTokenHash,
   verifyExecutionToken,
+  hashExecutionToken,
   type ExecutionToken,
 } from './mutation-result.js';
 
@@ -569,6 +570,75 @@ export class RunbookStore {
         return classificationToResult(classification);
       }
       assertExactlyOneRow(txn.applyStateUpdate(captured, next), captured.runId);
+      return { kind: 'committed', value: next };
+    });
+  }
+
+  /**
+   * Commit an effectful mutation under active execution ownership.
+   *
+   * Re-selects and classifies the commit row against both the captured claim/state
+   * CAS and the presented execution identity (token + epoch). Unlike
+   * {@link saveState}, this path requires the run to be owned by exactly this
+   * attempt in phase `effect_started`; a moved phase surfaces as
+   * `recovery_required`, a reissued attempt as `execution_in_progress`. On `ok`,
+   * one atomic UPDATE writes the new state, clears active ownership, and (via the
+   * `state_json` trigger) bumps `state_version`; the resolved-completion table is
+   * rewritten from `next`, and the owning attempt is marked `committed`.
+   *
+   * Ownership is cleared in the same UPDATE that writes `state_json`, before any
+   * completion/attempt writes, so no trigger-guarded write in this transaction is
+   * refused by the owned-run guard.
+   *
+   * @param captured - Authority captured before the effect.
+   * @param execution - The owning attempt's raw token and epoch.
+   * @param next - The new run state to persist (already reflecting any consumed
+   *   resolved completion).
+   * @returns The committed state, or a typed refusal.
+   */
+  commitOwnedState(
+    captured: CapturedAuthority,
+    execution: ExecutionExpectation,
+    next: RunbookState,
+  ): Promise<GuardedMutationResult<RunbookState>> {
+    const hash = hashExecutionToken(execution.token);
+    return this.transaction((txn) => {
+      const row = txn.commitRow(captured.runId, captured.claimKey);
+      const classification = classifyCommitRow(row, captured, execution);
+      if (classification.kind !== 'ok') {
+        return classificationToResult(classification);
+      }
+      const changes = txn.tx
+        .prepare(
+          `UPDATE runs
+              SET state_json = :stateJson,
+                  lifecycle  = :lifecycle,
+                  updated_at = :updatedAt,
+                  exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
+            WHERE id = :id
+              AND state_version = :stateVersion
+              AND exec_token = :hash
+              AND exec_epoch = :epoch`,
+        )
+        .run({
+          id: captured.runId,
+          stateJson: serializeStateJson(next),
+          lifecycle: next.lifecycle ?? 'running',
+          updatedAt: next.updatedAt,
+          stateVersion: captured.stateVersion,
+          hash,
+          epoch: execution.epoch,
+        }).changes;
+      assertExactlyOneRow(changes, captured.runId);
+      this.writeResolvedCompletions(txn.tx, captured.runId, next.resolvedCompletions);
+      txn.tx
+        .prepare(
+          `UPDATE execution_attempts
+              SET phase = 'committed', finished_at = :now
+            WHERE run_id = :runId AND exec_epoch = :epoch
+              AND exec_token = :hash AND phase = 'effect_started'`,
+        )
+        .run({ now: next.updatedAt, runId: captured.runId, epoch: execution.epoch, hash });
       return { kind: 'committed', value: next };
     });
   }
