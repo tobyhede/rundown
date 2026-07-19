@@ -6,6 +6,7 @@
   "scripts": {
     "worktree": "bash scripts/worktree.sh",
     "build": "pnpm --filter @rundown-org/parser build && pnpm --filter @rundown-org/core build && pnpm --filter @rundown-org/cli build && pnpm --filter @rundown-org/mcp build && pnpm --filter @rundown-org/claude-code-plugin build",
+    "build-link": "bash scripts/build-link.sh",
     "build:site": "pnpm --filter site build",
     "build:all": "pnpm run build && pnpm --filter site build",
     "test": "pnpm run test:unit",
