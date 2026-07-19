@@ -18,6 +18,8 @@ import {
   type LinkageCycleTrip,
   type RunbookState,
   type RunId,
+  type ClaimId,
+  type ClaimSeenRecordResult,
   type ReleaseRunbookResult,
 } from '../../src/runbook/index.js';
 import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
@@ -73,6 +75,9 @@ describe('RunbookCollectionService', () => {
       options?: { readonly retainClaimsAsTerminal?: boolean },
     ) => Promise<ReleaseRunbookResult>
   >;
+  // Held separately from the fake for the same unbound-method reason as
+  // `releaseRunbookSpy` above.
+  let recordClaimSeenSpy: jest.Mock<(claimId: ClaimId) => Promise<ClaimSeenRecordResult>>;
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
   const controlledRunId = assertRunId('rd_22222222222222222222222222222222');
@@ -157,6 +162,11 @@ describe('RunbookCollectionService', () => {
       removedFromDefaultStack: true,
       nextDefaultRunbookId: null,
     }));
+    recordClaimSeenSpy = jest.fn(async () => ({
+      kind: 'recorded' as const,
+      claimKey,
+      lastSeenAt: '2026-06-28T00:00:00.000Z',
+    }));
     sessionService = {
       async getActive() {
         return null;
@@ -195,6 +205,7 @@ describe('RunbookCollectionService', () => {
         return [];
       },
       releaseRunbook: releaseRunbookSpy,
+      recordClaimSeen: recordClaimSeenSpy,
     };
     collectionService = new RunbookCollectionService({
       sessionService,
@@ -309,6 +320,9 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '2',
     });
+    // Authorization established orchestrator liveness before this idempotent
+    // no-op was discovered.
+    expect(recordClaimSeenSpy).toHaveBeenCalledWith(claimId);
   });
 
   it('applies reported delegation outcomes through the state machine', async () => {

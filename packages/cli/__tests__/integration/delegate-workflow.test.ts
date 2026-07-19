@@ -14,6 +14,10 @@ import {
   type TestWorkspace,
   issueRunControlClaim,
   withRunTarget,
+  findFrontierInEvents,
+  setupParentWithChildren,
+  type FrontierEntry,
+  type StepEnteredEvent,
 } from '../helpers/test-utils.js';
 
 /**
@@ -25,43 +29,6 @@ import {
  * `__tests__/commands/collect.test.ts` by exercising the end-to-end CLI
  * pipeline rather than individual commands in isolation.
  */
-
-/** Frontier entry emitted inside a STEP_ENTERED event for a DELEGATE step. */
-interface FrontierEntry {
-  id: string;
-  runbook: string;
-  token: string;
-}
-
-/** Subset of the `step_entered` event shape the tests care about. */
-interface StepEnteredEvent {
-  type?: string;
-  delegateFrontier?: FrontierEntry[];
-  stepName?: string;
-  position?: unknown;
-}
-
-/**
- * Walk a possibly-nested list of parsed JSON values and find the first
- * `step_entered` event that carries a `delegateFrontier`.
- *
- * @param events - Parsed JSON values from stdout
- * @returns The frontier array if found, otherwise undefined
- */
-function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
-  for (const ev of events) {
-    if (Array.isArray(ev)) {
-      const nested = findFrontierInEvents(ev);
-      if (nested) return nested;
-    } else if (ev && typeof ev === 'object') {
-      const e = ev as StepEnteredEvent;
-      if (e.type === 'step_entered' && e.delegateFrontier) {
-        return e.delegateFrontier;
-      }
-    }
-  }
-  return undefined;
-}
 
 function findAllFrontiersInEvents(events: unknown[]): FrontierEntry[][] {
   const frontiers: FrontierEntry[][] = [];
@@ -117,109 +84,8 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     await workspace.cleanup();
   });
 
-  /**
-   * Build a parent runbook with one DELEGATE step (step 1) containing two
-   * H3 substeps, both referencing a child runbook. Step 2 is a terminal
-   * step used to assert that aggregation advanced the parent correctly.
-   *
-   * Step 1 uses `PASS ALL CONTINUE` / `FAIL ANY STOP` so individual-substep
-   * outcomes cleanly drive aggregation behavior.
-   */
-  function buildParentDelegate(): string {
-    return [
-      '# Parent',
-      '',
-      '## 1. Fan-out',
-      '',
-      '- DELEGATE',
-      '- PASS ALL CONTINUE',
-      '- FAIL ANY STOP',
-      '',
-      '### 1.1 Task A',
-      '',
-      '- child.runbook.md',
-      '',
-      '### 1.2 Task B',
-      '',
-      '- child.runbook.md',
-      '',
-      '## 2. Done',
-      '',
-      '- PASS COMPLETE',
-      '- FAIL STOP',
-      '',
-      'Finished.',
-      '',
-      '```bash',
-      'rd echo --result pass',
-      '```',
-      '',
-    ].join('\n');
-  }
-
-  /**
-   * Write both a passing and a failing child runbook plus a parent DELEGATE
-   * runbook to the workspace, then start the parent in prompted mode.
-   *
-   * Returns the parent run id and the two auto-issued tokens. The second
-   * substep (1.2) references `childRef2` so callers can wire a failing child.
-   */
-  async function setupParentWithChildren(childRef2 = 'child.runbook.md'): Promise<{
-    parentRunId: RunId;
-    token1: string;
-    token2: string;
-    startStdout: string;
-  }> {
-    const passChild = createRunbook({
-      title: 'Child Pass',
-      steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
-    });
-    const failChild = createRunbook({
-      title: 'Child Fail',
-      steps: [
-        { title: 'Do work', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result fail' },
-      ],
-    });
-
-    // Both child names need to resolve; write both to every discovery location.
-    await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), passChild);
-    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), passChild);
-    await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), failChild);
-    await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), failChild);
-
-    const parentContent = buildParentDelegate().replace(
-      '### 1.2 Task B\n\n- child.runbook.md',
-      `### 1.2 Task B\n\n- ${childRef2}`,
-    );
-    await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
-
-    const startResult = await runCliInProcess(
-      'run --prompted runbooks/parent.runbook.md',
-      workspace,
-    );
-    expect(startResult.exitCode).toBe(0);
-
-    const parentState = await getActiveState(workspace);
-    expect(parentState).not.toBeNull();
-    const parentRunId = parentState!.id;
-
-    const runEvents = parseConcatenatedJson(startResult.stdout);
-    const frontier = findFrontierInEvents(runEvents) ?? [];
-    const token1 = frontier.find((f) => f.id === '1.1')?.token;
-    const token2 = frontier.find((f) => f.id === '1.2')?.token;
-    expect(token1).toBeDefined();
-    expect(token2).toBeDefined();
-
-    return {
-      parentRunId,
-      token1: token1!,
-      token2: token2!,
-      startStdout: startResult.stdout,
-    };
-  }
-
   it('full happy path: run enters DELEGATE step, auto-issues tokens, claim+pass all substeps, collect fires CONTINUE', async () => {
-    const { parentRunId, token1, token2, startStdout } = await setupParentWithChildren();
+    const { parentRunId, token1, token2, startStdout } = await setupParentWithChildren(workspace);
 
     // Verify STEP_ENTERED event carried delegateFrontier with exactly 2 entries.
     const runEvents = parseConcatenatedJson(startStdout);
@@ -270,7 +136,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
 
   it("delegate --claim-id anchors on the claim's controlled run when it is not the active default (#586)", async () => {
     // Parent run A is activated with auto-issued 1.1/1.2 delegations.
-    const { parentRunId } = await setupParentWithChildren();
+    const { parentRunId } = await setupParentWithChildren(workspace);
 
     // Activate a DIFFERENT run so A is controlled-but-not-active: getActive() now
     // returns this run, not A. Start it `--prompted` so it ENTERS step 1 and stays
@@ -308,7 +174,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
   }, 20_000);
 
   it('run-targeted rd collect fails fast when persisted state.step no longer resolves to a runbook step', async () => {
-    const { parentRunId } = await setupParentWithChildren();
+    const { parentRunId } = await setupParentWithChildren(workspace);
 
     // Corrupt the persisted cursor so it names a step absent from the loaded
     // runbook — simulating stale state (e.g. the runbook edited out from under
@@ -331,7 +197,10 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     // Parent: step 1 has FAIL ANY STOP aggregation. Second substep is wired
     // to a failing child runbook, so after both claim+fail/pass complete the
     // parent aggregates to STOP.
-    const { parentRunId, token1, token2 } = await setupParentWithChildren('child-fail.runbook.md');
+    const { parentRunId, token1, token2 } = await setupParentWithChildren(
+      workspace,
+      'child-fail.runbook.md',
+    );
 
     // First subagent passes. Bare `pass` would target the parent under
     // reverted Route A — thread --claim-id to land on the child.
@@ -373,7 +242,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
   }, 20_000);
 
   it('rd collect reports the applied aggregation summary and advances the parent', async () => {
-    const { parentRunId, token1, token2 } = await setupParentWithChildren();
+    const { parentRunId, token1, token2 } = await setupParentWithChildren(workspace);
 
     // Claim + pass both subagents (report-only). `rd collect` is the command
     // that applies the parent aggregation, so it must emit the same transition

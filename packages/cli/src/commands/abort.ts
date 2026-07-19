@@ -159,6 +159,16 @@ export function registerAbortCommand(program: Command): void {
                 }
               }
 
+              // Bearer verification and the parent abort grant succeeded. Record
+              // the presented orchestrator now, before the pure cancellation and
+              // persistence: even an already-cancelled no-op proves liveness.
+              // DelegationLock is held, but SessionLock is not; recordClaimSeen
+              // self-acquires that distinct lock and is total, so a failed mark
+              // cannot block or mask the abort outcome (RD-102).
+              if (claimTarget.claimId !== undefined) {
+                await sessionService.recordClaimSeen(claimTarget.claimId);
+              }
+
               // 5. Call abortDelegation() pure function (frame-scoped)
               abortResult = abortDelegation({
                 parentState: freshParent,

@@ -30,7 +30,9 @@ KUBECONFIG
 NEXTX
 NOPASSWD
 NOTVALID
+offsetless
 OSTYPE
+stashable
 Subcategorize
 TOCTOU
 Turborepo

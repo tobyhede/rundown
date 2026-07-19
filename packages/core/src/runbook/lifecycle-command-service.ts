@@ -604,7 +604,10 @@ export type LifecycleTerminalOutcome =
       readonly requestedCommand: TerminalCommandName;
     }
   | {
-      /** The resolved bare-cascade root was already terminal; the chain was released. */
+      /**
+       * The resolved bare-cascade root was already terminal; chain cleanup occurs only for an
+       * ambient/no-bearer request or a bearer authorized for the resolved chain.
+       */
       readonly kind: 'already_terminal';
       readonly targetRunId: RunId;
       readonly lifecycle: 'completed' | 'stopped';
@@ -981,6 +984,14 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+
+    // Exact bearer/grant authorization is the liveness proof. Observe it before
+    // command policy can refuse for collection state and before any validation,
+    // no-op resolution, or persistence. No SessionLock is held here.
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     const policy = resolveCommandIntent({
       actorContext: authority.actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
@@ -1275,6 +1286,14 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+
+    // Retry bearer/grant authorization independently proves liveness before
+    // command policy, validation, or persistence. The total recorder cannot
+    // prevent or mask any later refusal/outcome (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
     const policy = resolveCommandIntent({
       actorContext: authority.actorContext,
       intent: {
@@ -1427,6 +1446,7 @@ export class RunbookLifecycleCommandService {
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
+    let presenterAuthorized = false;
     if (input.callerEvidence.kind === 'claim_bearer') {
       const target = await resolveCommandTarget(sessionService, {
         ...(claimId ? { claimId } : {}),
@@ -1443,6 +1463,13 @@ export class RunbookLifecycleCommandService {
             },
             claim: target.claim,
           });
+          const presenterAuthority = await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: target.state,
+            request: { action: 'mutate-run', runId: target.state.id },
+            intent: 'delegating-run-advance',
+          });
+          presenterAuthorized = presenterAuthority.kind === 'verified';
           break;
         }
         case 'default':
@@ -1464,6 +1491,7 @@ export class RunbookLifecycleCommandService {
             return { kind: 'actor_context_required' };
           }
           actorContext = authority.actorContext;
+          presenterAuthorized = true;
           break;
         }
         case 'none':
@@ -1494,6 +1522,15 @@ export class RunbookLifecycleCommandService {
       targeted,
       actorContext,
     });
+
+    // Target resolution runs transition policy after bearer/grant authorization.
+    // An independently authorized presenter has been seen alive at this point,
+    // regardless of whether policy refuses the transition or dispatch later
+    // fails. The recorder is total and self-locking, and no SessionLock is held
+    // on this path, so failure cannot block or mask the mutation (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
 
     const checked = this.#asRefusal(resolution);
     if (!checked.ready) return checked.outcome;
@@ -1672,6 +1709,17 @@ export class RunbookLifecycleCommandService {
       if (refusal) return refusal;
     }
 
+    const presenterAuthority =
+      input.callerEvidence.kind === 'claim_bearer'
+        ? await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: state,
+            request: { action: 'mutate-run', runId: state.id },
+            intent: 'run-navigation',
+          })
+        : undefined;
+    const presenterAuthorized = presenterAuthority?.kind === 'verified';
+
     const actorContext =
       resolution.kind === 'claim'
         ? verifiedClaimContext({
@@ -1682,18 +1730,9 @@ export class RunbookLifecycleCommandService {
             },
             claim: resolution.claim,
           })
-        : await (async (): Promise<ActorContext> => {
-            if (input.callerEvidence.kind !== 'claim_bearer') {
-              return UNKNOWN_ACTOR_CONTEXT;
-            }
-            const authority = await this.#resolveMutationActorContext({
-              callerEvidence: input.callerEvidence,
-              targetState: state,
-              request: { action: 'mutate-run', runId: state.id },
-              intent: 'run-navigation',
-            });
-            return authority.kind === 'verified' ? authority.actorContext : UNKNOWN_ACTOR_CONTEXT;
-          })();
+        : presenterAuthority?.kind === 'verified'
+          ? presenterAuthority.actorContext
+          : UNKNOWN_ACTOR_CONTEXT;
 
     const policy = resolveCommandIntent({
       actorContext,
@@ -1706,6 +1745,10 @@ export class RunbookLifecycleCommandService {
       // role gate (navigation is exempt from the collection guards); carry no
       // run id (accident barrier).
       return { kind: 'actor_context_required' };
+    }
+
+    if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
     return {
@@ -1750,6 +1793,11 @@ export class RunbookLifecycleCommandService {
       case 'terminal_claim_confirmed':
         // Idempotent no-op: child already terminal. Still release with retain so a
         // later --claim-id can confirm/conflict again (item 4, second site).
+        // The resolver verified and authorized the bearer before confirming the
+        // prior terminal outcome, so the presentation still proves liveness.
+        if (input.callerEvidence.kind === 'claim_bearer') {
+          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+        }
         await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
         return {
           kind: 'terminal_claim_confirmed',
@@ -1758,6 +1806,11 @@ export class RunbookLifecycleCommandService {
           command: resolution.command,
         };
       case 'terminal_claim_conflict':
+        // A confirmed terminal conflict is also post-authorization evidence from
+        // the claim's holder, despite refusing the requested terminal result.
+        if (input.callerEvidence.kind === 'claim_bearer') {
+          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+        }
         await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
         return {
           kind: 'terminal_claim_conflict',
@@ -1791,6 +1844,13 @@ export class RunbookLifecycleCommandService {
     const isRunControlClaim = resolution.claim.delegation === undefined;
     if (isRunControlClaim) {
       return this.#driveTerminalBare(input, state);
+    }
+
+    // `resolveTerminalTarget` verified the bearer and its mutate-run grant.
+    // Observe that holder before dispatch; SessionLock is not held here and the
+    // total recorder cannot mask a later terminal failure (RD-102).
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
     const steps = await this.#deps.loadSteps(state);
@@ -1887,18 +1947,6 @@ export class RunbookLifecycleCommandService {
       }
     }
 
-    if (plan.targetState.lifecycle !== 'running') {
-      // Resolved but already terminal: release the chain (explicit teardown) and
-      // report the no-op. The root is terminal, so retaining vs deleting the
-      // tombstone is moot — keep the existing bulk release.
-      await sessionService.releaseRunbooks(plan.releaseRunIds);
-      return {
-        kind: 'already_terminal',
-        targetRunId: plan.targetState.id,
-        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
-      };
-    }
-
     // Gate the resolved ROOT before forcing. A run-control claim for an inline
     // descendant may also force the inline chain it is currently executing; that
     // is the same active inline execution, not authority over an unrelated run.
@@ -1926,6 +1974,29 @@ export class RunbookLifecycleCommandService {
             intent: 'terminal-run-force',
           })
         : undefined;
+
+    const presenterAuthorized = descendantAuthority || authority?.kind === 'verified';
+    // Bearer/grant authorization is complete before command policy evaluates
+    // collection state. Record now so an authorized policy refusal or no-op still
+    // observes the holder. No SessionLock is held; the total write is non-masking.
+    if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
+      await sessionService.recordClaimSeen(input.callerEvidence.claimId);
+    }
+
+    if (plan.targetState.lifecycle !== 'running') {
+      // Preserve the pre-existing already-terminal outcome for every caller. Clean
+      // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
+      // bearer receives the same outcome without mutating the resolved chain.
+      if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
+        await sessionService.releaseRunbooks(plan.releaseRunIds);
+      }
+      return {
+        kind: 'already_terminal',
+        targetRunId: plan.targetState.id,
+        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      };
+    }
+
     if (authority?.kind === 'refused') {
       return authority.policy.kind === 'claim_grant_required' &&
         input.callerEvidence.kind === 'claim_bearer'

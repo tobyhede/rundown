@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import {
   mkdir,
   mkdtemp,
@@ -29,7 +30,14 @@ import {
   RunbookStateManager,
   SessionService,
 } from '@rundown-org/core';
-import type { ClaimId, FrameKey, RunbookState } from '@rundown-org/core';
+import type {
+  ClaimId,
+  ClaimLookupKey,
+  ClaimRecord,
+  FrameKey,
+  RunId,
+  RunbookState,
+} from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -229,7 +237,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
   stashed: string | null;
   stacks: Record<string, string[]>;
   defaultStack: string[];
-  claims: Record<string, Record<string, unknown>>;
+  claims: Record<string, ClaimRecord>;
 }> {
   try {
     const content = await readFile(workspace.sessionPath(), 'utf-8');
@@ -239,7 +247,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
     const claims =
       session.claims && typeof session.claims === 'object'
-        ? (session.claims as Record<string, Record<string, unknown>>)
+        ? (session.claims as Record<string, ClaimRecord>)
         : {};
 
     // Active runbook is the top of the default stack
@@ -278,7 +286,10 @@ export async function writeSession(
     stashed?: string | null;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
-    claims?: Record<string, Record<string, unknown>>;
+    // Matches `readSession`'s `claims` so a read→write round-trip type-checks.
+    // A test that fabricates a partial claim writes an invalid session anyway;
+    // the narrower type says so at compile time instead of at load time.
+    claims?: Record<string, ClaimRecord>;
   },
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};
@@ -436,6 +447,186 @@ export async function issueRunControlClaim(
   const sessionService = new SessionService(manager);
   const { claimId } = await sessionService.issueRunControlClaim(runId);
   return claimId;
+}
+
+/**
+ * Rewind a claim's `lastSeenAt` so a test can reach the idle threshold
+ * without waiting an hour.
+ *
+ * @param workspace - Test workspace whose session file is rewritten.
+ * @param claimKey - Non-secret claim lookup key. NEVER a bearer (`rdclm_…`) —
+ *   convert with `claimKeyFromBearer` at the call site if that is what you hold.
+ * @param iso - Timestamp to write, or any string when testing the corrupt path.
+ * @throws If `claimKey` is absent from the session — see below.
+ */
+export async function backdateClaimSeen(
+  workspace: TestWorkspace,
+  claimKey: ClaimLookupKey,
+  iso: string,
+): Promise<void> {
+  const raw = JSON.parse(await readFile(workspace.sessionPath(), 'utf-8')) as {
+    claims?: Record<string, { lastSeenAt: string }>;
+  };
+  const claim = raw.claims?.[claimKey];
+  // THROW, never no-op. A helper that silently does nothing when it cannot find
+  // the key would make EVERY idle assertion in Tasks 5, 6 and 7 vacuously green —
+  // the single highest-leverage way this feature's test suite could lie to us.
+  if (claim === undefined) {
+    throw new Error(
+      `backdateClaimSeen: no claim '${claimKey}' in session. ` +
+        `Did you pass a bearer (rdclm_…) instead of a lookup key (rdclk_…)? ` +
+        `Convert with claimKeyFromBearer().`,
+    );
+  }
+  claim.lastSeenAt = iso;
+  await writeFile(workspace.sessionPath(), JSON.stringify(raw, null, 2), 'utf-8');
+}
+
+/** Frontier entry emitted inside a STEP_ENTERED event for a DELEGATE step. */
+export interface FrontierEntry {
+  /** Qualified id of the delegated substep represented by this frontier entry. */
+  id: string;
+  /** Runbook reference delegated to the child. */
+  runbook: string;
+  /** Secret delegation token the child presents when claiming the work. */
+  token: string;
+}
+
+/** Subset of the `step_entered` event shape the delegation tests care about. */
+export interface StepEnteredEvent {
+  /** Event discriminator; `step_entered` identifies the event this helper accepts. */
+  type?: string;
+  /** Delegated work made claimable when the entered step has a DELEGATE frontier. */
+  delegateFrontier?: FrontierEntry[];
+  /** Human-readable name of the step that was entered. */
+  stepName?: string;
+  /** Execution position of the entered step, including substep or loop coordinates when present. */
+  position?: unknown;
+}
+
+/**
+ * Walk a possibly-nested list of parsed JSON values and find the first
+ * `step_entered` event that carries a `delegateFrontier`.
+ *
+ * @param events - Parsed JSON values from stdout
+ * @returns The frontier array if found, otherwise undefined
+ */
+export function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+  for (const ev of events) {
+    if (Array.isArray(ev)) {
+      const nested = findFrontierInEvents(ev);
+      if (nested) return nested;
+    } else if (ev && typeof ev === 'object') {
+      const e = ev as StepEnteredEvent;
+      if (e.type === 'step_entered' && e.delegateFrontier) {
+        return e.delegateFrontier;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Build a parent runbook with one DELEGATE step (step 1) containing two
+ * H3 substeps, both referencing a child runbook. Step 2 is a terminal
+ * step used to assert that aggregation advanced the parent correctly.
+ *
+ * Step 1 uses `PASS ALL CONTINUE` / `FAIL ANY STOP` so individual-substep
+ * outcomes cleanly drive aggregation behavior.
+ */
+function buildParentDelegate(): string {
+  return [
+    '# Parent',
+    '',
+    '## 1. Fan-out',
+    '',
+    '- DELEGATE',
+    '- PASS ALL CONTINUE',
+    '- FAIL ANY STOP',
+    '',
+    '### 1.1 Task A',
+    '',
+    '- child.runbook.md',
+    '',
+    '### 1.2 Task B',
+    '',
+    '- child.runbook.md',
+    '',
+    '## 2. Done',
+    '',
+    '- PASS COMPLETE',
+    '- FAIL STOP',
+    '',
+    'Finished.',
+    '',
+    '```bash',
+    'rd echo --result pass',
+    '```',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Write both a passing and a failing child runbook plus a parent DELEGATE
+ * runbook to the workspace, then start the parent in prompted mode.
+ *
+ * Returns the parent run id and the two auto-issued tokens. The second
+ * substep (1.2) references `childRef2` so callers can wire a failing child.
+ *
+ * @param workspace - Test workspace to write the runbooks into and run against.
+ * @param childRef2 - Runbook reference for substep 1.2.
+ * @returns The parent run id, both auto-issued tokens, and the start stdout.
+ */
+export async function setupParentWithChildren(
+  workspace: TestWorkspace,
+  childRef2 = 'child.runbook.md',
+): Promise<{
+  parentRunId: RunId;
+  token1: string;
+  token2: string;
+  startStdout: string;
+}> {
+  const passChild = createRunbook({
+    title: 'Child Pass',
+    steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+  });
+  const failChild = createRunbook({
+    title: 'Child Fail',
+    steps: [{ title: 'Do work', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result fail' }],
+  });
+
+  // Both child names need to resolve; write both to every discovery location.
+  await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), passChild);
+  await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), passChild);
+  await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), failChild);
+  await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), failChild);
+
+  const parentContent = buildParentDelegate().replace(
+    '### 1.2 Task B\n\n- child.runbook.md',
+    `### 1.2 Task B\n\n- ${childRef2}`,
+  );
+  await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
+
+  const startResult = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+  expect(startResult.exitCode).toBe(0);
+
+  const parentState = await getActiveState(workspace);
+  expect(parentState).not.toBeNull();
+  const parentRunId = parentState!.id;
+
+  const runEvents = parseConcatenatedJson(startResult.stdout);
+  const frontier = findFrontierInEvents(runEvents) ?? [];
+  const token1 = frontier.find((f) => f.id === '1.1')?.token;
+  const token2 = frontier.find((f) => f.id === '1.2')?.token;
+  expect(token1).toBeDefined();
+  expect(token2).toBeDefined();
+
+  return {
+    parentRunId,
+    token1: token1!,
+    token2: token2!,
+    startStdout: startResult.stdout,
+  };
 }
 
 /**

@@ -148,6 +148,8 @@ interface Run {
   readonly released: readonly RunId[];
   /** Every `childState.id` passed to recordChildCompletion, in call order. */
   readonly recorded: readonly RunId[];
+  /** Number of times the `onLinkageCycle` sink fired during the walk. */
+  readonly sinkCalls: number;
 }
 
 /**
@@ -186,6 +188,7 @@ async function walk(
   const advanced: RunId[] = [];
   const released: RunId[] = [];
   const recorded: RunId[] = [];
+  let sinkCalls = 0;
   const index = new Map<string, number>(graph.map((_, i) => [nodeRunId(i), i]));
   const deps: PropagateTerminalChildUpwardDeps = {
     manager: {
@@ -210,14 +213,16 @@ async function walk(
       advanced.push(parentRunId);
       return { status };
     },
-    onLinkageCycle: () => {},
+    onLinkageCycle: () => {
+      sinkCalls += 1;
+    },
   };
   const result = await propagateTerminalChildUpward(
     deps,
     makeState(nodeRunId(0), graph[0] ?? null, kindAt(kinds, 0)),
     'pass',
   );
-  return { result, advanced, released, recorded };
+  return { result, advanced, released, recorded, sinkCalls };
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +359,24 @@ describe('inline propagation guard — properties (#602)', () => {
         expect(result).not.toBe('handled');
       }),
       { numRuns: 200 },
+    );
+  });
+
+  it('the onLinkageCycle sink fires exactly once iff the walk refuses a cycle, and never otherwise', async () => {
+    // The sink is the seam's FOURTH side effect and a required dependency, yet the
+    // other properties assert only advance/release/record — the sink was stubbed to
+    // a no-op and never observed over arbitrary graphs. Its whole justification
+    // (a fail-closed refusal must name the offending run, never a bare 'blocked')
+    // rests on it firing precisely when, and only when, the walk returns
+    // 'linkage-cycle'. This binds that iff over the full graph/status/kind space, so
+    // a regression that dropped, double-fired, or misplaced the sink on some shape
+    // the example tests don't enumerate cannot pass unseen.
+    await fc.assert(
+      fc.asyncProperty(graphArb, advanceStatusArb, linkageKindArb, async (graph, status, kind) => {
+        const { result, sinkCalls } = await walk(graph, status, kind);
+        expect(sinkCalls).toBe(result === 'linkage-cycle' ? 1 : 0);
+      }),
+      { numRuns: 300 },
     );
   });
 

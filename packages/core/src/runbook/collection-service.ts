@@ -1,7 +1,7 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { verifiedClaimContext, type CallerEvidence } from './actor-context.js';
 import { claimCanReportDelegationResult } from './claim-id.js';
-import type { ClaimRecord, VerifiedClaim } from './claim-id.js';
+import type { ClaimId, ClaimRecord, VerifiedClaim } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -28,7 +28,7 @@ import {
   SENTINEL_ENTRY,
 } from './targeting.js';
 import { countNumberedSteps } from './step-utils.js';
-import type { ReleaseRunbookResult } from './session-service.js';
+import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
@@ -53,6 +53,15 @@ export interface CollectionSessionService extends CommandTargetReader {
     runbookId: RunId,
     options?: { readonly retainClaimsAsTerminal?: boolean },
   ): Promise<ReleaseRunbookResult>;
+
+  /**
+   * Record best-effort liveness for a presented bearer claim after collection
+   * authorization and before the operation. Never throws (#519).
+   *
+   * @param claimId - Bearer claim id the caller presented.
+   * @returns Typed recording outcome, not consumed by the collection seam.
+   */
+  recordClaimSeen(claimId: ClaimId): Promise<ClaimSeenRecordResult>;
 }
 
 /** Dependencies used by the core collection operation. */
@@ -285,6 +294,12 @@ export async function collectDelegationOutcomes(
   });
   if (policy.kind !== 'allowed') return policy;
 
+  // The orchestrator's presented bearer and collect grant are now authorized.
+  // Observe that holder before validation, no-op detection, or dispatch: each is
+  // later than the liveness proof. No SessionLock is held, and the total recorder
+  // cannot block or mask the collection outcome (RD-102).
+  await recordPresenterLiveness(input);
+
   const stepName = input.stepName ?? input.targetState.step;
   const step = findCollectionStep(input.steps, stepName);
 
@@ -443,6 +458,23 @@ async function projectAndConsumeReEntryFrontier(
   }
 
   return { status: 'projected', observations };
+}
+
+/**
+ * Record the ORCHESTRATOR's own presented bearer after authorization and NEVER
+ * the children's: a parent cannot vouch for a child's liveness (#519 AC5).
+ * Best-effort and total, so failure cannot mask the later collection (RD-102).
+ *
+ * Called outside any session-lock scope: `recordClaimSeen` self-acquires the
+ * session lock, which is not reentrant.
+ *
+ * @param input - The collect operation input carrying the caller's evidence.
+ */
+async function recordPresenterLiveness(
+  input: CollectDelegationOutcomesOperationInput,
+): Promise<void> {
+  if (input.callerEvidence.kind !== 'claim_bearer') return;
+  await input.sessionService.recordClaimSeen(input.callerEvidence.claimId);
 }
 
 async function applyCollection(

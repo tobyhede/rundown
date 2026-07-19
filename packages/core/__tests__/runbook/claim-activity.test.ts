@@ -208,6 +208,32 @@ describe('claimActivity (#519)', () => {
     }
   });
 
+  it('rejects OUT-OF-RANGE time-of-day and offset fields rather than normalizing them (AC6)', () => {
+    // Distinct from the calendar-invalid case above, which covers only impossible
+    // month/day. These pin the time-of-day and offset field checks, and the split
+    // between them is load-bearing, not decorative:
+    //
+    //  - `2026-07-16T24:00:00.000Z` is the one that MATTERS. `Date.parse` does NOT
+    //    reject hour 24 — verified on Node 24, it NORMALIZES it to next-day
+    //    midnight and returns a valid instant. So the `hour > 23` field check is
+    //    the SOLE guard against this AC6 fail-open; without it a corrupt hour reads
+    //    as a real instant a day away and a dead claim can read not-idle. Drop the
+    //    clause and only this assertion goes red.
+    //  - `:00:00:60` (leap second) and the out-of-range offsets are already caught
+    //    by the trailing `Number.isNaN(Date.parse(...))` gate today, so their field
+    //    checks are defense-in-depth. Pinned here so the layered rejection is
+    //    intentional rather than incidental to `Date.parse`'s current behaviour.
+    for (const corrupt of [
+      '2026-07-16T24:00:00.000Z', // hour 24 — the load-bearing case
+      '2026-07-16T00:60:00.000Z', // minute 60
+      '2026-07-16T00:00:60.000Z', // second 60 (leap second)
+      '2026-07-16T00:00:00.000+00:60', // offset minute 60
+      '2026-07-16T00:00:00.000+99:00', // offset hour 99
+    ]) {
+      expect(() => claimActivity(claimAt(corrupt), new Date(), ONE_HOUR)).toThrow(RundownError);
+    }
+  });
+
   it('rejects a lastSeenAt with NO offset, which would be host-timezone dependent (AC6)', () => {
     // `Date.parse('2026-07-16T00:00:00.000')` (no Z, no offset) is interpreted in
     // the HOST timezone per ECMA-262, so the same persisted record would yield a

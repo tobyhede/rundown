@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
+  backdateClaimSeen,
   createTestWorkspace,
+  readSession,
   issueRunControlClaim,
   runCliInProcess,
   getActiveState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { claimKeyFromBearer } from '@rundown-org/core';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/goto.ts`
@@ -141,6 +144,24 @@ describe('goto command', () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('STEP_NOT_FOUND');
+    });
+
+    it('records an authorized bearer before refusing an invalid goto target', async () => {
+      await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+      const claimId = await issueRunControlClaim(workspace, active!.id);
+      const claimKey = claimKeyFromBearer(claimId);
+      const epoch = '2020-01-01T00:00:00.000Z';
+      await backdateClaimSeen(workspace, claimKey, epoch);
+
+      const result = await runCliInProcess(['goto', '999', '--claim-id', claimId], workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain('STEP_NOT_FOUND');
+      expect(
+        Date.parse((await readSession(workspace)).claims[claimKey].lastSeenAt),
+      ).toBeGreaterThan(Date.parse(epoch));
     });
 
     it('requires step number argument', async () => {

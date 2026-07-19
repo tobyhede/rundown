@@ -14,7 +14,6 @@ import {
   deriveGotoActionBlock,
   type RunbookStateManager,
   type RunbookActorService,
-  type SessionService,
   type LifecycleNavigationOutcome,
   type ResolvedStep,
   type StepId,
@@ -46,8 +45,6 @@ export interface GotoContext {
   manager: RunbookStateManager;
   /** Actor service for managing XState actor lifecycle */
   actorService: RunbookActorService;
-  /** Session service for tracking active/stashed runbooks */
-  sessionService: SessionService;
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
@@ -165,7 +162,7 @@ export async function buildGotoContext(
     readonly commandStreamOptions?: CommandExecutionStreamOptions;
   } = {},
 ): Promise<BuildGotoContextResult> {
-  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
+  const { manager, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
   const outcome = await seam.resolveRunNavigation({
     command: 'goto',
@@ -189,7 +186,6 @@ export async function buildGotoContext(
       output,
       manager,
       actorService: createCliRunbookActorService(manager),
-      sessionService,
       state: outcome.state,
       steps: [...outcome.steps],
       cwd,

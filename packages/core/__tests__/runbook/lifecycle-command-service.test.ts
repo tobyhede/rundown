@@ -405,6 +405,34 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.policy.kind).toBe('actor_context_required');
     });
 
+    it('does not record when the presented bearer lacks the delegation grant', async () => {
+      const { seam: localSeam, manager: mgr } = await startSeamOnDelegateStep();
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      session.claims[claimKey] = {
+        ...session.claims[claimKey],
+        grants: session.claims[claimKey].grants.filter(
+          (grant) => grant.action !== 'delegate-from-run',
+        ),
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
+      };
+      await mgr.saveSession(session);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: evidence,
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('claim_grant_required');
+      expect((await mgr.loadSession()).claims[claimKey].lastSeenAt).toBe(
+        '2020-01-01T00:00:00.000Z',
+      );
+    });
+
     it('issues a bare delegation and persists the new substep state', async () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
 
@@ -555,10 +583,19 @@ describe('RunbookLifecycleCommandService', () => {
     it('refuses a bare issue when the run has pending uncollected outcomes', async () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamWithCollectionPending();
       const before = await mgr.load(state.id);
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      session.claims[claimKey] = {
+        ...session.claims[claimKey],
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
+      };
+      await mgr.saveSession(session);
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
-        callerEvidence: runControlEvidence(runId),
+        callerEvidence: evidence,
       });
 
       expect(outcome.kind).toBe('refused');
@@ -567,6 +604,9 @@ describe('RunbookLifecycleCommandService', () => {
 
       const after = await mgr.load(state.id);
       expect(after?.substepStates).toEqual(before?.substepStates); // no mutation
+      expect(Date.parse((await mgr.loadSession()).claims[claimKey].lastSeenAt)).toBeGreaterThan(
+        Date.parse('2020-01-01T00:00:00.000Z'),
+      );
     });
 
     it('refuses a positional confirmation (requestedRunbook, no --step) when collection is pending', async () => {
@@ -3335,9 +3375,12 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = buildSpanSeam(terminalSteps);
       await activate(substepRunning());
 
-      // Pass-through prototype spies: jest records a global invocation order,
-      // which pins that the span's CompletionLock release happened strictly
-      // before the terminal release's SessionLock acquire.
+      // Pass-through prototype spies: jest records a global invocation order.
+      // The first SessionLock acquisition is the pre-dispatch liveness mark;
+      // the last is terminal release. Pin both sides of CompletionLock so the
+      // recorder cannot become reentrant and terminal release cannot restore
+      // the ABBA inversion.
+      const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
       const sessionAcquireSpy = jest.spyOn(SessionLock.prototype, 'acquire');
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
@@ -3348,12 +3391,18 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('done');
       expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
-      // The span's lock closed BEFORE the terminal release took the SessionLock.
+      // Recording takes SessionLock before the completion span; terminal release
+      // takes it only after that span closes.
+      const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
       const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
-      const sessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
+      const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
+      const releaseSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder.at(-1);
+      expect(completionAcquire).toBeDefined();
       expect(completionRelease).toBeDefined();
-      expect(sessionAcquire).toBeDefined();
-      expect(sessionAcquire).toBeGreaterThan(completionRelease);
+      expect(recordingSessionAcquire).toBeDefined();
+      expect(releaseSessionAcquire).toBeDefined();
+      expect(recordingSessionAcquire).toBeLessThan(completionAcquire);
+      expect(releaseSessionAcquire).toBeGreaterThan(completionRelease);
     });
 
     it('reaches terminal without a lock timeout while a bare guarded write contends', async () => {
@@ -3641,6 +3690,7 @@ describe('RunbookLifecycleCommandService', () => {
       const claim = session.claims[claimKey];
       session.claims[claimKey] = {
         ...claim,
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
         grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
       };
       await manager.saveSession(session);
@@ -3660,6 +3710,9 @@ describe('RunbookLifecycleCommandService', () => {
         claimId: claimed.claimId,
         runId: claimChildRunId,
       });
+      expect((await manager.loadSession()).claims[claimKey].lastSeenAt).toBe(
+        '2020-01-01T00:00:00.000Z',
+      );
     });
 
     it('returns claim_grant_required when a run-targeted bearer lacks mutate-run grant', async () => {
@@ -4075,12 +4128,24 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
+        const evidence = runControlEvidence(ROOT);
+        if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+        const claimKey = claimKeyFromBearer(evidence.claimId);
+        const session = await manager.loadSession();
+        session.claims[claimKey] = {
+          ...session.claims[claimKey],
+          lastSeenAt: '2020-01-01T00:00:00.000Z',
+        };
+        await manager.saveSession(session);
         const out = await seam.runTerminal({
           command: 'stop',
-          callerEvidence: runControlEvidence(ROOT),
+          callerEvidence: evidence,
           targetSelector: { kind: 'default' },
         });
         expect(out.kind).toBe('delegation_collection_pending');
+        expect(
+          Date.parse((await manager.loadSession()).claims[claimKey].lastSeenAt),
+        ).toBeGreaterThan(Date.parse('2020-01-01T00:00:00.000Z'));
       });
 
       it('run-control claim terminal refuses when the resolved root is collection pending', async () => {
@@ -4112,6 +4177,7 @@ describe('RunbookLifecycleCommandService', () => {
         session.claims[claimKey] = {
           ...claim,
           grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
+          lastSeenAt: '2020-01-01T00:00:00.000Z',
         };
         await manager.saveSession(session);
         installResolvedPlan(root, [root]);
@@ -4127,6 +4193,9 @@ describe('RunbookLifecycleCommandService', () => {
           claimId: evidence.claimId,
           runId: ROOT,
         });
+        expect((await manager.loadSession()).claims[claimKey].lastSeenAt).toBe(
+          '2020-01-01T00:00:00.000Z',
+        );
       });
 
       it('refuses a bare direct-CLI stop on a collection-pending (delegating) root — ambient trust removed (#460)', async () => {
@@ -4237,6 +4306,29 @@ describe('RunbookLifecycleCommandService', () => {
           lifecycle: 'completed',
         });
         expect(releaseSpy).toHaveBeenCalled();
+      });
+
+      it('preserves already_terminal without releasing for a foreign run-control bearer', async () => {
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(root);
+        await sessionService.pushRunbook(ROOT);
+        await issueRunControlClaimFor(CHILD);
+        installResolvedPlan(root, [root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(CHILD),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+        });
+        expect((await sessionService.getActive())?.id).toBe(ROOT);
+        expect(releaseSpy).not.toHaveBeenCalled();
       });
 
       it('bare stop maps an already-stopped resolved root to already_terminal (stopped)', async () => {
