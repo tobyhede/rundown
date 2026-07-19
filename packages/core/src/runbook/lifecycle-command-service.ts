@@ -604,7 +604,10 @@ export type LifecycleTerminalOutcome =
       readonly requestedCommand: TerminalCommandName;
     }
   | {
-      /** The resolved bare-cascade root was already terminal; the chain was released. */
+      /**
+       * The resolved bare-cascade root was already terminal; chain cleanup occurs only for an
+       * ambient/no-bearer request or a bearer authorized for the resolved chain.
+       */
       readonly kind: 'already_terminal';
       readonly targetRunId: RunId;
       readonly lifecycle: 'completed' | 'stopped';
@@ -1443,6 +1446,7 @@ export class RunbookLifecycleCommandService {
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
+    let presenterAuthorized = false;
     if (input.callerEvidence.kind === 'claim_bearer') {
       const target = await resolveCommandTarget(sessionService, {
         ...(claimId ? { claimId } : {}),
@@ -1459,6 +1463,13 @@ export class RunbookLifecycleCommandService {
             },
             claim: target.claim,
           });
+          const presenterAuthority = await this.#resolveMutationActorContext({
+            callerEvidence: input.callerEvidence,
+            targetState: target.state,
+            request: { action: 'mutate-run', runId: target.state.id },
+            intent: 'delegating-run-advance',
+          });
+          presenterAuthorized = presenterAuthority.kind === 'verified';
           break;
         }
         case 'default':
@@ -1480,6 +1491,7 @@ export class RunbookLifecycleCommandService {
             return { kind: 'actor_context_required' };
           }
           actorContext = authority.actorContext;
+          presenterAuthorized = true;
           break;
         }
         case 'none':
@@ -1511,12 +1523,12 @@ export class RunbookLifecycleCommandService {
       actorContext,
     });
 
-    // Target resolution runs the transition policy after bearer/grant
-    // authorization. At this point the presented holder has been seen alive,
+    // Target resolution runs transition policy after bearer/grant authorization.
+    // An independently authorized presenter has been seen alive at this point,
     // regardless of whether policy refuses the transition or dispatch later
     // fails. The recorder is total and self-locking, and no SessionLock is held
     // on this path, so failure cannot block or mask the mutation (RD-102).
-    if (input.callerEvidence.kind === 'claim_bearer') {
+    if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
       await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
@@ -1966,10 +1978,12 @@ export class RunbookLifecycleCommandService {
     }
 
     if (plan.targetState.lifecycle !== 'running') {
-      // Preserve the pre-existing already-terminal outcome even when authority
-      // is absent. When the presented bearer did authorize this resolved chain,
-      // however, the no-op still proves that holder alive.
-      await sessionService.releaseRunbooks(plan.releaseRunIds);
+      // Preserve the pre-existing already-terminal outcome for every caller. Clean
+      // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
+      // bearer receives the same outcome without mutating the resolved chain.
+      if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
+        await sessionService.releaseRunbooks(plan.releaseRunIds);
+      }
       return {
         kind: 'already_terminal',
         targetRunId: plan.targetState.id,

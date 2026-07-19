@@ -3690,6 +3690,7 @@ describe('RunbookLifecycleCommandService', () => {
       const claim = session.claims[claimKey];
       session.claims[claimKey] = {
         ...claim,
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
         grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
       };
       await manager.saveSession(session);
@@ -3709,6 +3710,9 @@ describe('RunbookLifecycleCommandService', () => {
         claimId: claimed.claimId,
         runId: claimChildRunId,
       });
+      expect((await manager.loadSession()).claims[claimKey].lastSeenAt).toBe(
+        '2020-01-01T00:00:00.000Z',
+      );
     });
 
     it('returns claim_grant_required when a run-targeted bearer lacks mutate-run grant', async () => {
@@ -4302,6 +4306,29 @@ describe('RunbookLifecycleCommandService', () => {
           lifecycle: 'completed',
         });
         expect(releaseSpy).toHaveBeenCalled();
+      });
+
+      it('preserves already_terminal without releasing for a foreign run-control bearer', async () => {
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(root);
+        await sessionService.pushRunbook(ROOT);
+        await issueRunControlClaimFor(CHILD);
+        installResolvedPlan(root, [root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(CHILD),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+        });
+        expect((await sessionService.getActive())?.id).toBe(ROOT);
+        expect(releaseSpy).not.toHaveBeenCalled();
       });
 
       it('bare stop maps an already-stopped resolved root to already_terminal (stopped)', async () => {

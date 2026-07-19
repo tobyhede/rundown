@@ -472,6 +472,39 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(after).toBe(before);
   });
 
+  it('does not attempt recording for a stale presented claim', async () => {
+    const missingClaimId = assertClaimId(
+      'rdclm_00000000000000000000000000000000_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+    );
+    const recordSpy = jest.spyOn(sessionService, 'recordClaimSeen');
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId: missingClaimId },
+      targetSelector: { kind: 'claim', claimId: missingClaimId },
+      terminalPolicy: releasePolicy,
+    });
+
+    expect(outcome.kind).toBe('stale_claim');
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt recording when a valid bearer has no default target', async () => {
+    const { claimId } = await sessionService.issueRunControlClaim(runId);
+    await sessionService.popRunbook();
+    const recordSpy = jest.spyOn(sessionService, 'recordClaimSeen');
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'default' },
+      terminalPolicy: releasePolicy,
+    });
+
+    expect(outcome).toEqual({ kind: 'none' });
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
   it('a failed progress write neither fails nor masks the committed mutation (AC7, RD-102)', async () => {
     const { claimId } = await sessionService.issueRunControlClaim(runId);
     const saveSpy = jest
@@ -551,38 +584,11 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     ).toBe(true);
   });
 
-  it("records the CALLER's bearer, never the bearer named as the target (AC5)", async () => {
-    // THE ONE PLACE THE AC5 DEFECT IS EXPRESSIBLE, and so the only test that can
-    // fail on it. `callerEvidence` and `targetSelector` are independent fields
-    // (LifecycleTransitionInput), and a `claim` selector carries a SECOND bearer —
-    // so `recordClaimSeen(input.targetSelector.claimId)` is a line someone can
-    // write, and every other AC5 test in this change stays green when they do.
-    //
-    // Why it cannot live at the CLI: one `--claim-id` flag populates both fields
-    // (transition-target.ts `transitionTargetFields`), so the drift guard can never
-    // diverge them. Why the collect/abort AC5 cases cannot catch it either:
-    // `recordClaimSeen` verifies the bearer secret, and a parent holds only
-    // child claim KEYS — never child bearers — so no implementation reachable from
-    // those seams can move another claim's mark at all.
-    //
-    // A caller cannot vouch for another claim's liveness and must not appear to.
-    //
-    // NO SIBLING CASE FOR runTerminal, AND THAT IS A FINDING, NOT AN OMISSION.
-    // The divergence cannot reach an authorized terminal outcome there: the
-    // terminal path resolves the actor context from
-    // `callerEvidence` against the TARGET run and refuses a caller lacking
-    // `mutate-run` on it (`claim_grant_required`). Verified by running it. So at
-    // `runTerminal`, caller and target are necessarily the same claim wherever
-    // recording is reached, so the two arguments are indistinguishable.
-    //
-    // WHY THIS CASE CAN REACH `applied` WHEN THAT ONE CANNOT: the transition path
-    // builds its actor context from the TARGET's claim record for a `claim`
-    // selector and never consults `callerEvidence` for authorization. That
-    // asymmetry is what makes the presented-vs-named distinction observable here.
-    // If that gate is ever tightened to match the terminal path, this case will
-    // stop reaching `applied` — at which point the defect is not expressible at
-    // this seam either, and the honest move is to DELETE this test and record that
-    // the seam is safe by construction. Do not "fix" it by weakening the assertion.
+  it('records neither claim when the presenter lacks a grant for another claim target (AC5)', async () => {
+    // Transition authorization remains target-derived here, so this continues to
+    // apply until #613 tightens the mutation itself. Liveness is stricter: claim A
+    // presented the bearer but has no mutate-run grant for B, while claim B was
+    // selected rather than presented. Neither holder has established liveness.
     const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
       runbookPath: 'other.md',
     });
@@ -605,10 +611,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(outcome.kind).toBe('applied');
 
     const session = await manager.loadSession();
-    // The presenter is the holder observed alive, so its mark moves.
-    expect(session.claims[recordA.claimKey].lastSeenAt).not.toBe(recordA.lastSeenAt);
-    // The targeted claim was NAMED, not PRESENTED. Its holder proved nothing about
-    // its own liveness, so its mark is frozen.
+    expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
     expect(session.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
   });
 });
