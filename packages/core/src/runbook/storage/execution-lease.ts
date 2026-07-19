@@ -179,7 +179,7 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     ownerPid: number,
     wait?: LeaseWaitPolicy,
   ): Promise<GuardedMutationResult<ExecutionAttempt>> {
-    return this.withWait(captured.runId, wait, () => this.acquireOnce(captured, ownerPid));
+    return this.withWait(wait, () => this.acquireOnce(captured, ownerPid));
   }
 
   async markEffectStarted(
@@ -193,7 +193,11 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
           `UPDATE execution_attempts
               SET phase = 'effect_started', effect_started_at = :now
             WHERE run_id = :runId AND exec_epoch = :epoch
-              AND exec_token = :hash AND phase = 'claimed'`,
+              AND exec_token = :hash AND phase = 'claimed'
+              AND EXISTS (
+                SELECT 1 FROM runs
+                 WHERE id = :runId AND exec_token = :hash AND exec_epoch = :epoch
+              )`,
         )
         .run({ now, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
       if (changes !== 1) {
@@ -236,7 +240,7 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     if (deduped.length === 0) {
       return { kind: 'committed', value: [] };
     }
-    return this.withWait(deduped[0].runId, wait, () => this.acquireAllOnce(deduped, ownerPid));
+    return this.withWait(wait, () => this.acquireAllOnce(deduped, ownerPid));
   }
 
   /**
@@ -351,13 +355,11 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
    * run needing recovery surfaces as `recovery_required`.
    *
    * @template T - Attempt payload type.
-   * @param runId - Run being acquired (for recovery + diagnostics).
    * @param wait - Optional wait policy.
    * @param once - The single-attempt acquisition thunk.
    * @returns The acquisition result.
    */
   private async withWait<T>(
-    runId: RunId,
     wait: LeaseWaitPolicy | undefined,
     once: () => Promise<GuardedMutationResult<T>>,
   ): Promise<GuardedMutationResult<T>> {
@@ -371,6 +373,7 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
       if (wait.signal?.aborted || Date.now() >= deadline) {
         return result;
       }
+      const runId = result.runId;
       const recovery = await this.recoverDeadOwner(runId);
       if (recovery.kind === 'recovery_pending') {
         return {
@@ -384,8 +387,16 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
         continue; // The dead lease is cleared; retry immediately.
       }
       attempts += 1;
-      this.onWaitProgress?.({ runId, attempts, remainingMs: Math.max(0, deadline - Date.now()) });
-      await delay(wait.backoff(attempts - 1));
+      const remainingMs = Math.max(0, deadline - Date.now());
+      this.onWaitProgress?.({ runId, attempts, remainingMs });
+      if (remainingMs === 0) {
+        return result;
+      }
+      const requestedBackoff = Math.max(0, wait.backoff(attempts - 1));
+      await delay(Math.min(requestedBackoff, remainingMs), wait.signal);
+      if (wait.signal?.aborted || Date.now() >= deadline) {
+        return result;
+      }
     }
   }
 }
@@ -514,10 +525,21 @@ function dedupeByRun(captured: readonly CapturedAuthority[]): readonly CapturedA
  * transaction.
  *
  * @param ms - Delay in milliseconds.
- * @returns A promise that resolves after the delay.
+ * @param signal - Optional cancellation signal that resolves the delay early.
+ * @returns A promise that resolves after the delay or cancellation.
  */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
+
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    }
+  });
 }
 
 export type { ClaimLookupKey, ExecutionPhase };

@@ -150,6 +150,32 @@ describe('effect boundary', () => {
     const again = await lease.markEffectStarted(stale);
     expect(again.kind).toBe('execution_in_progress');
   });
+
+  it('refuses to start effects when the run no longer references the attempt', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          `UPDATE runs
+              SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL
+            WHERE id = :runId`,
+        )
+        .run({ runId: state.id });
+    });
+
+    const marked = await lease.markEffectStarted(acquired.value);
+    expect(marked.kind).toBe('execution_in_progress');
+    const phase = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT phase FROM execution_attempts WHERE run_id = :r AND exec_epoch = :e')
+          .get<{ readonly phase: string }>({ r: state.id, e: acquired.value.epoch })?.phase,
+    );
+    expect(phase).toBe('claimed');
+  });
 });
 
 describe('PID-aware dead-owner recovery', () => {
@@ -234,6 +260,25 @@ describe('all-or-none multi-run acquisition', () => {
     const result = await lease.acquireAll([], process.pid);
     expect(result.kind).toBe('committed');
   });
+
+  it('recovers the contended run that blocked all-or-none acquisition', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const owned = await lease.acquire(b.captured, process.pid);
+    if (owned.kind !== 'committed') throw new Error('acquire failed');
+    await setOwnerPid(b.state.id, deadPid());
+
+    const result = await lease.acquireAll([a.captured, b.captured], process.pid, {
+      budgetMs: 100,
+      backoff: () => 1,
+    });
+
+    expect(result.kind).toBe('committed');
+    if (result.kind !== 'committed') return;
+    expect(new Set(result.value.map((attempt) => attempt.runId))).toEqual(
+      new Set([a.state.id, b.state.id]),
+    );
+  });
 });
 
 describe('default contention policy and finite wait', () => {
@@ -273,5 +318,43 @@ describe('default contention policy and finite wait', () => {
     });
     expect(result.kind).toBe('execution_in_progress');
     expect(Date.now() - start).toBeGreaterThanOrEqual(100);
+  });
+
+  it('caps a wait backoff to the remaining total budget', async () => {
+    const { state, captured } = await preparedRun();
+    await lease.acquire(captured, process.pid);
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+
+    const start = Date.now();
+    const result = await lease.acquire(recap.authority, process.pid, {
+      budgetMs: 40,
+      backoff: () => 1000,
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect(Date.now() - start).toBeLessThan(300);
+  });
+
+  it('stops a wait backoff promptly when aborted', async () => {
+    const { state, captured } = await preparedRun();
+    await lease.acquire(captured, process.pid);
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => {
+      controller.abort();
+    }, 20);
+
+    const start = Date.now();
+    const result = await lease.acquire(recap.authority, process.pid, {
+      budgetMs: 1000,
+      backoff: () => 1000,
+      signal: controller.signal,
+    });
+    clearTimeout(abortTimer);
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect(Date.now() - start).toBeLessThan(300);
   });
 });

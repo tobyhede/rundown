@@ -425,7 +425,12 @@ export interface RunbookStoreTxn {
    * changed-row count so the caller can assert exactly one row.
    */
   applyStateUpdate(captured: CapturedAuthority, next: RunbookState): number;
-  /** Delete a run and its cascaded rows. */
+  /**
+   * Delete an unowned run and its cascaded rows.
+   *
+   * @throws {Error} With `execution_in_progress` when the run has active
+   * execution ownership.
+   */
   deleteRun(runId: RunId): void;
   /** Insert a claim row (fires the generation-bump trigger on the controlled run). */
   insertClaim(record: ClaimRecord, issuedGeneration: ClaimGeneration): void;
@@ -665,7 +670,17 @@ export class RunbookStore {
         return store.applyStateUpdate(tx, captured, next);
       },
       deleteRun(runId) {
-        tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: runId });
+        const changes = tx
+          .prepare('DELETE FROM runs WHERE id = :id AND exec_token IS NULL')
+          .run({ id: runId }).changes;
+        if (changes === 0) {
+          const owned = tx
+            .prepare('SELECT 1 AS owned FROM runs WHERE id = :id AND exec_token IS NOT NULL')
+            .get<{ readonly owned: 1 }>({ id: runId });
+          if (owned !== undefined) {
+            throw new Error(`execution_in_progress: run ${runId} has active execution ownership`);
+          }
+        }
       },
       insertClaim(record, issuedGeneration) {
         store.insertClaim(tx, record, issuedGeneration);
