@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -195,6 +195,85 @@ describe('CoreEffectfulMutationExecutor', () => {
     const loaded = await store.loadRun(runId);
     expect(loaded?.step).toBe('1');
     void state;
+  });
+
+  it('records recovery when commit throws after the effect boundary', async () => {
+    const { runId, state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const commitError = new Error('commit transport failed');
+    let computeCalls = 0;
+
+    const result = await executor.run({
+      captured,
+      compute: () => {
+        computeCalls += 1;
+        return Promise.resolve(preparedStep2(state));
+      },
+      commit: () => Promise.reject(commitError),
+    });
+
+    expect(result.kind).toBe('recovery_required');
+    expect(computeCalls).toBe(1);
+    const pending = await store.readPendingRecovery(runId);
+    expect(pending?.reason).toBe('effect_boundary_crossed');
+    expect((await store.loadRun(runId))?.step).toBe('1');
+  });
+
+  it('honors a custom recovery reason when commit throws', async () => {
+    const { runId, state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+
+    const result = await executor.run({
+      captured,
+      compute: () => Promise.resolve(preparedStep2(state)),
+      commit: () => Promise.reject(new Error('commit transport failed')),
+      recoveryReason: 'stale_commit',
+    });
+
+    expect(result.kind).toBe('recovery_required');
+    expect((await store.readPendingRecovery(runId))?.reason).toBe('stale_commit');
+  });
+
+  it('preserves the commit exception when guarded abandon sees a durable commit', async () => {
+    const { runId, state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const committer = new RunbookStoreActorCommitter(store, captured);
+    const abandon = jest.spyOn(lease, 'abandonToRecovery');
+    const commitError = new Error('response lost after durable commit');
+
+    await expect(
+      executor.run({
+        captured,
+        compute: () => Promise.resolve(preparedStep2(state)),
+        commit: async (attempt, prepared) => {
+          const committed = await committer.commit(attempt, prepared);
+          expect(committed.kind).toBe('committed');
+          throw commitError;
+        },
+      }),
+    ).rejects.toBe(commitError);
+
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect((await store.loadRun(runId))?.step).toBe('2');
+    expect(await store.readPendingRecovery(runId)).toBeNull();
+  });
+
+  it('preserves the commit exception when recording recovery also throws', async () => {
+    const { state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const commitError = new Error('commit failed');
+    const abandon = jest
+      .spyOn(lease, 'abandonToRecovery')
+      .mockRejectedValue(new Error('recovery write failed'));
+
+    await expect(
+      executor.run({
+        captured,
+        compute: () => Promise.resolve(preparedStep2(state)),
+        commit: () => Promise.reject(commitError),
+      }),
+    ).rejects.toBe(commitError);
+    expect(abandon).toHaveBeenCalledTimes(1);
   });
 
   it('refuses execution_in_progress without running the effect when already owned', async () => {

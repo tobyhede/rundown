@@ -9,12 +9,13 @@
  * API and render only the discriminated {@link GuardedMutationResult}.
  *
  * The fence has one non-negotiable rule: an ambiguous external effect is never
- * automatically repeated. If `compute` fails after the effect boundary, the
- * attempt is abandoned to `recovery_pending` and the caller receives
- * `recovery_required` — the machine-owned recovery path resumes it later. If the
- * guarded commit finds the attempt was superseded (its phase moved, or a fresh
- * attempt reacquired the run), that refusal surfaces as itself; `compute` is run
- * exactly once and never retried on a stale commit.
+ * automatically repeated. If an operation fails ambiguously after the effect
+ * boundary — during `compute` or while observing its commit — the attempt is
+ * abandoned to `recovery_pending` and the caller receives `recovery_required` —
+ * the machine-owned recovery path resumes it later. If the guarded commit finds
+ * the attempt was superseded (its phase moved, or a fresh attempt reacquired the
+ * run), that refusal surfaces as itself; `compute` is run exactly once and never
+ * retried on a stale commit.
  *
  * `ActorMutationCommitter` is not a second commit concept: it is the
  * actor-specific binding supplied as the executor's `commit` argument. There is
@@ -87,7 +88,7 @@ export interface EffectfulMutationInput<TPrepared, TResult> {
     attempt: ExecutionAttempt,
     prepared: TPrepared,
   ) => Promise<GuardedMutationResult<TResult>>;
-  /** Recovery cause recorded when `compute` fails after the effect boundary. */
+  /** Recovery cause recorded for an ambiguous failure after the effect boundary. */
   readonly recoveryReason?: ExecutionRecoveryReason;
   /** Optional finite wait policy for lease contention (default: immediate refusal). */
   readonly wait?: LeaseWaitPolicy;
@@ -106,7 +107,7 @@ export interface EffectfulMutationExecutor {
   ): Promise<GuardedMutationResult<TResult>>;
 }
 
-/** Default recovery cause when `compute` fails after the effect boundary. */
+/** Default recovery cause for an ambiguous failure after the effect boundary. */
 const DEFAULT_MID_EFFECT_REASON: ExecutionRecoveryReason = 'effect_boundary_crossed';
 
 /**
@@ -164,7 +165,29 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
       };
     }
 
-    return input.commit(attempt, prepared);
+    try {
+      return await input.commit(attempt, prepared);
+    } catch (commitError) {
+      // A thrown commit has an ambiguous durability outcome: it may have failed
+      // before commit, or committed durably before its caller observed an error.
+      // The exact token/epoch/phase guard ensures this only moves our still-live
+      // effect_started attempt; it cannot overwrite a committed or superseded
+      // attempt. If that guarded recovery refuses or itself fails, preserve the
+      // primary commit exception rather than reporting a recovery state that was
+      // not recorded.
+      try {
+        const recovery = await this.lease.abandonToRecovery(
+          attempt,
+          input.recoveryReason ?? DEFAULT_MID_EFFECT_REASON,
+        );
+        if (recovery.kind === 'recovery_required') {
+          return recovery;
+        }
+      } catch {
+        // The surviving exact lease remains recoverable by dead-owner recovery.
+      }
+      throw commitError;
+    }
   }
 }
 
