@@ -342,6 +342,55 @@ describe('tombstone preservation (#519 lastSeenAt survives)', () => {
     );
     expect(seen).toBe(now);
   });
+
+  it('records claim activity without bumping claim_generation', async () => {
+    // #519 liveness is pure metadata: it cannot change which claim resolves to
+    // which run, so it must not invalidate live captures as claim_superseded.
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'a'.repeat(32));
+    const before = (await counters(state.id)).claimGeneration;
+
+    await store.transaction((txn) => {
+      txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T02:02:02.000Z');
+    });
+
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    // A previously captured authority therefore still commits.
+    const cap = await store.captureAuthority(state.id, assertClaimLookupKey(key));
+    if (cap.kind !== 'captured') throw new Error('capture failed');
+    await store.transaction((txn) => {
+      txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T03:03:03.000Z');
+    });
+    const saved = await store.saveState(cap.authority, { ...state, stepName: 'after-seen' });
+    expect(saved.kind).toBe('committed');
+  });
+
+  it('records claim activity even while the run has an active execution owner', async () => {
+    // The authorization seam runs precisely when an owner may be executing;
+    // refusing liveness there would drop #519 exactly when it matters most.
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'b'.repeat(32));
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE runs SET exec_token = 'sha256:live' WHERE id = :id")
+        .run({ id: state.id });
+    });
+
+    await expect(
+      store.transaction((txn) => {
+        txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T04:04:04.000Z');
+      }),
+    ).resolves.toBeUndefined();
+
+    // Resolution-affecting claim writes are still refused under ownership.
+    await expect(
+      store.transaction((txn) => {
+        txn.tombstoneClaim(assertClaimLookupKey(key));
+      }),
+    ).rejects.toThrow(/execution_in_progress/);
+  });
 });
 
 describe('CAS zero-row invariant', () => {

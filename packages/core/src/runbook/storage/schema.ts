@@ -188,7 +188,14 @@ BEGIN
   END;
 END;
 
-CREATE TRIGGER claims_guard_update BEFORE UPDATE ON claims
+-- Scoped to the columns that can change CLAIM RESOLUTION. last_seen_at (#519
+-- claim-activity liveness) and updated_at are deliberately excluded: they are
+-- pure metadata, so recording claim activity must neither be refused while an
+-- owner executes nor bump the generation (see claims_bump_gen_update below).
+CREATE TRIGGER claims_guard_update BEFORE UPDATE OF
+  status, controlled_run, secret_hash, parent_run_id, parent_linkage_version,
+  delegation_json, grants_json
+ON claims
 BEGIN
   SELECT CASE
     WHEN (SELECT exec_token FROM runs WHERE id = NEW.controlled_run) IS NOT NULL
@@ -209,7 +216,14 @@ BEGIN
   UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.controlled_run;
 END;
 
-CREATE TRIGGER claims_bump_gen_update AFTER UPDATE ON claims
+-- Same column scope as claims_guard_update. A last_seen_at refresh does not
+-- change which claim resolves to which run, so bumping the generation for it
+-- would spuriously invalidate every live capture as claim_superseded at each
+-- authorization seam — exactly where #519 liveness recording happens.
+CREATE TRIGGER claims_bump_gen_update AFTER UPDATE OF
+  status, controlled_run, secret_hash, parent_run_id, parent_linkage_version,
+  delegation_json, grants_json
+ON claims
 BEGIN
   UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.controlled_run;
 END;
