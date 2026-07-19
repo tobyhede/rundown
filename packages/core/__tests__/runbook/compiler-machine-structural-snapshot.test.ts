@@ -236,3 +236,51 @@ describe('compileRunbookToMachine structural invariants', () => {
     expect(parentAlways.some((entry) => entry.target === 'step::2')).toBe(true);
   });
 });
+
+describe('interrupted-execution recovery machine shape', () => {
+  const RECOVERY_RUNBOOK = `## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 3. Third
+- PASS COMPLETE
+- FAIL STOP
+`;
+
+  it('adds a non-final recoveryRequired state carrying the recovery tag', () => {
+    const machine = compileRunbookToMachine(createRunbook(RECOVERY_RUNBOOK));
+    const recovery = getState(machine, 'recoveryRequired');
+    // Non-final: a final state has no outgoing transitions and is typed 'final'.
+    expect((recovery as { type?: string }).type).not.toBe('final');
+    expect(recovery.tags).toEqual(['recovery']);
+    // Reconcile/retry transitions leave the state via GOTO.
+    expect(recovery.on.GOTO).toBeDefined();
+  });
+
+  it('routes EXECUTION_OUTCOME_UNKNOWN through a single root-level handler', () => {
+    const machine = compileRunbookToMachine(createRunbook(RECOVERY_RUNBOOK));
+    const rootOn = machine.config.on as Record<string, { target?: string }>;
+    expect(rootOn.EXECUTION_OUTCOME_UNKNOWN.target).toBe('.recoveryRequired');
+
+    // The handler is root-level only; no generated leaf carries it.
+    const leaf = getState(machine, 'step::1');
+    expect(leaf.on.EXECUTION_OUTCOME_UNKNOWN).toBeUndefined();
+    expect(leaf.states.idle.on.EXECUTION_OUTCOME_UNKNOWN).toBeUndefined();
+  });
+
+  it('initializes the interrupted-recovery context fields as undefined', () => {
+    const machine = compileRunbookToMachine(createRunbook(RECOVERY_RUNBOOK));
+    const ctx = machine.config.context as unknown as {
+      interruptedEpoch?: number;
+      interruptedReason?: string;
+      interruptedStepId?: string;
+    };
+    expect(ctx.interruptedEpoch).toBeUndefined();
+    expect(ctx.interruptedReason).toBeUndefined();
+    expect(ctx.interruptedStepId).toBeUndefined();
+  });
+});

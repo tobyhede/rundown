@@ -17,7 +17,12 @@
 
 import { z } from 'zod';
 import { makeRunbookStateSchema } from '../../schemas.js';
-import type { RunbookState, ResolvedCompletion, Lifecycle } from '../types.js';
+import type {
+  RunbookState,
+  ResolvedCompletion,
+  Lifecycle,
+  ExecutionRecoveryReason,
+} from '../types.js';
 import { type RunId, assertRunId } from '../run-id.js';
 import {
   type ClaimRecord,
@@ -559,6 +564,83 @@ export class RunbookStore {
         return classificationToResult(classification);
       }
       assertExactlyOneRow(txn.applyStateUpdate(captured, next), captured.runId);
+      return { kind: 'committed', value: next };
+    });
+  }
+
+  /**
+   * Read the latest `recovery_pending` attempt for a run, if any.
+   *
+   * @param runId - Run to inspect.
+   * @returns The pending attempt's epoch and recorded reason, or null.
+   */
+  readPendingRecovery(
+    runId: RunId,
+  ): Promise<{ readonly epoch: ExecutionEpoch; readonly reason: string | null } | null> {
+    return this.driver.read((tx) => {
+      const row = tx
+        .prepare(
+          `SELECT exec_epoch AS epoch, reason FROM execution_attempts
+            WHERE run_id = :runId AND phase = 'recovery_pending'
+            ORDER BY exec_epoch DESC LIMIT 1`,
+        )
+        .get<{ readonly epoch: number; readonly reason: string | null }>({ runId });
+      if (row === undefined) {
+        return null;
+      }
+      return { epoch: assertExecutionEpoch(row.epoch), reason: row.reason };
+    });
+  }
+
+  /**
+   * Commit an interrupted-execution recovery snapshot.
+   *
+   * Persists the `recoveryRequired` snapshot (lifecycle stays `running`), records
+   * the attempt's recovery reason, and clears active ownership — atomically,
+   * keyed on the exact interrupted epoch. If the interrupted attempt was
+   * superseded meanwhile, the commit changes zero rows and refuses.
+   *
+   * @param input - Recovery commit inputs.
+   * @param input.epoch - The interrupted attempt's epoch.
+   * @param input.reason - The recovery cause to record.
+   * @param input.next - The recovery run state (carrying the new snapshot).
+   * @returns The committed state, or a typed refusal if the attempt was superseded.
+   */
+  commitRecovery(input: {
+    readonly epoch: ExecutionEpoch;
+    readonly reason: ExecutionRecoveryReason;
+    readonly next: RunbookState;
+  }): Promise<GuardedMutationResult<RunbookState>> {
+    const { epoch, reason, next } = input;
+    return this.transaction((txn) => {
+      const changes = txn.tx
+        .prepare(
+          `UPDATE runs
+              SET state_json = :json, lifecycle = :lifecycle,
+                  exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL,
+                  updated_at = :now
+            WHERE id = :runId AND exec_epoch = :epoch`,
+        )
+        .run({
+          json: serializeStateJson(next),
+          lifecycle: next.lifecycle ?? 'running',
+          now: next.updatedAt,
+          runId: next.id,
+          epoch,
+        }).changes;
+      if (changes !== 1) {
+        return {
+          kind: 'execution_in_progress',
+          runId: next.id,
+          message: `The interrupted attempt for run ${next.id} was superseded before recovery committed.`,
+        };
+      }
+      txn.tx
+        .prepare(
+          `UPDATE execution_attempts SET reason = COALESCE(reason, :reason)
+            WHERE run_id = :runId AND exec_epoch = :epoch AND phase = 'recovery_pending'`,
+        )
+        .run({ reason, runId: next.id, epoch });
       return { kind: 'committed', value: next };
     });
   }

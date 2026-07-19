@@ -142,6 +142,10 @@ describe('Graph invariant properties', () => {
 
         for (const [id, config] of Object.entries(states)) {
           if (id === 'COMPLETE' || id === 'STOPPED') continue;
+          // recoveryRequired is a non-final control state reached only via the
+          // root EXECUTION_OUTCOME_UNKNOWN handler; it reconciles via GOTO/stop,
+          // not PASS/FAIL.
+          if (id === 'recoveryRequired') continue;
           const cfg = config as Record<string, unknown>;
           // Parent aggregation states use `always`, not `on`
           if (cfg.always) continue;
