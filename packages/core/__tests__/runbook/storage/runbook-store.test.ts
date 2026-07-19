@@ -393,6 +393,176 @@ describe('tombstone preservation (#519 lastSeenAt survives)', () => {
   });
 });
 
+describe('mutateState (transactional replacement for the per-run lock)', () => {
+  it('commits a derived state and bumps only state_version', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+
+    const result = await store.mutateState(state.id, (current) => ({
+      ...current,
+      stepName: 'mutated',
+    }));
+
+    expect(result.kind).toBe('committed');
+    expect((await store.loadRun(state.id))?.stepName).toBe('mutated');
+    const after = await counters(state.id);
+    expect(after.stateVersion).toBe(before.stateVersion + 1);
+    expect(after.claimGeneration).toBe(before.claimGeneration);
+  });
+
+  it('writes nothing when the builder declines', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+
+    const result = await store.mutateState(state.id, () => null);
+
+    expect(result.kind).toBe('unchanged');
+    expect((await counters(state.id)).stateVersion).toBe(before.stateVersion);
+  });
+
+  it('retries against fresh state when a concurrent writer bumps the version', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    let builds = 0;
+
+    const result = await store.mutateState(state.id, async (current) => {
+      builds += 1;
+      if (builds === 1) {
+        // A concurrent writer lands between this read and our write.
+        await store.mutateState(state.id, (other) => ({ ...other, description: 'interloper' }));
+      }
+      return { ...current, stepName: `build-${String(builds)}` };
+    });
+
+    expect(result.kind).toBe('committed');
+    // The first attempt went stale and rebuilt from the interloper's state.
+    expect(builds).toBe(2);
+    const loaded = await store.loadRun(state.id);
+    expect(loaded?.stepName).toBe('build-2');
+    expect(loaded?.description).toBe('interloper');
+  });
+
+  it('refuses immediately while an execution owns the run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE runs SET exec_token = 'sha256:live' WHERE id = :id")
+        .run({ id: state.id });
+    });
+
+    const result = await store.mutateState(state.id, (current) => ({
+      ...current,
+      stepName: 'blocked',
+    }));
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect((await store.loadRun(state.id))?.stepName).not.toBe('blocked');
+  });
+
+  it('reports a missing run without invoking the builder', async () => {
+    let builds = 0;
+    const result = await store.mutateState(assertRunId(`rd_${'e'.repeat(32)}`), (current) => {
+      builds += 1;
+      return current;
+    });
+    expect(result.kind).toBe('missing');
+    expect(builds).toBe(0);
+  });
+
+  it('gives up as concurrent_modification once the attempt budget is spent', async () => {
+    const state = await newState();
+    await store.createRun(state);
+
+    const result = await store.mutateState(
+      state.id,
+      async (current) => {
+        // Always bump the version behind our back, so no attempt can ever land.
+        await store.transaction((txn) => {
+          txn.tx
+            .prepare(
+              "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+            )
+            .run({ id: state.id });
+        });
+        return { ...current, stepName: 'never' };
+      },
+      { attempts: 2 },
+    );
+
+    expect(result.kind).toBe('concurrent_modification');
+    expect((await store.loadRun(state.id))?.stepName).not.toBe('never');
+  });
+});
+
+describe('session persistence and run listing', () => {
+  it('round-trips the default stack and stash slot', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+
+    await store.saveSession({ defaultStack: [a.id, b.id], claims: {}, stashedRunbookId: b.id });
+
+    const session = await store.loadSession();
+    expect(session.defaultStack).toEqual([a.id, b.id]);
+    expect(session.stashedRunbookId).toBe(b.id);
+  });
+
+  it('tombstones claims dropped from the session without churning generation', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'c'.repeat(32));
+    const record = makeClaimRecord({
+      claimKey: assertClaimLookupKey(key),
+      controlledRunId: state.id,
+    });
+
+    // Re-saving the same claim leaves it untouched.
+    const before = (await counters(state.id)).claimGeneration;
+    await store.saveSession({ defaultStack: [], claims: { [key]: record } });
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    expect((await store.loadSession()).claims[key]).toBeDefined();
+
+    // Dropping it tombstones rather than hard-deletes.
+    await store.saveSession({ defaultStack: [], claims: {} });
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: key })?.status,
+    );
+    expect(status).toBe('superseded');
+  });
+
+  it('lists and deletes runs', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+
+    expect((await store.listRuns()).map((s) => s.id).sort()).toEqual([a.id, b.id].sort());
+
+    await store.deleteRun(a.id);
+    expect((await store.listRuns()).map((s) => s.id)).toEqual([b.id]);
+    expect(await store.loadRun(a.id)).toBeNull();
+  });
+
+  it('refuses to delete a run with an active execution owner', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE runs SET exec_token = 'sha256:live' WHERE id = :id")
+        .run({ id: state.id });
+    });
+    await expect(store.deleteRun(state.id)).rejects.toThrow(/execution_in_progress/);
+  });
+});
+
 describe('CAS zero-row invariant', () => {
   it('rolls back with an invariant error when a classified success writes zero rows', async () => {
     const state = await newState();
