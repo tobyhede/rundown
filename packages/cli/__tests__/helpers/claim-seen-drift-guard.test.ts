@@ -423,6 +423,44 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
     }
   });
 
+  it('records claim liveness on delegate --retry, the distinct retry issuance site (#519)', async () => {
+    // The RECORDING_COMMANDS it.each drives `delegate` through its FRESH issuance
+    // site (issueDelegation). `delegate --retry` records at a SEPARATE site inside
+    // #issueRetry, under the DelegationLock (lifecycle-command-service.ts:1290-1292)
+    // — a line the fresh case never reaches. Deleting it leaves the entire it.each
+    // green, so the retry recorder was unpinned end-to-end. This drives that exact
+    // site through the real CLI and asserts the mark moved.
+    //
+    // It is a standalone `it`, not an it.each row: the classification anchor keys on
+    // REAL command names (`delegate`), and `delegate --retry` is a flag path, not a
+    // command the program registers.
+    //
+    // The parent from arrangeDelegatableParent is delegation-exposed (it owns
+    // delegated children), so a retry MUST present bearer authority via `--claim-id`
+    // — exactly the presenter path this records. Its substep 1.1 is a pending
+    // delegation (childRunId null), which retry cancels and re-issues.
+    const arranged = await arrangeDelegatableParent();
+    try {
+      await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
+
+      const retried = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--claim-id', arranged.claimId],
+        arranged.workspace,
+      );
+      // Non-vacuous, per the driver discipline the rest of this file follows: a
+      // REFUSED retry records nothing and would freeze the mark for the wrong
+      // reason, passing this test hollow. Assert the committed `retried` action, not
+      // exit 0 alone.
+      expect(retried.exitCode).toBe(0);
+      expect(findActionOutput(retried.stdout)?.action).toBe('retried');
+
+      const after = (await readSession(arranged.workspace)).claims[arranged.claimKey].lastSeenAt;
+      expect(Date.parse(after)).toBeGreaterThan(Date.parse(EPOCH));
+    } finally {
+      await arranged.workspace.cleanup();
+    }
+  });
+
   it.each(
     Object.entries(NON_RECORDING_CLAIM_COMMANDS),
   )('does NOT record claim liveness when %s uses a target selector', async (name, {
