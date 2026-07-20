@@ -27,5 +27,15 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     stdout: 'ignore',
     stderr: 'pipe',
+    // Astro 7's `astro dev` daemonizes and exits 0 whenever it thinks it was
+    // launched by an agent — `am-i-vibing` sniffs CLAUDECODE/CURSOR_TRACE_ID/etc
+    // and Astro then forces `--background` (see astro/dist/cli/dev/index.js).
+    // Playwright treats that exit as "process exited early" and fails every
+    // test in this suite before it starts. `ASTRO_DEV_BACKGROUND` is the flag
+    // Astro sets on its own daemon child, and its presence short-circuits the
+    // agent sniff, so setting it here pins the foreground path. There is no
+    // `--no-background` equivalent: that flag only clears `flags.background`
+    // and leaves agent detection to re-enable daemonizing.
+    env: { ASTRO_DEV_BACKGROUND: '1' },
   },
 });

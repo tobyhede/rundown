@@ -15,7 +15,7 @@ test.describe('SQLite WebContainer substrate', () => {
   test('sql.js persists across sequential processes; native is stubbed; marker holds', async ({
     page,
   }) => {
-    await page.goto('/__sqlite-substrate-probe');
+    await page.goto('/dev/sqlite-substrate-probe');
 
     const result = page.locator('#probe-result');
     // The probe boots WebContainer, installs sql.js, and runs four Node

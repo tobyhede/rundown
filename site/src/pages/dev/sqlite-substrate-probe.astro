@@ -1,5 +1,7 @@
 ---
-// TEST-ONLY isolated page (not linked from any shipped route). It boots a
+// DEV/TEST-ONLY probe route: /dev/sqlite-substrate-probe
+//
+// Isolated page, not linked from any shipped route. It boots a
 // WebContainer, installs sql.js, and proves the SQLite substrate choice in the
 // REAL WebContainer runtime:
 //   1. WASM sql.js runs and persists a database across three sequential Node
@@ -135,7 +137,7 @@ console.log('shell=' + (process.env.SHELL ?? ''));
 
         const sqljsPersists = persistedTotal === '11';
         const nativeStubbed = nativeWorks === 'false';
-        const markerHolds = /(^|\\/)jsh$/.test(shell.trim());
+        const markerHolds = /(^|\/)jsh$/.test(shell.trim());
 
         detailEl.textContent = JSON.stringify(
           { persistedTotal, nativeWorks, shell, sqljsPersists, nativeStubbed, markerHolds },
