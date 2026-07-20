@@ -231,6 +231,48 @@ describe('captureAuthority (#613 caller/target unification)', () => {
   });
 });
 
+describe('captureRunAuthority (bare caller, no presented claim)', () => {
+  it('captures against the run’s own active controlling claim', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'a'.repeat(32));
+    const cap = await store.captureRunAuthority(state.id);
+    if (cap.kind !== 'captured') throw new Error(`expected captured, got ${cap.kind}`);
+    // The resolved authority is the run's controlling claim, not an invention.
+    expect(cap.authority.claimKey).toBe(key);
+    expect(cap.authority.runId).toBe(state.id);
+  });
+
+  it('agrees with captureAuthority when the caller does present the claim', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'b'.repeat(32));
+    const bare = await store.captureRunAuthority(state.id);
+    const presented = await store.captureAuthority(state.id, assertClaimLookupKey(key));
+    if (bare.kind !== 'captured' || presented.kind !== 'captured') {
+      throw new Error('expected both captures to succeed');
+    }
+    // Bare and presented paths must fence identically — same claim, same CAS.
+    expect(bare.authority).toEqual(presented.authority);
+  });
+
+  it('refuses a run whose only claim was tombstoned rather than resurrecting it', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'c'.repeat(32));
+    await store.transaction((txn) => {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    });
+    const cap = await store.captureRunAuthority(state.id);
+    expect(cap.kind).toBe('claim_superseded');
+  });
+
+  it('returns missing for an absent run, distinguishing it from an unclaimed one', async () => {
+    const cap = await store.captureRunAuthority(assertRunId(`rd_${'8'.repeat(32)}`));
+    expect(cap.kind).toBe('missing');
+  });
+});
+
 describe('guarded state writes', () => {
   it('refuses concurrent_modification on a stale captured version', async () => {
     const state = await newState();

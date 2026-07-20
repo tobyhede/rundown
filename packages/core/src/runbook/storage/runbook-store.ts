@@ -429,6 +429,38 @@ export function captureAuthority(
   };
 }
 
+/**
+ * Resolve the active claim controlling a run, if any.
+ *
+ * A run has at most one active controlling claim: `rundown run` mints a
+ * run-control claim as part of the same session mutation that pushes the run
+ * (`pushRunbookWithRunControlClaim`), and a delegated child is claimed by
+ * exactly one bearer. Tombstoned claims are excluded, so a superseded holder is
+ * never resurrected as authority.
+ *
+ * This exists for the *bare* caller — `rundown pass` with no `--claim-id` on a
+ * run that authorization has already cleared it to mutate. Such a caller
+ * presents no claim, but the fence still needs the run's authority predicate to
+ * capture. Resolving the controlling claim here is not a #613 divergence: #613
+ * forbids silently resolving a *presented* claim onto a different target, and
+ * nothing is presented on this path.
+ *
+ * @param tx - Open transaction.
+ * @param runId - Target run.
+ * @returns The controlling claim's lookup key, or `null` when the run has none.
+ */
+export function resolveControllingClaim(tx: SqlTransaction, runId: RunId): ClaimLookupKey | null {
+  const row = tx
+    .prepare(
+      `SELECT key FROM claims
+       WHERE controlled_run = :runId AND status = 'active'
+       ORDER BY key
+       LIMIT 1`,
+    )
+    .get<{ readonly key: string }>({ runId });
+  return row ? assertClaimLookupKey(row.key) : null;
+}
+
 /** Sync typed operations available inside a store write transaction. */
 export interface RunbookStoreTxn {
   /** Underlying transaction, for advanced/composite operations within the store. */
@@ -569,6 +601,37 @@ export class RunbookStore {
    */
   captureAuthority(runId: RunId, claimKey: ClaimLookupKey): Promise<CaptureResult> {
     return this.driver.read((tx) => captureAuthority(tx, runId, claimKey));
+  }
+
+  /**
+   * Capture authority for a run whose caller presented no claim.
+   *
+   * Resolves the run's active controlling claim and captures against it in one
+   * read transaction, so the claim cannot be tombstoned between lookup and
+   * capture. A run with no active controlling claim cannot be fenced and is
+   * refused as `claim_superseded` — the same refusal a caller presenting a dead
+   * claim receives, since in both cases no live authority controls the run.
+   *
+   * @param runId - Target run.
+   * @returns The captured authority or a typed refusal.
+   */
+  captureRunAuthority(runId: RunId): Promise<CaptureResult> {
+    return this.driver.read((tx) => {
+      const claimKey = resolveControllingClaim(tx, runId);
+      if (claimKey === null) {
+        const present = tx
+          .prepare('SELECT 1 AS present FROM runs WHERE id = :runId')
+          .get<{ readonly present: number }>({ runId });
+        return present
+          ? {
+              kind: 'claim_superseded' as const,
+              runId,
+              message: `Run ${runId} has no active controlling claim.`,
+            }
+          : { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
+      }
+      return captureAuthority(tx, runId, claimKey);
+    });
   }
 
   /**
