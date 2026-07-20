@@ -320,13 +320,30 @@ export class SqljsDriver implements SqlDriver {
   private async load(): Promise<Database> {
     try {
       const bytes = await fs.readFile(this.dbPath);
-      return new this.sql.Database(bytes);
+      return this.withConnectionPragmas(new this.sql.Database(bytes));
     } catch (err) {
       if (isNodeError(err) && err.code === 'ENOENT') {
-        return new this.sql.Database();
+        return this.withConnectionPragmas(new this.sql.Database());
       }
       throw err;
     }
+  }
+
+  /**
+   * Apply connection-scoped pragmas to a freshly constructed database.
+   *
+   * sql.js rebuilds the in-memory database on every load cycle, and SQLite
+   * scopes `foreign_keys` to the connection rather than the file. Without this,
+   * every FK constraint in the schema — notably `claims.controlled_run`'s
+   * `ON DELETE CASCADE` — is silently inert on this adapter while enforcing
+   * normally on the native one.
+   *
+   * @param db - Newly constructed in-memory database.
+   * @returns The same database, with connection pragmas applied.
+   */
+  private withConnectionPragmas(db: Database): Database {
+    db.exec('PRAGMA foreign_keys = ON');
+    return db;
   }
 
   /**

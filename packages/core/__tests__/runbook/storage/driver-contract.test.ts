@@ -22,8 +22,18 @@ import {
   openRunbookDriver,
   STORAGE_RUNTIME_ENV,
 } from '../../../src/runbook/storage/driver-factory.js';
+import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
+import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
+import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
+import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import { makeBaseStep } from '../../helpers/step-factories.js';
+import type { Runbook, Step } from '../../../src/runbook/types.js';
 
 const CREATE_KV = 'CREATE TABLE kv (k TEXT PRIMARY KEY, v INTEGER)';
+
+const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
+const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
 
 let dir: string;
 
@@ -141,6 +151,82 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
         ensureSchema(tx);
       }),
     ).rejects.toBeInstanceOf(IncompatibleSchemaError);
+  });
+
+  it('cascades claim rows when their controlled run is deleted', async () => {
+    await using driver = await adapter.open();
+    const now = '2026-07-20T00:00:00.000Z';
+
+    await driver.immediate((tx) => {
+      ensureSchema(tx);
+      tx.prepare(
+        `INSERT INTO runs (id, state_version, claim_generation, lifecycle,
+           state_json, created_at, updated_at)
+         VALUES (:id, 1, 1, 'running', '{}', :now, :now)`,
+      ).run({ id: 'rd_cascade', now });
+      tx.prepare(
+        `INSERT INTO claims (key, controlled_run, secret_hash, issued_generation,
+           status, grants_json, issued_at, updated_at, last_seen_at)
+         VALUES (:key, :run, 'hash', 1, 'active', '{}', :now, :now, :now)`,
+      ).run({ key: 'rdclk_cascade', run: 'rd_cascade', now });
+    });
+
+    await driver.immediate((tx) => {
+      tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: 'rd_cascade' });
+    });
+
+    const remaining = await driver.read((tx) =>
+      tx.prepare('SELECT COUNT(*) AS n FROM claims').get<{ readonly n: number }>(),
+    );
+    expect(remaining?.n).toBe(0);
+  });
+
+  it('reports foreign_keys as enabled', async () => {
+    await using driver = await adapter.open();
+    const pragma = await driver.read((tx) =>
+      tx.prepare('PRAGMA foreign_keys').get<{ readonly foreign_keys: number }>(),
+    );
+    expect(pragma?.foreign_keys).toBe(1);
+  });
+
+  it('cascades claim cleanup through the production RunbookStore.deleteRun path', async () => {
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      ensureSchema(tx);
+    });
+    const store = new RunbookStore(driver, dir);
+
+    // Mint a schema-valid run state via a throwaway manager on a separate dir,
+    // so its own storage cannot collide with the adapter driver under test.
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-scratch-'));
+    try {
+      const manager = new RunbookStateManager(scratch);
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      await store.createRun(state);
+      await store.transaction((txn) => {
+        txn.insertClaim(
+          makeClaimRecord({
+            claimKey: assertClaimLookupKey(`rdclk_${'c'.repeat(32)}`),
+            controlledRunId: state.id,
+          }),
+          assertClaimGeneration(0),
+        );
+      });
+
+      await store.deleteRun(state.id);
+
+      const remaining = await driver.read((tx) =>
+        tx.prepare('SELECT COUNT(*) AS n FROM claims').get<{ readonly n: number }>(),
+      );
+      expect(remaining?.n).toBe(0);
+    } finally {
+      await fs.rm(scratch, { recursive: true, force: true });
+    }
   });
 });
 
