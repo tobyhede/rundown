@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -341,6 +342,35 @@ describe('sql.js durability and crash boundaries', () => {
     const after = (await fs.readdir(dir)).filter((n) => n.endsWith('.tmp'));
     expect(after).toEqual([]);
     expect(await readSeed(dbPath)).toBe(3);
+  });
+
+  it('leaves a concurrent writer’s lock staging file intact while reclaiming its own orphan', async () => {
+    // file-lock.ts stages its atomic populated-create as
+    // `<lockFile>.<pid>.<uuid>.tmp` and then link()s it into place. The driver's
+    // adapter lock is `<dbPath>.lock`, so that staging file lands in this very
+    // directory as `<dbname>.lock.<pid>.<uuid>.tmp` — which an orphan sweep
+    // keyed on `<dbname>.` + `.tmp` matches. Unlinking it makes the owning
+    // writer's fs.link() throw an unhandled ENOENT and kill the process.
+    const dbPath = path.join(dir, 'neighbour.db');
+    await seed(dbPath);
+
+    const lockStaging = `${dbPath}.lock.${String(process.pid)}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(lockStaging, '{"pid":1,"created_at":"now"}', 'utf8');
+    // A genuine crash remnant from this driver, to prove the narrowed filter
+    // still reclaims what it owns rather than being disabled outright.
+    const ownOrphan = path.join(dir, `neighbour.db.export-${crypto.randomUUID()}.tmp`);
+    await fs.writeFile(ownOrphan, 'partial image', 'utf8');
+
+    {
+      await using driver = await openSqljsDriver(dbPath);
+      await driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 7, k: 'seed' });
+      });
+    }
+
+    await expect(fs.readFile(lockStaging, 'utf8')).resolves.toBe('{"pid":1,"created_at":"now"}');
+    await expect(fs.access(ownOrphan)).rejects.toThrow();
+    expect(await readSeed(dbPath)).toBe(7);
   });
 
   it('makes the last durable rename win across sequential writes', async () => {

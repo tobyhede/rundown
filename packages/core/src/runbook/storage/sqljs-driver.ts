@@ -4,11 +4,16 @@
  * Backs single-writer WebContainer hosts where native machine code (and thus
  * `node:sqlite`'s C internals and native addons) is unavailable. sql.js is an
  * in-memory SQLite compiled to WebAssembly; it provides NO cross-process
- * serialization on its own. This adapter supplies that serialization by holding
- * an adapter-owned advisory file lock around each short
- * `load → transaction → export → temp fsync → rename → dir fsync` critical
- * section, and one in-process async mutex so the non-reentrant file lock is
- * never recursively acquired.
+ * serialization, and neither does this adapter — it declares
+ * `capabilities.multiProcess: false` and callers must treat it as
+ * single-writer. What the adapter does provide is *atomicity of its own
+ * critical section*: an adapter-owned advisory file lock around each short
+ * `load → transaction → export → temp fsync → rename → dir fsync` cycle, plus
+ * one in-process async mutex so the non-reentrant file lock is never
+ * recursively acquired. That is a best-effort guard against interleaving, not
+ * the native adapter's genuine multi-process serialization: the lock is
+ * advisory, reclaimable on holder death, and bounded by a timeout, so a second
+ * concurrent writer is a lost-update hazard the adapter cannot rule out.
  *
  * Durability inside the lock is mandatory: the exported image is written to a
  * same-directory temp file, fsynced, atomically renamed over the database, and
@@ -63,6 +68,24 @@ export interface SqljsDriverOptions {
 
 /** Suffix marking an in-flight export temp file for this driver. */
 const TEMP_SUFFIX = '.tmp';
+
+/**
+ * Infix marking a temp file as *this driver's own* export staging file.
+ *
+ * The directory holding the database is shared with other writers that stage
+ * their own `.tmp` files beside it — notably `file-lock`, whose atomic
+ * populated-create stages `<dbPath>.lock.<pid>.<uuid>.tmp`. A reclamation
+ * filter keyed only on `<dbname>.` + `.tmp` matches that lock staging file, so
+ * one driver's orphan sweep would unlink another writer's in-flight lock temp
+ * and crash its `link()` with ENOENT.
+ *
+ * The infix makes export temps structurally distinguishable rather than
+ * blacklisting known foreign patterns: only names this driver itself minted can
+ * carry it, so the filter stays correct against staging schemes that do not
+ * exist yet. A blacklist (`!name.includes('.lock.')`) would only re-close this
+ * one hole and silently reopen on the next neighbour.
+ */
+const TEMP_INFIX = '.export-';
 
 /**
  * Translate the driver's bare named parameters to sql.js's `:`-prefixed bind
@@ -318,7 +341,10 @@ export class SqljsDriver implements SqlDriver {
   private async persist(db: Database): Promise<void> {
     const bytes = db.export();
     this.fault('after-export');
-    const tmp = path.join(this.dir, `${path.basename(this.dbPath)}.${randomUUID()}${TEMP_SUFFIX}`);
+    const tmp = path.join(
+      this.dir,
+      `${path.basename(this.dbPath)}${TEMP_INFIX}${randomUUID()}${TEMP_SUFFIX}`,
+    );
     const handle = await fs.open(tmp, 'wx', 0o600);
     try {
       await handle.writeFile(bytes);
@@ -372,11 +398,14 @@ export class SqljsDriver implements SqlDriver {
   /**
    * Remove crash-orphaned export temp files.
    *
-   * Runs under the file lock, so no other writer is mid-cycle: any temp matching
-   * this database's export pattern is a crash remnant and is safe to unlink.
+   * The adapter lock is held while this runs, so no other *sql.js driver* is
+   * mid-export: a file matching this driver's own export pattern is necessarily
+   * a crash remnant and is safe to unlink. The adapter lock says nothing about
+   * unrelated writers in the same directory, so the match must be exact — see
+   * {@link isExportTempName}.
    */
   private async reclaimOrphanTemps(): Promise<void> {
-    const prefix = `${path.basename(this.dbPath)}.`;
+    const base = path.basename(this.dbPath);
     let entries: string[];
     try {
       entries = await fs.readdir(this.dir);
@@ -388,7 +417,7 @@ export class SqljsDriver implements SqlDriver {
     }
     await Promise.all(
       entries
-        .filter((name) => name.startsWith(prefix) && name.endsWith(TEMP_SUFFIX))
+        .filter((name) => isExportTempName(name, base))
         .map((name) => removeQuietly(path.join(this.dir, name))),
     );
   }
@@ -401,6 +430,32 @@ export class SqljsDriver implements SqlDriver {
   private fault(stage: SqljsPersistStage): void {
     this.options.faultHook?.(stage);
   }
+}
+
+/** Matches the `randomUUID()` body minted between {@link TEMP_INFIX} and {@link TEMP_SUFFIX}. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Decide whether a directory entry is one of this driver's export temp files.
+ *
+ * Reclamation unlinks whatever this returns `true` for, so the predicate is the
+ * whole safety boundary between "clean up my crash remnant" and "delete a
+ * neighbouring writer's in-flight file". It therefore matches the full minted
+ * shape — `<dbname>.export-<uuid>.tmp` — rather than a prefix/suffix pair: the
+ * database basename is a prefix of every sidecar the lock, journal, and WAL
+ * conventions put beside it, so prefix-plus-`.tmp` alone is far too broad.
+ *
+ * @param name - A bare directory entry name (no path separators).
+ * @param base - `path.basename(dbPath)` for the database being reclaimed.
+ * @returns Whether `name` is an export temp minted by this driver for `base`.
+ */
+function isExportTempName(name: string, base: string): boolean {
+  const prefix = `${base}${TEMP_INFIX}`;
+  if (!name.startsWith(prefix) || !name.endsWith(TEMP_SUFFIX)) {
+    return false;
+  }
+  const body = name.slice(prefix.length, name.length - TEMP_SUFFIX.length);
+  return UUID_PATTERN.test(body);
 }
 
 /**
