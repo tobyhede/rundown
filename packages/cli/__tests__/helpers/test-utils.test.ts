@@ -1,6 +1,6 @@
-import { readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import { describe, it, expect } from '@jest/globals';
+import { seedRawRunState, writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
 import {
   createRunbook,
   createTestWorkspace,
@@ -418,7 +418,7 @@ describe('readRunbookState', () => {
         startedAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       };
-      await writeFile(join(workspace.statePath(), `${runId}.json`), JSON.stringify(state));
+      await seedRawRunState(workspace.cwd, state);
 
       await expect(readRunbookState(workspace, runId)).resolves.toEqual(
         expect.objectContaining({
@@ -446,7 +446,7 @@ describe('readRunbookState', () => {
         startedAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       };
-      await writeFile(join(workspace.statePath(), 'wf_legacy.json'), JSON.stringify(state));
+      await seedRawRunState(workspace.cwd, state);
 
       await expect(readRunbookState(workspace, 'wf_legacy')).resolves.toBeNull();
     } finally {
@@ -471,7 +471,7 @@ describe('readRunbookState', () => {
         startedAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       };
-      await writeFile(join(workspace.statePath(), `${filenameId}.json`), JSON.stringify(state));
+      await writeRawRunJson(workspace.cwd, filenameId, JSON.stringify(state));
 
       await expect(readRunbookState(workspace, filenameId)).resolves.toBeNull();
     } finally {
@@ -495,7 +495,7 @@ describe('readRunbookState', () => {
         startedAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       };
-      await writeFile(join(workspace.statePath(), `${id}.json`), JSON.stringify(state));
+      await seedRawRunState(workspace.cwd, state);
 
       await expect(readRunbookState(workspace, id)).resolves.toEqual(
         expect.objectContaining({ id }),

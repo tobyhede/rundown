@@ -30,8 +30,6 @@ function claimPopUnavailableMessage(
       return `Claim id ${claimKey} does not exist.`;
     case 'not-stashed':
       return `Claim id ${claimKey} is not currently stashed.`;
-    case 'missing-child':
-      return `Claim id ${claimKey} points at missing child state.`;
     case 'terminal-child':
       return `Claim id ${claimKey} points at a ${result.lifecycle} child runbook.`;
     case 'child-linkage-mismatch':

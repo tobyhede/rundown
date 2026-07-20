@@ -23,9 +23,14 @@ import {
  * inaccessible for an environmental reason — so terminal recovery is
  * authorized to remove it. Exactly three error shapes qualify:
  *
- * - {@link InvalidRunbookStateError} — schema validation / schemaVersion failure
+ * - {@link InvalidRunbookStateError} — schema validation / schemaVersion failure,
+ *   and corrupt (unparseable) persisted `state_json`, which
+ *   `RunbookStateManager.load` reframes from a bare `SyntaxError` so it cannot
+ *   escape as RD-999 / "Unknown error"
  * - {@link LegacySnapshotError} — deprecated dynamic-step snapshot shape
- * - `SyntaxError` — corrupt (unparseable) state-file JSON
+ * - `SyntaxError` — a raw JSON parse failure from any remaining unwrapped read
+ *   path (e.g. session data); retained so no such failure regresses to
+ *   non-recoverable
  *
  * Everything else (permissions, IO, unexpected internal errors) is NOT
  * recoverable and must propagate: deleting state on such errors is the #518

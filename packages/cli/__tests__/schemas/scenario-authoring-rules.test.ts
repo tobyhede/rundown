@@ -123,8 +123,8 @@ describe('opaque wrapper detection', () => {
   });
 
   it('reads a single-quoted backtick as literal text, not a substitution', () => {
-    // Abridged from delegate-claim-corruption.runbook.md:29, an allowlisted
-    // fault injector. Its JS template literals sit inside a single-quoted
+    // Abridged from the since-deleted delegate-claim-corruption.runbook.md, an
+    // allowlisted fault injector. Its JS template literals sat inside a single-quoted
     // `node -e` argument, so the shell never expands them. Re-parsing that inner
     // text as shell throws (`Bad substitution: "f".repeat`), so a quote-blind
     // scan for backticks crashes the lint on a legitimate command.

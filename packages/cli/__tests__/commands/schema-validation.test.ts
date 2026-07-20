@@ -32,6 +32,7 @@ import {
   validateErrorOutput,
   validateWarningOutput,
 } from '../helpers/schema-validator.js';
+import { seedSession } from '@rundown-org/core/testing/session-fixtures';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -125,14 +126,7 @@ describe('CLI JSON Output Schema Validation', () => {
     await runCliInProcess('pass --text', workspace);
 
     // Resurrect the session entry so the terminal state is still active.
-    const fsp = await import('node:fs/promises');
-    const sessionFile = path.join(workspace.statePath(), '..', 'session.json');
-    const session = JSON.parse(await fsp.readFile(sessionFile, 'utf8')) as Record<string, unknown>;
-    await fsp.writeFile(
-      sessionFile,
-      JSON.stringify({ ...session, active: state.id, defaultStack: [state.id] }),
-      'utf8',
-    );
+    await seedSession(workspace.cwd, { defaultStack: [state.id] });
     return state.id;
   }
 

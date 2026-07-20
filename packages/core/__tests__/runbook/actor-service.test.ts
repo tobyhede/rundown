@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActor, waitFor, type Snapshot } from 'xstate';
@@ -32,6 +32,7 @@ import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
+import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The
@@ -2260,6 +2261,19 @@ echo ok
     // Verifies the production code path that previously called
     // compileRunbookToMachine(steps) without options — Cause #1 in the handoff.
 
+    /**
+     * Read back the persisted state as a mutable plain object, so a test can
+     * corrupt it and re-seed it via {@link seedRawRunState} (which writes the
+     * `state_json` unvalidated — the rejection under test stays production's).
+     */
+    async function rawPersistedState(id: string): Promise<Record<string, unknown>> {
+      const loaded = await manager.load(id);
+      if (loaded === null) {
+        throw new Error(`expected persisted state for ${id}`);
+      }
+      return JSON.parse(JSON.stringify(loaded)) as Record<string, unknown>;
+    }
+
     it('seeds compiler context.frontmatterOutputs from RunbookState.frontmatterOutputs', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
@@ -2293,11 +2307,10 @@ echo ok
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
-      // Simulate a pre-OUTPUTS-feature state file by stripping frontmatterOutputs from disk.
-      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      // Simulate a pre-OUTPUTS-feature state by stripping frontmatterOutputs from the store.
+      const raw = await rawPersistedState(state.id);
       delete raw.frontmatterOutputs;
-      await writeFile(filePath, JSON.stringify(raw));
+      await seedRawRunState(testDir, raw);
 
       await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
         /Invalid runbook state.*missing frontmatter outputs/,
@@ -2309,10 +2322,9 @@ echo ok
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
-      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      const raw = await rawPersistedState(state.id);
       delete raw.frontmatterOutputs;
-      await writeFile(filePath, JSON.stringify(raw));
+      await seedRawRunState(testDir, raw);
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
         /Invalid runbook state.*missing frontmatter outputs/,
@@ -2324,10 +2336,9 @@ echo ok
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
-      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      const raw = await rawPersistedState(state.id);
       raw.snapshot = { value: { weird: true } };
-      await writeFile(filePath, JSON.stringify(raw));
+      await seedRawRunState(testDir, raw);
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
         /Unsupported snapshot\.value shape/,
@@ -2339,10 +2350,9 @@ echo ok
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
-      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      const raw = await rawPersistedState(state.id);
       raw.snapshot = { value: { 'step::1': '__capture' } };
-      await writeFile(filePath, JSON.stringify(raw));
+      await seedRawRunState(testDir, raw);
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
         /Unsupported snapshot\.value shape/,
@@ -2357,10 +2367,9 @@ echo ok
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
-      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      const raw = await rawPersistedState(state.id);
       raw.snapshot = { value: 'some-old-format' };
-      await writeFile(filePath, JSON.stringify(raw));
+      await seedRawRunState(testDir, raw);
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
         /Unsupported persisted stateValue/,
@@ -2372,10 +2381,9 @@ echo ok
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
-      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      const raw = await rawPersistedState(state.id);
       raw.snapshot = { value: 'step::nonexistent-step' };
-      await writeFile(filePath, JSON.stringify(raw));
+      await seedRawRunState(testDir, raw);
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
         /references missing step "nonexistent-step"/,

@@ -8,7 +8,12 @@ import {
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
-import { writeFile, readdir, readFile, realpath } from 'node:fs/promises';
+import {
+  listPersistedRunIds,
+  patchPersistedRunState,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
+import { writeFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('Inline linkage integration (rd run --step)', () => {
@@ -64,18 +69,13 @@ describe('Inline linkage integration (rd run --step)', () => {
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
   }
 
-  /** Helper: find child state in runs directory by scanning for parentLinkage. */
+  /** Helper: find child state in the run store by scanning for parentLinkage. */
   async function findChildState(parentRunId: string): Promise<Record<string, unknown> | null> {
-    const runsDir = workspace.statePath();
-    const files = await readdir(runsDir);
-    const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
+    const runIds = await listPersistedRunIds(workspace.cwd);
 
-    for (const f of stateFiles) {
-      const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
-        string,
-        unknown
-      >;
-      if (content.id !== parentRunId && content.parentLinkage) {
+    for (const runId of runIds) {
+      const content = await readPersistedRunState(workspace.cwd, runId);
+      if (content !== null && content.id !== parentRunId && content.parentLinkage) {
         return content;
       }
     }
@@ -762,14 +762,14 @@ Check manually.
       // completion marking substeps done). The cursor has NOT advanced, so only
       // the status === 'done' guard catches this.
 
-      const statePath = join(workspace.statePath(), `${parentRunId}.json`);
-      const stateData = JSON.parse(await readFile(statePath, 'utf-8'));
-      const substeps = stateData.substepStates as Array<Record<string, unknown>>;
+      const stateData = await readPersistedRunState(workspace.cwd, parentRunId);
+      expect(stateData).not.toBeNull();
+      const substeps = stateData!.substepStates as Array<Record<string, unknown>>;
       const target = substeps.find((ss) => ss.id === '1');
       expect(target).toBeDefined();
       target!.status = 'done';
       target!.result = 'pass';
-      await writeFile(statePath, JSON.stringify(stateData, null, 2));
+      await patchPersistedRunState(workspace.cwd, parentRunId, { substepStates: substeps });
 
       // Try to run with inline linkage to done substep
       result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
+import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   assertClaimId,
@@ -12,6 +12,7 @@ import {
   RunbookStateManager,
   SessionService,
   type ClaimId,
+  type ClaimRecord,
   type Runbook,
   type RunId,
 } from '@rundown-org/core';
@@ -19,6 +20,7 @@ import {
   createTestWorkspace,
   runCliInProcess,
   readSession,
+  writeSession,
   listRunbookStates,
   readRunbookState,
   getActiveState,
@@ -26,6 +28,7 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/prune.ts`
@@ -151,21 +154,14 @@ describe('prune command', () => {
       };
       // Persist an ArtifactRecord inside the unified `variables` bucket
       // alongside a string OUTPUTS value, mirroring the post-Phase-1 shape.
-      await writeFile(
-        join(workspace.statePath(), stateFile),
-        JSON.stringify(
-          {
-            ...state,
-            variables: {
-              ...state!.variables,
-              PlanPath: artifact,
-              Note: 'string-output',
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await patchPersistedRunState(workspace.cwd, stateId, (current) => ({
+        ...current,
+        variables: {
+          ...state!.variables,
+          PlanPath: artifact,
+          Note: 'string-output',
+        },
+      }));
 
       // Sanity-check: the artifact-shaped value really is on disk before prune.
       const before = await readRunbookState(workspace, stateId);
@@ -394,29 +390,6 @@ describe('prune command', () => {
 
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(0);
-    });
-
-    it('recovers from a legacy claim record that predates lastSeenAt', async () => {
-      const manager = new RunbookStateManager(workspace.cwd);
-      const started = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-      expect(started.exitCode).toBe(0);
-
-      const sessionPath = join(workspace.cwd, '.rundown', 'session.json');
-      const raw = JSON.parse(await readFile(sessionPath, 'utf8')) as {
-        claims: Record<string, Record<string, unknown>>;
-        [key: string]: unknown;
-      };
-      expect(Object.keys(raw.claims)).toHaveLength(1);
-      for (const claim of Object.values(raw.claims)) {
-        delete claim.lastSeenAt;
-      }
-      await writeFile(sessionPath, JSON.stringify(raw), 'utf8');
-
-      const result = await runCliInProcess('prune --all', workspace);
-
-      expect(result.exitCode).toBe(0);
-      expect(await listRunbookStates(workspace)).toEqual([]);
-      await expect(manager.loadSession()).resolves.toEqual({ defaultStack: [], claims: {} });
     });
   });
 
@@ -727,27 +700,20 @@ Do the thing.
         parentFrameKey: buildFrameKey('1'),
         parentEntry: 1,
       };
-      const sessionPath = join(workspace.cwd, '.rundown', 'session.json');
-      const raw = JSON.parse(await readFile(sessionPath, 'utf8')) as Record<string, unknown>;
-      await writeFile(
-        sessionPath,
-        JSON.stringify({
-          ...raw,
-          claims: {
-            [parsedClaim.claimKey]: {
-              claimKey: parsedClaim.claimKey,
-              secretHash: hashClaimSecret(parsedClaim.secret),
-              controlledRunId: childId,
-              delegation: linkage,
-              grants: createDelegatedChildGrants({ linkage }),
-              issuedAt: '2026-07-03T00:00:00.000Z',
-              updatedAt: '2026-07-03T00:00:00.000Z',
-              lastSeenAt: '2026-07-03T00:00:00.000Z',
-            },
+      await writeSession(workspace, {
+        claims: {
+          [parsedClaim.claimKey]: {
+            claimKey: parsedClaim.claimKey,
+            secretHash: hashClaimSecret(parsedClaim.secret),
+            controlledRunId: childId,
+            delegation: linkage,
+            grants: createDelegatedChildGrants({ linkage }),
+            issuedAt: '2026-07-03T00:00:00.000Z',
+            updatedAt: '2026-07-03T00:00:00.000Z',
+            lastSeenAt: '2026-07-03T00:00:00.000Z',
           },
-        }),
-        'utf8',
-      );
+        },
+      });
 
       const result = await runCliInProcess('prune', workspace);
       expect(result.exitCode).toBe(0);
@@ -764,9 +730,7 @@ Do the thing.
       await sessionService.pushRunbook(invalidId);
       // Corrupt to an invalid-but-parseable state file: wrong schemaVersion,
       // so list() skips it and it flows through the invalid-file prune path.
-      const stateFile = join(workspace.statePath(), `${invalidId}.json`);
-      const rawState = JSON.parse(await readFile(stateFile, 'utf8')) as Record<string, unknown>;
-      await writeFile(stateFile, JSON.stringify({ ...rawState, schemaVersion: 99 }), 'utf8');
+      await patchPersistedRunState(workspace.cwd, invalidId, { schemaVersion: 99 });
 
       const result = await runCliInProcess('prune --all', workspace);
       expect(result.exitCode).toBe(0);
@@ -794,25 +758,6 @@ Do the thing.
         const session = await readSession(workspace);
         expect(session.defaultStack).toEqual([runningId]);
         expect(await readRunbookState(workspace, completedId)).toBeNull();
-      });
-
-      it('tolerates the inverse interruption (deleted but still stacked) without worsening it', async () => {
-        // Simulate: delete succeeded, release failed — the #534 leak shape.
-        // The new release-first ordering can no longer produce this from
-        // prune, but a pre-fix binary or crash elsewhere can. Prune must exit
-        // 0 and leave the session as-is; recovery for the dangling id is the
-        // #518 cleanup path (bare rd stop / rd complete), not prune.
-        const manager = new RunbookStateManager(workspace.cwd);
-        const sessionService = new SessionService(manager);
-        const danglingId = await createStateFile(manager, { lifecycle: 'stopped' });
-        await sessionService.pushRunbook(danglingId);
-        await unlink(join(workspace.statePath(), `${danglingId}.json`));
-
-        const result = await runCliInProcess('prune', workspace);
-
-        expect(result.exitCode).toBe(0);
-        const session = await readSession(workspace);
-        expect(session.defaultStack).toEqual([danglingId]); // untouched, not worsened
       });
     });
   });

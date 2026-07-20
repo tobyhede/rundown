@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RunbookActorService, InvalidRunbookStateError } from '@rundown-org/core';
 import {
@@ -13,6 +13,7 @@ import {
   withRunTarget,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { patchPersistedRunState, seedSession } from '@rundown-org/core/testing/session-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/complete.ts`
@@ -420,10 +421,7 @@ Do work.
 
       const childState = await readRunbookState(workspace, childRunId);
       expect(childState).not.toBeNull();
-      await writeFile(
-        join(workspace.statePath(), `${childRunId}.json`),
-        JSON.stringify({ ...childState, lifecycle: 'completed' }, null, 2),
-      );
+      await patchPersistedRunState(workspace.cwd, childRunId, { lifecycle: 'completed' });
 
       result = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
 
@@ -476,10 +474,7 @@ Do work.
       // child's `stopped` lifecycle, so the seam refuses with a typed conflict.
       const childState = await readRunbookState(workspace, childRunId);
       if (!childState) throw new Error('Expected claimed child state to exist');
-      await writeFile(
-        join(workspace.statePath(), `${childRunId}.json`),
-        JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),
-      );
+      await patchPersistedRunState(workspace.cwd, childRunId, { lifecycle: 'stopped' });
 
       result = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
 
@@ -515,19 +510,7 @@ Do work.
 
     // Resurrect the session entry so the next complete call finds the
     // terminal state (simulating the race the short-circuit guards).
-    const fsp = await import('node:fs/promises');
-    const sessionFile = join(workspace.statePath(), '..', 'session.json');
-    const sessionRaw = await fsp.readFile(sessionFile, 'utf8');
-    const session = JSON.parse(sessionRaw) as {
-      active: string | null;
-      defaultStack: readonly string[];
-      claims: Record<string, unknown>;
-    };
-    await fsp.writeFile(
-      sessionFile,
-      JSON.stringify({ ...session, active: state!.id, defaultStack: [state!.id] }),
-      'utf8',
-    );
+    await seedSession(workspace.cwd, { defaultStack: [state!.id] });
 
     const persistedState = await readRunbookState(workspace, state!.id);
     expect(persistedState?.lifecycle).toBe('completed');
@@ -640,12 +623,13 @@ Waiting.
       expect(child?.parentLinkage?.kind).toBe('inline');
 
       // The back-edge: the child's inline parent is now ITSELF.
-      const statePath = join(workspace.statePath(), `${child!.id}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as {
-        parentLinkage: { parentRunId: string };
-      };
-      raw.parentLinkage.parentRunId = child!.id;
-      await writeFile(statePath, JSON.stringify(raw));
+      await patchPersistedRunState(workspace.cwd, child!.id, (current) => ({
+        ...current,
+        parentLinkage: {
+          ...(current.parentLinkage as Record<string, unknown>),
+          parentRunId: child!.id,
+        },
+      }));
       return child!.id;
     }
 

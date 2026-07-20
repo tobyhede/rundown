@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { buildFrameKey, DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
+import {
+  patchPersistedRunState,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
@@ -129,24 +133,15 @@ describe('delegate command', () => {
       snapshot.context && typeof snapshot.context === 'object'
         ? (snapshot.context as Record<string, unknown>)
         : {};
-    const stateFile = join(workspace.statePath(), `${state.id}.json`);
-    await writeFile(
-      stateFile,
-      JSON.stringify(
-        {
-          ...state,
-          snapshot: {
-            ...snapshot,
-            context: {
-              ...context,
-              substepStates: state.substepStates,
-            },
-          },
+    await patchPersistedRunState(workspace.cwd, state.id, {
+      snapshot: {
+        ...snapshot,
+        context: {
+          ...context,
+          substepStates: state.substepStates,
         },
-        null,
-        2,
-      ),
-    );
+      },
+    });
   }
 
   /** Start a prompted runbook with substeps and create a child runbook. */
@@ -984,14 +979,13 @@ describe('delegate command', () => {
 
       const parent = await getActiveState(workspace);
       if (!parent) throw new Error('Expected parent state');
-      const persisted = JSON.parse(
-        await readFile(join(workspace.statePath(), `${parent.id}.json`), 'utf-8'),
-      ) as {
+      const persisted = (await readPersistedRunState(workspace.cwd, parent.id)) as {
         snapshot?: {
           context?: { substepStates?: Array<{ delegation?: Record<string, unknown> }> };
         };
-      };
-      const snapshotDelegation = persisted.snapshot?.context?.substepStates?.[0]?.delegation;
+      } | null;
+      expect(persisted).not.toBeNull();
+      const snapshotDelegation = persisted?.snapshot?.context?.substepStates?.[0]?.delegation;
       expect(snapshotDelegation?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
       expect(snapshotDelegation?.token).toBeUndefined();
     });
@@ -1502,26 +1496,17 @@ describe('delegate command', () => {
 
       const state = await getActiveState(workspace);
       if (!state) throw new Error('Expected active state');
-      const stateFile = join(workspace.statePath(), `${state.id}.json`);
-      await writeFile(
-        stateFile,
-        JSON.stringify(
-          {
-            ...state,
-            parentLinkage: {
-              kind: 'delegation',
-              parentRunId: `rd_${'9'.repeat(32)}`,
-              parentStepId: '1',
-              parentStep: '1',
-              parentFrameKey: '1|',
-              parentEntry: 1,
-              tokenHash: `sha256:${'a'.repeat(64)}`,
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await patchPersistedRunState(workspace.cwd, state.id, {
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: `rd_${'9'.repeat(32)}`,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: '1|',
+          parentEntry: 1,
+          tokenHash: `sha256:${'a'.repeat(64)}`,
+        },
+      });
 
       const result = await runCliInProcess(
         await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),

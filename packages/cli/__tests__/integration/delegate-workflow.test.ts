@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { RunId } from '@rundown-org/core';
+import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 import {
   createTestWorkspace,
   createRunbook,
@@ -180,10 +181,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     // runbook — simulating stale state (e.g. the runbook edited out from under
     // an in-flight run). End-to-end this exercises the same state-load path as
     // a real `rd collect`, not just the command in isolation.
-    const statePath = join(workspace.statePath(), `${parentRunId}.json`);
-    const raw = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-    raw.step = '99';
-    await writeFile(statePath, JSON.stringify(raw, null, 2));
+    await patchPersistedRunState(workspace.cwd, parentRunId, { step: '99' });
 
     // The run-targeted collect must reject the stale state with STEP_NOT_FOUND rather than
     // collapsing it into an `already-aggregated` success.

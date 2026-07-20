@@ -21,6 +21,11 @@ import {
   parseFinalCliJsonObject,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import {
+  patchPersistedRunState,
+  seedSession,
+  writeRawRunJson,
+} from '@rundown-org/core/testing/session-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/stop.ts`
@@ -228,10 +233,12 @@ The result is {{ Result }}.
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
 
-      // Simulate corruption: delete state file but leave session stack intact
-      const stateDir = workspace.statePath();
+      // Simulate corruption: make the run's persisted state unusable while the
+      // session stack still points at it. Deleting the run row is not the
+      // faithful analogue any more — `session_stack.run_id` cascades, so the
+      // orphaned stack entry this test is about would vanish with the row.
       const stateId = state!.id;
-      await unlink(join(stateDir, `${stateId}.json`));
+      await writeRawRunJson(workspace.cwd, stateId, '{}');
 
       // Stop should clean up the orphaned stack entry
       const result = await runCliInProcess('stop --text', workspace);
@@ -247,10 +254,9 @@ The result is {{ Result }}.
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
 
-      // Write invalid JSON to state file
-      const stateDir = workspace.statePath();
+      // Write invalid JSON to the run's persisted state
       const stateId = state!.id;
-      await writeFile(join(stateDir, `${stateId}.json`), '{invalid');
+      await writeRawRunJson(workspace.cwd, stateId, '{invalid');
 
       const result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
@@ -264,11 +270,11 @@ The result is {{ Result }}.
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id;
-      const stateDir = workspace.statePath();
 
       // Write a legacy snapshot state that triggers a invalid-state error in load()
-      const legacyState = { ...state, lastAction: { type: 'GOTO_NEXT' } };
-      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(legacyState));
+      await patchPersistedRunState(workspace.cwd, stateId, {
+        lastAction: { type: 'GOTO_NEXT' },
+      });
 
       // stop is a cleanup command — it should handle invalid state gracefully
       const result = await runCliInProcess('stop --text', workspace);
@@ -283,11 +289,9 @@ The result is {{ Result }}.
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id;
-      const stateDir = workspace.statePath();
 
       // Write a state with the wrong schemaVersion to trigger InvalidRunbookStateError
-      const invalidState = { ...state, schemaVersion: 2 };
-      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(invalidState));
+      await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: 2 });
 
       // stop is a cleanup command — InvalidRunbookStateError must not propagate
       const result = await runCliInProcess('stop --text', workspace);
@@ -364,7 +368,7 @@ The result is {{ Result }}.
       expect(child?.parentLinkage?.kind).toBe('inline');
 
       // Corrupt the NON-TOP member; the top (child) stays valid.
-      await writeFile(join(workspace.statePath(), `${parent!.id}.json`), '{invalid');
+      await writeRawRunJson(workspace.cwd, parent!.id, '{invalid');
 
       const result = await runCliInProcess('stop --text', workspace);
 
@@ -476,68 +480,6 @@ Do work.
       expect(await readRunbookState(workspace, parentId)).not.toBeNull();
     });
 
-    it('fails closed for stale claimed runbook state without touching default stack', async () => {
-      const parentRunbook = `## 1. Review
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Child
-- DELEGATE
-
-Do child.
-
-- child.runbook.md
-`;
-      const childRunbook = `## 1. Child
-- PASS COMPLETE
-
-Do work.
-`;
-      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentRunbook);
-      await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
-
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
-      expect(result.exitCode).toBe(0);
-      const parentState = await getActiveState(workspace);
-      expect(parentState).not.toBeNull();
-      const token = parentState?.substepStates?.[0]?.delegation?.token;
-      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-      if (typeof token !== 'string') throw new Error('Expected delegation token');
-      result = await runCliInProcess(`claim ${token}`, workspace);
-      expect(result.exitCode).toBe(0);
-      const claimOutput = findActionOutput(result.stdout);
-      const childRunId = claimOutput?.run_id;
-      const claimId = claimOutput?.claim_id;
-      expect(typeof childRunId).toBe('string');
-      expect(typeof claimId).toBe('string');
-      await unlink(join(workspace.statePath(), `${String(childRunId)}.json`));
-
-      result = await runCliInProcess(['stop', '--claim-id', String(claimId)], workspace);
-      expect(result.exitCode).toBe(1);
-      const errorResponse = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(errorResponse).toEqual(
-        expect.objectContaining({
-          kind: 'error',
-          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-          command: 'stop',
-        }),
-      );
-      // Refusal identifies the claim by its non-secret lookup key, never the bearer secret.
-      expect(String(errorResponse.error)).toContain(
-        claimKeyFromBearer(assertClaimId(String(claimId))),
-      );
-      expect(String(errorResponse.error)).not.toContain(parseClaimBearer(String(claimId)).secret);
-      expect(String(errorResponse.error)).toContain('missing child state');
-
-      const session = await readSession(workspace);
-      expect(Object.values(session.claims)).toContainEqual(
-        expect.objectContaining({ controlledRunId: childRunId }),
-      );
-      expect(session.defaultStack).toContain(parentState!.id);
-      expect(session.active).toBe(parentState!.id);
-      expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
-    });
-
     it('releases a terminal claimed child as an idempotent no-op', async () => {
       const parentRunbook = `## 1. Review
 - PASS ALL CONTINUE
@@ -575,10 +517,7 @@ Do work.
 
       const childState = await readRunbookState(workspace, childRunId);
       expect(childState).not.toBeNull();
-      await writeFile(
-        join(workspace.statePath(), `${childRunId}.json`),
-        JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),
-      );
+      await patchPersistedRunState(workspace.cwd, childRunId, { lifecycle: 'stopped' });
 
       result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
 
@@ -798,21 +737,7 @@ Do work.
       // Reactivate the session so the next stop call can find the state.
       // Resurrect via the session stack — the simulated "already terminal
       // but session-active" race needs the state file to remain loadable.
-      const sessionFile = join(workspace.statePath(), '..', 'session.json');
-      const sessionRaw = await import('node:fs/promises').then((m) =>
-        m.readFile(sessionFile, 'utf8'),
-      );
-      const session = JSON.parse(sessionRaw) as {
-        active: string | null;
-        defaultStack: readonly string[];
-        claims: Record<string, unknown>;
-      };
-      const writeFileSync = await import('node:fs/promises').then((m) => m.writeFile);
-      await writeFileSync(
-        sessionFile,
-        JSON.stringify({ ...session, active: state!.id, defaultStack: [state!.id] }),
-        'utf8',
-      );
+      await seedSession(workspace.cwd, { defaultStack: [state!.id] });
 
       // Sanity: persisted state is terminal.
       const persistedState = await readRunbookState(workspace, state!.id);

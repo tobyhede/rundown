@@ -3,8 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { RunbookStateManager } from '../../src/runbook/state.js';
-import { runsDir as _runsDir } from '../../src/paths.js';
 import { DelegationScanService } from '../../src/runbook/delegation-scan.js';
+import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 import {
   hashDelegationToken,
   generateDelegationToken,
@@ -52,13 +52,9 @@ describe('DelegationScanService', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  /** Write a state file directly to bypass schema validation. */
+  /** Seed run state directly into the store to bypass schema validation. */
   async function writeState(state: RunbookState): Promise<void> {
-    const stateDir = _runsDir(tmpDir);
-    await fs.mkdir(stateDir, { recursive: true });
-    await fs.writeFile(path.join(stateDir, `${state.id}.json`), JSON.stringify(state, null, 2), {
-      mode: 0o600,
-    });
+    await seedRawRunState(tmpDir, state as unknown as Record<string, unknown>);
   }
 
   function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {

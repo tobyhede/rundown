@@ -4292,6 +4292,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('bare stop maps a non-running resolved root to already_terminal', async () => {
         const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
@@ -4312,6 +4313,7 @@ describe('RunbookLifecycleCommandService', () => {
         const root = baseState({ id: ROOT, lifecycle: 'completed' });
         await manager.save(root);
         await sessionService.pushRunbook(ROOT);
+        await manager.save(baseState({ id: CHILD }));
         await issueRunControlClaimFor(CHILD);
         installResolvedPlan(root, [root]);
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
@@ -4335,6 +4337,7 @@ describe('RunbookLifecycleCommandService', () => {
         // Pins the `lifecycle === 'stopped' ? 'stopped' : 'completed'` arm that the
         // completed-root test above never reaches.
         const root = baseState({ id: ROOT, lifecycle: 'stopped' });
+        await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
         const out = await seam.runTerminal({
@@ -4380,6 +4383,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('bare complete maps plan status none to outcome none', async () => {
+        await manager.save(baseState({ id: ROOT }));
         await issueRunControlClaimFor(ROOT);
         jest
           .spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan')
@@ -4393,6 +4397,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('bare complete maps missing-inline-parent to inline_plan_unavailable', async () => {
+        await manager.save(baseState({ id: ROOT }));
         await issueRunControlClaimFor(ROOT);
         jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
           status: 'missing-inline-parent',
@@ -4413,6 +4418,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('bare complete maps inline-cycle to inline_plan_unavailable', async () => {
+        await manager.save(baseState({ id: ROOT }));
         await issueRunControlClaimFor(ROOT);
         jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
           status: 'inline-cycle',

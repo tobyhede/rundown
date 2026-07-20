@@ -493,7 +493,10 @@ describe('SessionService', () => {
       });
     });
 
-    it('returns stale for a claim whose child state is missing', async () => {
+    it('deletes a claim together with the run it controls', async () => {
+      // Runs and their claims live in one database and are removed in a single
+      // transaction, so a delete can never half-apply the way two JSON files
+      // could. The claim resolves as `missing`, not as a dangling record.
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -506,11 +509,9 @@ describe('SessionService', () => {
 
       await manager.delete(child.id);
 
+      expect((await manager.loadSession()).claims).toEqual({});
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
-      expect(resolved.status).toBe('stale');
-      if (resolved.status === 'stale') {
-        expect(resolved.reason).toBe('missing-state');
-      }
+      expect(resolved.status).toBe('missing');
     });
 
     it('returns terminal for a completed claim child', async () => {

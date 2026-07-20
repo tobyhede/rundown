@@ -31,7 +31,7 @@ import {
   assertClaimSecretHash,
 } from '../claim-id.js';
 import type { SessionData } from '../state.js';
-import type { SqlDriver, SqlTransaction } from './sql-driver.js';
+import type { SqlBindable, SqlDriver, SqlTransaction } from './sql-driver.js';
 import {
   type CapturedAuthority,
   type ClaimGeneration,
@@ -741,6 +741,7 @@ export class RunbookStore {
       );
       for (const [key, record] of Object.entries(session.claims)) {
         if (stale.delete(key)) {
+          this.updateChangedClaimColumns(txn.tx, key, record);
           continue;
         }
         const generation =
@@ -1089,6 +1090,52 @@ export class RunbookStore {
    * @param record - Claim record to persist.
    * @param issuedGeneration - Generation captured as issuance metadata.
    */
+  /**
+   * Update an existing claim row to match a record, touching only changed columns.
+   *
+   * Column-precise on purpose. SQLite fires an `UPDATE OF <cols>` trigger based on
+   * the columns named in `SET`, not on whether their values actually differ, so
+   * blindly rewriting every column would bump `claim_generation` on each session
+   * save and invalidate live captures. Diffing first means a resolution-affecting
+   * edit (grants, status, linkage) still bumps the generation exactly once, while
+   * a metadata-only refresh (`last_seen_at`) never does.
+   *
+   * @param tx - Open transaction.
+   * @param key - Claim lookup key.
+   * @param record - Desired claim state.
+   */
+  private updateChangedClaimColumns(tx: SqlTransaction, key: string, record: ClaimRecord): void {
+    const desired: Record<string, SqlBindable> = {
+      controlled_run: record.controlledRunId,
+      secret_hash: record.secretHash,
+      parent_run_id: record.delegation?.parentRunId ?? null,
+      delegation_json: record.delegation ? JSON.stringify(record.delegation) : null,
+      grants_json: JSON.stringify(record.grants),
+      updated_at: record.updatedAt,
+      last_seen_at: record.lastSeenAt,
+    };
+    const current = tx
+      .prepare(
+        `SELECT controlled_run, secret_hash, parent_run_id, delegation_json,
+                grants_json, updated_at, last_seen_at
+           FROM claims WHERE key = :key`,
+      )
+      .get<Record<string, SqlBindable>>({ key });
+    if (current === undefined) {
+      return;
+    }
+    const changed = Object.keys(desired).filter((column) => current[column] !== desired[column]);
+    if (changed.length === 0) {
+      return;
+    }
+    const assignments = changed.map((column) => `${column} = :${column}`).join(', ');
+    const params: Record<string, SqlBindable> = { key };
+    for (const column of changed) {
+      params[column] = desired[column];
+    }
+    tx.prepare(`UPDATE claims SET ${assignments} WHERE key = :key`).run(params);
+  }
+
   private insertClaim(
     tx: SqlTransaction,
     record: ClaimRecord,
@@ -1153,6 +1200,32 @@ export class RunbookStore {
    * @returns The validated run state, or null.
    */
   private readRun(tx: SqlTransaction, runId: RunId): RunbookState | null {
+    const raw = this.readRunRaw(tx, runId);
+    return raw === null ? null : (this.stateSchema.parse(raw) as RunbookState);
+  }
+
+  /**
+   * Reassemble a run's persisted JSON without validating it.
+   *
+   * Exposed for the state manager, which owns the caller-facing error taxonomy
+   * (legacy-snapshot and schema-version rejection) and must therefore inspect the
+   * raw object before validation rather than receive a parsed value or a ZodError.
+   *
+   * @param runId - Run to read.
+   * @returns The assembled state object, or null when absent.
+   */
+  readRunJson(runId: RunId): Promise<Record<string, unknown> | null> {
+    return this.driver.read((tx) => this.readRunRaw(tx, runId));
+  }
+
+  /**
+   * Reassemble a run row into its full state object, unvalidated.
+   *
+   * @param tx - Open transaction.
+   * @param runId - Run to read.
+   * @returns The assembled object, or null when absent.
+   */
+  private readRunRaw(tx: SqlTransaction, runId: RunId): Record<string, unknown> | null {
     const row = tx
       .prepare('SELECT lifecycle, state_json FROM runs WHERE id = :id')
       .get<{ readonly lifecycle: string; readonly state_json: string }>({ id: runId });
@@ -1164,7 +1237,7 @@ export class RunbookStore {
     // resolvedCompletions live only in their own table; a run always carries the
     // field (empty when it has no completions), so canonicalize to `{}`.
     raw.resolvedCompletions = this.readResolvedCompletions(tx, runId);
-    return this.stateSchema.parse(raw) as RunbookState;
+    return raw;
   }
 
   /**

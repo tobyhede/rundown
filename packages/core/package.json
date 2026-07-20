@@ -21,6 +21,10 @@
     "./testing/claim-fixtures": {
       "import": "./dist/testing/claim-fixtures.js",
       "types": "./dist/testing/claim-fixtures.d.ts"
+    },
+    "./testing/session-fixtures": {
+      "import": "./dist/testing/session-fixtures.js",
+      "types": "./dist/testing/session-fixtures.d.ts"
     }
   },
   "files": [

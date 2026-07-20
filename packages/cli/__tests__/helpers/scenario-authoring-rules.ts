@@ -97,8 +97,9 @@ const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * Extract the text of every command substitution the shell would actually run.
  *
  * Quote-aware by necessity, not by preference: inside *single* quotes `$( … )`
- * and backticks are literal text. `delegate-claim-corruption.runbook.md:29` — an
- * allowlisted fault injector — passes a single-quoted `node -e` argument holding
+ * and backticks are literal text. The since-deleted allowlisted fault injector
+ * `delegate-claim-corruption.runbook.md` — whose shape is pinned in the unit
+ * tests — passed a single-quoted `node -e` argument holding
  * JS template literals (`` `sha256:${"f".repeat(64)}` ``), which `shellParse`
  * rejects outright as a bad substitution. A quote-blind regex hands that inner
  * text to the parser and throws on a legitimate command, so scanning raw text
