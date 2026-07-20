@@ -39,7 +39,11 @@ import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
-import type { RunbookStore, StateMutationResult } from './storage/runbook-store.js';
+import type {
+  RunbookStore,
+  SessionMutationTxn,
+  StateMutationResult,
+} from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 
 /** Current persisted state schema version for the v1 release. */
@@ -832,6 +836,22 @@ export class RunbookStateManager {
   async saveSession(session: SessionData): Promise<void> {
     const store = await this.store();
     await store.saveSession(session);
+  }
+
+  /**
+   * Read-modify-write the session inside a single store transaction.
+   *
+   * The atomic replacement for `loadSession` -> mutate -> `saveSession`, which is
+   * lossy under concurrency. Session mutations MUST use this: it is what makes the
+   * workspace session lock unnecessary.
+   *
+   * @template T - Value the mutation returns to its caller.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The work's return value, once committed.
+   */
+  async mutateSession<T>(work: (ctx: SessionMutationTxn) => T): Promise<T> {
+    const store = await this.store();
+    return store.mutateSession(work);
   }
 
   /**

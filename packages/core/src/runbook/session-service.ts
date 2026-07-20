@@ -12,7 +12,7 @@
 
 import type { RunbookStateManager, SessionData } from './state.js';
 import type { RunId } from './run-id.js';
-import { SessionLock } from './session-lock.js';
+import type { SessionMutationTxn } from './storage/runbook-store.js';
 import {
   createDelegatedChildGrants,
   createClaimRecord,
@@ -247,7 +247,6 @@ function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {
  * constructor-injection pattern as {@link RunbookActorService}.
  */
 export class SessionService {
-  private readonly lock: SessionLock;
   private readonly now: () => string;
 
   /**
@@ -261,34 +260,32 @@ export class SessionService {
    * CLI, which take the real clock — are unaffected.
    *
    * @param manager - State manager for raw session and state persistence
-   * @param lock - Optional pre-built session lock (defaults to one bound to `manager.cwd`)
    * @param now - Optional clock returning an ISO instant (defaults to the wall clock)
    */
   constructor(
     private readonly manager: RunbookStateManager,
-    lock?: SessionLock,
     now?: () => string,
   ) {
-    this.lock = lock ?? new SessionLock(manager.cwd);
     this.now = now ?? (() => new Date().toISOString());
   }
 
   /**
-   * Run a load-modify-save mutation under the workspace session lock.
+   * Run a session read-modify-write inside one store transaction.
    *
-   * Read-only methods bypass the lock — the worst case is a slightly stale snapshot.
-   * Mutations must always go through this helper so concurrent CLI processes
-   * cannot lose interleaved writes to `.rundown/session.json`.
+   * Replaces the workspace session file lock: atomicity now comes from the
+   * transaction, so an interleaved writer cannot lose an update. Because a
+   * transaction must never be held across an `await`, `work` is synchronous and
+   * reads run state through `ctx.readState` rather than awaiting the manager.
    *
-   * @param fn - Async mutation to execute while the session lock is held
-   * @returns The value returned by `fn`
+   * Read-only methods deliberately stay outside this helper — the worst case
+   * there is a slightly stale snapshot.
+   *
+   * @template T - Value the mutation returns.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The value returned by `work`, once committed.
    */
-  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    await this.lock.acquire();
-    // Best-effort scoped release: a failed unlink only leaks a self-healing lock
-    // and must never mask the committed session mutation that `fn()` returns.
-    await using _guard = this.lock.held();
-    return await fn();
+  private mutate<T>(work: (ctx: SessionMutationTxn) => T): Promise<T> {
+    return this.manager.mutateSession(work);
   }
 
   private findClaimByChildRunId(
@@ -319,12 +316,7 @@ export class SessionService {
   async issueRunControlClaim(
     runId: RunId,
   ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
-      const minted = this.mintRunControlClaim(session, runId);
-      await this.manager.saveSession(session);
-      return minted;
-    });
+    return this.mutate((ctx) => this.mintRunControlClaim(ctx.session, runId));
   }
 
   /**
@@ -332,11 +324,9 @@ export class SessionService {
    * as a single atomic session mutation.
    *
    * `rundown run` starts a run and hands the orchestrator a run-control bearer.
-   * Doing the push and the mint under one lock (one `loadSession`/`saveSession`)
-   * instead of two sequential {@link withLock} cycles keeps run-start atomic —
-   * there is never a persisted window where the run is on the stack but has no
-   * controlling claim — and halves the run-start lock/IO, removing the
-   * double-cycle contention that made the run-start path flaky under load.
+   * Doing the push and the mint in one transaction rather than two keeps run-start
+   * atomic: there is never a persisted window where the run is on the stack but
+   * has no controlling claim.
    *
    * @param id - The runbook state ID to push and control.
    * @returns Public bearer claim id and the persisted proof-backed record.
@@ -344,12 +334,9 @@ export class SessionService {
   async pushRunbookWithRunControlClaim(
     id: RunId,
   ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
-      session.defaultStack.push(id);
-      const minted = this.mintRunControlClaim(session, id);
-      await this.manager.saveSession(session);
-      return minted;
+    return this.mutate((ctx) => {
+      ctx.session.defaultStack.push(id);
+      return this.mintRunControlClaim(ctx.session, id);
     });
   }
 
@@ -418,7 +405,7 @@ export class SessionService {
    * vouch for a child's liveness (#519). When caller-versus-target attribution is
    * uncertain, the system under-reports rather than let one actor refresh another
    * actor's claim. The implementation follows the `unstashForClaimId` template —
-   * `withLock` -> verify bearer -> refresh -> `saveSession`.
+   * one transaction: verify bearer -> refresh -> commit.
    *
    * Call this only after the presented bearer has passed verification and its
    * relevant grant has authorized the operation. That authorization proves holder
@@ -429,22 +416,16 @@ export class SessionService {
    * attribution and let a parent refresh a child's claim, so those paths
    * deliberately under-report instead.
    *
-   * CALL ONLY OUTSIDE A HELD SESSION LOCK. This method self-acquires the session
-   * lock via `withLock`, and the underlying file lock is NOT reentrant: it reclaims
-   * a lock only when its owner is DEAD (`kill(pid, 0)` -> ESRCH). Call it from
-   * inside an existing `withLock` scope and the live owner is you — the acquire
-   * spins its jittered backoff to the full 5s deadline, throws, and the totality
-   * contract below silently converts that into `record-failed`. The symptom is a
-   * 5-second stall on every affected command plus a stale last-seen timestamp,
-   * with no error anywhere: totality MASKING a deadlock rather than
-   * exposing it. Call sites must record only when no session-lock scope is held.
+   * CALL ONLY OUTSIDE AN OPEN SESSION TRANSACTION. This method opens its own
+   * write transaction; nesting it inside another one would deadlock the single
+   * writer, and the totality contract below would silently convert that into
+   * `record-failed` — totality MASKING a deadlock rather than exposing it.
    *
-   * Best-effort and TOTAL: this method never throws. The protected run mutation
-   * lives in `.rundown/runs/` under `RunStateLock` while the claim lives in
-   * `session.json` under `SessionLock` — different files, different locks, no
-   * atomicity. Failing to record leaves an older observation, costing one spurious
-   * idle report and one wasted check; it must neither prevent a subsequent mutation
-   * nor mask that mutation's outcome. Failing a user's `rundown pass` because a
+   * Best-effort and TOTAL: this method never throws. It commits separately from
+   * the run mutation it accompanies, so the two are not atomic with each other.
+   * Failing to record leaves an older observation, costing one spurious idle
+   * report and one wasted check; it must neither prevent a subsequent mutation nor
+   * mask that mutation's outcome. Failing a user's `rundown pass` because a
    * bookkeeping write hiccuped would be indefensible (RD-102).
    *
    * RECORDS THE CLOCK VERBATIM, AND DELIBERATELY DOES NOT CLAMP TO
@@ -482,9 +463,9 @@ export class SessionService {
    */
   async recordClaimSeen(claimId: ClaimId): Promise<ClaimSeenRecordResult> {
     try {
-      return await this.withLock(async (): Promise<ClaimSeenRecordResult> => {
+      return await this.mutate((ctx): ClaimSeenRecordResult => {
         const parsed = parseClaimBearer(claimId);
-        const session = await this.manager.loadSession();
+        const { session } = ctx;
         if (!Object.hasOwn(session.claims, parsed.claimKey)) {
           return { kind: 'no-claim' };
         }
@@ -494,7 +475,6 @@ export class SessionService {
         }
         const now = this.now();
         session.claims[parsed.claimKey] = seenClaimRecord(claim, now);
-        await this.manager.saveSession(session);
         return { kind: 'recorded', claimKey: parsed.claimKey, lastSeenAt: now };
       });
     } catch (error: unknown) {
@@ -521,7 +501,7 @@ export class SessionService {
   /**
    * Resolve an explicit `--run` target to its live session-stack run state.
    *
-   * Read-only: bypasses the session lock (consistent with {@link getActive}).
+   * Read-only: no transaction (consistent with {@link getActive}).
    * Resolves only ids present on the session `defaultStack` (any depth) —
    * `--run` is target selection only. Claimed children are never stack members,
    * so `--run` can never substitute for `--claim-id`.
@@ -540,7 +520,7 @@ export class SessionService {
    * the two refusal causes ("not on this session's stack" vs "on the stack but
    * not running") into a typed outcome.
    *
-   * Read-only: bypasses the session lock (consistent with {@link getRunById},
+   * Read-only: no transaction (consistent with {@link getRunById},
    * which this composes). This is the single helper behind every command's
    * `--run` target resolution, so the refusal specificity cannot drift between
    * commands.
@@ -565,10 +545,8 @@ export class SessionService {
    * @param id - The runbook state ID to push
    */
   async pushRunbook(id: RunId): Promise<void> {
-    await this.withLock(async () => {
-      const session = await this.manager.loadSession();
-      session.defaultStack.push(id);
-      await this.manager.saveSession(session);
+    await this.mutate((ctx) => {
+      ctx.session.defaultStack.push(id);
     });
   }
 
@@ -580,10 +558,8 @@ export class SessionService {
    * @returns The matching claim record, or `null` when the delegation has not been claimed
    */
   async findClaimForDelegation(linkage: DelegationLinkage): Promise<ClaimRecord | null> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
-      return this.findClaimByDelegationLinkage(session.claims, linkage) ?? null;
-    });
+    const session = await this.manager.loadSession();
+    return this.findClaimByDelegationLinkage(session.claims, linkage) ?? null;
   }
 
   /**
@@ -603,12 +579,12 @@ export class SessionService {
    *   missing, terminal, or its persisted linkage diverges from `linkage`.
    */
   async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
+    return this.mutate((ctx): ClaimRunbookResult => {
+      const { session } = ctx;
       const now = this.now();
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
-        const existingState = await this.manager.load(existingForDelegation.controlledRunId);
+        const existingState = ctx.readState(existingForDelegation.controlledRunId);
         if (!existingState) {
           // Unreachable through any supported operation: a claim row is deleted with
           // the run it controls in one transaction (`claims.controlled_run` FK, ON
@@ -642,7 +618,7 @@ export class SessionService {
         };
       }
 
-      const childState = await this.manager.load(childRunId);
+      const childState = ctx.readState(childRunId);
       if (!childState) {
         return { status: 'missing-child', childRunId };
       }
@@ -691,7 +667,6 @@ export class SessionService {
         now,
       });
       session.claims[claim.claimKey] = claim;
-      await this.manager.saveSession(session);
       return { status: 'claimed', claimId: parsed.claimId, claim };
     });
   }
@@ -779,7 +754,7 @@ export class SessionService {
    * on) and must NOT count as open — otherwise it would wedge every future bare
    * parent transition until the orphaned child independently went terminal.
    *
-   * Read-only: bypasses the session lock (consistent with getActiveForClaimId).
+   * Read-only: no transaction (consistent with getActiveForClaimId).
    *
    * @param parentRunId - Parent runbook whose open claimed children should be listed
    * @returns Claim records for non-terminal children still linked to this parent
@@ -827,22 +802,27 @@ export class SessionService {
    * Run a parent-advancing transition write atomically with the
    * open-delegated-children check.
    *
-   * Holds the session lock across (1) re-validating that the parent has no open
-   * claimed children and (2) the supplied decisive advance write. Because
-   * {@link claimRunbook} also runs under the same lock, a concurrent claim
-   * cannot slip between the check and the write: either the claim commits first
-   * (this re-check sees it and refuses) or the advance commits first (the later
-   * claim still records, but it now lands against an already-resolved substep, so
+   * Re-validates that the parent has no open claimed children, then runs the
+   * supplied decisive advance write.
+   *
+   * NOT one atomic critical section, and deliberately so. This previously held the
+   * session file lock across both steps; a transaction cannot replace that,
+   * because `advance` is asynchronous and a transaction must never be held across
+   * an `await`. A concurrent {@link claimRunbook} can therefore now commit between
+   * the check and the write.
+   *
+   * That widened window does not admit a new outcome. The lock-held version
+   * already tolerated the reverse interleaving — advance first, claim second — and
+   * the recovery for it is what still applies here: the late claim records, but it
+   * lands against an already-resolved substep, so
    * {@link listOpenClaimsForParent} stops counting it as open and it cannot wedge
-   * future bare parent transitions). Together these close the check-then-act
-   * TOCTOU on the open-delegated-children guard.
+   * future bare parent transitions. The check is defence-in-depth over a design
+   * that is already safe against the race, not the thing making it safe.
    *
    * The `advance` callback MUST perform only the decisive transition write
    * (e.g. `RunbookCompletionService.recordManualCompletion` or
-   * `RunbookActorService.sendAndSync`) — neither acquires the session lock.
-   * Nesting any session-lock'd call here would self-deadlock, since the lock is
-   * non-reentrant. Downstream drain/release steps run outside this critical
-   * section.
+   * `RunbookActorService.sendAndSync`). Downstream drain/release steps run
+   * afterwards.
    *
    * @template T - Result type of the decisive advance write
    * @param parentRunId - Parent runbook whose advance must be guarded
@@ -867,27 +847,23 @@ export class SessionService {
         readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
       }
   > {
-    return this.withLock(async () => {
-      const parentState = await this.manager.load(parentRunId);
-      if (parentState) {
-        const collectionPending = readDelegationCollectionPendingForPolicy(parentState);
-        if (collectionPending.pending) {
-          return {
-            kind: 'delegation_collection_pending',
-            parentRunId,
-            outcomeCompletionKeys: collectionPending.outcomes.map(
-              (outcome) => outcome.completionKey,
-            ),
-            message: DELEGATION_COLLECTION_PENDING_MESSAGE,
-          };
-        }
+    const parentState = await this.manager.load(parentRunId);
+    if (parentState) {
+      const collectionPending = readDelegationCollectionPendingForPolicy(parentState);
+      if (collectionPending.pending) {
+        return {
+          kind: 'delegation_collection_pending',
+          parentRunId,
+          outcomeCompletionKeys: collectionPending.outcomes.map((outcome) => outcome.completionKey),
+          message: DELEGATION_COLLECTION_PENDING_MESSAGE,
+        };
       }
-      const openClaims = await this.listOpenClaimsForParent(parentRunId);
-      if (openClaims.length > 0) {
-        return { kind: 'open_delegated_children', claims: openClaims };
-      }
-      return { kind: 'advanced', value: await advance() };
-    });
+    }
+    const openClaims = await this.listOpenClaimsForParent(parentRunId);
+    if (openClaims.length > 0) {
+      return { kind: 'open_delegated_children', claims: openClaims };
+    }
+    return { kind: 'advanced', value: await advance() };
   }
 
   /**
@@ -900,7 +876,7 @@ export class SessionService {
    * inline descendants terminal before the root and no inline descendant remains
    * `running` under a terminal inline ancestor.
    *
-   * Read-only: bypasses the session lock (consistent with {@link getActive}).
+   * Read-only: no transaction (consistent with {@link getActive}).
    *
    * Fail-closed: a missing inline parent or an inline parent cycle returns a
    * dedicated non-resolved status rather than guessing a target.
@@ -957,7 +933,7 @@ export class SessionService {
 
   /**
    * Release multiple runbooks from session targeting structures in one session
-   * mutation, composed from {@link releaseRunbookLocked} under a single lock.
+   * mutation, composed from {@link releaseFromSession} in a single transaction.
    *
    * Used by the inline force-terminal cascade to tear down the whole active
    * inline chain after every member reached terminal lifecycle. This is explicit
@@ -968,20 +944,19 @@ export class SessionService {
    * @returns The released run ids and the next default-stack runbook id, if any.
    */
   async releaseRunbooks(runbookIds: readonly RunId[]): Promise<ReleaseRunbooksResult> {
-    return this.withLock(async () => {
+    return this.mutate((ctx) => {
       const releasedRunIds: RunId[] = [];
       for (const runbookId of runbookIds) {
-        const released = await this.releaseRunbookLocked(runbookId);
+        const released = this.releaseFromSession(ctx.session, runbookId);
         if (released.status === 'released') {
           releasedRunIds.push(runbookId);
         }
       }
 
-      const session = await this.manager.loadSession();
-
+      const { defaultStack } = ctx.session;
       return {
         releasedRunIds,
-        nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
+        nextDefaultRunbookId: defaultStack[defaultStack.length - 1] ?? null,
       };
     });
   }
@@ -993,13 +968,13 @@ export class SessionService {
    * recovery path for persisted session shapes that the current version rejects,
    * so attempting to validate or adapt that data would make recovery impossible
    * or introduce a forbidden migration. The canonical empty session is written
-   * under the session lock before run-state files are deleted, preserving prune's
+   * in one transaction before run state is deleted, preserving prune's
    * release-before-delete convergence guarantee.
    *
    * @returns A promise that resolves after the canonical empty session is persisted.
    */
   async resetForPruneAll(): Promise<void> {
-    await this.withLock(() => this.manager.saveSession({ defaultStack: [], claims: {} }));
+    await this.manager.saveSession({ defaultStack: [], claims: {} });
   }
 
   /**
@@ -1017,7 +992,7 @@ export class SessionService {
     runbookId: RunId,
     options: { readonly retainClaimsAsTerminal?: boolean } = {},
   ): Promise<ReleaseRunbookResult> {
-    return this.withLock(() => this.releaseRunbookLocked(runbookId, options));
+    return this.mutate((ctx) => this.releaseFromSession(ctx.session, runbookId, options));
   }
 
   /**
@@ -1030,38 +1005,38 @@ export class SessionService {
    * @returns The claim lookup keys that were removed.
    */
   async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimLookupKey[]> {
-    return this.withLock(async () => {
+    return this.mutate((ctx) => {
       const targets = new Set<string>(childRunIds);
-      const session = await this.manager.loadSession();
       const removed: ClaimLookupKey[] = [];
-      for (const [claimKey, claim] of Object.entries(session.claims)) {
+      for (const [claimKey, claim] of Object.entries(ctx.session.claims)) {
         if (targets.has(claim.controlledRunId)) {
           removed.push(claim.claimKey);
-          delete session.claims[claimKey];
+          delete ctx.session.claims[claimKey];
         }
-      }
-      if (removed.length > 0) {
-        await this.manager.saveSession(session);
       }
       return removed;
     });
   }
 
   /**
-   * Inner load-modify-save for releaseRunbook. Caller must hold the session lock.
+   * Release a runbook from an in-memory session (no IO, no transaction).
    *
+   * Pure in-place mutation so composite operations — {@link releaseRunbooks},
+   * {@link popRunbook} — can release several runbooks against one session
+   * snapshot and commit once, instead of round-tripping per runbook.
+   *
+   * @param session - Session to mutate in place.
    * @param runbookId - Runbook id to release from session targeting structures
    * @param options - Release options (see {@link releaseRunbook})
    * @param options.retainClaimsAsTerminal - When true, retain matching claim
    *   records as terminal tombstones instead of deleting them.
    * @returns Structured release result describing what was removed
    */
-  private async releaseRunbookLocked(
+  private releaseFromSession(
+    session: SessionData,
     runbookId: RunId,
     options: { readonly retainClaimsAsTerminal?: boolean } = {},
-  ): Promise<ReleaseRunbookResult> {
-    const session = await this.manager.loadSession();
-
+  ): ReleaseRunbookResult {
     const originalDefaultStackLength = session.defaultStack.length;
     session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
     const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
@@ -1096,7 +1071,6 @@ export class SessionService {
       return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
     }
 
-    await this.manager.saveSession(session);
     return {
       status: 'released',
       runbookId,
@@ -1114,11 +1088,11 @@ export class SessionService {
    * @returns The new active runbook ID (parent), or null if the stack is empty
    */
   async popRunbook(): Promise<RunId | null> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
-      const topId = session.defaultStack[session.defaultStack.length - 1];
+    return this.mutate((ctx) => {
+      const { defaultStack } = ctx.session;
+      const topId = defaultStack[defaultStack.length - 1];
       if (!topId) return null;
-      const released = await this.releaseRunbookLocked(topId);
+      const released = this.releaseFromSession(ctx.session, topId);
       return released.status === 'released' ? released.nextDefaultRunbookId : null;
     });
   }
@@ -1132,8 +1106,8 @@ export class SessionService {
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
    */
   async stash(): Promise<RunId | null> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
+    return this.mutate((ctx) => {
+      const { session } = ctx;
 
       // Refuse to overwrite an existing stash — caller must unstash first
       if (session.stashedRunbookId) return null;
@@ -1145,8 +1119,6 @@ export class SessionService {
       if (!activeId) return null;
 
       session.stashedRunbookId = activeId;
-      await this.manager.saveSession(session);
-
       return activeId;
     });
   }
@@ -1158,8 +1130,8 @@ export class SessionService {
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    */
   async stashRunbook(runbookId: RunId): Promise<RunId | null> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
+    return this.mutate((ctx) => {
+      const { session } = ctx;
       if (session.stashedRunbookId) return null;
 
       const originalDefaultStackLength = session.defaultStack.length;
@@ -1173,7 +1145,6 @@ export class SessionService {
       if (!removedFromDefaultStack && !targetedByClaim) return null;
 
       session.stashedRunbookId = runbookId;
-      await this.manager.saveSession(session);
       return runbookId;
     });
   }
@@ -1185,9 +1156,9 @@ export class SessionService {
    * @returns Discriminated restore result describing success or the refusal reason
    */
   async unstashForClaimId(claimId: ClaimId): Promise<UnstashForClaimIdResult> {
-    return this.withLock(async () => {
+    return this.mutate((ctx): UnstashForClaimIdResult => {
       const parsed = parseClaimBearer(claimId);
-      const session = await this.manager.loadSession();
+      const { session } = ctx;
       if (!Object.hasOwn(session.claims, parsed.claimKey)) {
         return { status: 'missing-claim', claimId };
       }
@@ -1199,7 +1170,7 @@ export class SessionService {
         return { status: 'not-stashed', claim };
       }
 
-      const state = await this.manager.load(claim.controlledRunId);
+      const state = ctx.readState(claim.controlledRunId);
       if (!state) {
         // Unreachable through any supported operation: a claim row is deleted with
         // the run it controls in one transaction (`claims.controlled_run` FK, ON
@@ -1220,7 +1191,7 @@ export class SessionService {
       if (!claim.delegation) {
         return { status: 'child-linkage-mismatch', claim };
       }
-      const parent = await this.manager.load(claim.delegation.parentRunId);
+      const parent = ctx.readState(claim.delegation.parentRunId);
       if (!parent) {
         return { status: 'parent-missing', claim };
       }
@@ -1230,7 +1201,6 @@ export class SessionService {
 
       session.stashedRunbookId = undefined;
       session.claims[parsed.claimKey] = refreshedClaimRecord(claim, this.now());
-      await this.manager.saveSession(session);
       return { status: 'restored', claim: session.claims[parsed.claimKey], state };
     });
   }
@@ -1244,8 +1214,8 @@ export class SessionService {
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
    */
   async unstash(): Promise<RunbookState | null> {
-    return this.withLock(async () => {
-      const session = await this.manager.loadSession();
+    return this.mutate((ctx) => {
+      const { session } = ctx;
       const stashedId = session.stashedRunbookId;
 
       if (!stashedId) return null;
@@ -1257,17 +1227,15 @@ export class SessionService {
         return null;
       }
 
-      const state = await this.manager.load(stashedId);
+      const state = ctx.readState(stashedId);
       if (!state) {
         session.stashedRunbookId = undefined;
-        await this.manager.saveSession(session);
         return null;
       }
 
       // Push back to stack
       session.defaultStack.push(stashedId);
       session.stashedRunbookId = undefined;
-      await this.manager.saveSession(session);
 
       return state;
     });

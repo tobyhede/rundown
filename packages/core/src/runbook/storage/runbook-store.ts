@@ -463,6 +463,24 @@ export interface RunbookStoreTxn {
   stack(): readonly RunId[];
   /** Read the current stash slot. */
   stash(): RunId | null;
+  /**
+   * Read a run's persisted state inside this transaction.
+   *
+   * Session mutations that validate against run state (claim linkage checks,
+   * terminal-child refusals, stash gating) must read that state under the same
+   * transaction that writes the session; a read outside it could observe a run
+   * that another writer terminalizes before the session write lands.
+   */
+  readState(runId: RunId): RunbookState | null;
+}
+
+/** Typed operations available inside a {@link RunbookStore.mutateSession} cycle. */
+export interface SessionMutationTxn extends RunbookStoreTxn {
+  /**
+   * The session snapshot, read at transaction start. Mutate in place; the store
+   * reconciles it into the session tables when the callback returns.
+   */
+  readonly session: SessionData;
 }
 
 /**
@@ -730,30 +748,67 @@ export class RunbookStore {
    * @returns Resolves once committed.
    */
   saveSession(session: SessionData): Promise<void> {
+    return this.transaction((txn) => this.applySession(txn, session));
+  }
+
+  /**
+   * Read the session, hand it to `work` for in-place mutation, and reconcile the
+   * result — all inside one transaction.
+   *
+   * This is the transactional replacement for the load-modify-save cycle that
+   * previously ran under the workspace session file lock. Atomicity now comes
+   * from the transaction itself, so an interleaved writer cannot lose an update:
+   * `BEGIN IMMEDIATE` serializes the read against every other writer, and the
+   * whole cycle either commits or rolls back.
+   *
+   * `work` is synchronous by construction. A transaction must not be held across
+   * an `await` — that is what makes the sqljs single-connection driver safe — so
+   * every dependency a session mutation needs is available on the passed
+   * operations (notably {@link RunbookStoreTxn.readState} for run-state reads)
+   * rather than fetched by the caller mid-cycle.
+   *
+   * @template T - Value the mutation returns to its caller.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The work's return value, once committed.
+   */
+  mutateSession<T>(work: (ctx: SessionMutationTxn) => T): Promise<T> {
     return this.transaction((txn) => {
-      txn.setStack(session.defaultStack);
-      txn.setStash(session.stashedRunbookId ?? null);
-      const stale = new Set(
-        txn.tx
-          .prepare("SELECT key FROM claims WHERE status = 'active'")
-          .all<{ readonly key: string }>()
-          .map((row) => row.key),
-      );
-      for (const [key, record] of Object.entries(session.claims)) {
-        if (stale.delete(key)) {
-          this.updateChangedClaimColumns(txn.tx, key, record);
-          continue;
-        }
-        const generation =
-          txn.tx
-            .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
-            .get<{ readonly g: number }>({ id: record.controlledRunId })?.g ?? 0;
-        txn.insertClaim(record, assertClaimGeneration(generation));
-      }
-      for (const key of stale) {
-        txn.tombstoneClaim(assertClaimLookupKey(key));
-      }
+      const session = this.readSession(txn.tx);
+      const result = work({ ...txn, session });
+      this.applySession(txn, session);
+      return result;
     });
+  }
+
+  /**
+   * Reconcile a session snapshot into the session tables.
+   *
+   * @param txn - Open store transaction.
+   * @param session - Session data to persist.
+   */
+  private applySession(txn: RunbookStoreTxn, session: SessionData): void {
+    txn.setStack(session.defaultStack);
+    txn.setStash(session.stashedRunbookId ?? null);
+    const stale = new Set(
+      txn.tx
+        .prepare("SELECT key FROM claims WHERE status = 'active'")
+        .all<{ readonly key: string }>()
+        .map((row) => row.key),
+    );
+    for (const [key, record] of Object.entries(session.claims)) {
+      if (stale.delete(key)) {
+        this.updateChangedClaimColumns(txn.tx, key, record);
+        continue;
+      }
+      const generation =
+        txn.tx
+          .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
+          .get<{ readonly g: number }>({ id: record.controlledRunId })?.g ?? 0;
+      txn.insertClaim(record, assertClaimGeneration(generation));
+    }
+    for (const key of stale) {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    }
   }
 
   /**
@@ -986,6 +1041,9 @@ export class RunbookStore {
       },
       stash() {
         return store.readStash(tx);
+      },
+      readState(runId) {
+        return store.readRun(tx, runId);
       },
     };
   }

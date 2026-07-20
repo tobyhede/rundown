@@ -22,7 +22,6 @@ import {
   RunbookCompletionService,
   RunbookLifecycleCommandService,
   RunbookStateManager,
-  SessionLock,
   SessionService,
   activeFrame,
   assertClaimId,
@@ -3016,7 +3015,7 @@ describe('RunbookLifecycleCommandService', () => {
 
   describe('explicit-target completion lock span (#500)', () => {
     afterEach(() => {
-      // Prototype spies (CompletionLock / SessionLock) must not leak into other
+      // Prototype spies (CompletionLock) must not leak into other
       // tests in this file; instance spies die with the beforeEach services.
       jest.restoreAllMocks();
     });
@@ -3357,11 +3356,13 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('applies terminal side effects only after the completion-lock scope closes', async () => {
       // Plan-review error-level fix: the drain reaching terminal must NOT run
-      // #applyTerminalSideEffects → releaseRunbook → SessionLock inside the
-      // CompletionLock scope (the bare guarded path holds the opposite
-      // SessionLock → CompletionLock edge — an ABBA inversion). Pin the order
-      // with prototype spies: the span's CompletionLock release strictly
-      // precedes the terminal release's SessionLock acquire.
+      // #applyTerminalSideEffects → releaseRunbook → the session write inside the
+      // CompletionLock scope. Originally this pinned an ABBA inversion against
+      // SessionLock; the session side is now a short store transaction rather than
+      // a held file lock, so the deadlock edge is gone — but the ordering it
+      // enforced is still the property worth keeping: the completion span must not
+      // stay open across an unrelated session write. Pinned on the session
+      // mutation that now carries it.
       const terminalSteps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -3375,14 +3376,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = buildSpanSeam(terminalSteps);
       await activate(substepRunning());
 
-      // Pass-through prototype spies: jest records a global invocation order.
-      // The first SessionLock acquisition is the pre-dispatch liveness mark;
-      // the last is terminal release. Pin both sides of CompletionLock so the
-      // recorder cannot become reentrant and terminal release cannot restore
-      // the ABBA inversion.
+      // Pass-through spies: jest records a global invocation order. The first
+      // session mutation is the pre-dispatch liveness mark; the last is terminal
+      // release. Pin both sides of CompletionLock so the recorder cannot become
+      // reentrant and terminal release cannot move back inside the span.
       const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
-      const sessionAcquireSpy = jest.spyOn(SessionLock.prototype, 'acquire');
+      const sessionAcquireSpy = jest.spyOn(manager, 'mutateSession');
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
 
       const outcome = await explicitPass(localSeam, '1.1');
@@ -3391,8 +3391,8 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('done');
       expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
-      // Recording takes SessionLock before the completion span; terminal release
-      // takes it only after that span closes.
+      // Recording writes the session before the completion span; terminal release
+      // writes it only after that span closes.
       const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
       const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
       const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
@@ -3406,7 +3406,7 @@ describe('RunbookLifecycleCommandService', () => {
     });
 
     it('reaches terminal without a lock timeout while a bare guarded write contends', async () => {
-      // The ABBA partner: runGuardedParentAdvance holds the SessionLock while
+      // The ABBA partner: runGuardedParentAdvance used to hold the SessionLock while
       // its decisive write waits on the CompletionLock. Pre-fix (terminal side
       // effects inside the span) this interleaving deadlocked into 5s lock
       // timeouts; post-fix both operations complete.
