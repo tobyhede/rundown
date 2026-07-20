@@ -481,6 +481,7 @@ function buildConsumedCompletionPatchFrom(
  * @param steps - Parsed runbook steps for step-name lookup.
  * @param lastResultSync - Optional persisted-result update to fold in.
  * @param consumePatch - Optional resolved-completion consumption patch.
+ * @param consumePatch.resolvedCompletions - Tagged op that removes the consumed resolved-completion entry, when one was consumed.
  * @returns The typed state-update patch.
  * @throws {Error} If the snapshot value shape is unsupported, references a
  *   transient parent-entry state, is malformed, or references a missing step.

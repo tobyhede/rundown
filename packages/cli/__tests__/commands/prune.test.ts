@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir, unlink } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   assertClaimId,
@@ -12,7 +12,6 @@ import {
   RunbookStateManager,
   SessionService,
   type ClaimId,
-  type ClaimRecord,
   type Runbook,
   type RunId,
 } from '@rundown-org/core';

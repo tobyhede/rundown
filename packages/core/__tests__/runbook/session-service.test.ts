@@ -1277,7 +1277,9 @@ describe('SessionService', () => {
 
       // Claim from inside the advance window — the interleaving the lock forbade.
       const linkage = linkageFor(parent.id, 'a');
-      let claimed: ReturnType<typeof assertClaimed> | undefined;
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
       const advanceResult = await sessionService.runGuardedParentAdvance(parent.id, async () => {
         claimed = assertClaimed(await claimant.claimRunbook(child.id, linkage));
         // The decisive write the guard protects: resolve the delegated substep.

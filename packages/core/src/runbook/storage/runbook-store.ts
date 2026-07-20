@@ -755,6 +755,7 @@ export class RunbookStore {
    * @param runId - Run to mutate.
    * @param build - Derives the next state from the current one; `null` means no change.
    * @param options - Optional attempt budget (default 8).
+   * @param options.attempts - Maximum number of stale-version retries before giving up.
    * @returns The committed state, the unchanged state, or a typed refusal.
    */
   async mutateState(
@@ -811,7 +812,9 @@ export class RunbookStore {
    * @returns Resolves once committed.
    */
   saveSession(session: SessionData): Promise<void> {
-    return this.transaction((txn) => this.applySession(txn, session));
+    return this.transaction((txn) => {
+      this.applySession(txn, session);
+    });
   }
 
   /**

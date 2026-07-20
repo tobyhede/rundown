@@ -439,7 +439,7 @@ describe('collect command', () => {
       const ids = await listPersistedRunIds(workspace.cwd);
       const stateId = ids[0];
       expect(stateId).toBeDefined();
-      const stateJson = await readPersistedRunState(workspace.cwd, stateId!);
+      const stateJson = await readPersistedRunState(workspace.cwd, stateId);
       expect(stateJson).not.toBeNull();
       expect(stateJson!.lifecycle).toBe('stopped');
     });

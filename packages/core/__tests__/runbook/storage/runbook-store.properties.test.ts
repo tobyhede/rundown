@@ -10,7 +10,6 @@ import {
   classifyCommitRow,
   assertExactlyOneRow,
   StoreInvariantError,
-  type CommitRow,
 } from '../../../src/runbook/storage/runbook-store.js';
 import {
   assertClaimGeneration,
@@ -21,7 +20,7 @@ import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../../src/testing/effective-vars.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
-import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
+import { assertRunId } from '../../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
@@ -220,7 +219,7 @@ describe('classifier totality and single-row invariant', () => {
           execPhase: fc.constant(null),
         }),
         (row) => {
-          const result = classifyCommitRow(row as CommitRow, captured);
+          const result = classifyCommitRow(row, captured);
           expect(VALID_KINDS.has(result.kind)).toBe(true);
         },
       ),
@@ -232,9 +231,13 @@ describe('classifier totality and single-row invariant', () => {
     fc.assert(
       fc.property(fc.integer({ min: -3, max: 5 }), (changes) => {
         if (changes === 1) {
-          expect(() => assertExactlyOneRow(changes, runId)).not.toThrow();
+          expect(() => {
+            assertExactlyOneRow(changes, runId);
+          }).not.toThrow();
         } else {
-          expect(() => assertExactlyOneRow(changes, runId)).toThrow(StoreInvariantError);
+          expect(() => {
+            assertExactlyOneRow(changes, runId);
+          }).toThrow(StoreInvariantError);
         }
       }),
       { numRuns: 40 },

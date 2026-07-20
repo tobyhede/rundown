@@ -125,7 +125,7 @@ interface ParkedChild {
  */
 async function park(goFile: string, op: ChildOp): Promise<ParkedChild> {
   opSeq += 1;
-  const tag = `${String(opSeq)}`;
+  const tag = String(opSeq);
   const readyFile = path.join(dir, `ready-${tag}`);
   const resultFile = path.join(dir, `result-${tag}`);
   const child = spawn(
@@ -134,7 +134,7 @@ async function park(goFile: string, op: ChildOp): Promise<ParkedChild> {
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
   let stderr = '';
-  child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
   children.push(child);
 
   const deadline = Date.now() + 60_000;
@@ -172,11 +172,11 @@ async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
   const exits = parked.map(
     ({ child }) =>
       new Promise<void>((resolve, reject) => {
-        child.on('exit', (code, signal) =>
+        child.on('exit', (code, signal) => {
           code === 0
             ? resolve()
-            : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`)),
-        );
+            : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
+        });
       }),
   );
 
@@ -231,7 +231,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // writers widen the odds that at least two mutation windows genuinely
     // overlap on any given run.
     const parentId = await newRun();
-    const linkage = linkageFor(parentId, 'a') as DelegationLinkage;
+    const linkage = linkageFor(parentId, 'a');
     const childRunId = await newRun({ parentLinkage: linkage });
 
     const results = await race(
@@ -277,7 +277,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
     const before = claim.lastSeenAt;
 
     const results = await race([
-      { kind: 'recordClaimSeen', claimId: claimId as string },
+      { kind: 'recordClaimSeen', claimId: claimId },
       { kind: 'pushRunbook', runId: pushRunId },
     ]);
     const [seen] = values(results);

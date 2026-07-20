@@ -18,7 +18,6 @@ import {
   type RunbookState,
 } from '@rundown-org/core';
 import {
-  deletePersistedRunState,
   patchPersistedRunState,
   readPersistedRunState,
   writeRawRunJson,

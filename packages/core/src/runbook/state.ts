@@ -8,7 +8,6 @@ import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
   ForContext,
-  Lifecycle,
   Substep,
   SubstepState,
   Runbook,
@@ -330,7 +329,11 @@ export class RunbookStateManager {
     return this._cwd;
   }
 
-  /** The project's shared store, opened on first use. */
+  /**
+   * The project's shared store, opened on first use.
+   *
+   * @returns The shared {@link RunbookStore} for this project root.
+   */
   private store(): Promise<RunbookStore> {
     return getRunbookStore(this._cwd, this.storeOptions);
   }
@@ -474,7 +477,7 @@ export class RunbookStateManager {
     }
 
     // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field.
-    const obj = raw as Record<string, unknown>;
+    const obj = raw;
     const lastAction = obj.lastAction;
     if (
       typeof lastAction === 'object' &&
@@ -679,6 +682,7 @@ export class RunbookStateManager {
    * @param id - Runbook id.
    * @param buildUpdates - Derives the patch; `null` means leave the state alone.
    * @param options - Whether a missing run throws or resolves to null.
+   * @param options.missingIsError - When true, a missing run throws; when false, it resolves to null.
    * @returns The resulting state, or null when missing and tolerated.
    * @throws {Error} When the run is missing (and not tolerated), owned by an
    *   execution, or lost to a concurrent writer.
@@ -766,6 +770,12 @@ export class RunbookStateManager {
     return await store.listRunIds();
   }
 
+  /**
+   * Load every persisted run in the project, applying the same validation and
+   * error taxonomy as a direct {@link load}.
+   *
+   * @returns All runbook states currently persisted for this project root.
+   */
   async list(): Promise<RunbookState[]> {
     const store = await this.store();
     const ids = await store.listRunIds();

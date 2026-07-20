@@ -13,7 +13,6 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
-  deletePersistedRunState,
   patchPersistedRunState,
   seedRawRunState,
 } from '@rundown-org/core/testing/session-fixtures';

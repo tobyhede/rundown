@@ -1,16 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
@@ -21,7 +10,7 @@ import {
 } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { runsDir, runStateLockPath, statePath as _statePath } from '../../src/paths.js';
+import { runStateLockPath, statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -851,7 +840,7 @@ describe('RunbookStateManager', () => {
 
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([state.id]);
-      expect(session.claims[claimKey]?.lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
+      expect(session.claims[claimKey].lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
     });
 
     it('loads a session with no claims at all without tripping the claim guard (#519)', async () => {
@@ -1104,13 +1093,9 @@ describe('RunbookStateManager', () => {
     (filePermissionsSupported ? it : it.skip)(
       'should set restrictive file permissions on the state database',
       async () => {
-        const state = await manager.create(
-          { source: 'project', path: 'test.runbook.md' },
-          mockRunbook,
-          {
-            runbookPath: 'test.runbook.md',
-          },
-        );
+        await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+          runbookPath: 'test.runbook.md',
+        });
 
         // State lives in the project database now; it carries run state and
         // hashed claim secrets, so it keeps the owner-only mode.
