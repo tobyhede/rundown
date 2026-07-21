@@ -494,6 +494,14 @@ export function classifyDelegationLiveness(
   if (delegation.cancelledAt !== null) {
     return { kind: 'closed', reason: 'resolved' };
   }
+  // A present-but-different active frame is itself proof the delegating frame
+  // has been advanced past: the cursor sits on another frame while the top-level
+  // step still matches. Close immediately rather than falling back to a
+  // possibly-stale or absent historical count — the historical fallback applies
+  // only when the active frame is absent or matches the delegating frame.
+  if (parent.activeFrameKey !== undefined && parent.activeFrameKey !== linkage.parentFrameKey) {
+    return { kind: 'closed', reason: 'cursor-advanced' };
+  }
   // Entry identity: a frame revisited via GOTO/loop re-entry advances its entry
   // counter past the value captured on the claim. Compare only when the frame
   // carries a current entry; a frame with no recorded entry cannot mismatch.

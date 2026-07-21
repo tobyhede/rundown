@@ -733,8 +733,10 @@ describe('targeting helpers', () => {
     });
 
     it('closes as cursor-advanced on an entry mismatch recorded in frameEntryCounts', () => {
+      // Active frame absent: the historical-count fallback resolves the entry and
+      // detects the mismatch against the value captured on the claim.
       const state = parent({
-        activeFrameKey: buildFrameKey('other'),
+        activeFrameKey: undefined,
         activeEntry: undefined,
         frameEntryCounts: { [FRAME]: 3 },
       });
@@ -744,8 +746,23 @@ describe('targeting helpers', () => {
       });
     });
 
-    it('stays live when the frame carries no recorded entry to compare', () => {
+    it('closes as cursor-advanced when the active frame differs, even with no recorded entry count', () => {
+      // The cursor moved to a different frame within the same step, writing no
+      // `done` row and no historical entry count for the delegating frame. A
+      // present-but-different active frame is itself proof the delegating frame
+      // has been advanced past; it must NOT fall back to the (absent) historical
+      // count and stay live.
       const state = parent({ activeFrameKey: buildFrameKey('other'), activeEntry: undefined });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('stays live when the active frame is absent and no entry was recorded', () => {
+      // Absent active frame: the historical-count fallback still applies, and a
+      // frame with no recorded entry cannot mismatch, so the claim stays live.
+      const state = parent({ activeFrameKey: undefined, activeEntry: undefined });
       expect(classifyDelegationLiveness(state, linkage).kind).toBe('live');
     });
   });

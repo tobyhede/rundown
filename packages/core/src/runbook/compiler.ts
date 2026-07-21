@@ -131,7 +131,7 @@ export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as cons
 export const RECOVERY_TAG = 'recovery' as const;
 
 /** Name of the top-level non-final recoveryRequired state. */
-const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
+export const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -2465,6 +2465,11 @@ function buildRecoveryReconcileTransitions(
     }
   }
   return [...firstByStep.values()].map((first) => ({
+    // XState invokes guards with the full event union, so the `event.type`
+    // check is the type-narrowing that makes `event.target` accessible — not a
+    // redundant runtime guard. It mirrors the sibling GOTO guards (see the
+    // per-step GOTO transitions). A narrowed parameter type is rejected by
+    // XState's contravariant `Guard` signature, so the narrowing stays in-body.
     guard: ({ event }: { event: RunbookEvent }) =>
       event.type === 'GOTO' && event.target.step === first.stepName,
     target: routeThroughParentArtifactsIfNeeded(first.id, steps),
@@ -2473,6 +2478,14 @@ function buildRecoveryReconcileTransitions(
       interruptedReason: undefined,
       interruptedStepId: undefined,
       retryCount: 0,
+      // The reconcile re-enters the target step's first state, so reset the
+      // cursor to that first substep and clear the completion-cursor fields.
+      // Without this the drifted substep captured when the run was interrupted
+      // survives the recovery jump, leaving `context.substep` inconsistent with
+      // the entered state (matching the normal GOTO cursor reset).
+      substep: first.substepId,
+      substepCompletedCount: 0,
+      deferredResults: EMPTY_RESULTS,
       lastAction: buildGotoLastActionFromEvent(first.substepId),
     }),
   }));

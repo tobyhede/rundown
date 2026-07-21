@@ -2390,6 +2390,65 @@ echo ok
       );
     });
 
+    /**
+     * Drive a fresh run into the non-final `recoveryRequired` state and persist
+     * that snapshot, so a subsequent `createActor` must hydrate from it.
+     */
+    async function seedRecoveryRequiredState(): Promise<string> {
+      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const actor = await actorService.createActor(created.id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      const snapshot = actor.getPersistedSnapshot();
+      actor.stop();
+      expect(stateValueAsString((snapshot as unknown as { value: unknown }).value)).toBe(
+        'recoveryRequired',
+      );
+      await manager.update(created.id, { snapshot, lifecycle: 'running' });
+      return created.id;
+    }
+
+    it('hydrates a persisted recoveryRequired run and reconciles via its recovery GOTO', async () => {
+      const id = await seedRecoveryRequiredState();
+
+      // F1: assertFreshSnapshotValue previously rejected `recoveryRequired`,
+      // so a recovered run could never be resumed. It must now hydrate.
+      const actor = await actorService.createActor(id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(stateValueAsString(actor.getSnapshot().value)).toBe('recoveryRequired');
+
+      // Firing the recovery GOTO leaves recoveryRequired for the target step and
+      // clears the captured interruption context.
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+      const snapshot = actor.getSnapshot();
+      expect(stateValueAsString(snapshot.value)).toMatch(/^step::1/);
+      const ctx = snapshot.context as RunbookContext;
+      expect(ctx.interruptedEpoch).toBeUndefined();
+      expect(ctx.interruptedReason).toBeUndefined();
+      expect(ctx.interruptedStepId).toBeUndefined();
+      actor.stop();
+    });
+
+    it('hydrates a persisted recoveryRequired run and stops it via FORCE_STOP', async () => {
+      const id = await seedRecoveryRequiredState();
+
+      const actor = await actorService.createActor(id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(stateValueAsString(actor.getSnapshot().value)).toBe('recoveryRequired');
+
+      actor.send({ type: 'FORCE_STOP' });
+      expect(stateValueAsString(actor.getSnapshot().value)).toBe('STOPPED');
+      actor.stop();
+    });
+
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

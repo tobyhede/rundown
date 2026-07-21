@@ -44,6 +44,7 @@ import {
   isCompoundLeafValue,
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
+  RECOVERY_REQUIRED_STATE_NAME,
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
@@ -476,6 +477,91 @@ function buildConsumedCompletionPatchFrom(
 }
 
 /**
+ * Classification of a fresh (non-migratable) persisted snapshot value.
+ *
+ * A discriminated union produced by {@link parseFreshStepValue}: either a
+ * terminal state (`COMPLETE`/`STOPPED`, which carries no step cursor) or a
+ * step-scoped state with its resolved step name and regex-parsed substep.
+ */
+type FreshStepValue =
+  | { readonly kind: 'terminal'; readonly stateValue: 'COMPLETE' | 'STOPPED' }
+  | {
+      readonly kind: 'step';
+      readonly stateValue: string;
+      readonly step: ResolvedStep;
+      readonly parsedSubstep: string | undefined;
+    };
+
+/**
+ * Validate and classify a persisted `snapshot.value` into a terminal marker or a
+ * resolved step cursor, failing closed on any unsupported shape.
+ *
+ * The single source of the snapshot-value validation shared by
+ * {@link deriveActorStatePatch} and
+ * {@link RunbookActorService.assertFreshSnapshotValue}: the `stateValueAsString`
+ * null check, the transient `__parent-entry::*` guard, the `step::…` step-ID
+ * parse, and the missing-step rejection — each preserving its fail-closed
+ * diagnostic. Terminal states short-circuit before any step lookup. Per the
+ * no-migration rule, older or malformed values are rejected, never adapted.
+ *
+ * @param id - Runbook state ID (used in error messages).
+ * @param value - The raw `snapshot.value` returned by XState.
+ * @param steps - Parsed runbook steps for step-name lookup.
+ * @returns The terminal-or-step classification of the value.
+ * @throws {Error} If the value shape is unsupported, references the transient
+ *   parent-entry sibling, is malformed, or references a missing step.
+ */
+function parseFreshStepValue(
+  id: string,
+  value: unknown,
+  steps: readonly ResolvedStep[],
+): FreshStepValue {
+  const stateValue = stateValueAsString(value);
+  if (stateValue === null) {
+    throw new Error(
+      `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(value)}`,
+    );
+  }
+
+  // Terminal states carry no step cursor; classify before any step parsing.
+  if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
+    return { kind: 'terminal', stateValue };
+  }
+
+  // Defense-in-depth (Issue 6): reject any persisted stateValue that references
+  // the transient `__parent-entry::*` sibling. The machine is supposed to leave
+  // parent-entry before any transition settles, so this state must NEVER
+  // persist. Without the explicit guard the regex below would silently match
+  // `step::N::__parent-entry::M` and report substep `__parent-entry::M` — wrong
+  // substep and wrong recovery path.
+  if (stateValue.includes('::__parent-entry::')) {
+    throw new Error(
+      `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
+        'Prune invalid runbook state and restart execution.',
+    );
+  }
+
+  // Parse only the current XState state ID format. Older or malformed persisted
+  // snapshots are invalid state and must fail closed.
+  const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+  if (!match) {
+    throw new Error(
+      `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
+        'Prune invalid runbook state and restart execution.',
+    );
+  }
+  const stepName = match[1];
+  const step = steps.find((s) => s.name === stepName);
+  if (!step) {
+    throw new Error(
+      `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
+        'Prune invalid runbook state and restart execution.',
+    );
+  }
+  return { kind: 'step', stateValue, step, parsedSubstep: match[2] };
+}
+
+/**
  * Derive the persistence patch for an actor snapshot, purely.
  *
  * The single source of the terminal and non-terminal patch shapes shared by
@@ -500,17 +586,12 @@ function deriveActorStatePatch(
   lastResultSync: LastResultSync | undefined,
   consumePatch: { readonly resolvedCompletions?: ResolvedCompletionsOp },
 ): RunbookStateUpdate {
-  const rawValue: unknown = snapshot.value;
-  const stateValue = stateValueAsString(rawValue);
-  if (stateValue === null) {
-    throw new Error(
-      `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(rawValue)}`,
-    );
-  }
+  const classification = parseFreshStepValue(id, snapshot.value, steps);
 
   // If the runbook is in a final state, don't try to parse a step number.
   // Just update the snapshot and variables, preserving the last step number.
-  if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
+  if (classification.kind === 'terminal') {
+    const stateValue = classification.stateValue;
     const variables = snapshot.context?.variables ?? {};
     const rawFinalVars = snapshot.context?.finalVars ?? {};
     // Empty finalVars on terminal: explicitly write `undefined` so the persisted
@@ -545,49 +626,11 @@ function deriveActorStatePatch(
     };
   }
 
-  if (!steps.length) {
-    throw new Error(
-      `updateFromActor called with empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
-    );
-  }
-
-  // Defense-in-depth (Issue 6): reject any persisted stateValue that
-  // references the transient `__parent-entry::*` sibling. The machine is
-  // supposed to leave parent-entry before any transition settles, so this
-  // state must NEVER persist. Without the explicit guard the regex below
-  // would silently match `step::N::__parent-entry::M` and report substep
-  // `__parent-entry::M` — wrong substep and wrong recovery path.
-  if (stateValue.includes('::__parent-entry::')) {
-    throw new Error(
-      `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
-        'Prune invalid runbook state and restart execution.',
-    );
-  }
-
-  // Parse only the current XState state ID format. Older or malformed
-  // persisted snapshots are invalid state and must fail closed.
-  const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-  if (!match) {
-    throw new Error(
-      `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
-        'Prune invalid runbook state and restart execution.',
-    );
-  }
-  const stepName = match[1];
-
-  let substep = snapshot.context?.substep;
-  if (!substep && match[2]) {
-    substep = match[2];
-  }
-
-  // Find step by name (unified lookup)
-  const step = steps.find((s) => s.name === stepName);
-  if (!step) {
-    throw new Error(
-      `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
-        'Prune invalid runbook state and restart execution.',
-    );
-  }
+  // Step-scoped state: `parseFreshStepValue` resolved the step and parsed the
+  // substep from the value; the persisted context substep takes precedence.
+  const { step, parsedSubstep } = classification;
+  const stepName = step.name;
+  const substep = snapshot.context?.substep ?? parsedSubstep;
 
   const retryCount = snapshot.context?.retryCount ?? 0;
   const variables = snapshot.context?.variables ?? {};
@@ -669,49 +712,27 @@ export class RunbookActorService {
     snapshot: PersistedRunbookSnapshot,
     steps: readonly ResolvedStep[],
   ): void {
+    // The machine-internal pending-effect snapshot (`{ 'step::N': '__capture' }`
+    // etc.) must NEVER appear in a persisted snapshot on resume. Reject it
+    // before `parseFreshStepValue` flattens it to an apparently-valid step id.
+    // This guard is specific to hydration; the live-actor persist path
+    // (`deriveActorStatePatch`) never observes a pending-effect leaf here.
     if (isPendingMachineEffectSnapshotValue(snapshot.value)) {
       throw new Error(
         `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
       );
     }
 
-    const stateValue = stateValueAsString(snapshot.value);
-    if (stateValue === null) {
-      throw new Error(
-        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
-      );
-    }
-    if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
+    // The non-final `recoveryRequired` state is a legitimate persisted value: a
+    // run interrupted mid-execution is committed there by the recovery service
+    // and must be resumable so its typed reconcile/retry/stop transitions can
+    // fire. Accept it here alongside terminal and step values. It carries no
+    // step cursor, so it never flows through `parseFreshStepValue`.
+    if (stateValueAsString(snapshot.value) === RECOVERY_REQUIRED_STATE_NAME) return;
 
-    // Defense-in-depth (Issue 6): the machine-internal `__parent-entry::*`
-    // sibling resolves entry-time artifacts BEFORE routing into the real
-    // substep. The machine is supposed to leave it before any transition
-    // settles, so it must NEVER appear in a persisted snapshot. The
-    // `step::(.+?)(?:::(.+))?` regex below would otherwise happily match
-    // `step::2::__parent-entry::1` with `substep = "__parent-entry::1"` —
-    // wrong substep, wrong recovery path. Bail with a clear diagnostic
-    // before the regex runs.
-    if (stateValue.includes('::__parent-entry::')) {
-      throw new Error(
-        `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
-          'Prune invalid runbook state and restart execution.',
-      );
-    }
-
-    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-    if (!match) {
-      throw new Error(
-        `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
-          'Prune invalid runbook state and restart execution.',
-      );
-    }
-    const stepName = match[1];
-    if (!steps.find((s) => s.name === stepName)) {
-      throw new Error(
-        `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
-          'Prune invalid runbook state and restart execution.',
-      );
-    }
+    // Terminal and step values are validated and classified by the shared
+    // helper; any unsupported shape throws with the same fail-closed diagnostic.
+    parseFreshStepValue(id, snapshot.value, steps);
   }
 
   /**

@@ -12903,4 +12903,66 @@ echo ok
       actor.stop();
     });
   });
+
+  describe('recoveryRequired GOTO reconcile', () => {
+    const source = `## 1. Review
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Next
+- PASS COMPLETE
+`;
+
+    it('reconciles onto the target step first substep with no stale cursor', () => {
+      const steps = createRunbook(source);
+      const machine = compileRunbookToMachine(steps);
+
+      // Baseline: where a fresh entry into step 1 leaves the substep cursor.
+      const fresh = createActor(machine);
+      fresh.start();
+      const firstSubstep = fresh.getSnapshot().context.substep;
+      fresh.stop();
+
+      const actor = createActor(machine);
+      actor.start();
+
+      // Advance past the first substep so the cursor drifts to 1.2.
+      actor.send({ type: 'PASS' });
+      const advanced = actor.getSnapshot().context;
+      expect(advanced.substep).not.toBe(firstSubstep);
+      expect(advanced.substepCompletedCount).toBeGreaterThan(0);
+
+      // Interrupt: the root handler jumps to recoveryRequired, preserving the
+      // drifted cursor in context.
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      expect(actor.getSnapshot().value).toBe('recoveryRequired');
+
+      // Reconcile via the recovery GOTO back into step 1: it must land on that
+      // step's first substep with no stale substep or completion cursor.
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+      const recoveredCtx = actor.getSnapshot().context;
+
+      expect(actor.getSnapshot().value).not.toBe('recoveryRequired');
+      expect(recoveredCtx.substep).toBe(firstSubstep);
+      expect(recoveredCtx.substepCompletedCount).toBe(0);
+      expect(recoveredCtx.deferredResults ?? []).toEqual([]);
+      expect(recoveredCtx.interruptedEpoch).toBeUndefined();
+      expect(recoveredCtx.interruptedReason).toBeUndefined();
+      expect(recoveredCtx.interruptedStepId).toBeUndefined();
+      actor.stop();
+    });
+  });
 });
