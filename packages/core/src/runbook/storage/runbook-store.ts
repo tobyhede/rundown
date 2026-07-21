@@ -454,6 +454,8 @@ export function captureAuthority(
  * @param tx - Open transaction.
  * @param runId - Target run.
  * @returns The controlling claim's lookup key, or `null` when the run has none.
+ * @throws {Error} When two active claims control the run — a corruption the
+ *   partial unique index makes unreachable — rather than selecting an arbitrary one.
  */
 export function resolveControllingClaim(tx: SqlTransaction, runId: RunId): ClaimLookupKey | null {
   const rows = tx
@@ -471,8 +473,10 @@ export function resolveControllingClaim(tx: SqlTransaction, runId: RunId): Claim
         `is inconsistent. Finish or prune active runbooks and restart.`,
     );
   }
-  const row = rows[0];
-  return row ? assertClaimLookupKey(row.key) : null;
+  if (rows.length === 0) {
+    return null;
+  }
+  return assertClaimLookupKey(rows[0].key);
 }
 
 /** Sync typed operations available inside a store write transaction. */
@@ -1248,6 +1252,8 @@ export class RunbookStore {
    *
    * @param tx - Open write transaction.
    * @param next - The run state just committed.
+   * @throws {Error} When a delegated claim for this run carries malformed
+   *   persisted linkage (invalid state), aborting the transaction.
    */
   private afterAuthoritativeStateWrite(tx: SqlTransaction, next: RunbookState): void {
     this.writeResolvedCompletions(tx, next.id, next.resolvedCompletions);
@@ -1271,6 +1277,8 @@ export class RunbookStore {
    * @param tx - Open write transaction.
    * @param parent - The parent run state just committed.
    * @returns The keys of the claims superseded by this call.
+   * @throws {Error} When an active delegated claim carries no persisted
+   *   delegation linkage (invalid state), aborting the transaction.
    */
   private invalidateClosedDelegatedClaims(
     tx: SqlTransaction,

@@ -456,7 +456,10 @@ export function classifyDelegationLiveness(
     return { kind: 'closed', reason: 'resolved' };
   }
   const delegation = substep.delegation;
-  if (delegation === undefined || delegation.tokenHash !== linkage.tokenHash) {
+  if (delegation === undefined) {
+    return { kind: 'closed', reason: 'token-reissued' };
+  }
+  if (delegation.tokenHash !== linkage.tokenHash) {
     return { kind: 'closed', reason: 'token-reissued' };
   }
   if (delegation.cancelledAt !== null) {
