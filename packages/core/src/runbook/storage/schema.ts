@@ -24,7 +24,7 @@ import type { SqlTransaction } from './sql-driver.js';
  * version is invalid and rejected with an {@link IncompatibleSchemaError}; the
  * recovery path is explicit user action (finish, stop, prune, restart).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 1;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;

@@ -122,15 +122,18 @@ describe('status command', () => {
   });
 
   describe('incompatible database schema (RD-305)', () => {
-    // Seed the store as the FIRST open in this process: a database whose
-    // `user_version` predates the cutover. `ensureSchema` runs in
-    // `openRunbookDriver` on that first open and rejects the version before any
-    // query, so both read-only and mutating commands surface RD-305. (Seeding
-    // via a prior `run` would cache the store and skip the re-check.)
+    // A schema version this build cannot read (neither 0/fresh nor the current
+    // SCHEMA_VERSION). Seed the store as the FIRST open in this process:
+    // `ensureSchema` runs in `openRunbookDriver` on that first open and rejects
+    // the version before any query, so both read-only and mutating commands
+    // surface RD-305. (Seeding via a prior `run` would cache the store and skip
+    // the re-check.)
+    const INCOMPATIBLE_VERSION = 99;
+
     async function seedIncompatibleDatabase(): Promise<void> {
       await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
       const db = new DatabaseSync(join(workspace.cwd, '.rundown', 'rundown.db'));
-      db.exec('PRAGMA user_version = 1');
+      db.exec(`PRAGMA user_version = ${String(INCOMPATIBLE_VERSION)}`);
       db.close();
     }
 
@@ -156,7 +159,7 @@ describe('status command', () => {
       expect(error.code).toBe('RD-305');
       expect(error.code).not.toBe('RD-999');
       expect(error.details?.category).toBe('STATE');
-      expect(error.details?.context).toMatchObject({ foundVersion: 1, expectedVersion: 2 });
+      expect(error.details?.context).toMatchObject({ foundVersion: INCOMPATIBLE_VERSION });
       expect(error.error).toMatch(/\.rundown\/rundown\.db/);
     });
 
