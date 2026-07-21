@@ -1244,6 +1244,10 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
    * @param event - Runbook event to send (PASS, FAIL, RETRY, or GOTO)
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard threaded into the SUCCESS-path
+   *   persist only (never the effects-failure stopped-lifecycle fallback); when
+   *   present the write refuses if the run has a live delegated child.
    * @throws {Error} If the actor snapshot's stateValue is not a string (from {@link updateFromActor})
    * @throws {Error} If the steps array is empty for a non-terminal state (from {@link updateFromActor})
    * @returns Updated state and snapshot; or null if state not found

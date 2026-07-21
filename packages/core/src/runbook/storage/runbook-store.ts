@@ -101,6 +101,8 @@ export function parentAdvanceGuard(parentRunId: RunId): ParentAdvanceGuard {
  */
 export class OpenDelegatedChildrenError extends Error {
   /**
+   * Construct the refusal, carrying the blocking claims.
+   *
    * @param claims - The active delegated child claims that blocked the advance.
    */
   constructor(readonly claims: readonly ClaimRecord[]) {

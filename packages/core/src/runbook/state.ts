@@ -561,8 +561,11 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID to update
    * @param updates - Partial state updates with tagged ops on record-shaped fields
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
   async update(
     id: string,
@@ -592,8 +595,11 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID to update
    * @param buildUpdates - Callback that derives a patch from current state
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated state, or current state when the callback returns `null`
    * @throws {Error} If the runbook with the given ID is not found
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
   async updateWithState(
     id: string,
@@ -620,8 +626,11 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID to update
    * @param buildUpdates - Callback that derives a patch from current state
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated state, the current state when the callback returns
    *   `null`, or `null` when the runbook does not exist
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
   async updateWithStateIfExists(
     id: string,

@@ -473,6 +473,8 @@ export class RunbookCompletionService {
    * non-reentrant, so re-acquiring here would deadlock.
    *
    * @param args - Manual completion target and result
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
    * @returns Whether a completion was recorded or already existed
    */
   async recordManualCompletion(
@@ -494,6 +496,8 @@ export class RunbookCompletionService {
    * the lock must use {@link recordManualCompletion}.
    *
    * @param args - Manual completion target and result
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
    * @returns Whether a completion was recorded or already existed
    */
   async recordManualCompletionUnlocked(
