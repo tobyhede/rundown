@@ -2,6 +2,7 @@ import type { StepPosition } from '../cli/types.js';
 import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
 import type { VariableValue } from './effective-vars.js';
 import type { DelegationTokenHash } from './delegation-token.js';
+import type { ClaimRecord } from './claim-id.js';
 
 /**
  * Sentinel entry value for pre-recorded completions targeting non-active frames.
@@ -376,6 +377,34 @@ export function findSubstepState(
   frameKey: FrameKey,
 ): SubstepState | undefined {
   return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
+}
+
+/**
+ * True when `linkage` is a delegation linkage that matches `claim`'s parent
+ * run / step / token hash. Verifies a child runbook's `parentLinkage` genuinely
+ * originated from the supplied claim record.
+ *
+ * Lives here (a dependency-free leaf) so both `session-service.ts` and the
+ * storage layer reuse the identical predicate without a store → session-service
+ * import cycle.
+ *
+ * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
+ * @param claim - Claim record whose parent run id, parent step id, and token hash must all match.
+ * @returns `true` only when `linkage.kind === 'delegation'` and every identifying field matches `claim`.
+ */
+export function linkageMatchesClaim(
+  linkage: RunbookState['parentLinkage'],
+  claim: ClaimRecord,
+): boolean {
+  if (!claim.delegation) {
+    return false;
+  }
+  return (
+    linkage?.kind === 'delegation' &&
+    linkage.parentRunId === claim.delegation.parentRunId &&
+    linkage.parentStepId === claim.delegation.parentStepId &&
+    linkage.tokenHash === claim.delegation.tokenHash
+  );
 }
 
 /**

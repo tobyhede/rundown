@@ -33,7 +33,7 @@ import {
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
-import { classifyDelegationLiveness, findSubstepState } from './targeting.js';
+import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -209,26 +209,6 @@ function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
     parentFrameKey: claim.delegation.parentFrameKey,
     parentEntry: claim.delegation.parentEntry,
   };
-}
-
-/**
- * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
- * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
- *
- * @param linkage - Parent linkage stored on the child runbook state (any kind, including non-delegation or absent)
- * @param claim - Claim record whose parent run id, parent step id, and token hash must all match
- * @returns `true` only when `linkage.kind === 'delegation'` and every identifying field matches `claim`; `false` otherwise
- */
-function linkageMatchesClaim(linkage: RunbookState['parentLinkage'], claim: ClaimRecord): boolean {
-  if (!claim.delegation) {
-    return false;
-  }
-  return (
-    linkage?.kind === 'delegation' &&
-    linkage.parentRunId === claim.delegation.parentRunId &&
-    linkage.parentStepId === claim.delegation.parentStepId &&
-    linkage.tokenHash === claim.delegation.tokenHash
-  );
 }
 
 function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {

@@ -31,7 +31,7 @@ import {
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
-import { classifyDelegationLiveness } from '../targeting.js';
+import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from '../targeting.js';
 import type { SessionData } from '../state.js';
 import type { SqlBindable, SqlDriver, SqlTransaction } from './sql-driver.js';
 import {
@@ -70,6 +70,55 @@ export type StateMutationResult =
   | { readonly kind: 'missing'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'execution_in_progress'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+
+/**
+ * Marker instructing a guarded run-state write to refuse — inside the same
+ * transaction, before the run `UPDATE` — when the run named by `parentRunId`
+ * still has a live delegated child. Supplied only by
+ * {@link SessionService.runGuardedParentAdvance}; absent on every routine write.
+ */
+export type ParentAdvanceGuard = {
+  readonly kind: 'refuse-open-delegated-children';
+  readonly parentRunId: RunId;
+};
+
+/**
+ * Build the guard for a parent-advancing write.
+ *
+ * @param parentRunId - The parent run whose advance must refuse on a live delegated child.
+ * @returns The guard marker to pass as {@link RunbookStore.mutateState}'s `guard` option.
+ */
+export function parentAdvanceGuard(parentRunId: RunId): ParentAdvanceGuard {
+  return { kind: 'refuse-open-delegated-children', parentRunId };
+}
+
+/**
+ * Thrown from a guarded write when a live delegated child still exists for the
+ * advancing parent. Aborts the write transaction (rollback) and is caught at
+ * exactly one boundary — {@link SessionService.runGuardedParentAdvance} — where
+ * it becomes the `open_delegated_children` refusal. Any other error from the
+ * guarded write is rethrown unchanged.
+ */
+export class OpenDelegatedChildrenError extends Error {
+  /**
+   * @param claims - The active delegated child claims that blocked the advance.
+   */
+  constructor(readonly claims: readonly ClaimRecord[]) {
+    super('Parent advance refused: a live delegated child exists.');
+    this.name = 'OpenDelegatedChildrenError';
+  }
+}
+
+/**
+ * Type guard for {@link OpenDelegatedChildrenError}. Same-realm custom error, so
+ * `instanceof` is the correct (allow-listed) check.
+ *
+ * @param value - Caught value to test.
+ * @returns `true` when `value` is an `OpenDelegatedChildrenError`.
+ */
+export function isOpenDelegatedChildrenError(value: unknown): value is OpenDelegatedChildrenError {
+  return value instanceof OpenDelegatedChildrenError;
+}
 
 /**
  * Raised when a classified-success guarded write changes anything other than
@@ -777,14 +826,18 @@ export class RunbookStore {
    *
    * @param runId - Run to mutate.
    * @param build - Derives the next state from the current one; `null` means no change.
-   * @param options - Optional attempt budget (default 8).
+   * @param options - Optional attempt budget and parent-advance guard.
    * @param options.attempts - Maximum number of stale-version retries before giving up.
+   * @param options.guard - Parent-advance guard: when present, the write refuses
+   *   inside its transaction if the run still has a live delegated child.
    * @returns The committed state, the unchanged state, or a typed refusal.
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
+   *   live delegated child blocks the advance.
    */
   async mutateState(
     runId: RunId,
     build: (current: RunbookState) => RunbookState | null | Promise<RunbookState | null>,
-    options: { readonly attempts?: number } = {},
+    options: { readonly attempts?: number; readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<StateMutationResult> {
     const attempts = options.attempts ?? DEFAULT_MUTATE_ATTEMPTS;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -796,8 +849,12 @@ export class RunbookStore {
       if (next === null) {
         return { kind: 'unchanged', value: snapshot.state };
       }
+      // A guard refusal throws OpenDelegatedChildrenError out of the transaction
+      // (driver ROLLBACK + rethrow); it must NOT be caught here as a retry — it
+      // propagates to runGuardedParentAdvance as the open_delegated_children
+      // refusal.
       const outcome = await this.transaction((txn) =>
-        this.writeStateAtVersion(txn.tx, runId, snapshot.stateVersion, next),
+        this.writeStateAtVersion(txn.tx, runId, snapshot.stateVersion, next, options.guard),
       );
       if (outcome === 'committed') {
         return { kind: 'committed', value: next };
@@ -971,14 +1028,33 @@ export class RunbookStore {
    * @param runId - Run to write.
    * @param stateVersion - Version captured at read.
    * @param next - New state.
+   * @param guard - Optional parent-advance guard. When present, the open
+   *   delegated-children predicate is evaluated inside this transaction BEFORE
+   *   the `UPDATE`; a live delegated child aborts the write (rollback).
    * @returns Why the write did or did not land.
+   * @throws {OpenDelegatedChildrenError} When `guard` is supplied and the parent
+   *   still has a live delegated child, aborting the transaction.
    */
   private writeStateAtVersion(
     tx: SqlTransaction,
     runId: RunId,
     stateVersion: number,
     next: RunbookState,
+    guard?: ParentAdvanceGuard,
   ): 'committed' | 'stale' | 'owned' | 'missing' {
+    if (guard !== undefined) {
+      // Defensive invariant: the guard only applies to its own parent's advance.
+      if (guard.parentRunId !== runId) {
+        throw new Error(
+          `Parent-advance guard for ${guard.parentRunId} misapplied to write of ${runId}.`,
+        );
+      }
+      const open = this.openDelegatedChildrenFor(tx, runId);
+      if (open.length > 0) {
+        // Aborts the BEGIN IMMEDIATE transaction (ROLLBACK) before any UPDATE.
+        throw new OpenDelegatedChildrenError(open);
+      }
+    }
     const changes = tx
       .prepare(
         `UPDATE runs
@@ -1258,6 +1334,56 @@ export class RunbookStore {
   private afterAuthoritativeStateWrite(tx: SqlTransaction, next: RunbookState): void {
     this.writeResolvedCompletions(tx, next.id, next.resolvedCompletions);
     this.invalidateClosedDelegatedClaims(tx, next);
+  }
+
+  /**
+   * List active delegated claims that are still OPEN for `parentRunId`,
+   * evaluated inside an open write transaction against the PRE-update parent
+   * state.
+   *
+   * A claim is open only when the child state exists, is non-terminal, still
+   * has delegation linkage matching the claim, AND the parent's corresponding
+   * delegated substep is not yet `done`. Mirrors
+   * {@link SessionService.listOpenClaimsForParent} exactly, but as synchronous
+   * in-transaction SQL so the result is atomic with the decisive write that
+   * follows in the same transaction — the whole point of the guard.
+   *
+   * @param tx - Open write transaction (pre-UPDATE).
+   * @param parentRunId - The advancing parent run.
+   * @returns Claim records for non-terminal children still linked to this parent
+   *   whose delegated substep remains unresolved.
+   */
+  private openDelegatedChildrenFor(tx: SqlTransaction, parentRunId: RunId): ClaimRecord[] {
+    const parent = this.readRun(tx, parentRunId);
+    const parentSubsteps = parent?.substepStates ?? [];
+    const rows = tx
+      .prepare("SELECT * FROM claims WHERE parent_run_id = :parentId AND status = 'active'")
+      .all<ClaimRow>({ parentId: parentRunId });
+
+    const open: ClaimRecord[] = [];
+    for (const row of rows) {
+      const claim = deserializeClaim(row);
+      if (!claim.delegation) {
+        continue;
+      }
+      const child = this.readRun(tx, claim.controlledRunId);
+      if (!child || child.lifecycle === 'completed' || child.lifecycle === 'stopped') {
+        continue;
+      }
+      if (!linkageMatchesClaim(child.parentLinkage, claim)) {
+        continue;
+      }
+      const parentSubstep = findSubstepState(
+        parentSubsteps,
+        claim.delegation.parentStepId,
+        claim.delegation.parentFrameKey,
+      );
+      if (parentSubstep?.status === 'done') {
+        continue;
+      }
+      open.push(claim);
+    }
+    return open;
   }
 
   /**
