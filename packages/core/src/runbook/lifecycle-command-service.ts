@@ -2340,31 +2340,29 @@ export class RunbookLifecycleCommandService {
       };
     }
 
-    const recordManualCompletion = (): ReturnType<
-      RunbookCompletionService['recordManualCompletion']
-    > =>
-      completionService.recordManualCompletion({
-        runbookId: activeState.id,
-        currentState: activeState,
-        targetStep: cursor.step,
-        targetSubstep,
-        ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
-        targetFrame: cursor.frame,
-        result: input.command,
-        agentId: 'manual',
-      });
+    const recordArgs: Parameters<RunbookCompletionService['recordManualCompletion']>[0] = {
+      runbookId: activeState.id,
+      currentState: activeState,
+      targetStep: cursor.step,
+      targetSubstep,
+      ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
+      targetFrame: cursor.frame,
+      result: input.command,
+      agentId: 'manual',
+    };
 
     let recordResult: Awaited<ReturnType<RunbookCompletionService['recordManualCompletion']>>;
     if (guardOpenChildren) {
-      const guarded = await sessionService.runGuardedParentAdvance(
-        activeState.id,
-        recordManualCompletion,
+      // Guarded branch: thread the in-transaction guard into the decisive write.
+      const guarded = await sessionService.runGuardedParentAdvance(activeState.id, (guard) =>
+        completionService.recordManualCompletion(recordArgs, { guard }),
       );
       const guardResult = this.#guardRefusal(guarded, activeState.id);
       if (guardResult.kind === 'refusal') return guardResult.outcome;
       recordResult = guardResult.value;
     } else {
-      recordResult = await recordManualCompletion();
+      // Explicit-target / claim-authorized path: no guarded advance, no guard.
+      recordResult = await completionService.recordManualCompletion(recordArgs);
     }
 
     const duplicate =
@@ -2651,17 +2649,18 @@ export class RunbookLifecycleCommandService {
       }
     })();
 
-    const sendAndSync = (): ReturnType<RunbookActorService['sendAndSync']> =>
-      actorService.sendAndSync(activeState.id, steps, { type: eventType });
-
     let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
     if (guardOpenChildren) {
-      const guarded = await sessionService.runGuardedParentAdvance(activeState.id, sendAndSync);
+      // Guarded branch: thread the in-transaction guard into the decisive write.
+      const guarded = await sessionService.runGuardedParentAdvance(activeState.id, (guard) =>
+        actorService.sendAndSync(activeState.id, steps, { type: eventType }, { guard }),
+      );
       const guardResult = this.#guardRefusal(guarded, activeState.id);
       if (guardResult.kind === 'refusal') return guardResult.outcome;
       syncResult = guardResult.value;
     } else {
-      syncResult = await sendAndSync();
+      // Explicit-target / claim-authorized path: no guarded advance, no guard.
+      syncResult = await actorService.sendAndSync(activeState.id, steps, { type: eventType });
     }
     if (!syncResult) {
       throw new Error('Failed to dispatch transition to runbook engine');

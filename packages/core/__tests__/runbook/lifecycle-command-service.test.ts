@@ -46,7 +46,12 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
-import { assertClaimed, linkageFor, claimLiveDelegation } from './claim-test-helpers.js';
+import {
+  assertClaimed,
+  linkageFor,
+  claimLiveDelegation,
+  seedLiveDelegation,
+} from './claim-test-helpers.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
@@ -2286,6 +2291,94 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome.kind).toBe('open_delegated_children');
+    });
+
+    it('refuses a racing claim through the top-level production path (sendAndSync)', async () => {
+      // A claim that commits INSIDE the guarded advance window — after the cheap
+      // pre-check, before the decisive sendAndSync write — must refuse the advance
+      // via the in-transaction guard, preserving the bearer. Drives the real
+      // LifecycleCommandService -> sendAndSync -> updateFromActor -> manager.update
+      // forwarding: fails if any layer drops the guard.
+      loadStepsImpl = () => twoSteps;
+      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac');
+      const linkage = linkageFor(namedRunId, 'a');
+      await activate(baseState({ id: namedRunId }));
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realSendAndSync = actorService.sendAndSync.bind(actorService);
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
+      jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (...args) => {
+        claimed = assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+        return realSendAndSync(...args);
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('open_delegated_children');
+      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
+        'verified',
+      );
+      expect((await manager.load(namedRunId))?.step).toBe('1');
+    });
+
+    it('refuses a racing claim through the substep production path (recordManualCompletion)', async () => {
+      // Same race as the top-level test, but through #driveSubstep ->
+      // recordManualCompletion -> recordManualCompletionUnlocked ->
+      // manager.updateWithState. Fails if any of those layers drops the guard.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad');
+      const linkage = linkageFor(namedRunId, 'a');
+      await activate(baseState({ id: namedRunId, substep: '1' }));
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realRecord = completionService.recordManualCompletion.bind(completionService);
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
+      jest
+        .spyOn(completionService, 'recordManualCompletion')
+        .mockImplementation(async (...args) => {
+          claimed = assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+          return realRecord(...args);
+        });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('open_delegated_children');
+      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
+        'verified',
+      );
+      expect(
+        findSubstepState(
+          (await manager.load(namedRunId))?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.status,
+      ).not.toBe('done');
     });
 
     it('keeps the targeted exemption for run+step over pending outcomes (sanctioned operator recovery)', async () => {
