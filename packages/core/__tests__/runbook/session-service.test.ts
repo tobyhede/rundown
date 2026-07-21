@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId, type DelegationClaimLinkage } from '../../src/runbook/claim-id.js';
@@ -642,6 +643,35 @@ describe('SessionService', () => {
       expect(resolved.status).toBe('unlinked');
       if (resolved.status === 'unlinked') {
         expect(resolved.reason).toBe('parent-missing');
+      }
+    });
+
+    it('returns stale for a claim whose child state is missing', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '8');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+
+      // Orphan the claim: delete the child run row with the FK cascade disabled so
+      // the claim survives, referencing a run whose state can no longer be read.
+      // This is the corrupted-database state the typed `stale` refusal defends —
+      // the cascade makes it unreachable through any supported delete.
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      raw.exec('PRAGMA foreign_keys = OFF');
+      raw.prepare('DELETE FROM runs WHERE id = :id').run({ id: child.id });
+      raw.close();
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(resolved.status).toBe('stale');
+      if (resolved.status === 'stale') {
+        expect(resolved.reason).toBe('missing-state');
       }
     });
 

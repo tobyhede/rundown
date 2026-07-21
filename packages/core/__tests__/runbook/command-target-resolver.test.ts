@@ -298,6 +298,10 @@ describe('resolveCommandTarget claim-id message redaction', () => {
       name: 'unlinked/parent-missing',
       resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'parent-missing' },
     },
+    {
+      name: 'stale/missing-state',
+      resolution: { status: 'stale', claimId, reason: 'missing-state' },
+    },
   ];
 
   for (const { name, resolution } of cases) {
@@ -627,6 +631,11 @@ describe('resolveTransitionTarget', () => {
         reason: 'child-linkage-mismatch' as const,
       },
       expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is no longer linked to an active delegation (child-linkage-mismatch).`,
+    },
+    {
+      label: 'stale missing-state',
+      resolution: { status: 'stale' as const, claimId, reason: 'missing-state' as const },
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} no longer has readable runbook state (missing-state). Recover with \`rundown prune\` and restart from source.`,
     },
   ])('reports stale_claim for $label claim resolution', async (caseDef) => {
     await expect(

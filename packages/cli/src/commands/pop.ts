@@ -28,6 +28,8 @@ function claimPopUnavailableMessage(
   switch (result.status) {
     case 'missing-claim':
       return `Claim id ${claimKey} does not exist.`;
+    case 'missing-child':
+      return `Claim id ${claimKey} no longer has readable child runbook state. Recover with \`rundown prune\` and restart from source.`;
     case 'not-stashed':
       return `Claim id ${claimKey} is not currently stashed.`;
     case 'terminal-child':
