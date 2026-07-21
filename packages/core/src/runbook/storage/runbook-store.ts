@@ -604,7 +604,7 @@ export class RunbookStore {
    */
   constructor(
     private readonly driver: SqlDriver,
-    private readonly cwd: string,
+    cwd: string,
   ) {
     this.stateSchema = makeRunbookStateSchema(cwd);
   }

@@ -155,7 +155,7 @@ child.on("error", (error) => {
 
 child.on("close", (code) => {
   // Strip ANSI so the scope regexes match colored Stryker output.
-  // eslint-disable-next-line no-control-regex
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching ANSI escape sequences
   const plain = captured.replace(/\x1b\[[0-9;]*m/g, "");
   const mutatedFiles = plain.match(
     /Found (\d+) of \d+ file\(s\) to be mutated/,
