@@ -412,6 +412,16 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     --testFiles __tests__/helpers/table-formatter.test.ts
   ```
 
+  **Prefer the wrapper for local scoped runs:**
+  `node scripts/mutate-scoped.mjs <pkg> <mutateSpec> <testFilesSpec>` (`<pkg>` =
+  `core|cli|parser|plugin`). It makes the raw command correct-by-construction:
+  it passes each spec as a single argument (so the last-wins collapse below
+  cannot happen), hard-fails on a `Instrumented 0` mis-scope, and applies
+  fast-local timeout defaults (`STRYKER_TIMEOUT_MS=8000`,
+  `STRYKER_TIMEOUT_FACTOR=1.5`, `STRYKER_MAX_TEST_RUNNER_REUSE=10`) so the run
+  finishes in minutes. Reach for the raw `pnpm --filter … exec` form only when
+  you need a flag the wrapper doesn't pass through.
+
   Both obvious alternatives are unsafe, in different ways: the first fails
   **loudly**, the second **silently looks like success**. Check the
   `Instrumented N source file(s) with M mutant(s)` line before trusting any
@@ -426,6 +436,27 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     that cannot fail. Each `stryker.config.mjs`'s own `mutate` array is
     package-relative (`'src/**/*.ts'`) for the same reason, as is
     `.github/workflows/mutation-pr.yml:96` (`sed "s#^${PKG_DIR}/##"`).
+  - Repeated `--mutate` / `--testFiles` flags **collapse to last-wins**
+    (Stryker's Commander CLI does not accumulate them):
+    `--mutate a.ts --mutate b.ts` mutates **only** `b.ts`, same for
+    `--testFiles`. Nothing warns — the wrong, narrower run just runs. Pass many
+    files as **one comma-separated list** in a single flag
+    (`--mutate a.ts,b.ts`), and verify **both** the `Found M test file(s)` line
+    and the `Instrumented N source file(s)` line match what you intended. (The
+    `mutate-scoped.mjs` wrapper takes exactly one spec each and refuses extra
+    positionals, so it cannot mis-collapse.)
+  - Timeouts are **legitimate but expensive** under the committed CI budget.
+    Infinite-loop mutants (e.g. a mutant deleting a loop's `seen`-set cycle
+    guard) are _detected_ via Timeout, but core's `timeoutMS: 60000` /
+    `timeoutFactor: 3` (issue #483, deliberately wide to avoid
+    Timeout-as-survivor false negatives under CI contention) makes each cost
+    `netTime * factor + timeoutMS` ≈ 72s, amplified by the jest-runner in-band
+    memory leak (OOM → restart → retry). For a local scoped run, cheapen it via
+    the wrapper (or `STRYKER_TIMEOUT_MS` / `STRYKER_TIMEOUT_FACTOR` /
+    `STRYKER_MAX_TEST_RUNNER_REUSE`, all env-parameterized in each
+    `stryker.config.mjs` with the CI values as defaults). **Do not** lower the
+    committed defaults and **do not** exclude mutators to dodge the timeouts —
+    they are real kills, not survivors.
 
   Note `incremental: true`: a stale `reports/stryker-incremental.json` can print
   a plausible aggregate over a zero-mutant run. Also note **core is excluded

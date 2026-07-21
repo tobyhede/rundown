@@ -1,7 +1,21 @@
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 const parsePositiveInteger = (value, fallback) => {
-  const parsed = Number.parseInt(value ?? '', 10);
+  const parsed = Number.parseInt(value ?? "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/**
+ * Parse a positive (possibly fractional) number from an env value. Unlike
+ * parsePositiveInteger this accepts floats, which timeoutFactor needs (e.g. a
+ * local `STRYKER_TIMEOUT_FACTOR=1.5`); unset/non-positive falls back.
+ *
+ * @param {string | undefined} value - the raw env value.
+ * @param {number} fallback - value when unset/non-positive.
+ * @returns {number}
+ */
+const parsePositiveNumber = (value, fallback) => {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
@@ -17,7 +31,10 @@ const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
 // `recover()` disposes and respawns the child (re-running only its cheap config
 // load, NOT the dry run). This is the supported lever for "a memory leak you
 // cannot resolve" per the Stryker schema. See issue #485.
-const maxTestRunnerReuse = parsePositiveInteger(process.env.STRYKER_MAX_TEST_RUNNER_REUSE, 25);
+const maxTestRunnerReuse = parsePositiveInteger(
+  process.env.STRYKER_MAX_TEST_RUNNER_REUSE,
+  25,
+);
 
 /**
  * Parse a boolean-ish env value. Only 'true'/'1' enable the flag; unset or any
@@ -28,8 +45,8 @@ const maxTestRunnerReuse = parsePositiveInteger(process.env.STRYKER_MAX_TEST_RUN
  * @returns {boolean}
  */
 const parseBoolean = (value, fallback) => {
-  if (value === 'true' || value === '1') return true;
-  if (value === 'false' || value === '0') return false;
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
   return fallback;
 };
 
@@ -39,22 +56,33 @@ const parseBoolean = (value, fallback) => {
 // false negatives are acceptable (it never blocks merge). See issue #485.
 const ignoreStatic = parseBoolean(process.env.STRYKER_IGNORE_STATIC, false);
 
+// Per-mutant timeout budget = netTime * timeoutFactor + timeoutMS + overhead.
+// Defaults are the committed CI budget; STRYKER_TIMEOUT_MS / STRYKER_TIMEOUT_FACTOR
+// let a local scoped run cheapen it so genuine infinite-loop mutants are still
+// *detected* via Timeout but cost seconds instead of a full minute. CI leaves
+// both unset, so the budget is unchanged.
+const timeoutMS = parsePositiveInteger(process.env.STRYKER_TIMEOUT_MS, 60000);
+const timeoutFactor = parsePositiveNumber(
+  process.env.STRYKER_TIMEOUT_FACTOR,
+  2.5,
+);
+
 // The dashboard reporter UPLOADS the report and requires an API key, so enable
 // it only when one is present. The producer workflow (mutation.yml) sets the
 // key; the advisory PR workflow does not (it only downloads the public
 // baseline), so PR runs never upload partial, changed-file-scoped reports that
 // would corrupt the dashboard baseline. See issue #485.
-const reporters = ['progress', 'clear-text', 'html', 'json'];
-if (process.env.STRYKER_DASHBOARD_API_KEY) reporters.push('dashboard');
+const reporters = ["progress", "clear-text", "html", "json"];
+if (process.env.STRYKER_DASHBOARD_API_KEY) reporters.push("dashboard");
 
 const config = {
-  packageManager: 'pnpm',
+  packageManager: "pnpm",
   // Explicit plugin list: pnpm's isolated layout breaks Stryker's default
   // '@stryker-mutator/*' auto-discovery glob (which resolves relative to
   // stryker-core's own node_modules, where jest-runner is not a sibling).
   // Naming the plugin makes Stryker resolve it from this package's node_modules.
-  plugins: ['@stryker-mutator/jest-runner'],
-  testRunner: 'jest',
+  plugins: ["@stryker-mutator/jest-runner"],
+  testRunner: "jest",
   // enableFindRelatedTests scopes each mutant run to only the test files that
   // *transitively import* the mutated source (jest's inverse module graph),
   // instead of reloading the entire suite for every mutant. With it `false`,
@@ -70,8 +98,8 @@ const config = {
   // false survivor. The inverse graph is transitive, so ordinary integration
   // tests still count; only runtime-only coverage is lost. That residue is
   // acceptable because the alternative (`false`) does not complete. See #485.
-  jest: { configFile: 'jest.stryker.config.js', enableFindRelatedTests: true },
-  testRunnerNodeArgs: ['--experimental-vm-modules'],
+  jest: { configFile: "jest.stryker.config.js", enableFindRelatedTests: true },
+  testRunnerNodeArgs: ["--experimental-vm-modules"],
   checkers: [],
   // The CLI is a thin wrapper, so its mutation value is fairly uniform across
   // the orchestration helpers/services — there is no large low-value core to
@@ -79,20 +107,20 @@ const config = {
   // and codegen, excluded below; the real lever for keeping CLI runs bounded is
   // the changed-file (`--mutate`) scoping the workflows apply. See issue #485.
   mutate: [
-    'src/**/*.ts',
-    '!src/**/*.d.ts',
-    '!src/index.ts',
-    '!src/cli.ts',
-    '!src/schemas/**',
+    "src/**/*.ts",
+    "!src/**/*.d.ts",
+    "!src/index.ts",
+    "!src/cli.ts",
+    "!src/schemas/**",
     // Doc codegen (`gen-cli-help.ts`): not shipped runtime logic and untested,
     // so every mutant would survive as pure noise.
-    '!src/scripts/**',
+    "!src/scripts/**",
     // JSON/text output renderers — presentation, low correctness stakes.
-    '!src/services/renderers/**',
+    "!src/services/renderers/**",
   ],
-  coverageAnalysis: 'perTest',
+  coverageAnalysis: "perTest",
   incremental: true,
-  incrementalFile: 'reports/stryker-incremental.json',
+  incrementalFile: "reports/stryker-incremental.json",
   // break: 70 is a catastrophic-drop floor on the project-wide aggregate, not
   // a quality target. It applies to every `stryker run` (the weekly full run
   // and the per-PR run), failing loudly instead of silently uploading a red
@@ -101,20 +129,20 @@ const config = {
   // guard. See issue #483.
   thresholds: { high: 80, low: 60, break: 70 },
   reporters,
-  htmlReporter: { fileName: 'reports/mutation/index.html' },
-  jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },
+  htmlReporter: { fileName: "reports/mutation/index.html" },
+  jsonReporter: { fileName: "reports/mutation/mutation-report.json" },
   dashboard: {
-    project: 'github.com/tobyhede/rundown',
-    module: 'cli',
+    project: "github.com/tobyhede/rundown",
+    module: "cli",
     // version is auto-detected from the CI environment (branch/ref) when unset;
     // the producer workflow may pin it via STRYKER_DASHBOARD_VERSION.
     version: process.env.STRYKER_DASHBOARD_VERSION || undefined,
-    reportType: 'full',
+    reportType: "full",
   },
   concurrency,
   maxTestRunnerReuse,
   ignoreStatic,
-  timeoutMS: 60000,
-  timeoutFactor: 2.5,
+  timeoutMS,
+  timeoutFactor,
 };
 export default config;

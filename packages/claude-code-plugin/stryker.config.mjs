@@ -1,7 +1,21 @@
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 const parsePositiveInteger = (value, fallback) => {
-  const parsed = Number.parseInt(value ?? '', 10);
+  const parsed = Number.parseInt(value ?? "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+/**
+ * Parse a positive (possibly fractional) number from an env value. Unlike
+ * parsePositiveInteger this accepts floats, which timeoutFactor needs (e.g. a
+ * local `STRYKER_TIMEOUT_FACTOR=1.5`); unset/non-positive falls back.
+ *
+ * @param {string | undefined} value - the raw env value.
+ * @param {number} fallback - value when unset/non-positive.
+ * @returns {number}
+ */
+const parsePositiveNumber = (value, fallback) => {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
@@ -15,8 +29,8 @@ const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
  * @returns {boolean}
  */
 const parseBoolean = (value, fallback) => {
-  if (value === 'true' || value === '1') return true;
-  if (value === 'false' || value === '0') return false;
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
   return fallback;
 };
 
@@ -26,29 +40,38 @@ const parseBoolean = (value, fallback) => {
 // false negatives are acceptable (it never blocks merge). See issue #485.
 const ignoreStatic = parseBoolean(process.env.STRYKER_IGNORE_STATIC, false);
 
+// Per-mutant timeout budget = netTime * timeoutFactor + timeoutMS + overhead.
+// Defaults are the committed budget; STRYKER_TIMEOUT_MS / STRYKER_TIMEOUT_FACTOR
+// let a local scoped run cheapen it. CI leaves both unset, so it is unchanged.
+const timeoutMS = parsePositiveInteger(process.env.STRYKER_TIMEOUT_MS, 30000);
+const timeoutFactor = parsePositiveNumber(
+  process.env.STRYKER_TIMEOUT_FACTOR,
+  2.5,
+);
+
 // The dashboard reporter UPLOADS the report and requires an API key, so enable
 // it only when one is present. The producer workflow (mutation.yml) sets the
 // key; the advisory PR workflow does not (it only downloads the public
 // baseline), so PR runs never upload partial, changed-file-scoped reports that
 // would corrupt the dashboard baseline. See issue #485.
-const reporters = ['progress', 'clear-text', 'html', 'json'];
-if (process.env.STRYKER_DASHBOARD_API_KEY) reporters.push('dashboard');
+const reporters = ["progress", "clear-text", "html", "json"];
+if (process.env.STRYKER_DASHBOARD_API_KEY) reporters.push("dashboard");
 
 const config = {
-  packageManager: 'pnpm',
+  packageManager: "pnpm",
   // Explicit plugin list: pnpm's isolated layout breaks Stryker's default
   // '@stryker-mutator/*' auto-discovery glob (which resolves relative to
   // stryker-core's own node_modules, where jest-runner is not a sibling).
   // Naming the plugin makes Stryker resolve it from this package's node_modules.
-  plugins: ['@stryker-mutator/jest-runner'],
-  testRunner: 'jest',
-  jest: { configFile: 'jest.stryker.config.js' },
-  testRunnerNodeArgs: ['--experimental-vm-modules'],
+  plugins: ["@stryker-mutator/jest-runner"],
+  testRunner: "jest",
+  jest: { configFile: "jest.stryker.config.js" },
+  testRunnerNodeArgs: ["--experimental-vm-modules"],
   checkers: [],
-  mutate: ['src/**/*.ts', '!src/**/*.d.ts', '!src/index.ts'],
-  coverageAnalysis: 'perTest',
+  mutate: ["src/**/*.ts", "!src/**/*.d.ts", "!src/index.ts"],
+  coverageAnalysis: "perTest",
   incremental: true,
-  incrementalFile: 'reports/stryker-incremental.json',
+  incrementalFile: "reports/stryker-incremental.json",
   // break: 70 is a catastrophic-drop floor on the project-wide aggregate, not
   // a quality target. It applies to every `stryker run` (the weekly full run
   // and the per-PR run), failing loudly instead of silently uploading a red
@@ -57,19 +80,19 @@ const config = {
   // guard. See issue #483.
   thresholds: { high: 80, low: 60, break: 70 },
   reporters,
-  htmlReporter: { fileName: 'reports/mutation/index.html' },
-  jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },
+  htmlReporter: { fileName: "reports/mutation/index.html" },
+  jsonReporter: { fileName: "reports/mutation/mutation-report.json" },
   dashboard: {
-    project: 'github.com/tobyhede/rundown',
-    module: 'plugin',
+    project: "github.com/tobyhede/rundown",
+    module: "plugin",
     // version is auto-detected from the CI environment (branch/ref) when unset;
     // the producer workflow may pin it via STRYKER_DASHBOARD_VERSION.
     version: process.env.STRYKER_DASHBOARD_VERSION || undefined,
-    reportType: 'full',
+    reportType: "full",
   },
   concurrency,
   ignoreStatic,
-  timeoutMS: 30000,
-  timeoutFactor: 2.5,
+  timeoutMS,
+  timeoutFactor,
 };
 export default config;

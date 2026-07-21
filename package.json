@@ -29,6 +29,7 @@
     "test:mutate:cli": "pnpm --filter @rundown-org/cli test:mutate --",
     "test:mutate:cli:dry": "pnpm --filter @rundown-org/cli test:mutate:dry",
     "test:mutate:plugin": "pnpm --filter @rundown-org/claude-code-plugin test:mutate",
+    "test:mutate:scoped": "node scripts/mutate-scoped.mjs",
     "test:pw": "pnpm --filter site test",
     "test:coverage": "run-p test:coverage:*",
     "test:coverage:parser": "pnpm --filter @rundown-org/parser test:coverage",
