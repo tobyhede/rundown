@@ -153,10 +153,18 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     } catch {
       // The effect boundary was crossed; the external outcome is unknown. Record
       // recovery instead of retrying — the ambiguous effect must never repeat.
-      await this.lease.abandonToRecovery(
-        attempt,
-        input.recoveryReason ?? DEFAULT_MID_EFFECT_REASON,
-      );
+      // A failed recovery-write must never mask this typed post-boundary outcome
+      // (RD-102): the surviving `effect_started` attempt stays reclaimable by
+      // dead-owner recovery, so suppress the write error and still return
+      // `recovery_required`.
+      try {
+        await this.lease.abandonToRecovery(
+          attempt,
+          input.recoveryReason ?? DEFAULT_MID_EFFECT_REASON,
+        );
+      } catch {
+        // The surviving exact lease remains recoverable by dead-owner recovery.
+      }
       return {
         kind: 'recovery_required',
         runId: input.captured.runId,

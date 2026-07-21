@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -9,6 +9,7 @@ import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import {
   SqliteExecutionLeaseService,
   type ExecutionAttempt,
+  type LeaseWaitProgress,
 } from '../../../src/runbook/storage/execution-lease.js';
 import {
   assertClaimGeneration,
@@ -74,6 +75,17 @@ async function preparedRun(): Promise<{ state: RunbookState; captured: CapturedA
 function setOwnerPid(runId: RunId, pid: number): Promise<void> {
   return store.transaction((txn) => {
     txn.tx.prepare('UPDATE runs SET exec_pid = :pid WHERE id = :id').run({ pid, id: runId });
+  });
+}
+
+/** Clear the run's active ownership (as a concurrent recovery-commit would). */
+function clearOwner(runId: RunId): Promise<void> {
+  return store.transaction((txn) => {
+    txn.tx
+      .prepare(
+        'UPDATE runs SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL WHERE id = :id',
+      )
+      .run({ id: runId });
   });
 }
 
@@ -228,6 +240,30 @@ describe('PID-aware dead-owner recovery', () => {
     expect(phase).toBe('recovery_pending');
   });
 
+  it('does not re-record recovery when another actor already resolved the effect_started tuple', async () => {
+    // Actor A observes a dead effect_started owner and is about to record
+    // recovery. Actor B has already resolved that exact tuple (its attempt
+    // moved out of the recovery-eligible phases) before A's CAS lands.
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await lease.markEffectStarted(acquired.value);
+    await setOwnerPid(state.id, deadPid());
+    // Actor B resolved the recovery: the attempt is committed out of the
+    // effect_started / recovery_pending phases (ownership on the run is stale).
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          "UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :r AND exec_epoch = :e",
+        )
+        .run({ r: state.id, e: acquired.value.epoch });
+    });
+    // Actor A must not claim it recorded recovery: its exact-tuple CAS matched
+    // nothing, so the outcome is the same no-op as an absent attempt.
+    const recovered = await lease.recoverDeadOwner(state.id);
+    expect(recovered.kind).toBe('missing');
+  });
+
   it('returns missing for an absent run', async () => {
     const recovered = await lease.recoverDeadOwner('rd_00000000000000000000000000000000' as RunId);
     expect(recovered.kind).toBe('missing');
@@ -333,6 +369,32 @@ describe('default contention policy and finite wait', () => {
     });
 
     expect(result.kind).toBe('execution_in_progress');
+    expect(Date.now() - start).toBeLessThan(300);
+  });
+
+  it('retries immediately, without backoff or wait progress, when recovery reports the tuple was already cleared', async () => {
+    const { state, captured } = await preparedRun();
+    await lease.acquire(captured, process.pid); // run is owned → a fresh acquire is refused
+    const progress: LeaseWaitProgress[] = [];
+    const waiting = new SqliteExecutionLeaseService(driver, (p) => progress.push(p));
+    // Model a concurrent actor that resolves the recovery and clears ownership
+    // between the refused acquire and our dead-owner recovery: recovery reports
+    // `missing`, and the run becomes acquirable on the very next attempt.
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      await clearOwner(runId);
+      return { kind: 'missing', runId };
+    });
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+    const start = Date.now();
+    const result = await waiting.acquire(recap.authority, process.pid, {
+      budgetMs: 1000,
+      backoff: () => 1000, // huge: a backoff would blow the timing assertion
+    });
+    expect(result.kind).toBe('committed');
+    // The missing fast-path must not consume an attempt / report progress …
+    expect(progress).toHaveLength(0);
+    // … nor apply the backoff before retrying.
     expect(Date.now() - start).toBeLessThan(300);
   });
 

@@ -168,7 +168,7 @@ interface OwnerRow {
   readonly execPid: number | null;
   readonly execTokenHash: string | null;
   readonly execEpoch: number | null;
-  readonly phase: string | null;
+  readonly phase: ExecutionPhase | null;
 }
 
 /** Thrown inside an all-or-none transaction to roll back on the first refusal. */
@@ -194,6 +194,17 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     private readonly onWaitProgress?: (progress: LeaseWaitProgress) => void,
   ) {}
 
+  /**
+   * Acquire execution ownership under the captured claim/state CAS. Without a
+   * wait policy the call refuses immediately on contention; with one it retries
+   * the whole short transaction outside SQLite within the finite budget,
+   * self-healing a crashed pre-effect owner.
+   *
+   * @param captured - Authority captured before the effect.
+   * @param ownerPid - Acquiring process id.
+   * @param wait - Optional finite wait policy (default: immediate refusal).
+   * @returns The acquired attempt, or a typed refusal.
+   */
   async acquire(
     captured: CapturedAuthority,
     ownerPid: number,
@@ -202,6 +213,14 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     return this.withWait(wait, () => this.acquireOnce(captured, ownerPid));
   }
 
+  /**
+   * Move the exact owned attempt from `claimed` to `effect_started` under its
+   * token/epoch, and only while the run still references it.
+   *
+   * @param attempt - The owned `claimed` attempt.
+   * @returns The effect-started attempt, or `execution_in_progress` on lost
+   *   ownership.
+   */
   async markEffectStarted(
     attempt: ExecutionAttempt,
   ): Promise<GuardedMutationResult<ExecutionAttempt>> {
@@ -231,6 +250,16 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     });
   }
 
+  /**
+   * Abandon this process's own `effect_started` attempt to `recovery_pending`
+   * after a mid-effect failure whose external outcome is unknown. No liveness
+   * check runs; the run stays owned until recovery clears it.
+   *
+   * @param attempt - The `effect_started` attempt this process owns.
+   * @param reason - The recovery cause to record.
+   * @returns `recovery_required` on success, or `execution_in_progress` when the
+   *   attempt was already moved by another actor.
+   */
   async abandonToRecovery(
     attempt: ExecutionAttempt,
     reason: ExecutionRecoveryReason,
@@ -261,6 +290,16 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     });
   }
 
+  /**
+   * Recover a run whose owner may be dead. Liveness is evaluated OUTSIDE SQLite,
+   * then the exact observed `(pid, token, epoch, phase)` tuple is changed under
+   * CAS: a dead pre-effect owner is reclaimed; a dead effect-started owner is
+   * moved to `recovery_pending`; a live owner or an already-resolved tuple is a
+   * no-op.
+   *
+   * @param runId - Run to inspect.
+   * @returns The phase-aware recovery outcome.
+   */
   async recoverDeadOwner(runId: RunId): Promise<DeadOwnerRecovery> {
     const owner = await this.driver.read((tx) => readOwner(tx, runId));
     if (!owner.present) {
@@ -281,6 +320,16 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     return this.markRecoveryPending(runId, owner, epoch);
   }
 
+  /**
+   * Acquire ownership of several runs all-or-none in one short transaction:
+   * either every deduplicated run is acquired, or nothing is and the first
+   * refusal is returned. Honours the optional finite wait policy.
+   *
+   * @param captured - Captured authority for each affected run.
+   * @param ownerPid - Acquiring process id.
+   * @param wait - Optional finite wait policy (default: immediate refusal).
+   * @returns All acquired attempts, or a typed refusal (with nothing acquired).
+   */
   async acquireAll(
     captured: readonly CapturedAuthority[],
     ownerPid: number,
@@ -386,14 +435,23 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     owner: OwnerRow,
     epoch: ExecutionEpoch,
   ): Promise<DeadOwnerRecovery> {
-    await this.driver.immediate((tx) => {
-      tx.prepare(
-        `UPDATE execution_attempts
-            SET phase = 'recovery_pending', reason = COALESCE(reason, 'owner_dead')
-          WHERE run_id = :runId AND exec_epoch = :epoch AND exec_token = :hash
-            AND phase IN ('effect_started', 'recovery_pending')`,
-      ).run({ runId, epoch, hash: owner.execTokenHash });
-    });
+    const changes = await this.driver.immediate(
+      (tx) =>
+        tx
+          .prepare(
+            `UPDATE execution_attempts
+                SET phase = 'recovery_pending', reason = COALESCE(reason, 'owner_dead')
+              WHERE run_id = :runId AND exec_epoch = :epoch AND exec_token = :hash
+                AND phase IN ('effect_started', 'recovery_pending')`,
+          )
+          .run({ runId, epoch, hash: owner.execTokenHash }).changes,
+    );
+    if (changes !== 1) {
+      // Another actor resolved this exact tuple between the read and the CAS
+      // (its attempt moved out of the recovery-eligible phases). Do not claim we
+      // recorded recovery; report the same no-op as an absent attempt.
+      return { kind: 'missing', runId };
+    }
     return { kind: 'recovery_pending', runId, epoch };
   }
 
@@ -435,6 +493,12 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
       }
       if (recovery.kind === 'reclaimed_pre_effect') {
         continue; // The dead lease is cleared; retry immediately.
+      }
+      if (recovery.kind === 'missing') {
+        // Ownership was already cleared by another actor (its recovery resolved
+        // the tuple). Retry immediately, like a reclaim: do not consume an
+        // attempt, report progress, or back off.
+        continue;
       }
       attempts += 1;
       const remainingMs = Math.max(0, deadline - Date.now());
@@ -538,7 +602,7 @@ function readOwner(tx: SqlTransaction, runId: RunId): OwnerRow {
       readonly exec_pid: number | null;
       readonly exec_token: string | null;
       readonly exec_epoch: number | null;
-      readonly phase: string | null;
+      readonly phase: ExecutionPhase | null;
     }>({ runId });
   if (row === undefined) {
     return { present: false, execPid: null, execTokenHash: null, execEpoch: null, phase: null };

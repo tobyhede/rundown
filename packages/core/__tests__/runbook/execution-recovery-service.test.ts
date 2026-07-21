@@ -12,9 +12,10 @@ import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution
 import { assertClaimGeneration } from '../../src/runbook/storage/mutation-result.js';
 import {
   ExecutionRecoveryService,
+  validateReason,
   type RecoveryActor,
 } from '../../src/runbook/execution-recovery-service.js';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { RunbookStateManager, InvalidRunbookStateError } from '../../src/runbook/state.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../src/runbook/claim-id.js';
 import type { RunId } from '../../src/runbook/run-id.js';
@@ -199,5 +200,21 @@ describe('ExecutionRecoveryService', () => {
     const service = new ExecutionRecoveryService(store, makeActor);
     const outcome = await service.recover('rd_00000000000000000000000000000000' as RunId);
     expect(outcome.kind).toBe('missing');
+  });
+});
+
+describe('validateReason', () => {
+  it('falls back to the default reason only for a null persisted value', () => {
+    expect(validateReason(null)).toBe('owner_dead');
+  });
+
+  it('returns a recognized persisted reason unchanged', () => {
+    expect(validateReason('effect_boundary_crossed')).toBe('effect_boundary_crossed');
+    expect(validateReason('stale_commit')).toBe('stale_commit');
+    expect(validateReason('owner_dead')).toBe('owner_dead');
+  });
+
+  it('rejects an unknown non-null persisted reason as stale state, never coercing it', () => {
+    expect(() => validateReason('totally_bogus')).toThrow(InvalidRunbookStateError);
   });
 });
