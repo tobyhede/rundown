@@ -127,11 +127,30 @@ while (!existsSync(goFile)) {
   // spin
 }
 
+// Stamp the mutation window with an EPOCH clock on BOTH arms. `performance`'s
+// timeOrigin+now is comparable across processes (unlike `process.hrtime`, whose
+// zero is "an arbitrary time in the past" and only accidentally machine-global);
+// the parent uses these to witness that at least two children's windows actually
+// overlapped. A child that legitimately throws must still report t0/t1 — a
+// missing timestamp would turn a real signal into a `BigInt(undefined)`-style
+// crash in the witness.
+const t0 = performance.timeOrigin + performance.now();
 try {
   const value = await run(service);
-  writeFileSync(resultFile, JSON.stringify({ ok: true, value }));
+  const t1 = performance.timeOrigin + performance.now();
+  writeFileSync(resultFile, JSON.stringify({ ok: true, value, t0, t1, pid: process.pid }));
 } catch (error: unknown) {
-  writeFileSync(resultFile, JSON.stringify({ ok: false, error: getErrorMessage(error) }));
+  const t1 = performance.timeOrigin + performance.now();
+  writeFileSync(
+    resultFile,
+    JSON.stringify({
+      ok: false,
+      error: getErrorMessage(error),
+      t0,
+      t1,
+      pid: process.pid,
+    }),
+  );
 }
 
 await closeRunbookStores();

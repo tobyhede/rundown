@@ -34,9 +34,18 @@ import { linkageFor, seedLiveDelegation, assertClaimed } from './claim-test-help
  *
  * DETERMINISM. Children are barrier-synchronized, never slept: each warms its
  * driver, signals readiness, and spins on a `go` file that the parent creates
- * once, after every child is parked. There are no timing assumptions in any
- * assertion — each property holds for every possible interleaving, so a lost
+ * once, after every child is parked. The DOMAIN assertions make no timing
+ * assumptions — each property holds for every possible interleaving, so a lost
  * overlap costs sensitivity, never correctness.
+ *
+ * SENSITIVITY WITNESS. A correct-but-serialized implementation would pass every
+ * domain assertion while proving nothing, so each race additionally asserts
+ * `expectOverlap`: at least two children's mutation windows were concurrently in
+ * flight. Overlap is MEASURED, not assumed — children stamp an epoch clock
+ * around the mutation on both the success and failure arms — and a failure means
+ * the barrier release degenerated to serial execution (lost sensitivity), never
+ * a correctness regression. The barrier makes overlap reliable in practice; this
+ * witness is what fails loudly if that ever stops being true.
  */
 
 const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts', import.meta.url));
@@ -69,10 +78,26 @@ type ChildOp =
       readonly callbackGoFile: string;
     };
 
-/** A child's reported outcome, as written to its result file. */
+/**
+ * A child's reported outcome, as written to its result file. `t0`/`t1` bracket
+ * the mutation window (epoch ms) and `pid` names the writer; they carry on BOTH
+ * arms so the overlap witness can read them without narrowing on `ok`.
+ */
 type ChildResult =
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly error: string };
+  | {
+      readonly ok: true;
+      readonly value: unknown;
+      readonly t0: number;
+      readonly t1: number;
+      readonly pid: number;
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly t0: number;
+      readonly t1: number;
+      readonly pid: number;
+    };
 
 let dir: string;
 let manager: RunbookStateManager;
@@ -216,6 +241,24 @@ function values(results: readonly ChildResult[]): readonly unknown[] {
 }
 
 /**
+ * Sensitivity witness: assert at least two children's mutation windows were
+ * concurrently in flight. Two half-open intervals overlap iff each starts before
+ * the other ends (`a.t0 < b.t1 && b.t0 < a.t1`). A failure means the barrier
+ * release degenerated to serial execution, so the race proved no concurrency —
+ * it flags lost sensitivity, not a correctness bug (the domain assertions hold
+ * for every interleaving regardless).
+ *
+ * @param results - Child outcomes collected from the race; each carries `t0`/`t1`.
+ * @throws {Error} Via `expect` when no interval pair overlaps.
+ */
+function expectOverlap(results: readonly ChildResult[]): void {
+  const overlapping = results.some((a, i) =>
+    results.some((b, j) => i !== j && a.t0 < b.t1 && b.t0 < a.t1),
+  );
+  expect(overlapping).toBe(true);
+}
+
+/**
  * Resolve when the child exits cleanly; reject on a non-zero exit. Attach BEFORE
  * releasing the worker so a fast exit is not missed (`exit` does not replay).
  *
@@ -278,6 +321,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     const results = await race(runIds.map((runId) => ({ kind: 'issueRunControlClaim', runId })));
     values(results);
+    expectOverlap(results);
 
     const session = await manager.loadSession();
     const controlled = Object.values(session.claims).map((c) => c.controlledRunId);
@@ -308,6 +352,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
       })),
     );
     const statuses = values(results).map((v) => (v as { status: string }).status);
+    expectOverlap(results);
 
     expect([...statuses].sort()).toEqual([
       'already-claimed',
@@ -328,35 +373,40 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     const results = await race(runIds.map((runId) => ({ kind: 'pushRunbook', runId })));
     values(results);
+    expectOverlap(results);
 
     const session = await manager.loadSession();
     expect([...session.defaultStack].sort()).toEqual([...runIds].sort());
   }, 120_000);
 
-  it('does not clobber a #519 lastSeenAt refresh with a concurrent unrelated mutation', async () => {
-    // `recordClaimSeen` rewrites one claim record inside the session; a
-    // concurrent push rewrites the stack. Both mutate the same session row, so
-    // an unserialized writer would roll one of them back.
+  it('does not clobber a #519 lastSeenAt refresh with concurrent unrelated mutations', async () => {
+    // `recordClaimSeen` rewrites one claim record inside the session; each
+    // concurrent push rewrites the stack. All four mutate the same session row,
+    // so an unserialized writer would roll one of them back. Three pushes rather
+    // than one both raises the odds of a genuine overlap and proves the refresh
+    // survives against a whole cohort, not a single racer.
     const seenRunId = await newRun();
-    const pushRunId = await newRun();
+    const pushRunIds = await Promise.all([newRun(), newRun(), newRun()]);
     const { claimId, claim } = await sessionService.issueRunControlClaim(seenRunId);
     const before = claim.lastSeenAt;
 
     const results = await race([
-      { kind: 'recordClaimSeen', claimId: claimId },
-      { kind: 'pushRunbook', runId: pushRunId },
+      { kind: 'recordClaimSeen', claimId },
+      ...pushRunIds.map((runId) => ({ kind: 'pushRunbook' as const, runId })),
     ]);
+    expectOverlap(results);
+    // `recordClaimSeen` is the first op, so its result is the first value.
     const [seen] = values(results);
     expect((seen as { kind: string }).kind).toBe('recorded');
 
     const session = await manager.loadSession();
     const refreshed = Object.values(session.claims).find((c) => c.controlledRunId === seenRunId);
-    // The refresh survived: it was neither rolled back nor overwritten by the
+    // The refresh survived: it was neither rolled back nor overwritten by any
     // concurrent push's snapshot of the claims map.
     expect(refreshed?.lastSeenAt).toBe((seen as { lastSeenAt: string }).lastSeenAt);
     expect(Date.parse(refreshed?.lastSeenAt ?? '')).toBeGreaterThanOrEqual(Date.parse(before));
-    // ...and the concurrent push was not rolled back by the refresh either.
-    expect(session.defaultStack).toContain(pushRunId);
+    // ...and every concurrent push survived the refresh, none rolled back.
+    expect([...session.defaultStack].sort()).toEqual([...pushRunIds].sort());
   }, 120_000);
 
   it('converges with no duplicate or resurrected entries when releases and pops race', async () => {
@@ -376,6 +426,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
       { kind: 'popRunbook' },
     ]);
     values(results);
+    expectOverlap(results);
 
     const session = await manager.loadSession();
     const { defaultStack } = session;
