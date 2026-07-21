@@ -24,7 +24,7 @@ import {
 } from '../../src/runbook/claim-id.js';
 import type { Runbook, RunId, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import { linkageFor, assertClaimed } from './claim-test-helpers.js';
+import { linkageFor, assertClaimed, claimLiveDelegation } from './claim-test-helpers.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = {
@@ -238,7 +238,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
       parentLinkage: linkage,
     });
     await sessionService.pushRunbook(parent.id);
-    const delegated = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+    const delegated = assertClaimed(
+      await claimLiveDelegation(sessionService, manager, child.id, linkage),
+    );
 
     expect(delegated.claim.lastSeenAt).toBe(delegated.claim.issuedAt);
   });
@@ -375,7 +377,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       runbookPath: 'child.md',
       parentLinkage: linkageFor(runId, 'a'),
     });
-    assertClaimed(await sessionService.claimRunbook(child.id, linkageFor(runId, 'a')));
+    assertClaimed(
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(runId, 'a')),
+    );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -659,7 +663,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     });
     const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
     const { claimId: claimB, claim: recordB } = assertClaimed(
-      await sessionService.claimRunbook(child.id, linkage),
+      await claimLiveDelegation(sessionService, manager, child.id, linkage),
     );
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -674,7 +678,11 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(Date.parse(after.claims[recordA.claimKey].lastSeenAt)).toBeGreaterThan(
       Date.parse(recordA.lastSeenAt),
     );
-    expect(after.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
+    // The point of AC5 stands: caller A's liveness was recorded, target B's was
+    // not. Under the R2 latch, completing the delegated child resolves its parent
+    // delegation, so claim B is tombstoned — never refreshed — and drops out of
+    // the active-claims view entirely.
+    expect(after.claims[recordB.claimKey]).toBeUndefined();
   });
 });
 

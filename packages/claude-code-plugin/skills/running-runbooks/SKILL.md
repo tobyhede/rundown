@@ -135,6 +135,8 @@ When another agent delegates work to you, the plugin injects claim instructions 
 4. Use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` to report your result back to the parent
 5. **Stop.** Once you have reported your claim's final result, your job is done — end your turn and return control to the orchestrator that delegated you.
 
+If `rundown claim <token>` fails with `DELEGATION_SUPERSEDED` (RD-825), the parent already moved past this delegation before you claimed it. **Do not retry the token** — report the superseded delegation to the orchestrator and let the parent decide what happens next.
+
 Variables can be passed during claiming:
 
 ```bash

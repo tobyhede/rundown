@@ -802,6 +802,14 @@ Delegation semantics:
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a one-time `claim_id`; replaying the same token is
   refused.
+- `claim` refuses with RD-825 (`DELEGATION_SUPERSEDED`) when the parent has
+  moved past the delegation — it advanced its cursor beyond the step, ended,
+  reset the substep, or reissued the token — before the claim committed. A
+  durable two-sided latch enforces this: the parent commit tombstones any
+  already-committed claim, and the claim transaction refuses once the parent has
+  advanced. **Do not retry the token; report the superseded delegation to the
+  orchestrator.** The envelope carries `parentRunId` and `stepId` (and
+  `childRunId` when an existing/orphaned child was identified).
 - Child runbook uses `rundown pass --claim-id <claim_id>` /
   `rundown fail --claim-id <claim_id>` to report its outcome. Other
   claim-targeted lifecycle commands use the same explicit child routing.

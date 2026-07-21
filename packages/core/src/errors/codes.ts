@@ -380,6 +380,14 @@ export const ErrorCodes = {
       'A claim record has a lastSeenAt that is not a parseable ISO timestamp. The claim activity signal cannot be derived, so it is reported as unreadable rather than guessed. Finish or prune active runbooks and restart.',
     docSlug: 'claim-seen-unreadable',
   },
+  DELEGATION_SUPERSEDED: {
+    code: 'RD-825',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation superseded',
+    description:
+      'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator. The durable claim latch refuses a claim once the parent advances, ends, resets, or reissues the token.',
+    docSlug: 'delegation-superseded',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

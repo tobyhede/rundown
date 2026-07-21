@@ -96,6 +96,10 @@ function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  // The claim pipeline's diagnostic pre-check calls this; default it to `live`
+  // so these wiring tests are unaffected. The classifier itself is covered by
+  // the core targeting suite, and the superseded path by the core claim suite.
+  classifyDelegationLiveness: jest.fn(() => ({ kind: 'live' })),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -496,6 +500,11 @@ function mockHappyDelegationLock(): {
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
+  // Default the durable-latch pre-check to `live` so it stays inert; individual
+  // tests override it to exercise the superseded path.
+  jest
+    .mocked(core.classifyDelegationLiveness)
+    .mockReturnValue({ kind: 'live' } as ReturnType<typeof core.classifyDelegationLiveness>);
   jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
   const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
     parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;

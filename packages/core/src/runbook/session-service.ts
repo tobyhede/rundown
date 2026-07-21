@@ -33,7 +33,7 @@ import {
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
-import { findSubstepState } from './targeting.js';
+import { classifyDelegationLiveness, findSubstepState } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -582,6 +582,30 @@ export class SessionService {
     return this.mutate((ctx): ClaimRunbookResult => {
       const { session } = ctx;
       const now = this.now();
+
+      // Claim-side half of the durable latch (R2). Validate the exact delegation
+      // is still live in the parent state read inside THIS transaction, before
+      // any existing-claim refresh or fresh insertion. If the parent commit that
+      // moved past this delegation already landed, refuse — the tombstoned bearer
+      // cannot be resurrected by a later reset. A parent that cannot be read is a
+      // hard integrity error, not a routine close (the nested missing-child throw
+      // below only covers the existing-claim path, never a fresh claim).
+      const parent = ctx.readState(linkage.parentRunId);
+      const liveness = classifyDelegationLiveness(parent, linkage);
+      if (liveness.kind === 'parent-unreadable') {
+        throw new Error(
+          `Parent run ${linkage.parentRunId} is missing while claiming delegation ${linkage.parentStepId}; the runbook database is inconsistent.`,
+        );
+      }
+      if (liveness.kind === 'closed') {
+        return {
+          status: 'delegation-superseded',
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          childRunId,
+        };
+      }
+
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
         const existingState = ctx.readState(existingForDelegation.controlledRunId);

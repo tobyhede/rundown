@@ -16,7 +16,12 @@ import {
   buildResolvedCompletion,
 } from '../../src/runbook/targeting.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
-import { linkageFor, assertClaimed } from './claim-test-helpers.js';
+import {
+  linkageFor,
+  assertClaimed,
+  claimLiveDelegation,
+  seedLiveDelegation,
+} from './claim-test-helpers.js';
 
 let inlineForceRunIdSeq = 0;
 
@@ -377,7 +382,12 @@ describe('SessionService', () => {
         parentLinkage: persistedLinkage,
       });
 
-      const result = await sessionService.claimRunbook(CHILD_RUN_ID, persistedLinkage);
+      const result = await claimLiveDelegation(
+        sessionService,
+        manager,
+        CHILD_RUN_ID,
+        persistedLinkage,
+      );
       const claimed = assertClaimed(result);
       const expectedDelegation: DelegationClaimLinkage = {
         childRunId: CHILD_RUN_ID,
@@ -411,7 +421,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(parent.id);
 
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+        await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a')),
       );
 
       expect((await sessionService.getActive())?.id).toBe(parent.id);
@@ -435,8 +445,10 @@ describe('SessionService', () => {
         parentLinkage: linkage,
       });
 
-      const first = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
-      const second = await sessionService.claimRunbook(child.id, linkage);
+      const first = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      const second = await claimLiveDelegation(sessionService, manager, child.id, linkage);
       const session = await manager.loadSession();
 
       expect(second).toEqual({
@@ -464,10 +476,12 @@ describe('SessionService', () => {
           parentLinkage: linkage,
         },
       );
-      const first = assertClaimed(await sessionService.claimRunbook(existingChild.id, linkage));
+      const first = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, existingChild.id, linkage),
+      );
 
       const missingChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
-      const second = await sessionService.claimRunbook(missingChildId, linkage);
+      const second = await claimLiveDelegation(sessionService, manager, missingChildId, linkage);
       const session = await manager.loadSession();
 
       expect(second).toEqual({
@@ -505,7 +519,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await manager.delete(child.id);
 
@@ -523,7 +539,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await manager.update(child.id, { lifecycle: 'completed' });
 
@@ -543,7 +561,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await manager.update(child.id, { lifecycle: 'stopped' });
 
@@ -563,7 +583,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await manager.update(child.id, {
         parentLinkage: {
@@ -579,7 +601,7 @@ describe('SessionService', () => {
       }
     });
 
-    it('returns unlinked when the parent has ended', async () => {
+    it('supersedes the delegated claim once the parent ends (R2 latch)', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -588,15 +610,17 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await manager.update(parent.id, { lifecycle: 'completed' });
 
+      // R2: an authoritative parent state commit tombstones the linked delegated
+      // claim (parent terminalization). The bearer therefore no longer resolves
+      // as an active claim — the tombstone is not surfaced in loadSession.
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
-      expect(resolved.status).toBe('unlinked');
-      if (resolved.status === 'unlinked') {
-        expect(resolved.reason).toBe('parent-ended');
-      }
+      expect(resolved.status).toBe('missing');
     });
 
     it('returns unlinked when the parent state is missing', async () => {
@@ -608,7 +632,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await manager.delete(parent.id);
 
@@ -630,7 +656,7 @@ describe('SessionService', () => {
       });
       await manager.delete(child.id);
 
-      const result = await sessionService.claimRunbook(child.id, linkage);
+      const result = await claimLiveDelegation(sessionService, manager, child.id, linkage);
       expect(result.status).toBe('missing-child');
       if (result.status === 'missing-child') {
         expect(result.childRunId).toBe(child.id);
@@ -648,7 +674,7 @@ describe('SessionService', () => {
       });
 
       const drifted = { ...linkage, tokenHash: linkageFor(parent.id, '3').tokenHash };
-      const result = await sessionService.claimRunbook(child.id, drifted);
+      const result = await claimLiveDelegation(sessionService, manager, child.id, drifted);
 
       expect(result.status).toBe('linkage-mismatch');
       if (result.status === 'linkage-mismatch') {
@@ -658,7 +684,7 @@ describe('SessionService', () => {
       }
     });
 
-    it('claimRunbook refuses to refresh an existing child claim with different linkage', async () => {
+    it('refuses a reissued-token claim against an existing child delegation as superseded', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -667,22 +693,24 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: originalLinkage,
       });
-      const first = assertClaimed(await sessionService.claimRunbook(child.id, originalLinkage));
+      const first = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, originalLinkage),
+      );
+      expect(first.claim.delegation).toBeDefined();
 
+      // The parent still delegates the original token. A second claim presenting
+      // a different (reissued) token is refused by the R2 latch as superseded —
+      // the parent's live substep carries a different token — rather than minting
+      // a rival claim against the same child. (Pre-R2 this surfaced as a
+      // linkage-mismatch; the durable latch now decides on parent liveness first.)
       const incomingLinkage = linkageFor(parent.id, '6');
-      await manager.update(child.id, { parentLinkage: incomingLinkage });
-
       const result = await sessionService.claimRunbook(child.id, incomingLinkage);
 
-      expect(result.status).toBe('linkage-mismatch');
-      if (result.status === 'linkage-mismatch') {
+      expect(result.status).toBe('delegation-superseded');
+      if (result.status === 'delegation-superseded') {
+        expect(result.parentRunId).toBe(parent.id);
+        expect(result.parentStepId).toBe(incomingLinkage.parentStepId);
         expect(result.childRunId).toBe(child.id);
-        expect(result.incoming).toBe(incomingLinkage);
-        // Assert against the independently-constructed original linkage rather
-        // than reconstructing the expectation from the claim under test — the
-        // latter passes tautologically if the persisted delegation is dropped.
-        expect(first.claim.delegation).toBeDefined();
-        expect(result.persisted).toEqual(originalLinkage);
       }
     });
 
@@ -695,7 +723,7 @@ describe('SessionService', () => {
       });
       const linkage = linkageFor(parent.id, '4');
 
-      const result = await sessionService.claimRunbook(child.id, linkage);
+      const result = await claimLiveDelegation(sessionService, manager, child.id, linkage);
       expect(result.status).toBe('linkage-mismatch');
       if (result.status === 'linkage-mismatch') {
         expect(result.persisted).toBeUndefined();
@@ -711,7 +739,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await sessionService.releaseRunbook(child.id);
 
@@ -741,7 +771,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
       await manager.update(child.id, { lifecycle: childLifecycle });
       return { claimId: claimed.claimId, claimKey: claimed.claim.claimKey, childRunId: child.id };
     }
@@ -843,7 +875,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await sessionService.stashRunbook(child.id);
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
@@ -874,7 +908,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       const absent = await sessionService.unstashForClaimId(
         assertClaimId(
@@ -904,7 +940,7 @@ describe('SessionService', () => {
         },
       );
       const terminalClaimed = assertClaimed(
-        await sessionService.claimRunbook(terminalChild.id, terminalLinkage),
+        await claimLiveDelegation(sessionService, manager, terminalChild.id, terminalLinkage),
       );
       await sessionService.stashRunbook(terminalChild.id);
       await manager.update(terminalChild.id, { lifecycle: 'completed' });
@@ -927,16 +963,18 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: endedLinkage,
       });
-      const endedClaimed = assertClaimed(await sessionService.claimRunbook(child.id, endedLinkage));
+      const endedClaimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, endedLinkage),
+      );
       await manager.update(endedParent.id, { lifecycle: 'stopped' });
       await sessionService.releaseRunbook(terminalChild.id);
       await sessionService.stashRunbook(child.id);
 
+      // R2: ending the parent superseded the delegated claim, so its bearer no
+      // longer resolves as a live claim — it reports as a missing claim rather
+      // than a live ended-parent outcome.
       const parentEnded = await sessionService.unstashForClaimId(endedClaimed.claimId);
-      expect(parentEnded.status).toBe('parent-ended');
-      if (parentEnded.status === 'parent-ended') {
-        expect(parentEnded.lifecycle).toBe('stopped');
-      }
+      expect(parentEnded.status).toBe('missing-claim');
     });
 
     it('exposes a stashed claimed child read-only via includeStashed', async () => {
@@ -948,7 +986,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       await sessionService.stashRunbook(child.id);
 
@@ -980,7 +1020,9 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
 
       // Simulate the active-claimed-child state: child on default stack and
       // referenced by the claim record.
@@ -1013,7 +1055,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(parent.id);
 
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+        await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a')),
       );
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([
@@ -1038,11 +1080,16 @@ describe('SessionService', () => {
       });
       const childB = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
         runbookPath: 'b.md',
-        parentLinkage: linkageFor(parent.id, 'b'),
+        parentLinkage: linkageFor(parent.id, 'b', '1.2'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(childA.id, linkageFor(parent.id, 'a'));
-      await sessionService.claimRunbook(childB.id, linkageFor(parent.id, 'b'));
+      await claimLiveDelegation(sessionService, manager, childA.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(
+        sessionService,
+        manager,
+        childB.id,
+        linkageFor(parent.id, 'b', '1.2'),
+      );
 
       const open = await sessionService.listOpenClaimsForParent(parent.id);
       expect(open.map((claim) => claim.controlledRunId).sort()).toEqual(
@@ -1060,11 +1107,16 @@ describe('SessionService', () => {
       });
       const doneChild = await manager.create({ source: 'project', path: 'done.md' }, mockRunbook, {
         runbookPath: 'done.md',
-        parentLinkage: linkageFor(parent.id, 'b'),
+        parentLinkage: linkageFor(parent.id, 'b', '1.2'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(openChild.id, linkageFor(parent.id, 'a'));
-      await sessionService.claimRunbook(doneChild.id, linkageFor(parent.id, 'b'));
+      await claimLiveDelegation(sessionService, manager, openChild.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(
+        sessionService,
+        manager,
+        doneChild.id,
+        linkageFor(parent.id, 'b', '1.2'),
+      );
       await manager.update(doneChild.id, { lifecycle: 'completed' });
 
       const open = await sessionService.listOpenClaimsForParent(parent.id);
@@ -1080,7 +1132,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parent.id, 'a'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a'));
       await manager.update(child.id, { lifecycle: 'completed' });
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
@@ -1095,7 +1147,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parent.id, 'a'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a'));
       await manager.update(child.id, { lifecycle: 'stopped' });
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
@@ -1110,7 +1162,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parent.id, 'a'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a'));
       await manager.delete(child.id);
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
@@ -1128,7 +1180,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parentB.id, 'a'),
       });
       await sessionService.pushRunbook(parentB.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parentB.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parentB.id, 'a'));
 
       await expect(sessionService.listOpenClaimsForParent(parentA.id)).resolves.toEqual([]);
     });
@@ -1142,7 +1194,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parent.id, 'a'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a'));
 
       // Diverge the child's persisted linkage tokenHash from the claim record so
       // linkageMatchesClaim() returns false (same field set getActiveForClaimId
@@ -1164,7 +1216,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(parent.id);
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+        await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a')),
       );
 
       // Simulate the "advance wins the lock first" TOCTOU ordering: a concurrent
@@ -1216,7 +1268,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parent.id, 'a'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a'));
 
       let ran = false;
       const result = await sessionService.runGuardedParentAdvance(parent.id, async () => {
@@ -1240,7 +1292,7 @@ describe('SessionService', () => {
         parentLinkage: linkageFor(parent.id, 'a'),
       });
       await sessionService.pushRunbook(parent.id);
-      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(parent.id, 'a'));
       // The claimed child completed — it is no longer an open claim, so the
       // parent advance is permitted.
       await manager.update(child.id, { lifecycle: 'completed' });
@@ -1277,6 +1329,9 @@ describe('SessionService', () => {
 
       // Claim from inside the advance window — the interleaving the lock forbade.
       const linkage = linkageFor(parent.id, 'a');
+      // Seed the parent's live delegation so the racing claim passes the R2
+      // claim-side latch; the advance below then resolves that same substep.
+      await seedLiveDelegation(manager, linkage);
       let claimed:
         | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
         | undefined;

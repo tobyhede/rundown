@@ -27,9 +27,11 @@ import { type RunId, assertRunId } from '../run-id.js';
 import {
   type ClaimRecord,
   type ClaimLookupKey,
+  type DelegationClaimLinkage,
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
+import { classifyDelegationLiveness } from '../targeting.js';
 import type { SessionData } from '../state.js';
 import type { SqlBindable, SqlDriver, SqlTransaction } from './sql-driver.js';
 import {
@@ -485,6 +487,11 @@ export interface RunbookStoreTxn {
   insertClaim(record: ClaimRecord, issuedGeneration: ClaimGeneration): void;
   /** Mark a claim superseded (tombstone). Idempotent. */
   tombstoneClaim(key: ClaimLookupKey): void;
+  /**
+   * Supersede every active delegated claim no longer live in the given parent
+   * state (the parent half of R2's durable latch). Returns the keys tombstoned.
+   */
+  invalidateClosedDelegatedClaims(parent: RunbookState): readonly ClaimLookupKey[];
   /** Refresh a claim's #519 activity timestamp. */
   recordClaimSeen(key: ClaimLookupKey, now: string): void;
   /** Replace the default stack with the given ordered run ids. */
@@ -727,7 +734,7 @@ export class RunbookStore {
           epoch: execution.epoch,
         }).changes;
       assertExactlyOneRow(changes, captured.runId);
-      this.writeResolvedCompletions(txn.tx, captured.runId, next.resolvedCompletions);
+      this.afterAuthoritativeStateWrite(txn.tx, next);
       txn.tx
         .prepare(
           `UPDATE execution_attempts
@@ -966,7 +973,7 @@ export class RunbookStore {
         stateVersion,
       }).changes;
     if (changes === 1) {
-      this.writeResolvedCompletions(tx, runId, next.resolvedCompletions);
+      this.afterAuthoritativeStateWrite(tx, next);
       return 'committed';
     }
     const row = tx
@@ -1093,6 +1100,9 @@ export class RunbookStore {
       tombstoneClaim(key) {
         tx.prepare("UPDATE claims SET status = 'superseded' WHERE key = :key").run({ key });
       },
+      invalidateClosedDelegatedClaims(parent) {
+        return store.invalidateClosedDelegatedClaims(tx, parent);
+      },
       recordClaimSeen(key, now) {
         tx.prepare('UPDATE claims SET last_seen_at = :now WHERE key = :key').run({ key, now });
       },
@@ -1172,7 +1182,7 @@ export class RunbookStore {
         claimGeneration: captured.claimGeneration,
       });
     if (result.changes === 1) {
-      this.writeResolvedCompletions(tx, captured.runId, next.resolvedCompletions);
+      this.afterAuthoritativeStateWrite(tx, next);
     }
     return result.changes;
   }
@@ -1205,6 +1215,74 @@ export class RunbookStore {
         createdAt: completion.completedAt,
       });
     }
+  }
+
+  /**
+   * Run the common bookkeeping every authoritative run-state write owes.
+   *
+   * Invoked exactly once by each successful state-write site — after a run
+   * UPDATE changes exactly one row, never on a zero-row/stale/owned outcome —
+   * so the resolved-completion projection and the delegated-claim supersession
+   * latch stay in lockstep with the committed state. This is the single home
+   * for the parent half of R2's two-sided durable latch.
+   *
+   * @param tx - Open write transaction.
+   * @param next - The run state just committed.
+   */
+  private afterAuthoritativeStateWrite(tx: SqlTransaction, next: RunbookState): void {
+    this.writeResolvedCompletions(tx, next.id, next.resolvedCompletions);
+    this.invalidateClosedDelegatedClaims(tx, next);
+  }
+
+  /**
+   * Tombstone every active delegated claim that is no longer live in `parent`.
+   *
+   * The parent half of the two-sided durable latch (R2). Selects active claims
+   * whose `parent_run_id` names this run, classifies each against the committed
+   * parent state via {@link classifyDelegationLiveness}, and supersedes those
+   * that are closed. Each status UPDATE fires `claims_bump_gen_update` once,
+   * bumping the controlled child's `claim_generation`; no caller bumps it
+   * directly. Idempotent: a claim already superseded matches no `status =
+   * 'active'` row.
+   *
+   * A row with no persisted delegation linkage is invalid state — a delegated
+   * claim must carry one — and aborts the transaction rather than being skipped.
+   *
+   * @param tx - Open write transaction.
+   * @param parent - The parent run state just committed.
+   * @returns The keys of the claims superseded by this call.
+   */
+  private invalidateClosedDelegatedClaims(
+    tx: SqlTransaction,
+    parent: RunbookState,
+  ): ClaimLookupKey[] {
+    const rows = tx
+      .prepare(
+        `SELECT key, delegation_json FROM claims
+          WHERE parent_run_id = :parentId AND status = 'active'`,
+      )
+      .all<{ readonly key: string; readonly delegation_json: string | null }>({
+        parentId: parent.id,
+      });
+    const update = tx.prepare(
+      "UPDATE claims SET status = 'superseded' WHERE key = :key AND status = 'active'",
+    );
+    const superseded: ClaimLookupKey[] = [];
+    for (const row of rows) {
+      const key = assertClaimLookupKey(row.key);
+      if (row.delegation_json === null) {
+        throw new Error(
+          `Delegated claim ${key} for parent ${parent.id} carries no persisted delegation linkage; the runbook database is inconsistent.`,
+        );
+      }
+      const linkage = JSON.parse(row.delegation_json) as DelegationClaimLinkage;
+      const liveness = classifyDelegationLiveness(parent, linkage);
+      if (liveness.kind === 'closed') {
+        update.run({ key });
+        superseded.push(key);
+      }
+    }
+    return superseded;
   }
 
   /**

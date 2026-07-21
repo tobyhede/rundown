@@ -25,6 +25,7 @@ import {
   type ParentLinkage,
   type ClaimId,
   RUNS_DIR,
+  classifyDelegationLiveness,
   DelegationScanService,
   DelegationLock,
   DelegationLockTimeoutError,
@@ -238,6 +239,19 @@ export type ClaimFailure =
       readonly parentRunId: string;
       readonly stepId: string;
       readonly childRunId: string;
+    }
+  | {
+      /**
+       * The parent moved past this delegation (advanced, ended, reset, or
+       * reissued its token) before the claim committed. The durable latch
+       * refuses it; the token must not be retried. `childRunId` is present only
+       * when an existing/orphaned child was identified — the fresh prelaunch
+       * diagnostic omits it. Rendered as `DELEGATION_SUPERSEDED`.
+       */
+      readonly reason: 'delegation-superseded';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId?: string;
     }
   | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
@@ -1165,6 +1179,7 @@ type ClaimChildResult =
         | 'child-missing'
         | 'delegation-resolved'
         | 'delegation-already-claimed'
+        | 'delegation-superseded'
         | 'linkage-mismatch';
       readonly childRunId: RunId;
     };
@@ -1209,6 +1224,11 @@ async function claimChildForPipeline(
       return { ok: false, reason: 'delegation-resolved', childRunId: claim.childRunId };
     case 'linkage-mismatch':
       return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
+    case 'delegation-superseded':
+      // Core is authoritative for the post-launch race: the parent moved past
+      // this delegation between the pre-check and the claim transaction. Use the
+      // pipeline's known child id (core omits it on the fresh-prelaunch path).
+      return { ok: false, reason: 'delegation-superseded', childRunId };
     default: {
       const _exhaustive: never = claim;
       throw new Error(
@@ -1438,6 +1458,32 @@ export async function claimAndLaunch(
         reason: 'delegation-removed',
         parentRunId: parentState.id,
         stepId,
+      };
+    }
+
+    // 4a′. Diagnostic pre-check for the durable latch. Classify the delegation
+    // against the freshly re-read parent using the delegation's ORIGINAL step
+    // name (`stepId`) — not `freshParent.step` — so a top-level cursor advance
+    // (parent moved on without a `done` substep row) surfaces here as
+    // `delegation-superseded`. Scoped to `cursor-advanced` only: parent
+    // termination (handled above), cancellation (4c), and replay/resolution
+    // (4b) keep their more specific diagnostics, and `token-reissued` cannot
+    // occur since `freshSubstep` was matched on this exact token. `childRunId`
+    // is omitted — no child is guaranteed on the fresh path and none may be
+    // synthesized. Core's claim transaction stays authoritative for the rest.
+    const precheckLiveness = classifyDelegationLiveness(freshParent, {
+      parentStep: stepId,
+      parentStepId: substepId ?? stepId,
+      parentFrameKey: freshSubstep.frameKey,
+      parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
+      tokenHash,
+    });
+    if (precheckLiveness.kind === 'closed' && precheckLiveness.reason === 'cursor-advanced') {
+      return {
+        ok: false,
+        reason: 'delegation-superseded',
+        parentRunId: freshParent.id,
+        stepId: substepId ?? stepId,
       };
     }
 

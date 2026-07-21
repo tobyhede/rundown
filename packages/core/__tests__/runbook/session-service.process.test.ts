@@ -9,7 +9,7 @@ import { SessionService } from '../../src/runbook/session-service.js';
 import { closeRunbookStores } from '../../src/runbook/storage/store-registry.js';
 import type { RunId, Runbook, Step, DelegationLinkage } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import { linkageFor } from './claim-test-helpers.js';
+import { linkageFor, seedLiveDelegation } from './claim-test-helpers.js';
 
 /**
  * CROSS-PROCESS session-write contention.
@@ -233,6 +233,9 @@ describe('cross-process session write contention (transaction replaces SessionLo
     const parentId = await newRun();
     const linkage = linkageFor(parentId, 'a');
     const childRunId = await newRun({ parentLinkage: linkage });
+    // Seed the parent's live delegation so the racing claims pass the R2
+    // claim-side latch; the contention property is unaffected.
+    await seedLiveDelegation(manager, linkage);
 
     const results = await race(
       Array.from({ length: 4 }, () => ({

@@ -36,7 +36,7 @@ import {
 import { verifiedClaimContext } from '../../src/runbook/actor-context.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
-import { assertClaimed, linkageFor } from './claim-test-helpers.js';
+import { assertClaimed, linkageFor, claimLiveDelegation } from './claim-test-helpers.js';
 
 const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
 const child = { id: 'child', lifecycle: 'running' } as RunbookState;
@@ -918,7 +918,12 @@ describe('resolveTransitionTarget integration', () => {
       );
       await sessionService.pushRunbook(parentState.id);
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(childState.id, linkageFor(parentState.id, 'a')),
+        await claimLiveDelegation(
+          sessionService,
+          manager,
+          childState.id,
+          linkageFor(parentState.id, 'a'),
+        ),
       );
 
       await expect(

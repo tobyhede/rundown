@@ -390,10 +390,12 @@ describe('claim command', () => {
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toEqual([parentId]);
-      // The auto-completed child's claim is retained as a terminal tombstone
-      // (not deleted) so `rd pass/fail --claim-id` can confirm-or-conflict and
-      // `rd prune` can later GC it. The parent must still not be popped.
-      expect(Object.values(session.claims)).toContainEqual(
+      // R2: the auto-completed child resolves its parent delegation, so the
+      // durable latch supersedes the delegated claim in the same commit. The
+      // superseded row is retained in the database (for generation accounting
+      // and `rd prune`) but no longer surfaces as an active claim. The parent
+      // must still not be popped.
+      expect(Object.values(session.claims)).not.toContainEqual(
         expect.objectContaining({ controlledRunId: childRunId }),
       );
       expect((await readRunbookState(workspace, childRunId))?.lifecycle).toBe('completed');

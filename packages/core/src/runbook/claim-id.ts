@@ -166,6 +166,19 @@ export type ClaimRunbookResult =
       readonly childRunId: RunId;
       readonly incoming: DelegationLinkage;
       readonly persisted: RunbookState['parentLinkage'];
+    }
+  | {
+      /**
+       * The parent has moved past this delegation (advanced, ended, reset, or
+       * reissued its token). The durable latch refuses the claim; the bearer
+       * must not be retried. `childRunId` is present only when an existing or
+       * orphaned child was identified — the fresh prelaunch path omits it
+       * because no child has been created.
+       */
+      readonly status: 'delegation-superseded';
+      readonly parentRunId: RunId;
+      readonly parentStepId: string;
+      readonly childRunId?: RunId;
     };
 
 /** Result of resolving a claim id to a usable child runbook. */

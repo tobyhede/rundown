@@ -110,6 +110,17 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
           childRunId: failure.childRunId,
         },
       };
+    case 'delegation-superseded':
+      return {
+        code: 'DELEGATION_SUPERSEDED',
+        message:
+          'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          ...(failure.childRunId !== undefined ? { childRunId: failure.childRunId } : {}),
+        },
+      };
     case 'lock-timeout':
       return {
         code: 'DELEGATION_LOCK_TIMEOUT',

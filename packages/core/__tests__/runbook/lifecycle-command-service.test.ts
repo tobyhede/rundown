@@ -46,7 +46,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
-import { assertClaimed, linkageFor } from './claim-test-helpers.js';
+import { assertClaimed, linkageFor, claimLiveDelegation } from './claim-test-helpers.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
@@ -2274,7 +2274,9 @@ describe('RunbookLifecycleCommandService', () => {
           parentLinkage: linkageFor(namedRunId, 'a'),
         }),
       );
-      assertClaimed(await sessionService.claimRunbook(childRunId, linkageFor(namedRunId, 'a')));
+      assertClaimed(
+        await claimLiveDelegation(sessionService, manager, childRunId, linkageFor(namedRunId, 'a')),
+      );
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -2541,7 +2543,7 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       );
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(childRunId, linkageFor(runId, 'a')),
+        await claimLiveDelegation(sessionService, manager, childRunId, linkageFor(runId, 'a')),
       );
 
       const outcome = await seam.resolveRunNavigation({
@@ -3651,7 +3653,12 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       );
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(claimChildRunId, linkageFor(parentRunId, 'a')),
+        await claimLiveDelegation(
+          sessionService,
+          manager,
+          claimChildRunId,
+          linkageFor(parentRunId, 'a'),
+        ),
       );
 
       await seam.runTransition({
@@ -3683,7 +3690,12 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       );
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(claimChildRunId, linkageFor(parentRunId, 'a')),
+        await claimLiveDelegation(
+          sessionService,
+          manager,
+          claimChildRunId,
+          linkageFor(parentRunId, 'a'),
+        ),
       );
       const session = await manager.loadSession();
       const claimKey = claimKeyFromBearer(claimed.claimId);
@@ -3821,7 +3833,12 @@ describe('RunbookLifecycleCommandService', () => {
         };
         await manager.save(baseState(childBase));
         const claimed = assertClaimed(
-          await sessionService.claimRunbook(claimChildRunId, linkageFor(claimParentRunId, 'a')),
+          await claimLiveDelegation(
+            sessionService,
+            manager,
+            claimChildRunId,
+            linkageFor(claimParentRunId, 'a'),
+          ),
         );
         if (childLifecycle !== 'running') {
           await manager.save(baseState({ ...childBase, lifecycle: childLifecycle }));
@@ -4221,7 +4238,9 @@ describe('RunbookLifecycleCommandService', () => {
         });
         await manager.save(root);
         await manager.save(child);
-        assertClaimed(await sessionService.claimRunbook(childRunId, linkageFor(ROOT, 'a')));
+        assertClaimed(
+          await claimLiveDelegation(sessionService, manager, childRunId, linkageFor(ROOT, 'a')),
+        );
         installResolvedPlan(root, [root]);
 
         const out = await seam.runTerminal({
