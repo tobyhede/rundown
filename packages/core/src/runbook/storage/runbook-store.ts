@@ -434,11 +434,15 @@ export function captureAuthority(
 /**
  * Resolve the active claim controlling a run, if any.
  *
- * A run has at most one active controlling claim: `rundown run` mints a
+ * A run has at most one active controlling claim, enforced by the partial
+ * unique index `claims_one_active_per_run` (`schema.ts`): `rundown run` mints a
  * run-control claim as part of the same session mutation that pushes the run
  * (`pushRunbookWithRunControlClaim`), and a delegated child is claimed by
  * exactly one bearer. Tombstoned claims are excluded, so a superseded holder is
- * never resurrected as authority.
+ * never resurrected as authority. A second active row is impossible under the
+ * index; reading two here is hard corruption and throws rather than selecting an
+ * arbitrary controller (which `null` — "no controller" to `captureRunAuthority`
+ * — would misreport as a routine refusal).
  *
  * This exists for the *bare* caller — `rundown pass` with no `--claim-id` on a
  * run that authorization has already cleared it to mutate. Such a caller
@@ -452,14 +456,22 @@ export function captureAuthority(
  * @returns The controlling claim's lookup key, or `null` when the run has none.
  */
 export function resolveControllingClaim(tx: SqlTransaction, runId: RunId): ClaimLookupKey | null {
-  const row = tx
+  const rows = tx
     .prepare(
       `SELECT key FROM claims
        WHERE controlled_run = :runId AND status = 'active'
        ORDER BY key
-       LIMIT 1`,
+       LIMIT 2`,
     )
-    .get<{ readonly key: string }>({ runId });
+    .all<{ readonly key: string }>({ runId });
+  if (rows.length > 1) {
+    throw new Error(
+      `Run ${runId} has two active controlling claims; the partial unique index ` +
+        `claims_one_active_per_run should make this unreachable. The runbook database ` +
+        `is inconsistent. Finish or prune active runbooks and restart.`,
+    );
+  }
+  const row = rows[0];
   return row ? assertClaimLookupKey(row.key) : null;
 }
 
@@ -868,19 +880,27 @@ export class RunbookStore {
         .all<{ readonly key: string }>()
         .map((row) => row.key),
     );
+    const inserts: ClaimRecord[] = [];
     for (const [key, record] of Object.entries(session.claims)) {
       if (stale.delete(key)) {
         this.updateChangedClaimColumns(txn.tx, key, record);
         continue;
       }
+      inserts.push(record);
+    }
+    // Tombstone removed claims BEFORE inserting new ones. A rotated claim (new
+    // key, same controlled_run — e.g. re-issuing a run-control claim) would
+    // otherwise collide with its still-active predecessor under
+    // claims_one_active_per_run, which requires at most one active claim per run.
+    for (const key of stale) {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    }
+    for (const record of inserts) {
       const generation =
         txn.tx
           .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
           .get<{ readonly g: number }>({ id: record.controlledRunId })?.g ?? 0;
       txn.insertClaim(record, assertClaimGeneration(generation));
-    }
-    for (const key of stale) {
-      txn.tombstoneClaim(assertClaimLookupKey(key));
     }
   }
 

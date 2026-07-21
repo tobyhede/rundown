@@ -9,6 +9,7 @@ import {
   RunbookStore,
   classifyCommitRow,
   assertExactlyOneRow,
+  resolveControllingClaim,
   StoreInvariantError,
 } from '../../../src/runbook/storage/runbook-store.js';
 import {
@@ -111,12 +112,16 @@ describe('generative schema round-trip', () => {
 });
 
 describe('structural counter properties', () => {
-  it('advances claim_generation exactly once per claim write and never moves state_version', async () => {
+  it('advances claim_generation exactly once per claim insert and never moves state_version', async () => {
+    // Each run may hold at most one active claim (claims_one_active_per_run), so
+    // the cumulative "N active claims on one run" form is unrepresentable. The
+    // invariant under test — one claim insert bumps claim_generation exactly once
+    // and never touches state_version — is exercised on N independent runs.
     await fc.assert(
-      fc.asyncProperty(fc.integer({ min: 1, max: 8 }), async (mints) => {
-        const state = await baseState();
-        await store.createRun(state);
-        for (let i = 0; i < mints; i++) {
+      fc.asyncProperty(fc.integer({ min: 1, max: 8 }), async (runs) => {
+        for (let i = 0; i < runs; i++) {
+          const state = await baseState();
+          await store.createRun(state);
           const key = assertClaimLookupKey(nextClaimKey());
           await store.transaction((txn) => {
             txn.insertClaim(
@@ -124,16 +129,16 @@ describe('structural counter properties', () => {
               assertClaimGeneration(0),
             );
           });
+          const row = await store.read((txn) =>
+            txn.tx
+              .prepare('SELECT state_version, claim_generation FROM runs WHERE id = :id')
+              .get<{ readonly state_version: number; readonly claim_generation: number }>({
+                id: state.id,
+              }),
+          );
+          expect(row?.claim_generation).toBe(1);
+          expect(row?.state_version).toBe(0);
         }
-        const row = await store.read((txn) =>
-          txn.tx
-            .prepare('SELECT state_version, claim_generation FROM runs WHERE id = :id')
-            .get<{ readonly state_version: number; readonly claim_generation: number }>({
-              id: state.id,
-            }),
-        );
-        expect(row?.claim_generation).toBe(mints);
-        expect(row?.state_version).toBe(0);
       }),
       { numRuns: 15 },
     );
@@ -180,6 +185,78 @@ describe('tombstone preservation property', () => {
         expect(status).toBe('superseded');
       }),
       { numRuns: 15 },
+    );
+  });
+});
+
+describe('active-controller uniqueness property', () => {
+  it('keeps at most one active controlling claim across arbitrary mint/rotate/release/tombstone sequences', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(fc.constantFrom('mint', 'rotate', 'release', 'tombstone'), {
+          minLength: 1,
+          maxLength: 10,
+        }),
+        async (ops) => {
+          const state = await baseState();
+          await store.createRun(state);
+          let activeKey: string | null = null;
+          for (const op of ops) {
+            if (op === 'mint') {
+              // A second active claim is not a production path; the rotate op
+              // covers replacement. Skipping here keeps the sequence legal.
+              if (activeKey !== null) continue;
+              const key = assertClaimLookupKey(nextClaimKey());
+              await store.transaction((txn) => {
+                txn.insertClaim(
+                  makeClaimRecord({ claimKey: key, controlledRunId: state.id }),
+                  assertClaimGeneration(0),
+                );
+              });
+              activeKey = key;
+            } else if (op === 'rotate') {
+              const next = assertClaimLookupKey(nextClaimKey());
+              const prev = activeKey;
+              await store.transaction((txn) => {
+                if (prev !== null) txn.tombstoneClaim(assertClaimLookupKey(prev));
+                txn.insertClaim(
+                  makeClaimRecord({ claimKey: next, controlledRunId: state.id }),
+                  assertClaimGeneration(0),
+                );
+              });
+              activeKey = next;
+            } else if (activeKey !== null) {
+              const key = activeKey;
+              await store.transaction((txn) => {
+                txn.tombstoneClaim(assertClaimLookupKey(key));
+              });
+              activeKey = null;
+            }
+
+            const activeCount = await store.read(
+              (txn) =>
+                txn.tx
+                  .prepare(
+                    "SELECT COUNT(*) AS n FROM claims WHERE controlled_run = :id AND status = 'active'",
+                  )
+                  .get<{ readonly n: number }>({ id: state.id })?.n ?? 0,
+            );
+            expect(activeCount).toBeLessThanOrEqual(1);
+
+            const controller = await store.read((txn) => resolveControllingClaim(txn.tx, state.id));
+            if (controller !== null) {
+              const status = await store.read(
+                (txn) =>
+                  txn.tx
+                    .prepare('SELECT status FROM claims WHERE key = :k')
+                    .get<{ readonly status: string }>({ k: controller })?.status,
+              );
+              expect(status).toBe('active');
+            }
+          }
+        },
+      ),
+      { numRuns: 25 },
     );
   });
 });

@@ -25,6 +25,9 @@ export {
   type DelegationLiveness,
   type DelegationLivenessLinkage,
 } from './targeting.js';
+// Storage is otherwise internal; the incompatible-schema error is public so the
+// CLI can classify it by type and surface the RD-305 envelope.
+export { IncompatibleSchemaError } from './storage/schema.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,

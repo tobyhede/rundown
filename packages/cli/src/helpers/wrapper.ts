@@ -5,6 +5,7 @@ import {
   RundownError,
   Errors,
   getWriter,
+  IncompatibleSchemaError,
 } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
@@ -45,6 +46,13 @@ function toRundownError(error: unknown): RundownError {
   // Legacy RunbookSyntaxError from parser
   if (error instanceof RunbookSyntaxError) {
     return Errors.syntaxError(error.message);
+  }
+
+  // Incompatible persisted schema — surface RD-305 (with the observed/expected
+  // versions) rather than a generic RD-999 crash. Reached on every store open,
+  // including read-only commands, since ensureSchema runs in openRunbookDriver.
+  if (error instanceof IncompatibleSchemaError) {
+    return Errors.incompatibleStateSchema(error.foundVersion, error.expectedVersion);
   }
 
   // Generic error - wrap it

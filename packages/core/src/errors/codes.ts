@@ -116,6 +116,14 @@ export const ErrorCodes = {
       'This runbook was stopped. Start a new run or use "rundown pop" to resume if stashed.',
     docSlug: 'runbook-stopped',
   },
+  INCOMPATIBLE_STATE_SCHEMA: {
+    code: 'RD-305',
+    category: ErrorCategory.STATE,
+    title: 'Incompatible runbook database schema',
+    description:
+      'The runbook database uses a schema version this build cannot read, and Rundown never migrates persisted state. Any in-flight runs are unrecoverable — delete `.rundown/rundown.db` and restart your runbooks from source.',
+    docSlug: 'incompatible-state-schema',
+  },
 
   // Validation Errors (4xx)
   GOTO_TARGET_NOT_FOUND: {

@@ -293,10 +293,22 @@ describe('guarded state writes', () => {
     const key = await mintClaim(state.id, '2'.repeat(32));
     const cap = await store.captureAuthority(state.id, assertClaimLookupKey(key));
     if (cap.kind !== 'captured') throw new Error('capture failed');
-    // Minting another claim bumps the run's claim_generation.
+    // Rotate the claim — supersede the first, then mint its replacement. This is
+    // the production rotate path and the only way to have a second active claim
+    // under claims_one_active_per_run; both writes bump the run's claim_generation.
+    await store.transaction((txn) => {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    });
     await mintClaim(state.id, '3'.repeat(32));
     const result = await store.saveState(cap.authority, { ...state, stepName: 'x' });
     expect(result.kind).toBe('claim_superseded');
+  });
+
+  it('rejects a second active claim on the same controlled run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await mintClaim(state.id, 'a'.repeat(32));
+    await expect(mintClaim(state.id, 'b'.repeat(32))).rejects.toThrow(/UNIQUE/);
   });
 
   it('refuses execution_in_progress when the run is owned', async () => {

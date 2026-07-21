@@ -27,7 +27,7 @@ const EXPECTED_TABLES = [
 ] as const;
 
 describe('storage schema', () => {
-  it('installs schema version 1 with all six coordinated tables', async () => {
+  it('installs the current schema version with all six coordinated tables', async () => {
     await using driver = memoryDriver();
     await driver.immediate((tx) => {
       ensureSchema(tx);
