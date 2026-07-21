@@ -5,6 +5,7 @@ import type { ExecutionLifecycleService } from './execution-lifecycle-service.js
 import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
 import { merge } from './state-update-ops.js';
 import type { RunbookStateManager } from './state.js';
+import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import {
   SENTINEL_ENTRY,
   activeFrame,
@@ -474,10 +475,13 @@ export class RunbookCompletionService {
    * @param args - Manual completion target and result
    * @returns Whether a completion was recorded or already existed
    */
-  async recordManualCompletion(args: RecordManualCompletionArgs): Promise<RecordCompletionResult> {
+  async recordManualCompletion(
+    args: RecordManualCompletionArgs,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
+  ): Promise<RecordCompletionResult> {
     const lock = new CompletionLock(this.manager.cwd);
     await using _guard = await lock.scope(args.runbookId);
-    return await this.recordManualCompletionUnlocked(args);
+    return await this.recordManualCompletionUnlocked(args, options);
   }
 
   /**
@@ -494,6 +498,7 @@ export class RunbookCompletionService {
    */
   async recordManualCompletionUnlocked(
     args: RecordManualCompletionArgs,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RecordCompletionResult> {
     const existingKey = await this.findExistingCompletion(args.runbookId, {
       frame: args.targetFrame,
@@ -548,17 +553,21 @@ export class RunbookCompletionService {
     // `done` substep state, and a concurrent delete between them flips the
     // missing-parent behavior. updateWithState throws if the parent is gone,
     // which is the intended fail-closed semantics for recording a completion.
-    await this.manager.updateWithState(args.runbookId, (freshParent) => {
-      return {
-        resolvedCompletions: merge({ [key]: completion }),
-        substepStates: upsertSubstepState(
-          freshParent.substepStates ?? [],
-          args.targetSubstep,
-          args.targetFrame.frameKey,
-          { status: 'done', result: args.result },
-        ),
-      };
-    });
+    await this.manager.updateWithState(
+      args.runbookId,
+      (freshParent) => {
+        return {
+          resolvedCompletions: merge({ [key]: completion }),
+          substepStates: upsertSubstepState(
+            freshParent.substepStates ?? [],
+            args.targetSubstep,
+            args.targetFrame.frameKey,
+            { status: 'done', result: args.result },
+          ),
+        };
+      },
+      options.guard === undefined ? {} : { guard: options.guard },
+    );
 
     return { status: 'recorded', key };
   }
