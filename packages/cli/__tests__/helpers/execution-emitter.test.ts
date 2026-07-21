@@ -63,7 +63,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 
@@ -86,7 +85,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 
@@ -107,7 +105,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 
@@ -128,7 +125,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 

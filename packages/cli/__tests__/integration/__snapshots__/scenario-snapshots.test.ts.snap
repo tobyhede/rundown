@@ -2,7 +2,7 @@
 
 exports[`scenario output snapshots delegation-outputs JSON 1`] = `
 "=== command: rd run snapshot-delegation-outputs.runbook.md --allow-all ===
-{"type":"runbook_started","title":"Delegation with Outputs","prompted":false,"statePath":".rundown/runs/<runbookId>.json","claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":1}
+{"type":"runbook_started","title":"Delegation with Outputs","prompted":false,"claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":2},"stepName":"1","description":"Set message","hasCommand":true,"commandCode":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":2}
 {"type":"command_started","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","displayCommand":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","position":{"current":"1","total":2},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":3}
 {"type":"command_completed","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","success":true,"exitCode":0,"position":{"current":"1","total":2},"policyDenied":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":4}
@@ -10,7 +10,7 @@ exports[`scenario output snapshots delegation-outputs JSON 1`] = `
 {"type":"step_entered","position":{"current":"2","total":2,"substep":"1"},"stepName":"1","description":"Child task","prompt":"Delegated to child runbook.","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"delegateFrontier":[{"id":"2.1","runbook":"snapshot-child.runbook.md","token":"<token>"}],"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":6}
 
 === command: rd claim <token> ===
-{"type":"runbook_started","title":"Snapshot Child","prompted":false,"statePath":".rundown/runs/<runbookId>.json","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-child.runbook.md"},"seq":1}
+{"type":"runbook_started","title":"Snapshot Child","prompted":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-child.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"Child step","prompt":"The message is: hello from snapshot parent","hasCommand":false,"isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-child.runbook.md"},"seq":2}
 {"action":"claimed","message":"Claimed <token> -> <workdir>/.rundown/runbooks/snapshot-child.runbook.md","token":"<token>","claim_id":"<claimId>","run_id":"<runbookId>","runbook":"<workdir>/.rundown/runbooks/snapshot-child.runbook.md","parent_run_id":"<runbookId>","parent_step":"2.1","kind":"claim"}
 "
@@ -19,7 +19,7 @@ exports[`scenario output snapshots delegation-outputs JSON 1`] = `
 exports[`scenario output snapshots delegation-outputs text 1`] = `
 "=== command: rd run snapshot-delegation-outputs.runbook.md --allow-all --text ===
 File:     .rundown/runbooks/snapshot-delegation-outputs.runbook.md
-State:    .rundown/runs/<runbookId>.json
+Run:      <runbookId>
 Action:   START
 
 ## 1. Set message
@@ -40,7 +40,7 @@ Delegated to child runbook.
 
 === command: rd claim <token> --text ===
 File:     .rundown/runbooks/snapshot-child.runbook.md
-State:    .rundown/runs/<runbookId>.json
+Run:      <runbookId>
 Action:   START
 
 ## 1. Child step
@@ -51,7 +51,7 @@ Claimed <token> -> <workdir>/.rundown/runbooks/snapshot-child.runbook.md
 `;
 
 exports[`scenario output snapshots multi-step JSON 1`] = `
-"{"type":"runbook_started","title":"Multi Step","prompted":false,"statePath":".rundown/runs/<runbookId>.json","claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-multi-step.runbook.md"},"seq":1}
+"{"type":"runbook_started","title":"Multi Step","prompted":false,"claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-multi-step.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":3},"stepName":"1","description":"First","hasCommand":true,"commandCode":"rd echo --result pass","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-multi-step.runbook.md"},"seq":2}
 {"type":"command_started","command":"rd echo --result pass","displayCommand":"rd echo --result pass","position":{"current":"1","total":3},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-multi-step.runbook.md"},"seq":3}
 {"type":"command_completed","command":"rd echo --result pass","success":true,"exitCode":0,"position":{"current":"1","total":3},"policyDenied":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-multi-step.runbook.md"},"seq":4}
@@ -70,7 +70,7 @@ exports[`scenario output snapshots multi-step JSON 1`] = `
 
 exports[`scenario output snapshots multi-step text 1`] = `
 "File:     .rundown/runbooks/snapshot-multi-step.runbook.md
-State:    .rundown/runs/<runbookId>.json
+Run:      <runbookId>
 Action:   START
 
 ## 1. First
@@ -113,7 +113,7 @@ Runbook:  COMPLETE
 `;
 
 exports[`scenario output snapshots retry JSON 1`] = `
-"{"type":"runbook_started","title":"Retry","prompted":false,"statePath":".rundown/runs/<runbookId>.json","claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-retry.runbook.md"},"seq":1}
+"{"type":"runbook_started","title":"Retry","prompted":false,"claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-retry.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"Flaky step","hasCommand":true,"commandCode":"rd echo --result fail --result pass","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-retry.runbook.md"},"seq":2}
 {"type":"command_started","command":"rd echo --result fail --result pass","displayCommand":"rd echo --result fail --result pass","position":{"current":"1","total":1},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-retry.runbook.md"},"seq":3}
 {"type":"command_completed","command":"rd echo --result fail --result pass","success":false,"exitCode":1,"position":{"current":"1","total":1},"policyDenied":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-retry.runbook.md"},"seq":4}
@@ -128,7 +128,7 @@ exports[`scenario output snapshots retry JSON 1`] = `
 
 exports[`scenario output snapshots retry text 1`] = `
 "File:     .rundown/runbooks/snapshot-retry.runbook.md
-State:    .rundown/runs/<runbookId>.json
+Run:      <runbookId>
 Action:   START
 
 ## 1. Flaky step
@@ -159,7 +159,7 @@ Runbook:  COMPLETE
 `;
 
 exports[`scenario output snapshots simple-complete JSON 1`] = `
-"{"type":"runbook_started","title":"Simple Complete","prompted":false,"statePath":".rundown/runs/<runbookId>.json","claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-complete.runbook.md"},"seq":1}
+"{"type":"runbook_started","title":"Simple Complete","prompted":false,"claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-complete.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"Single step","hasCommand":true,"commandCode":"rd echo --result pass","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-complete.runbook.md"},"seq":2}
 {"type":"command_started","command":"rd echo --result pass","displayCommand":"rd echo --result pass","position":{"current":"1","total":1},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-complete.runbook.md"},"seq":3}
 {"type":"command_completed","command":"rd echo --result pass","success":true,"exitCode":0,"position":{"current":"1","total":1},"policyDenied":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-complete.runbook.md"},"seq":4}
@@ -170,7 +170,7 @@ exports[`scenario output snapshots simple-complete JSON 1`] = `
 
 exports[`scenario output snapshots simple-complete text 1`] = `
 "File:     .rundown/runbooks/snapshot-simple-complete.runbook.md
-State:    .rundown/runs/<runbookId>.json
+Run:      <runbookId>
 Action:   START
 
 ## 1. Single step
@@ -189,7 +189,7 @@ Runbook:  COMPLETE
 `;
 
 exports[`scenario output snapshots simple-stop JSON 1`] = `
-"{"type":"runbook_started","title":"Simple Stop","prompted":false,"statePath":".rundown/runs/<runbookId>.json","claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-stop.runbook.md"},"seq":1}
+"{"type":"runbook_started","title":"Simple Stop","prompted":false,"claim_id":"<claimId>","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-stop.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"Single step","hasCommand":true,"commandCode":"rd echo --result fail","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-stop.runbook.md"},"seq":2}
 {"type":"command_started","command":"rd echo --result fail","displayCommand":"rd echo --result fail","position":{"current":"1","total":1},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-stop.runbook.md"},"seq":3}
 {"type":"command_completed","command":"rd echo --result fail","success":false,"exitCode":1,"position":{"current":"1","total":1},"policyDenied":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-simple-stop.runbook.md"},"seq":4}
@@ -200,7 +200,7 @@ exports[`scenario output snapshots simple-stop JSON 1`] = `
 
 exports[`scenario output snapshots simple-stop text 1`] = `
 "File:     .rundown/runbooks/snapshot-simple-stop.runbook.md
-State:    .rundown/runs/<runbookId>.json
+Run:      <runbookId>
 Action:   START
 
 ## 1. Single step

@@ -29,14 +29,14 @@ export interface StepPosition {
 /**
  * Runbook metadata for display in CLI output.
  *
- * Contains essential information about a runbook's current state
+ * Contains essential identifying information about a runbook execution
  * for display in status and listing commands.
  */
 export interface RunbookMetadata {
   /** Path to the runbook source file */
   file: string;
-  /** Current runbook state (e.g., 'running', 'complete', 'stopped') */
-  state: string;
+  /** Durable identifier for this runbook execution. */
+  runbookId: string;
   /** Whether the runbook is waiting for user input (only included if true) */
   prompted?: boolean;
 }

@@ -26,7 +26,6 @@ export type EventSubscriber = (event: RunbookEventV1) => void;
  *   payload: {
  *     title: 'My Runbook',
  *     prompted: false,
- *     statePath: '.rundown/runs/wf-123.json',
  *   },
  * });
  *

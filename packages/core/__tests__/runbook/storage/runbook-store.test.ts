@@ -569,6 +569,60 @@ describe('session persistence and run listing', () => {
     expect(session.stashedRunbookId).toBe(b.id);
   });
 
+  it('preserves an unchanged stash row without superseding captured authority', async () => {
+    const stashed = await newState();
+    await store.createRun(stashed);
+    await store.saveSession({ defaultStack: [], claims: {}, stashedRunbookId: stashed.id });
+    const key = await mintClaim(stashed.id, '1'.repeat(32));
+    const captured = await store.captureAuthority(stashed.id, assertClaimLookupKey(key));
+    expect(captured.kind).toBe('captured');
+    const before = await counters(stashed.id);
+
+    await store.mutateSession(({ session }) => {
+      session.defaultStack.push(stashed.id);
+    });
+
+    expect(await counters(stashed.id)).toEqual(before);
+    expect(await store.captureAuthority(stashed.id, assertClaimLookupKey(key))).toEqual(captured);
+  });
+
+  it('allows unrelated session mutations while an unchanged stashed run is owned', async () => {
+    const stashed = await newState();
+    const active = await newState();
+    await store.createRun(stashed);
+    await store.createRun(active);
+    await store.saveSession({ defaultStack: [], claims: {}, stashedRunbookId: stashed.id });
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE runs SET exec_token = 'sha256:live' WHERE id = :id")
+        .run({ id: stashed.id });
+    });
+
+    await expect(
+      store.mutateSession(({ session }) => {
+        session.defaultStack.push(active.id);
+      }),
+    ).resolves.toBeUndefined();
+    expect((await store.loadSession()).defaultStack).toEqual([active.id]);
+  });
+
+  it('still bumps generations when the stash is replaced or cleared', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+    await store.saveSession({ defaultStack: [], claims: {}, stashedRunbookId: a.id });
+    const afterInitialStash = { a: await counters(a.id), b: await counters(b.id) };
+
+    await store.saveSession({ defaultStack: [], claims: {}, stashedRunbookId: b.id });
+    const afterReplacement = { a: await counters(a.id), b: await counters(b.id) };
+    expect(afterReplacement.a.claimGeneration).toBe(afterInitialStash.a.claimGeneration + 1);
+    expect(afterReplacement.b.claimGeneration).toBe(afterInitialStash.b.claimGeneration + 1);
+
+    await store.saveSession({ defaultStack: [], claims: {} });
+    expect((await counters(b.id)).claimGeneration).toBe(afterReplacement.b.claimGeneration + 1);
+  });
+
   it('tombstones claims dropped from the session without churning generation', async () => {
     const state = await newState();
     await store.createRun(state);

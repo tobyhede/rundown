@@ -154,13 +154,6 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
   });
 
-  it('replaces runbookId values embedded in state paths', () => {
-    const input = '"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"';
-    expect(normalizeCliOutput(input, workspace)).toBe(
-      '"statePath":".rundown/runs/<runbookId>.json"',
-    );
-  });
-
   describe('runbook ID normalization is bounded to 32 lowercase hex chars', () => {
     it('does NOT normalize uppercase hex', () => {
       const input = '"runbookId":"rd_0123456789abcdef0123456789ABCDEF"';

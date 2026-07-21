@@ -10,7 +10,7 @@ import {
 } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { runStateLockPath, statePath as _statePath } from '../../src/paths.js';
+import { runStateLockPath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';

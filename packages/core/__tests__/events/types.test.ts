@@ -18,7 +18,6 @@ describe('RunbookEventV1 types', () => {
       payload: {
         title: 'Test Runbook',
         prompted: false,
-        statePath: '.rundown/runs/wf-2026-01-21-abc123.json',
       } satisfies RunbookStartedPayload,
     };
     expect(event.type).toBe('RUNBOOK_STARTED');

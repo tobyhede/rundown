@@ -146,19 +146,6 @@ export const ensureStateDirs = async (cwd: string): Promise<void> => {
 };
 
 /**
- * Absolute path to a specific runbook state file.
- *
- * @param cwd - Project root directory
- * @param id - Runbook execution ID (must match `[A-Za-z0-9._-]+`)
- * @returns Path to `.rundown/runs/<id>.json`
- * @throws {Error} If `id` contains path separators, `..`, or is otherwise unsafe
- */
-export const statePath = (cwd: string, id: string): string => {
-  assertSafeId(id, 'id');
-  return path.join(cwd, RUNS_DIR, `${id}.json`);
-};
-
-/**
  * Session file path used by versions prior to the `.rundown/` migration.
  * Used only for upgrade detection — never written to.
  * @internal

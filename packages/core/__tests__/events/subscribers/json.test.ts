@@ -25,9 +25,7 @@ describe('JSONSubscriber', () => {
     }) as Extract<RunbookEventV1, { type: T }>;
 
   it('collects events', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'STEP_TRANSITIONED',
@@ -45,9 +43,7 @@ describe('JSONSubscriber', () => {
   });
 
   it('builds execution summary for complete runbook', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'COMMAND_COMPLETED',
@@ -80,9 +76,7 @@ describe('JSONSubscriber', () => {
   });
 
   it('builds execution summary for stopped runbook', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'RUNBOOK_STOPPED',
@@ -104,7 +98,6 @@ describe('JSONSubscriber', () => {
     subscriber.handle(
       makeEvent('RUNBOOK_STARTED', {
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       }),
     );
     subscriber.clear();
@@ -112,9 +105,7 @@ describe('JSONSubscriber', () => {
   });
 
   it('collects ERROR_OCCURRED events', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'ERROR_OCCURRED',
@@ -134,9 +125,7 @@ describe('JSONSubscriber', () => {
   });
 
   it('builds summary for empty runbook (no steps executed)', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'RUNBOOK_COMPLETED',
@@ -156,9 +145,7 @@ describe('JSONSubscriber', () => {
   });
 
   it('counts multiple commands with mixed success/failure', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'COMMAND_COMPLETED',
@@ -211,9 +198,7 @@ describe('JSONSubscriber', () => {
   });
 
   it('returns running status before terminal event', () => {
-    subscriber.handle(
-      makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.rundown/runs/wf-test.json' }, 1),
-    );
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false }, 1));
     subscriber.handle(
       makeEvent(
         'COMMAND_COMPLETED',

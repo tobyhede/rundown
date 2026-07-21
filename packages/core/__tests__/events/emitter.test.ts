@@ -19,7 +19,6 @@ describe('ExecutionEventEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test-123.json',
       },
     });
 
@@ -37,7 +36,6 @@ describe('ExecutionEventEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test-123.json',
       },
     });
     emitter.emit({
@@ -66,7 +64,6 @@ describe('ExecutionEventEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test-123.json',
       },
     });
 
@@ -82,7 +79,6 @@ describe('ExecutionEventEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test-123.json',
       },
     });
     unsub();
@@ -106,7 +102,6 @@ describe('ExecutionEventEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test-123.json',
       },
     });
 

@@ -56,7 +56,6 @@ describe('JSONRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-2026-04-23-abcdef.json',
         },
       };
       const completed: RunbookEventV1 = {
@@ -87,7 +86,6 @@ describe('JSONRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-2026-04-23-abcdef.json',
         },
       };
 
@@ -175,6 +173,21 @@ describe('JSONRenderer', () => {
       const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
       expect(parsed.kind).toBe('status');
       expect(parsed.message).toBe('hello');
+    });
+
+    it('emits runbookId metadata without a removed state-file path', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+
+      renderer.render({
+        type: 'metadata',
+        metadata: { file: 'test.runbook.md', runbookId: 'rd_123' },
+      });
+      renderer.flush();
+
+      const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ file: 'test.runbook.md', runbookId: 'rd_123' });
+      expect(parsed).not.toHaveProperty('state');
     });
   });
 

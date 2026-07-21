@@ -34,7 +34,7 @@ import { getRunbookFromState } from './runbook-loader.js';
  * Internal data structure for status command output.
  *
  * Uses flat structure per docs/spec/cli-output.md:
- * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
+ * - `file`/`runbookId`/`prompted` at top level (not nested in `runbook`)
  * - `position` for step position (current/total/substep)
  * - `step` for step details (name/description)
  *
@@ -52,8 +52,8 @@ export interface StatusOutputData {
   stashed: boolean;
   /** Runbook file path (flat, not nested) */
   file?: string;
-  /** State file path */
-  state?: string;
+  /** Durable identifier for this runbook execution. */
+  runbookId?: string;
   /** Whether runbook is in prompted mode */
   prompted?: boolean;
   /** Current position in runbook */
@@ -255,7 +255,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     active: false,
     stashed: true,
     file: metadata.file,
-    state: metadata.state,
+    runbookId: metadata.runbookId,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: buildStepPosition(
       stashedState.step,
@@ -396,7 +396,7 @@ export function buildActiveStatus(
     ...(lifecycleStatus !== undefined ? { status: lifecycleStatus } : {}),
     stashed: !!stashedId,
     file: metadata.file,
-    state: metadata.state,
+    runbookId: metadata.runbookId,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: {
       ...basePosition,

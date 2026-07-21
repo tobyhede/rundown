@@ -35,7 +35,6 @@ import {
   type ParentLinkage,
   type Frame,
   type FrameKey,
-  RUNS_DIR,
   type DelegateFrontierEntry,
   DelegationLock,
   DelegationLockTimeoutError,
@@ -1478,7 +1477,7 @@ export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
 export function buildMetadata(state: RunbookState): RunbookMetadata {
   return {
     file: state.runbook.path,
-    state: `${RUNS_DIR}/${state.id}.json`,
+    runbookId: state.id,
     prompted: state.prompted ?? undefined,
   };
 }

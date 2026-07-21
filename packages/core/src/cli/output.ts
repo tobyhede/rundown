@@ -77,14 +77,14 @@ export function printStepSeparator(stepNum: string, writer: OutputWriter = getWr
 /**
  * Print metadata block to stdout.
  *
- * Outputs runbook metadata including file path, state, and optional prompt status.
+ * Outputs runbook metadata including file path, run ID, and optional prompt status.
  *
  * @param meta - The RunbookMetadata to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printMetadata(meta: RunbookMetadata, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`File:     ${meta.file}`);
-  writer.writeLine(`State:    ${colorizeStatus(meta.state)}`);
+  writer.writeLine(`Run:      ${meta.runbookId}`);
   if (meta.prompted) {
     writer.writeLine(`Prompt:   ${success('Yes')}`);
   }

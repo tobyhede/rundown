@@ -102,7 +102,7 @@ export class JSONRenderer implements OutputRenderer {
         break;
       case 'metadata':
         this.output.file = event.metadata.file;
-        this.output.state = event.metadata.state;
+        this.output.runbookId = event.metadata.runbookId;
         if (event.metadata.prompted) {
           this.output.prompted = event.metadata.prompted;
         }

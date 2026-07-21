@@ -87,7 +87,7 @@ describe('status command', () => {
 
     const result = await runCliInProcess('status --text', workspace);
 
-    expect(result.stdout).toContain('State:');
+    expect(result.stdout).toContain('Run:');
     expect(result.stdout).toMatch(/rd_[a-f0-9]{32}/);
   });
 
@@ -289,13 +289,13 @@ describe('claim-id delegated children', () => {
     const claimId2 = child2Output!.claim_id as string;
 
     let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
-    expect(JSON.parse(status.stdout).state).toContain(child1Id);
+    expect(JSON.parse(status.stdout).runbookId).toBe(child1Id);
 
     status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
-    expect(JSON.parse(status.stdout).state).toContain(child2Id);
+    expect(JSON.parse(status.stdout).runbookId).toBe(child2Id);
 
     status = await runCliInProcess('status', workspace);
-    expect(JSON.parse(status.stdout).state).toContain(parentId);
+    expect(JSON.parse(status.stdout).runbookId).toBe(parentId);
   });
 
   async function setupOwnedStash() {
@@ -388,7 +388,7 @@ describe('claim-id delegated children', () => {
     expect(output.active).toBe(true);
     expect(output.stashed).toBe(true);
     expect(output.file).toContain('child-secret.runbook.md');
-    expect(output.state).toContain(childRunId);
+    expect(output.runbookId).toBe(childRunId);
     expect(output.parentLinkage).toEqual(
       expect.objectContaining({
         kind: 'delegation',
@@ -415,7 +415,7 @@ describe('claim-id delegated children', () => {
     expect(status.exitCode).toBe(0);
     expect(output.active).toBe(false);
     expect(output.status).toBe('completed');
-    expect(output.state).toContain(childRunId);
+    expect(output.runbookId).toBe(childRunId);
   });
 
   it('anonymous stash remains visible to plain callers', async () => {

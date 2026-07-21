@@ -169,7 +169,7 @@ describe('output format integration tests', () => {
     it('includes runbook details in metadata', async () => {
       const result = await runCliInProcess('status --text', workspace);
 
-      expect(result.stdout).toContain('State:');
+      expect(result.stdout).toContain('Run:');
       expectRunId(result.stdout);
     });
 

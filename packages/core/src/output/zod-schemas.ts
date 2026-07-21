@@ -247,8 +247,8 @@ export const RunbookContextSchema = z
   .object({
     /** Runbook filename (relative path) */
     file: z.string().describe('Path to the runbook file'),
-    /** State file path */
-    state: z.string().describe('Current runbook state or status'),
+    /** Durable identifier for the runbook execution. */
+    runbookId: z.string().describe('Runbook execution identifier'),
     /** Whether runbook is in prompted mode (waiting for user input) */
     prompted: z.boolean().optional().describe('Whether the runbook is awaiting user input'),
   })
@@ -371,7 +371,7 @@ export const ActionResponseSchema = z
     runbook: RunbookContextSchema.optional().describe('Runbook context information'),
     // Flat format fields
     file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Runbook state after action'),
+    runbookId: z.string().optional().describe('Runbook execution identifier'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     message: z.string().optional().describe('Status message from the action'),
     /** Idempotency status for action-family responses */
@@ -523,7 +523,7 @@ export const StatusResponseSchema = z
       .describe('Parent linkage projection when this runbook is a child'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
-    state: z.string().optional().describe('Current runbook execution state'),
+    runbookId: z.string().optional().describe('Runbook execution identifier'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     vars: z
       .record(z.string(), z.string())
@@ -1137,7 +1137,7 @@ export const StashResponseSchema = z
     /** Runbook context */
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Runbook state'),
+    runbookId: z.string().optional().describe('Runbook execution identifier'),
     message: z.string().optional().describe('Status message'),
     position: PositionSchema.optional().describe('Position when stashed'),
   })
@@ -1159,7 +1159,7 @@ export const PopResponseSchema = z
     /** Runbook context */
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Runbook state'),
+    runbookId: z.string().optional().describe('Runbook execution identifier'),
     message: z.string().optional().describe('Status message'),
     position: PositionSchema.optional().describe('Position when restored'),
     step: z

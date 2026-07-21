@@ -148,7 +148,12 @@ export async function openRunbookDriver(
     // Schema init failed on a driver we just opened; dispose it so the failure
     // path does not leak the underlying connection, then rethrow the original
     // error unchanged.
-    await driver[Symbol.asyncDispose]();
+    try {
+      await driver[Symbol.asyncDispose]();
+    } catch {
+      // Cleanup is best-effort: its failure must not replace the schema error
+      // that explains why the database could not be opened.
+    }
     throw err;
   }
 }

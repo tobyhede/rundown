@@ -322,7 +322,7 @@ export class RunbookStateManager {
   }
 
   /**
-   * Project root directory used for all state file paths.
+   * Project root directory used for storage and artifact path resolution.
    *
    * @returns The working directory passed to the constructor
    */
@@ -742,14 +742,11 @@ export class RunbookStateManager {
   }
 
   /**
-   * Delete a runbook state file and its per-run outputs directory from disk.
+   * Delete a persisted run and its per-run outputs directory.
    *
-   * Removes both `.rundown/runs/<id>.json` and the captured-output directory
-   * `.rundown/runs/<id>/` if it exists. Silently ignores errors when either
-   * path is absent — `delete` must be idempotent.
-   *
-   * Held under the per-run state lock so a concurrent `save`/`update` cannot
-   * recreate the state file or write into the outputs directory mid-removal.
+   * Removes the authoritative SQLite row and the captured-output directory
+   * `.rundown/runs/<id>/` if it exists. Missing state is ignored so deletion is
+   * idempotent.
    *
    * @param id - The runbook state ID to delete
    */
@@ -776,13 +773,6 @@ export class RunbookStateManager {
     }
   }
 
-  /**
-   * List all persisted runbook states.
-   *
-   * Reads all runbook state JSON files from the state directory.
-   *
-   * @returns An array of all runbook states, or an empty array if none exist
-   */
   /**
    * List the ids of every persisted run, including runs whose state is invalid.
    *

@@ -842,7 +842,8 @@ echo hello
       if (startedEvent) {
         const event = startedEvent;
         expect(event).toHaveProperty('prompted');
-        expect(event).toHaveProperty('statePath');
+        expect(event).toHaveProperty('runbookId');
+        expect(event).not.toHaveProperty('statePath');
       }
 
       // Should have runbook_completed event for successful run

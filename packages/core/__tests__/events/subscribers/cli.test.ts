@@ -33,12 +33,13 @@ describe('CLISubscriber', () => {
       makeEvent('RUNBOOK_STARTED', {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       }),
     );
     const output = writer.getOutput();
     expect(output).toContain('File:');
-    expect(output).toContain('State:');
+    expect(output).toContain('Run:');
+    expect(output).toContain('wf-test');
+    expect(output).not.toContain('.rundown/runs/');
     expect(output).toContain('Action:');
     expect(output).toContain('START');
   });

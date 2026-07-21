@@ -90,10 +90,10 @@ export class CLISubscriber {
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
 
-    // Print metadata - use canonical runbook path for file, statePath for state
+    // Print metadata with the canonical runbook path and durable run identity.
     const meta: RunbookMetadata = {
       file: runbook.path,
-      state: payload.statePath,
+      runbookId: event.runbookId,
       prompted: payload.prompted,
     };
     printMetadata(meta, this.writer);

@@ -24,7 +24,6 @@ import {
   type DelegationLinkage,
   type ParentLinkage,
   type ClaimId,
-  RUNS_DIR,
   classifyDelegationLiveness,
   DelegationScanService,
   DelegationLock,
@@ -231,8 +230,7 @@ export type ClaimFailure =
        * The child's persisted `parentLinkage` disagrees with the freshly
        * token-validated linkage. Indicates state corruption (manual edits,
        * stale linkage from a prior delegation, cross-host state merge);
-       * operator intervention required — inspect
-       * `.rundown/runs/<childRunId>.json`. Rendered as
+       * operator intervention required — inspect the child run by ID. Rendered as
        * `CHILD_LINKAGE_MISMATCH`.
        */
       readonly reason: 'linkage-mismatch';
@@ -307,7 +305,6 @@ function emitRunbookStarted(
       description: runbookState.description,
       prompted,
       ...(claimId !== undefined ? { claimId } : {}),
-      statePath: `${RUNS_DIR}/${runbookState.id}.json`,
     },
   });
 }

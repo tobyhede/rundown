@@ -96,7 +96,7 @@ describe('isActionResponse type guard', () => {
         kind: 'stash',
         action: 'stash',
         stashedId: 'abc-123',
-        runbook: { file: 'test.md', state: 'test-state.json' },
+        runbook: { file: 'test.md', runbookId: 'rd_test' },
       };
 
       // StashResponse has kind='stash', not 'action'
@@ -108,7 +108,7 @@ describe('isActionResponse type guard', () => {
         kind: 'pop',
         action: 'pop',
         restoredId: 'abc-123',
-        runbook: { file: 'test.md', state: 'test-state.json' },
+        runbook: { file: 'test.md', runbookId: 'rd_test' },
       };
 
       // PopResponse has kind='pop', not 'action'
@@ -150,7 +150,7 @@ describe('isClaimResponse type guard', () => {
       kind: 'stash',
       action: 'stash',
       stashedId: 'abc-123',
-      runbook: { file: 'test.md', state: 'test-state.json' },
+      runbook: { file: 'test.md', runbookId: 'rd_test' },
     };
     expect(isClaimResponse(response as CLIResponse)).toBe(false);
   });
@@ -160,7 +160,7 @@ describe('isClaimResponse type guard', () => {
       kind: 'pop',
       action: 'pop',
       restoredId: 'abc-123',
-      runbook: { file: 'test.md', state: 'test-state.json' },
+      runbook: { file: 'test.md', runbookId: 'rd_test' },
     };
     expect(isClaimResponse(response as CLIResponse)).toBe(false);
   });

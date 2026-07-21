@@ -40,8 +40,6 @@ export interface RunbookStartedPayload {
   readonly prompted: boolean;
   /** Orchestrator bearer claim id minted for the run controller. */
   readonly claimId?: ClaimId;
-  /** State file path for metadata display (e.g., ".rundown/runs/wf-xxx.json") */
-  readonly statePath: string;
 }
 
 /**

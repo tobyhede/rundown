@@ -45,7 +45,7 @@ interface StatusDetailData {
   active?: boolean;
   stashed?: boolean;
   file?: string;
-  state?: string;
+  runbookId?: string;
   prompted?: boolean;
   position?: {
     current: string;
@@ -234,7 +234,7 @@ export class TextRenderer implements OutputRenderer {
       active,
       stashed,
       file,
-      state,
+      runbookId,
       prompted,
       position,
       step,
@@ -252,9 +252,9 @@ export class TextRenderer implements OutputRenderer {
 
     // Stashed only (no active)
     if (!active && stashed && position) {
-      if (file || state) {
+      if (file || runbookId) {
         printMetadata(
-          { file: file ?? 'unknown', state: state ?? 'unknown', prompted },
+          { file: file ?? 'unknown', runbookId: runbookId ?? 'unknown', prompted },
           this.writer,
         );
       }
@@ -264,8 +264,11 @@ export class TextRenderer implements OutputRenderer {
     }
 
     // Active runbook
-    if (file || state) {
-      printMetadata({ file: file ?? 'unknown', state: state ?? 'unknown', prompted }, this.writer);
+    if (file || runbookId) {
+      printMetadata(
+        { file: file ?? 'unknown', runbookId: runbookId ?? 'unknown', prompted },
+        this.writer,
+      );
     }
 
     // Print action block if lastAction exists
@@ -707,7 +710,7 @@ export class TextRenderer implements OutputRenderer {
     printMetadata(
       {
         file: runbook.path,
-        state: payload.statePath,
+        runbookId: event.runbookId,
         prompted: payload.prompted,
       },
       this.writer,

@@ -1155,12 +1155,15 @@ export class RunbookStore {
           message: `The interrupted attempt for run ${next.id} was superseded before recovery committed.`,
         };
       }
-      txn.tx
+      const attemptChanges = txn.tx
         .prepare(
-          `UPDATE execution_attempts SET reason = COALESCE(reason, :reason)
+          `UPDATE execution_attempts
+              SET phase = 'committed', finished_at = :now,
+                  reason = COALESCE(reason, :reason)
             WHERE run_id = :runId AND exec_epoch = :epoch AND phase = 'recovery_pending'`,
         )
-        .run({ reason, runId: next.id, epoch });
+        .run({ reason, now: next.updatedAt, runId: next.id, epoch }).changes;
+      assertExactlyOneRow(attemptChanges, next.id);
       return { kind: 'committed', value: next };
     });
   }
@@ -1545,6 +1548,12 @@ export class RunbookStore {
    * @param runId - Run to stash, or null to clear.
    */
   private setStash(tx: SqlTransaction, runId: RunId | null): void {
+    const current = tx
+      .prepare('SELECT run_id FROM stash_slot WHERE slot = 0')
+      .get<{ readonly run_id: string }>();
+    if ((current?.run_id ?? null) === runId) {
+      return;
+    }
     tx.prepare('DELETE FROM stash_slot').run();
     if (runId !== null) {
       tx.prepare('INSERT INTO stash_slot (slot, run_id) VALUES (0, :runId)').run({ runId });

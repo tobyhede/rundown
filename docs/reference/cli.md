@@ -495,7 +495,7 @@ shown below.
 
 ```text
 File:     my-runbook.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+Run:      rd_0123456789abcdef0123456789abcdef
 Action:   CONTINUE
 Result:   PASS
 
@@ -1028,7 +1028,7 @@ Output formatting is implemented in
 
 ```text
 File:     runbook.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+Run:      rd_0123456789abcdef0123456789abcdef
 Action:   START
 At:       1
 

@@ -167,6 +167,21 @@ describe('ExecutionRecoveryService', () => {
     const rehydrated = createActor(machine, { snapshot: loaded?.snapshot as never }).start();
     expect(rehydrated.getSnapshot().hasTag('recovery')).toBe(true);
     rehydrated.stop();
+
+    const attempt = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at FROM execution_attempts
+            WHERE run_id = :runId ORDER BY exec_epoch DESC LIMIT 1`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({ runId }),
+    );
+    expect(attempt).toEqual({
+      phase: 'committed',
+      finished_at: '2026-03-03T00:00:00.000Z',
+    });
+    await expect(store.readPendingRecovery(runId)).resolves.toBeNull();
+    await expect(service.recover(runId)).resolves.toEqual({ kind: 'not_pending', runId });
   });
 
   it('clears ownership and never leaks an execution token into persisted state', async () => {

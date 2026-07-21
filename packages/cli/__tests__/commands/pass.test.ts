@@ -468,10 +468,10 @@ Do child work.
       });
 
       let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
-      expect(JSON.parse(status.stdout).state).toContain(child1Id);
+      expect(JSON.parse(status.stdout).runbookId).toBe(child1Id);
 
       status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
-      expect(JSON.parse(status.stdout).state).toContain(child2Id);
+      expect(JSON.parse(status.stdout).runbookId).toBe(child2Id);
 
       result = await runCliInProcess(['pass', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);
