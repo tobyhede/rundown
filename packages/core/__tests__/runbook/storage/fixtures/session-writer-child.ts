@@ -46,7 +46,14 @@ type ChildOp =
   | { readonly kind: 'pushRunbook'; readonly runId: string }
   | { readonly kind: 'recordClaimSeen'; readonly claimId: string }
   | { readonly kind: 'releaseRunbook'; readonly runId: string }
-  | { readonly kind: 'popRunbook' };
+  | { readonly kind: 'popRunbook' }
+  | {
+      readonly kind: 'guardedParentAdvance';
+      readonly parentRunId: string;
+      readonly linkage: DelegationLinkage;
+      readonly callbackReadyFile: string;
+      readonly callbackGoFile: string;
+    };
 
 const [cwd, readyFile, goFile, resultFile, opJson] = process.argv.slice(2);
 const op = JSON.parse(opJson) as ChildOp;
@@ -71,6 +78,35 @@ async function run(service: SessionService): Promise<unknown> {
       return service.releaseRunbook(assertRunId(op.runId));
     case 'popRunbook':
       return service.popRunbook();
+    case 'guardedParentAdvance': {
+      const parentRunId = assertRunId(op.parentRunId);
+      // Second-stage barrier INSIDE the advance callback: signal that the fast
+      // pre-check returned no open children and the callback has begun, then wait
+      // for the parent process to commit the racing claim before performing the
+      // guarded decisive write. No SQLite transaction is open across this spin —
+      // the guard runs inside `manager.update` below.
+      return service.runGuardedParentAdvance(parentRunId, async (guard) => {
+        writeFileSync(op.callbackReadyFile, String(process.pid));
+        while (!existsSync(op.callbackGoFile)) {
+          // spin
+        }
+        await manager.update(
+          parentRunId,
+          {
+            substepStates: [
+              {
+                id: op.linkage.parentStepId,
+                frameKey: op.linkage.parentFrameKey,
+                status: 'done',
+                result: 'pass',
+              },
+            ],
+          },
+          { guard },
+        );
+        return 'advanced';
+      });
+    }
   }
 }
 
