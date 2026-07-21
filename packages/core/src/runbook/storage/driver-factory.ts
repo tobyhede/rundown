@@ -52,6 +52,26 @@ export class NativeSqliteUnavailableError extends Error {
 }
 
 /**
+ * Raised when the single-writer sql.js adapter cannot be initialized inside a
+ * WebContainer runtime. Mirrors {@link NativeSqliteUnavailableError}: a driver we
+ * positively selected but could not start is a hard startup failure, never a
+ * silent fallthrough to the other runtime.
+ */
+export class SqljsUnavailableError extends Error {
+  /**
+   * Construct a typed sql.js-unavailable startup error.
+   *
+   * @param cause - The underlying initialization failure message.
+   */
+  constructor(cause: string) {
+    super(
+      `sql.js (WASM SQLite) failed to initialize in this single-writer WebContainer runtime: ${cause}.`,
+    );
+    this.name = 'SqljsUnavailableError';
+  }
+}
+
+/**
  * Positively identify the supported single-writer WebContainer runtime.
  *
  * @param env - Environment to inspect (defaults to `process.env`).
@@ -119,10 +139,18 @@ export async function openRunbookDriver(
 ): Promise<SqlDriver> {
   const runtime = options.runtime ?? selectStorageRuntime(options.env);
   const driver = await openDriver(runtime, dbPath, options);
-  await driver.immediate((tx) => {
-    ensureSchema(tx);
-  });
-  return driver;
+  try {
+    await driver.immediate((tx) => {
+      ensureSchema(tx);
+    });
+    return driver;
+  } catch (err) {
+    // Schema init failed on a driver we just opened; dispose it so the failure
+    // path does not leak the underlying connection, then rethrow the original
+    // error unchanged.
+    await driver[Symbol.asyncDispose]();
+    throw err;
+  }
 }
 
 /**
@@ -139,7 +167,11 @@ async function openDriver(
   options: OpenRunbookDriverOptions,
 ): Promise<SqlDriver> {
   if (runtime === 'sqljs') {
-    return openSqljsDriver(dbPath, options.sqljs);
+    try {
+      return await openSqljsDriver(dbPath, options.sqljs);
+    } catch (err) {
+      throw new SqljsUnavailableError(getErrorMessage(err));
+    }
   }
   try {
     return openNativeDriver(dbPath, options.native);

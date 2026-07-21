@@ -16,7 +16,8 @@
  */
 
 import { z } from 'zod';
-import { makeRunbookStateSchema } from '../../schemas.js';
+import { makeRunbookStateSchema, RunIdSchema, DelegationTokenHashSchema } from '../../schemas.js';
+import { getErrorMessage } from '../../errors.js';
 import type {
   RunbookState,
   ResolvedCompletion,
@@ -1431,7 +1432,7 @@ export class RunbookStore {
           `Delegated claim ${key} for parent ${parent.id} carries no persisted delegation linkage; the runbook database is inconsistent.`,
         );
       }
-      const linkage = JSON.parse(row.delegation_json) as DelegationClaimLinkage;
+      const linkage = parseDelegationLinkage(row.delegation_json, key);
       const liveness = classifyDelegationLiveness(parent, linkage);
       if (liveness.kind === 'closed') {
         update.run({ key });
@@ -1709,6 +1710,56 @@ function assertLifecycle(value: string): Lifecycle {
 const GrantsSchema = z.array(z.record(z.string(), z.unknown()));
 
 /**
+ * Zod schema validating a persisted `delegation_json` blob against the
+ * {@link DelegationClaimLinkage} shape. `parentFrameKey` is a branded string, so
+ * it validates as a non-empty string and is re-branded by the parse-helper cast.
+ */
+const DelegationLinkageSchema = z
+  .object({
+    childRunId: RunIdSchema,
+    tokenHash: DelegationTokenHashSchema,
+    parentRunId: RunIdSchema,
+    parentStepId: z.string().min(1),
+    parentStep: z.string().min(1),
+    parentFrameKey: z.string().min(1),
+    // Positive to match the canonical RunbookState.parentLinkage.parentEntry.
+    parentEntry: z.number().int().positive(),
+  })
+  .strict();
+
+/**
+ * Parse and validate a persisted `delegation_json` column into a
+ * {@link DelegationClaimLinkage}.
+ *
+ * The no-migration policy forbids trusting an unchecked cast: a corrupt or
+ * schema-incompatible row is rejected with an explicit error so the recovery
+ * path is deliberate user action (finish / prune / restart) rather than a
+ * silently-adapted bad claim escaping into the session.
+ *
+ * @param json - Raw `delegation_json` column value.
+ * @param claimKey - Claim lookup key, used only for the error message.
+ * @returns The validated delegation linkage.
+ * @throws {Error} When the JSON is unparseable or fails linkage validation.
+ */
+function parseDelegationLinkage(json: string, claimKey: string): DelegationClaimLinkage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    throw new Error(
+      `Claim ${claimKey} carries an unparseable persisted delegation linkage; the runbook database is inconsistent: ${getErrorMessage(err)}`,
+    );
+  }
+  const result = DelegationLinkageSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(
+      `Claim ${claimKey} carries a malformed persisted delegation linkage; the runbook database is inconsistent: ${result.error.message}`,
+    );
+  }
+  return result.data as DelegationClaimLinkage;
+}
+
+/**
  * Reconstruct a claim record from its row.
  *
  * @param row - Raw claim row.
@@ -1719,9 +1770,7 @@ function deserializeClaim(row: ClaimRow): ClaimRecord {
     JSON.parse(row.grants_json),
   ) as unknown as ClaimRecord['grants'];
   const delegation =
-    row.delegation_json !== null
-      ? (JSON.parse(row.delegation_json) as ClaimRecord['delegation'])
-      : undefined;
+    row.delegation_json !== null ? parseDelegationLinkage(row.delegation_json, row.key) : undefined;
   return {
     claimKey: assertClaimLookupKey(row.key),
     secretHash: assertClaimSecretHash(row.secret_hash),

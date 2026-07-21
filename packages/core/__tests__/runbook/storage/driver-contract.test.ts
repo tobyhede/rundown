@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as vm from 'node:vm';
 import { DatabaseSync } from 'node:sqlite';
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import {
@@ -24,6 +25,7 @@ import {
 } from '../../../src/runbook/storage/driver-factory.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { isError } from '../../../src/errors.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -269,6 +271,68 @@ describe('native adapter SQLITE_BUSY handling', () => {
     holder.close();
   });
 
+  it('preserves a cross-realm Error thrown by read() work and still rolls back', async () => {
+    await using driver = openNativeDriver(path.join(dir, 'read-normalize.db'));
+    await driver.immediate((tx) => {
+      tx.exec(CREATE_KV);
+    });
+
+    // A cross-realm Error is not an `instanceof Error` of this realm but IS an
+    // Error by `Error.isError` — the exact case `instanceof` narrowing drops.
+    const crossRealm = vm.runInNewContext('new Error("cross-realm read failure")') as Error;
+    expect(crossRealm instanceof Error).toBe(false);
+
+    const rejection = await driver
+      .read<void>(() => {
+        throw crossRealm;
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(isError(rejection)).toBe(true);
+    // The original error object is surfaced as-is, not re-wrapped into a
+    // this-realm Error that would flatten it to "Error: cross-realm read failure".
+    expect(rejection).toBe(crossRealm);
+
+    // A leaked (un-rolled-back) BEGIN would make the next transaction throw
+    // "cannot start a transaction within a transaction"; its success proves the
+    // rollback ran.
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('INSERT INTO kv VALUES(:k, :v)').run({ k: 'z', v: 9 });
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('normalizes a non-Error thrown by immediate() work and still rolls back', async () => {
+    await using driver = openNativeDriver(path.join(dir, 'immediate-normalize.db'));
+    await driver.immediate((tx) => {
+      tx.exec(CREATE_KV);
+    });
+
+    const rejection = await driver
+      .immediate<void>((tx) => {
+        tx.prepare('INSERT INTO kv VALUES(:k, :v)').run({ k: 'a', v: 1 });
+        // Deliberately a non-Error throw: the whole point is that the driver
+        // normalizes it into an Error.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'immediate string failure';
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(isError(rejection)).toBe(true);
+    expect((rejection as Error).message).toBe('immediate string failure');
+
+    // The failed write must have rolled back, and the connection stays usable.
+    const count = await driver.read(
+      (tx) => tx.prepare('SELECT count(*) AS c FROM kv').get<{ readonly c: number }>()?.c,
+    );
+    expect(count).toBe(0);
+  });
+
   it('succeeds once the contended write lock is released mid-retry', async () => {
     const dbPath = path.join(dir, 'busy2.db');
     const holder = new DatabaseSync(dbPath);
@@ -336,6 +400,25 @@ describe('positive driver selection', () => {
         tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>()?.user_version,
     );
     expect(version).toBe(1);
+  });
+
+  it('disposes the just-opened driver and rethrows when schema init fails', async () => {
+    const dbFile = path.join(dir, 'schema-init-fail.db');
+    // Seed an incompatible schema version so ensureSchema throws during the
+    // factory's schema-init transaction, exercising the failure path.
+    const seed = new DatabaseSync(dbFile);
+    seed.exec('PRAGMA user_version = 4242');
+    seed.close();
+
+    const disposeSpy = jest.spyOn(NativeSqlDriver.prototype, Symbol.asyncDispose);
+    try {
+      await expect(openRunbookDriver(dbFile, { runtime: 'native' })).rejects.toBeInstanceOf(
+        IncompatibleSchemaError,
+      );
+      expect(disposeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      disposeSpy.mockRestore();
+    }
   });
 });
 

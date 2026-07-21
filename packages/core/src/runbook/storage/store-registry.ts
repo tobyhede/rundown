@@ -21,6 +21,7 @@
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
+import { isNodeError } from '../../errors.js';
 import { DB_FILE, dbPath } from '../../paths.js';
 import type { SqlDriver } from './sql-driver.js';
 import { openRunbookDriver, type OpenRunbookDriverOptions } from './driver-factory.js';
@@ -41,6 +42,55 @@ interface OpenStore {
  * openers for the same path share one open rather than racing to create two.
  */
 const openStores = new Map<string, Promise<OpenStore>>();
+
+/**
+ * `chmod` error codes that mean the filesystem cannot carry a POSIX mode at all,
+ * so the owner-only hardening is a no-op rather than a failure. Everything else
+ * (notably `EACCES` and `EPERM`) is a genuine permission failure that must
+ * surface.
+ */
+const UNSUPPORTED_MODE_CODES: ReadonlySet<string> = new Set(['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
+
+/**
+ * Whether a `chmod` failure means the filesystem does not support POSIX modes.
+ *
+ * @param err - Error thrown by `fs.chmod`.
+ * @returns True when the mode operation is unsupported by the filesystem.
+ */
+function isUnsupportedModeError(err: unknown): boolean {
+  return isNodeError(err) && typeof err.code === 'string' && UNSUPPORTED_MODE_CODES.has(err.code);
+}
+
+/**
+ * Apply owner-only (`0o600`) mode to one database file, suppressing ONLY the
+ * errors that are expected and safe:
+ *
+ * - A filesystem that cannot carry POSIX modes at all ({@link isUnsupportedModeError}).
+ * - `ENOENT` on an OPTIONAL sidecar (the `-wal`/`-shm` files may not exist yet).
+ *
+ * Every other failure — `EACCES`, `EPERM`, and any unexpected error — propagates
+ * so a store that could not be hardened fails to open loudly rather than running
+ * with weaker-than-intended permissions.
+ *
+ * @param file - File to harden.
+ * @param optional - Whether a missing file (`ENOENT`) is tolerable.
+ * @returns Resolves once the mode is applied or the failure is safely ignored.
+ * @throws {NodeJS.ErrnoException} When the failure is a genuine, unexpected
+ *   permission error (for example `EACCES` or `EPERM`).
+ */
+async function hardenDatabaseFileMode(file: string, optional: boolean): Promise<void> {
+  try {
+    await fs.chmod(file, 0o600);
+  } catch (err) {
+    if (isUnsupportedModeError(err)) {
+      return;
+    }
+    if (optional && isNodeError(err) && err.code === 'ENOENT') {
+      return;
+    }
+    throw err;
+  }
+}
 
 /**
  * Resolve a project root to the canonical key for its database.
@@ -100,23 +150,31 @@ export function openRunbookStore(
     // The database holds run state and hashed claim secrets, so it inherits the
     // owner-only mode the per-run JSON state files carried before it. Applied
     // after open because the file does not exist until the driver creates it.
-    // Best-effort: a filesystem without POSIX modes must not fail the open.
-    await Promise.all(
-      [target, `${target}-wal`, `${target}-shm`].map((file) =>
-        fs.chmod(file, 0o600).catch(() => undefined),
-      ),
-    );
+    // The main DB file is required; the WAL/SHM sidecars are optional (they may
+    // not exist yet). A genuine permission failure (EACCES/EPERM) on any of them
+    // fails the open rather than silently weakening the stored secrets.
+    await Promise.all([
+      hardenDatabaseFileMode(target, /* optional */ false),
+      hardenDatabaseFileMode(`${target}-wal`, /* optional */ true),
+      hardenDatabaseFileMode(`${target}-shm`, /* optional */ true),
+    ]);
     return { driver, store: new RunbookStore(driver, cwd) };
   })();
   // Registered before it resolves so concurrent callers join this open. On
   // failure the entry is dropped so a later attempt can retry rather than
   // permanently caching a rejected promise.
   openStores.set(key, opening);
-  opening.catch(() => {
-    if (openStores.get(key) === opening) {
-      openStores.delete(key);
+  void (async (): Promise<void> => {
+    try {
+      await opening;
+    } catch {
+      // Drop the cached rejected promise, but only if this exact open is still
+      // the registered one — a concurrent reopen must not be evicted.
+      if (openStores.get(key) === opening) {
+        openStores.delete(key);
+      }
     }
-  });
+  })();
   return opening;
 }
 

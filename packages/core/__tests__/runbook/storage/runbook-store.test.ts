@@ -18,7 +18,11 @@ import {
 } from '../../../src/runbook/storage/mutation-result.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
-import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import {
+  assertClaimLookupKey,
+  type DelegationClaimLinkage,
+} from '../../../src/runbook/claim-id.js';
+import { assertDelegationTokenHash } from '../../../src/runbook/delegation-token.js';
 import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
@@ -603,6 +607,64 @@ describe('session persistence and run listing', () => {
     await store.deleteRun(a.id);
     expect((await store.listRuns()).map((s) => s.id)).toEqual([b.id]);
     expect(await store.loadRun(a.id)).toBeNull();
+  });
+
+  it('round-trips a delegated claim carrying a valid delegation linkage', async () => {
+    const parent = await newState();
+    await store.createRun(parent);
+
+    const linkage: DelegationClaimLinkage = {
+      childRunId: parent.id,
+      tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+      parentRunId: parent.id,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    };
+    const key = assertClaimLookupKey(`rdclk_${'e'.repeat(32)}`);
+    const record = makeClaimRecord({
+      claimKey: key,
+      controlledRunId: parent.id,
+      delegation: linkage,
+      grants: [{ action: 'mutate-run', runId: parent.id }],
+    });
+    await store.transaction((txn) => {
+      txn.insertClaim(record, assertClaimGeneration(0));
+    });
+
+    const session = await store.loadSession();
+    expect(session.claims[key].delegation).toEqual(linkage);
+  });
+
+  it('rejects a claim whose persisted delegation linkage is malformed', async () => {
+    const run = await newState();
+    await store.createRun(run);
+
+    // Persist a structurally invalid delegation_json directly, simulating a
+    // corrupt/incompatible row. The no-migration policy demands an explicit
+    // rejection rather than trusting the unchecked cast.
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          `INSERT INTO claims
+             (key, controlled_run, secret_hash, issued_generation, status,
+              parent_run_id, parent_linkage_version, delegation_json, grants_json,
+              issued_at, updated_at, last_seen_at)
+           VALUES
+             (:key, :run, :hash, 1, 'active',
+              :run, 0, :bad, '[]', :now, :now, :now)`,
+        )
+        .run({
+          key: `rdclk_${'f'.repeat(32)}`,
+          run: run.id,
+          hash: `sha256:${'b'.repeat(64)}`,
+          bad: '{"childRunId":"not-a-valid-run-id"}',
+          now: '2026-07-20T00:00:00.000Z',
+        });
+    });
+
+    await expect(store.loadSession()).rejects.toThrow(/delegation linkage/i);
   });
 
   it('refuses to delete a run with an active execution owner', async () => {

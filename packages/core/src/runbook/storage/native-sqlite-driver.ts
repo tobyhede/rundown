@@ -15,7 +15,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { isNodeError } from '../../errors.js';
+import { isError, isNodeError, getErrorMessage } from '../../errors.js';
 import type {
   SqlDriver,
   SqlParams,
@@ -137,16 +137,22 @@ export class NativeSqlDriver implements SqlDriver {
    * @param work - Synchronous callback receiving the open transaction.
    * @returns The callback's return value once the transaction closes.
    */
-  read<T>(work: (tx: SqlTransaction) => T): Promise<T> {
+  // `node:sqlite` is synchronous, so this body has no await; it is `async` to
+  // satisfy the Promise-returning {@link SqlDriver} contract with direct
+  // return/throw rather than hand-rolled Promise.resolve/reject.
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async read<T>(work: (tx: SqlTransaction) => T): Promise<T> {
     this.assertOpen();
     this.db.exec('BEGIN');
     try {
       const result = work(new NativeTransaction(this.db));
       this.db.exec('COMMIT');
-      return Promise.resolve(result);
+      return result;
     } catch (err) {
       this.rollback();
-      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+      // `Error.isError` (via `isError`) recognizes cross-realm and non-native
+      // errors that a bare `instanceof Error` would miss and needlessly re-wrap.
+      throw isError(err) ? err : new Error(getErrorMessage(err));
     }
   }
 
@@ -176,7 +182,11 @@ export class NativeSqlDriver implements SqlDriver {
         return result;
       } catch (err) {
         this.rollback();
-        throw err;
+        // Same normalization as `read`: surface a cross-realm/native error as
+        // itself, wrapping only genuinely non-Error throws. The `BEGIN IMMEDIATE`
+        // catch above is deliberately left raw so `isSqliteBusy` can still read
+        // its `errcode`.
+        throw isError(err) ? err : new Error(getErrorMessage(err));
       }
     }
   }
