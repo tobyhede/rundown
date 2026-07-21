@@ -587,7 +587,16 @@ const ClaimGrantSchema: z.ZodType<ClaimGrant> = z.discriminatedUnion('action', [
   ReportDelegationResultGrantSchema,
 ]);
 
-const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
+/**
+ * Zod schema for a {@link DelegationClaimLinkage}.
+ *
+ * This is the single source of truth for validating persisted `delegation_json`
+ * rows (see `runbook/storage/runbook-store.ts`'s `parseDelegationLinkage`) as
+ * well as in-memory `ClaimGrant`/`ClaimRecord` delegation payloads. Callers must
+ * not maintain a parallel local schema — import this one so the two validation
+ * edges cannot drift out of sync.
+ */
+export const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
   .object({
     childRunId: RunIdSchema,
     tokenHash: DelegationTokenHashSchema,

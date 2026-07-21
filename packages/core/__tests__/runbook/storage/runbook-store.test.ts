@@ -691,6 +691,48 @@ describe('session persistence and run listing', () => {
     expect(session.claims[key].delegation).toEqual(linkage);
   });
 
+  it('accepts a persisted delegation linkage with an empty parentFrameKey (canonical schema)', async () => {
+    // parseDelegationLinkage validates against the canonical
+    // DelegationClaimLinkageSchema (packages/core/src/schemas.ts), whose
+    // parentFrameKey field is FrameKeySchema (z.string().transform), not
+    // z.string().min(1). Real frame keys from buildFrameKey() are never empty,
+    // but the schema itself does not forbid it — this pins that the shared
+    // schema is authoritative rather than reintroducing a stricter local check.
+    const run = await newState();
+    await store.createRun(run);
+
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          `INSERT INTO claims
+             (key, controlled_run, secret_hash, issued_generation, status,
+              parent_run_id, parent_linkage_version, delegation_json, grants_json,
+              issued_at, updated_at, last_seen_at)
+           VALUES
+             (:key, :run, :hash, 1, 'active',
+              :run, 0, :linkage, '[]', :now, :now, :now)`,
+        )
+        .run({
+          key: `rdclk_${'a'.repeat(32)}`,
+          run: run.id,
+          hash: `sha256:${'c'.repeat(64)}`,
+          linkage: JSON.stringify({
+            childRunId: run.id,
+            tokenHash: `sha256:${'d'.repeat(64)}`,
+            parentRunId: run.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: '',
+            parentEntry: 1,
+          }),
+          now: '2026-07-20T00:00:00.000Z',
+        });
+    });
+
+    const session = await store.loadSession();
+    expect(session.claims[`rdclk_${'a'.repeat(32)}`].delegation?.parentFrameKey).toBe('');
+  });
+
   it('rejects a claim whose persisted delegation linkage is malformed', async () => {
     const run = await newState();
     await store.createRun(run);
