@@ -39,6 +39,7 @@ import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import type {
+  ParentAdvanceGuard,
   RunbookStore,
   SessionMutationTxn,
   StateMutationResult,
@@ -563,8 +564,15 @@ export class RunbookStateManager {
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
    */
-  async update(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
-    const state = await this.mutate(id, () => updates, { missingIsError: true });
+  async update(
+    id: string,
+    updates: RunbookStateUpdate,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
+  ): Promise<RunbookState> {
+    const state = await this.mutate(id, () => updates, {
+      missingIsError: true,
+      guard: options.guard,
+    });
     if (state === null) {
       throw new Error(`Runbook ${id} not found`);
     }
@@ -592,8 +600,9 @@ export class RunbookStateManager {
     buildUpdates: (
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RunbookState> {
-    const updated = await this.updateWithStateIfExists(id, buildUpdates);
+    const updated = await this.updateWithStateIfExists(id, buildUpdates, options);
     if (updated === null) {
       throw new Error(`Runbook ${id} not found`);
     }
@@ -619,8 +628,9 @@ export class RunbookStateManager {
     buildUpdates: (
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RunbookState | null> {
-    return await this.mutate(id, buildUpdates, { missingIsError: false });
+    return await this.mutate(id, buildUpdates, { missingIsError: false, guard: options.guard });
   }
 
   /**
@@ -681,18 +691,22 @@ export class RunbookStateManager {
    *
    * @param id - Runbook id.
    * @param buildUpdates - Derives the patch; `null` means leave the state alone.
-   * @param options - Whether a missing run throws or resolves to null.
+   * @param options - Whether a missing run throws or resolves to null, and an optional guard.
    * @param options.missingIsError - When true, a missing run throws; when false, it resolves to null.
+   * @param options.guard - Parent-advance guard forwarded to the store; when
+   *   present the write refuses if the run still has a live delegated child.
    * @returns The resulting state, or null when missing and tolerated.
    * @throws {Error} When the run is missing (and not tolerated), owned by an
    *   execution, or lost to a concurrent writer.
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
+   *   live delegated child blocks the advance.
    */
   private async mutate(
     id: string,
     buildUpdates: (
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
-    options: { readonly missingIsError: boolean },
+    options: { readonly missingIsError: boolean; readonly guard?: ParentAdvanceGuard },
   ): Promise<RunbookState | null> {
     const runId = this.toRunId(id);
     if (runId === null) {
@@ -702,12 +716,16 @@ export class RunbookStateManager {
       return null;
     }
     const store = await this.store();
-    const result = await store.mutateState(runId, async (current) => {
-      const updates = await buildUpdates(current);
-      return updates === null
-        ? null
-        : applyRunbookStateUpdate(current, updates, new Date().toISOString());
-    });
+    const result = await store.mutateState(
+      runId,
+      async (current) => {
+        const updates = await buildUpdates(current);
+        return updates === null
+          ? null
+          : applyRunbookStateUpdate(current, updates, new Date().toISOString());
+      },
+      { guard: options.guard },
+    );
     if (result.kind === 'missing' && !options.missingIsError) {
       return null;
     }

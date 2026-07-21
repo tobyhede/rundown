@@ -20,7 +20,13 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertClaimLookupKey, assertClaimSecretHash } from '../../src/runbook/claim-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
+import {
+  parentAdvanceGuard,
+  isOpenDelegatedChildrenError,
+} from '../../src/runbook/storage/runbook-store.js';
+import { assertClaimGeneration } from '../../src/runbook/storage/mutation-result.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
+import type { Step, Runbook, RunId, DelegationLinkage } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import {
   brandTrustedArtifactArrayForTest,
@@ -1402,6 +1408,65 @@ describe('RunbookStateManager', () => {
       expect(result.state).toBeNull();
       expect(result.value).toBeNull();
       expect(buildResult).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('parent-advance guard', () => {
+    const PARENT_STEP_ID = 'a';
+    const PARENT_FRAME = buildFrameKey('1');
+    const TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+
+    function delegationLinkage(parentRunId: RunId): DelegationLinkage {
+      return {
+        kind: 'delegation',
+        parentRunId,
+        parentStepId: PARENT_STEP_ID,
+        parentStep: '1',
+        parentFrameKey: PARENT_FRAME,
+        parentEntry: 1,
+        tokenHash: TOKEN_HASH,
+      };
+    }
+
+    it('refuses a guarded update when the parent has a live delegated child', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      await manager.update(parent.id, {
+        substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: delegationLinkage(parent.id),
+      });
+      const store = await getRunbookStore(testDir);
+      await store.transaction((txn) => {
+        txn.insertClaim(
+          makeClaimRecord({
+            claimKey: assertClaimLookupKey(`rdclk_${'c'.repeat(32)}`),
+            controlledRunId: child.id,
+            delegation: {
+              childRunId: child.id,
+              parentRunId: parent.id,
+              parentStepId: PARENT_STEP_ID,
+              parentStep: '1',
+              parentFrameKey: PARENT_FRAME,
+              parentEntry: 1,
+              tokenHash: TOKEN_HASH,
+            },
+            grants: [{ action: 'mutate-run', runId: child.id }],
+          }),
+          assertClaimGeneration(0),
+        );
+      });
+
+      const error: unknown = await manager
+        .update(parent.id, { step: '2' }, { guard: parentAdvanceGuard(parent.id) })
+        .then(
+          (value) => value,
+          (reason: unknown) => reason,
+        );
+      expect(isOpenDelegatedChildrenError(error)).toBe(true);
     });
   });
 });
