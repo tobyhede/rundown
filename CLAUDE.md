@@ -109,12 +109,13 @@ Domain locks expose `scope()` / `held()` built on them.
 
 **Examples:** `CompletionLock`, `DelegationLock`, and `SessionLock`
 (`packages/core/src/runbook/{completion,delegation,session}-lock.ts`) all expose
-`acquire` + `scope()` / `held()`. `RunStateLock` (`run-state-lock.ts`) is the
-exception: it is consumed through the narrow `RunStateLockLike` DI interface
-(acquire/release only, so test fakes stay trivial), so its caller —
-`RunbookStateManager.withRunStateLock` in `state.ts` — wraps `heldLock` inline
-rather than calling a `held()` method. See the lock fixture tests under
-`packages/core/__tests__/runbook/` (`*-lock.test.ts`).
+`acquire` + `scope()` / `held()`. A narrower DI variant exists for consumers
+that inject a deterministic fake lock: the acquire/release-only interfaces
+`DelegationLockLike` and `RunStateLockLike` (`{delegation,run-state}-lock.ts`),
+whose callers wrap `heldLock` + `await using` inline rather than calling a
+`held()` method. The live consumer is the lifecycle seam's injected
+`delegationLock` (`lifecycle-command-service.ts`). See the lock fixture tests
+under `packages/core/__tests__/runbook/` (`*-lock.test.ts`).
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 (e.g., `sessionLockPath(cwd)` if manifest is per-project, or derive a

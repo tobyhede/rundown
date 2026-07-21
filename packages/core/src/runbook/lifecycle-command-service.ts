@@ -2392,38 +2392,39 @@ export class RunbookLifecycleCommandService {
   // concurrent writer can neither orphan the recorded row nor move the cursor
   // between record and drain.
   //
-  // Lock-ordering proof (roadmap item 15, amended by the 2026-07-03 plan
-  // review): nothing reachable from inside this span acquires another domain
-  // lock.
+  // Lock-ordering proof (roadmap item 15; SessionLock and the run-state file
+  // lock have since been replaced by SQLite transactions, so the only live
+  // cross-lock edge is between the two remaining file-lock domains). Nothing
+  // reachable from inside this span acquires a file-lock domain that could
+  // invert that edge:
   // - `guardOpenChildren` is false BY CONSTRUCTION on every explicit-target
   //   path (an explicit-step selector makes the transition targeted; a
-  //   claim-with---step combination resolves kind 'claim'), so the SessionLock
-  //   guard (`runGuardedParentAdvance`) never nests inside this scope.
-  // - `#applyTerminalSideEffects` → `sessionService.releaseRunbook` acquires
-  //   the project-wide SessionLock, and IS reachable from a terminal drain —
-  //   so `#drainSubstepObservations` returns the pending terminal status as
-  //   data and the side effect is applied strictly AFTER the `await using`
-  //   scope below closes. Applying it in-span would create a CompletionLock →
-  //   SessionLock edge; the bare guarded path holds the opposite SessionLock →
-  //   CompletionLock edge (`runGuardedParentAdvance` around the locking
-  //   record), which would be an ABBA inversion.
-  // - Remaining cross-lock edges stay acyclic: SessionLock → CompletionLock
-  //   (bare guarded record — never holds CompletionLock while waiting),
-  //   DelegationLock → CompletionLock (`recordChildCompletion` →
-  //   `recordManualCompletion`), and every domain lock → RunStateLock (the
-  //   sanctioned leaf per run-state-lock.ts). CompletionLock acquires nothing
-  //   but RunStateLock inside this span.
+  //   claim-with---step combination resolves kind 'claim'), so
+  //   `runGuardedParentAdvance` — whose open-delegated-children check is now an
+  //   in-transaction SQLite guard, not a lock — is never invoked on this path.
+  // - `#applyTerminalSideEffects` → `sessionService.releaseRunbook` commits a
+  //   SQLite session transaction (`mutateSession`), and IS reachable from a
+  //   terminal drain — so `#drainSubstepObservations` returns the pending
+  //   terminal status as data and the side effect is applied strictly AFTER the
+  //   `await using` scope below closes. It holds no file lock, so this is not an
+  //   ABBA requirement; keeping it out of the span bounds CompletionLock hold
+  //   time and avoids holding a file lock across an unrelated DB write.
+  // - The only live cross-lock file-lock edge is DelegationLock → CompletionLock
+  //   (`recordChildCompletion` holds the parent DelegationLock while calling
+  //   `recordManualCompletion`, which acquires the CompletionLock). This span
+  //   acquires no DelegationLock, so it cannot invert that edge. Run state and
+  //   session state commit through short SQLite transactions, not a file lock.
   //
   // Hold-time note: the span holds the CompletionLock across the whole drain
   // loop, so the worst case scales with the number of queued resolved
   // completions (substep count × single-apply machine dispatch, each pass an
-  // `ensureActiveEntry` + `listResolvedCompletions` + `sendAndSync` under
-  // RunStateLock — milliseconds each on a local filesystem). Contenders are
-  // bounded by the 5s file-lock deadline, and `recordChildCompletion` waits on
-  // this lock WHILE HOLDING the parent DelegationLock, so the hold time must
-  // stay well under that deadline; if a step ever carries enough substeps to
-  // threaten it, cap applied completions per span and let the next locking
-  // drain pick up the surplus.
+  // `ensureActiveEntry` + `listResolvedCompletions` + `sendAndSync`, each
+  // committed through a short SQLite transaction — milliseconds each on a local
+  // filesystem). Contenders are bounded by the 5s file-lock deadline, and
+  // `recordChildCompletion` waits on this lock WHILE HOLDING the parent
+  // DelegationLock, so the hold time must stay well under that deadline; if a
+  // step ever carries enough substeps to threaten it, cap applied completions
+  // per span and let the next locking drain pick up the surplus.
   //
   // `CompletionLockTimeoutError` propagates as a throw — the same contract the
   // pre-span record path had when its internal lock scope timed out.
@@ -2484,8 +2485,8 @@ export class RunbookLifecycleCommandService {
       );
     }
     // The `await using` scope above has closed: the CompletionLock is released
-    // before any terminal side effect can take the SessionLock (see the
-    // lock-ordering proof in the method comment).
+    // before the terminal side effect commits its SQLite session transaction
+    // (see the lock-ordering proof in the method comment).
     if (drained.terminalStatus) {
       await this.#applyTerminalSideEffects(input, drained.terminalStatus, activeState.id);
     }
@@ -2498,7 +2499,7 @@ export class RunbookLifecycleCommandService {
   // Terminal side effects are NOT applied here: a terminal drain returns its
   // status as data and the caller applies #applyTerminalSideEffects — the
   // explicit span must do so only after its CompletionLock scope closes
-  // (SessionLock must never nest inside it).
+  // (bounding CompletionLock hold time across the terminal session write).
   async #drainSubstepObservations(
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],

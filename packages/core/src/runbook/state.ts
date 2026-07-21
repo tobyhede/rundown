@@ -288,7 +288,7 @@ export interface RunbookStateManagerOptions {
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
- * State is persisted to `.rundown/runs/` as JSON files.
+ * State is persisted in the project's SQLite database (`.rundown/rundown.db`).
  * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
@@ -515,10 +515,11 @@ export class RunbookStateManager {
   }
 
   /**
-   * Save a runbook state to disk.
+   * Save a runbook state.
    *
-   * Creates the state directory if it does not exist and writes the state
-   * as a JSON file, automatically updating the `updatedAt` timestamp.
+   * Persists the state through the SQLite store — inserting a new run or
+   * updating the existing row — automatically updating the `updatedAt`
+   * timestamp.
    *
    * @param state - The runbook state to persist
    */
@@ -816,19 +817,15 @@ export class RunbookStateManager {
   /**
    * Load the session data from disk.
    *
-   * @returns The parsed session data, or a default empty session if the file doesn't exist
-   * @throws {Error} When the persisted session is incompatible with the current
-   *   model and must NOT be adapted. Rundown never migrates persisted runbook
-   *   state, so each of these is a rejection with an explicit user recovery path,
-   *   never a hydration or a shim:
-   *   - A legacy per-agent ownership shape (`ownedRunbooks`, `stashedRunbookOwnership`,
-   *     or `stacks`) — recover by finishing or pruning active runbooks and restarting.
-   *   - A claim record predating the required `ClaimRecord.lastSeenAt` (#519) —
-   *     same recovery. Checked before schema validation purely to route this cause to
-   *     the finish/prune/restart path rather than Zod's delete-the-file message.
-   *   - A session failing `SessionDataSchema` — recover by deleting
-   *     `.rundown/session.json` and restarting active runbooks.
-   * @throws {SyntaxError} When the session file is not parseable JSON.
+   * @returns The parsed session data, or a default empty session if none exists
+   * @throws {Error} When the session reconstructed from the store fails
+   *   `SessionDataSchema` validation and must NOT be adapted. Rundown never
+   *   migrates persisted runbook state, so this is a rejection with an explicit
+   *   user recovery path — finish or prune active runbooks and restart — never a
+   *   hydration or a shim. The store reconstructs the session from typed columns,
+   *   so the legacy-shape and unparseable-JSON causes that policed hand-edited
+   *   `session.json` no longer apply; an incompatible database schema version is
+   *   rejected earlier, at store open (`IncompatibleSchemaError`), not here.
    */
   async loadSession(): Promise<SessionData> {
     const store = await this.store();

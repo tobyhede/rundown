@@ -465,8 +465,9 @@ async function projectAndConsumeReEntryFrontier(
  * the children's: a parent cannot vouch for a child's liveness (#519 AC5).
  * Best-effort and total, so failure cannot mask the later collection (RD-102).
  *
- * Called outside any session-lock scope: `recordClaimSeen` self-acquires the
- * session lock, which is not reentrant.
+ * Called outside any session-mutation scope: `recordClaimSeen` opens its own
+ * SQLite session transaction (`mutateSession`), which cannot nest inside
+ * another.
  *
  * @param input - The collect operation input carrying the caller's evidence.
  */
