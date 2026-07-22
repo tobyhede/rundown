@@ -24,9 +24,15 @@ import {
 } from '../../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../../src/runbook/delegation-token.js';
 import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
-import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
+import type {
+  DelegationLinkage,
+  RunbookState,
+  Runbook,
+  Step,
+  SubstepState,
+} from '../../../src/runbook/types.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
-import { makeBaseStep } from '../../helpers/step-factories.js';
+import { makeBaseStep, makeStepDelegation } from '../../helpers/step-factories.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
@@ -74,6 +80,53 @@ async function mintClaim(runId: RunId, keyHex: string): Promise<string> {
     txn.insertClaim(record, assertClaimGeneration(0));
   });
   return claimKey;
+}
+
+const TARGET_FRAME = buildFrameKey('1');
+const COLLIDING_FRAME = buildFrameKey('2');
+
+function initialLinkage(parentRunId: RunId, tokenFill = 'a'): DelegationLinkage {
+  return {
+    kind: 'delegation',
+    parentRunId,
+    parentStepId: '1.1',
+    parentStep: '1',
+    parentFrameKey: TARGET_FRAME,
+    parentEntry: 1,
+    tokenHash: assertDelegationTokenHash(`sha256:${tokenFill.repeat(64)}`),
+  };
+}
+
+function delegationSubstep(
+  id: string,
+  frameKey: ReturnType<typeof buildFrameKey>,
+  linkage: DelegationLinkage,
+  childRunId: RunId | null = null,
+): SubstepState {
+  return {
+    id,
+    frameKey,
+    status: 'running',
+    delegation: makeStepDelegation({ tokenHash: linkage.tokenHash, childRunId }),
+  };
+}
+
+function snapshotSubsteps(state: RunbookState): readonly SubstepState[] {
+  const snapshot = state.snapshot as
+    | { readonly context?: { readonly substepStates?: unknown } }
+    | undefined;
+  return snapshot?.context?.substepStates as readonly SubstepState[];
+}
+
+function withSnapshotSubsteps(
+  state: RunbookState,
+  substepStates: readonly SubstepState[],
+): RunbookState {
+  return {
+    ...state,
+    substepStates,
+    snapshot: { context: { substepStates } } as RunbookState['snapshot'],
+  };
 }
 
 describe('RunbookStore round-trip', () => {
@@ -154,6 +207,151 @@ describe('RunbookStore round-trip', () => {
           .get<{ readonly phase: string }>({ id: state.id }),
       ),
     ).toEqual({ phase: 'claimed' });
+  });
+});
+
+describe('atomic initial delegation link transaction operations', () => {
+  it('links only the exact id/frame entry and synchronizes snapshot context', async () => {
+    const parent = await newState({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    const linkage = initialLinkage(parent.id);
+    const childRunId = assertRunId(`rd_${'1'.repeat(32)}`);
+    const target = delegationSubstep('1.1', TARGET_FRAME, linkage);
+    const sameIdOtherFrame = delegationSubstep('1.1', COLLIDING_FRAME, linkage);
+    const otherIdSameFrame = delegationSubstep('1.2', TARGET_FRAME, linkage);
+    await store.createRun(
+      withSnapshotSubsteps(parent, [target, sameIdOtherFrame, otherIdSameFrame]),
+    );
+
+    const result = await store.transaction((txn) =>
+      txn.linkInitialDelegation({ childRunId, linkage }, '2026-07-22T10:00:00.000Z'),
+    );
+
+    expect(result).toBe('linked');
+    const persisted = await store.loadRun(parent.id);
+    expect(persisted?.updatedAt).toBe('2026-07-22T10:00:00.000Z');
+    expect(persisted?.substepStates).toEqual([
+      { ...target, delegation: { ...target.delegation, childRunId } },
+      sameIdOtherFrame,
+      otherIdSameFrame,
+    ]);
+    expect(snapshotSubsteps(persisted as RunbookState)).toEqual(persisted?.substepStates);
+    expect((await counters(parent.id)).stateVersion).toBe(1);
+  });
+
+  it('distinguishes missing, mismatched, replayed, and occupied link slots without writing', async () => {
+    const missingId = assertRunId(`rd_${'2'.repeat(32)}`);
+    const missingLinkage = initialLinkage(missingId);
+    const childRunId = assertRunId(`rd_${'3'.repeat(32)}`);
+    await expect(
+      store.transaction((txn) =>
+        txn.linkInitialDelegation(
+          { childRunId, linkage: missingLinkage },
+          '2026-07-22T10:00:00.000Z',
+        ),
+      ),
+    ).resolves.toBe('conflict');
+
+    const parent = await newState();
+    const linkage = initialLinkage(parent.id);
+    const linkedTarget = delegationSubstep('1.1', TARGET_FRAME, linkage, childRunId);
+    await store.createRun({ ...parent, substepStates: [linkedTarget] });
+    const before = await counters(parent.id);
+
+    await expect(
+      store.transaction((txn) =>
+        txn.linkInitialDelegation({ childRunId, linkage }, '2026-07-22T10:00:00.000Z'),
+      ),
+    ).resolves.toBe('already-linked');
+    await expect(
+      store.transaction((txn) =>
+        txn.linkInitialDelegation(
+          { childRunId: assertRunId(`rd_${'4'.repeat(32)}`), linkage },
+          '2026-07-22T10:00:00.000Z',
+        ),
+      ),
+    ).resolves.toBe('conflict');
+    await expect(
+      store.transaction((txn) =>
+        txn.linkInitialDelegation(
+          {
+            childRunId,
+            linkage: { ...linkage, tokenHash: initialLinkage(parent.id, 'b').tokenHash },
+          },
+          '2026-07-22T10:00:00.000Z',
+        ),
+      ),
+    ).resolves.toBe('conflict');
+    expect(await counters(parent.id)).toEqual(before);
+    expect((await store.loadRun(parent.id))?.substepStates).toEqual([linkedTarget]);
+  });
+
+  it('clears only the exact token/child entry and synchronizes snapshot context', async () => {
+    const parent = await newState({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    const linkage = initialLinkage(parent.id);
+    const childRunId = assertRunId(`rd_${'5'.repeat(32)}`);
+    const target = delegationSubstep('1.1', TARGET_FRAME, linkage, childRunId);
+    const sameIdOtherFrame = delegationSubstep('1.1', COLLIDING_FRAME, linkage, childRunId);
+    const otherIdSameFrame = delegationSubstep('1.2', TARGET_FRAME, linkage, childRunId);
+    await store.createRun(
+      withSnapshotSubsteps(parent, [target, sameIdOtherFrame, otherIdSameFrame]),
+    );
+
+    const result = await store.transaction((txn) =>
+      txn.clearInitialDelegation({ childRunId, linkage }, '2026-07-22T11:00:00.000Z'),
+    );
+
+    expect(result).toBe('cleared');
+    const persisted = await store.loadRun(parent.id);
+    expect(persisted?.updatedAt).toBe('2026-07-22T11:00:00.000Z');
+    expect(persisted?.substepStates).toEqual([
+      { ...target, delegation: { ...target.delegation, childRunId: null } },
+      sameIdOtherFrame,
+      otherIdSameFrame,
+    ]);
+    expect(snapshotSubsteps(persisted as RunbookState)).toEqual(persisted?.substepStates);
+    expect((await counters(parent.id)).stateVersion).toBe(1);
+  });
+
+  it('leaves state untouched for missing, token-mismatched, and child-mismatched clear requests', async () => {
+    const missingId = assertRunId(`rd_${'6'.repeat(32)}`);
+    const missingLinkage = initialLinkage(missingId);
+    const childRunId = assertRunId(`rd_${'7'.repeat(32)}`);
+    await expect(
+      store.transaction((txn) =>
+        txn.clearInitialDelegation(
+          { childRunId, linkage: missingLinkage },
+          '2026-07-22T11:00:00.000Z',
+        ),
+      ),
+    ).resolves.toBe('already-absent');
+
+    const parent = await newState();
+    const linkage = initialLinkage(parent.id);
+    const linkedTarget = delegationSubstep('1.1', TARGET_FRAME, linkage, childRunId);
+    await store.createRun({ ...parent, substepStates: [linkedTarget] });
+    const before = await counters(parent.id);
+
+    await expect(
+      store.transaction((txn) =>
+        txn.clearInitialDelegation(
+          {
+            childRunId,
+            linkage: { ...linkage, tokenHash: initialLinkage(parent.id, 'c').tokenHash },
+          },
+          '2026-07-22T11:00:00.000Z',
+        ),
+      ),
+    ).resolves.toBe('already-absent');
+    await expect(
+      store.transaction((txn) =>
+        txn.clearInitialDelegation(
+          { childRunId: assertRunId(`rd_${'8'.repeat(32)}`), linkage },
+          '2026-07-22T11:00:00.000Z',
+        ),
+      ),
+    ).resolves.toBe('already-absent');
+    expect(await counters(parent.id)).toEqual(before);
+    expect((await store.loadRun(parent.id))?.substepStates).toEqual([linkedTarget]);
   });
 });
 
