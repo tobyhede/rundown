@@ -219,6 +219,8 @@ export interface CommitRow {
   readonly claimStatus: string | null;
   /** Whether the presented claim controls the target run (#613 unification). */
   readonly claimControlsRun: boolean;
+  /** Persisted delegation linkage for the presented claim, else null. */
+  readonly claimDelegationJson: string | null;
   /** Parent run id for a delegated claim, else null. */
   readonly parentId: string | null;
   /** Parent lifecycle for a delegated claim, else null. */
@@ -375,6 +377,7 @@ const COMMIT_ROW_SQL = `
     c.key                    AS claim_key,
     c.status                 AS claim_status,
     c.controlled_run         AS controlled_run,
+    c.delegation_json        AS claim_delegation_json,
     p.id                     AS parent_id,
     p.lifecycle              AS parent_lifecycle,
     r.exec_token             AS exec_token,
@@ -394,6 +397,7 @@ type RawCommitRow = {
   readonly claim_key: string | null;
   readonly claim_status: string | null;
   readonly controlled_run: string | null;
+  readonly claim_delegation_json: string | null;
   readonly parent_id: string | null;
   readonly parent_lifecycle: string | null;
   readonly exec_token: string | null;
@@ -426,6 +430,7 @@ export function selectCommitRow(
       claimPresent: false,
       claimStatus: null,
       claimControlsRun: false,
+      claimDelegationJson: null,
       parentId: null,
       parentLifecycle: null,
       execToken: null,
@@ -441,6 +446,7 @@ export function selectCommitRow(
     claimPresent,
     claimStatus: raw.claim_status,
     claimControlsRun: claimPresent && raw.controlled_run === runId,
+    claimDelegationJson: raw.claim_delegation_json,
     parentId: raw.parent_id,
     parentLifecycle: raw.parent_lifecycle,
     execToken: raw.exec_token,
@@ -484,7 +490,19 @@ export function captureAuthority(
       message: `The presented claim does not control run ${runId}.`,
     };
   }
-  const parent = row.parentId !== null ? { runId: assertRunId(row.parentId) } : undefined;
+  const delegatedParent =
+    row.claimDelegationJson === null
+      ? undefined
+      : parseDelegationLinkage(row.claimDelegationJson, claimKey).parentRunId;
+  const parent = delegatedParent === undefined ? undefined : { runId: delegatedParent };
+  const parentTerminal = row.parentLifecycle === 'completed' || row.parentLifecycle === 'stopped';
+  if (parent && (row.parentId !== parent.runId || parentTerminal)) {
+    return {
+      kind: 'claim_superseded',
+      runId,
+      message: `The delegated parent of run ${runId} is missing, terminal, or relinked.`,
+    };
+  }
   return {
     kind: 'captured',
     authority: {
