@@ -61,7 +61,11 @@ function runGuard(repo, base, extraEnv = {}) {
   if (base) args.push('--base', base);
   const env = { ...GUARD_BASE_ENV, ...extraEnv };
   try {
-    const stdout = execFileSync('node', args, { cwd: repo, encoding: 'utf8', env });
+    const stdout = execFileSync('node', args, {
+      cwd: repo,
+      encoding: 'utf8',
+      env,
+    });
     return { status: 0, stdout, stderr: '' };
   } catch (err) {
     return {
@@ -178,6 +182,55 @@ test('flags a renamed committed dated file (rename rewrites the record)', () => 
   );
 });
 
+test('flags a dated file moved out of docs/superpowers into docs/internal', () => {
+  // Moving a dated record into docs/internal/ rewrites the record just as a
+  // same-directory rename does. The guard must catch it even though the new
+  // path lands outside docs/superpowers/ — rename detection has to consider all
+  // paths, not just those under the scope prefix.
+  git(
+    repo,
+    'mv',
+    'docs/superpowers/plans/2026-07-15-example-plan.md',
+    'docs/internal/2026-07-15-example-plan.md',
+  );
+  git(repo, 'commit', '-qm', 'move dated plan into docs/internal');
+
+  const result = runGuard(repo, baseSha);
+  assert.equal(
+    result.status,
+    1,
+    `moving a dated file out of docs/superpowers must be flagged; stderr: ${result.stderr}`,
+  );
+  assert.match(
+    result.stderr,
+    /2026-07-15-example-plan\.md/,
+    'guard must name the original dated path when it is moved out of scope',
+  );
+});
+
+test('flags a modified dated file whose path contains non-ASCII characters', () => {
+  // git's default --name-status C-quotes paths with non-ASCII bytes (wrapping
+  // them in double quotes with octal escapes), which breaks tab-splitting and
+  // hides the real path from isDatedDoc. NUL-delimited (-z) output emits the raw
+  // literal path, so the guard must still flag the rewrite.
+  const special = 'docs/superpowers/plans/2026-07-15-café-plan.md';
+  put(repo, special, '# Plan\n\nAs planned.\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-qm', 'add dated plan with non-ascii name');
+  const specialBase = git(repo, 'rev-parse', 'HEAD');
+
+  put(repo, special, '# Plan\n\nRewritten after the fact.\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-qm', 'rewrite non-ascii dated plan');
+
+  const result = runGuard(repo, specialBase);
+  assert.equal(
+    result.status,
+    1,
+    `modified dated file with a non-ASCII path must be flagged; stderr: ${result.stderr}`,
+  );
+});
+
 test('ignores a modified non-dated doc under docs/superpowers', () => {
   put(repo, 'docs/superpowers/README.md', '# Index\n\nUpdated index.\n');
   git(repo, 'add', '-A');
@@ -223,7 +276,9 @@ test('resolves the base via GITHUB_BASE_REF (origin/<branch>) and flags a modifi
 });
 
 test('CI mode: unresolvable base exits non-zero naming the misconfiguration', () => {
-  const result = runGuard(repo, 'refs/heads/does-not-exist', { GITHUB_ACTIONS: 'true' });
+  const result = runGuard(repo, 'refs/heads/does-not-exist', {
+    GITHUB_ACTIONS: 'true',
+  });
   assert.equal(
     result.status,
     1,

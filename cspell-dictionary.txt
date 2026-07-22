@@ -162,6 +162,7 @@ parameterised
 parameterizing
 parseable
 pasteable
+pathspec
 perf
 persistable
 picomatch

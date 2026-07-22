@@ -67,7 +67,11 @@ function resolveBase(explicit) {
   if (process.env.GITHUB_BASE_REF) candidates.push(`origin/${process.env.GITHUB_BASE_REF}`);
   candidates.push('origin/main', 'main');
   for (const ref of candidates) {
-    if (git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFailure: true })) {
+    if (
+      git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+        allowFailure: true,
+      })
+    ) {
       return ref;
     }
   }
@@ -140,29 +144,48 @@ function main() {
   //    rename, so it is NOT flagged. That is consistent with delete+add being
   //    allowed, but it means the rename branch is a near-verbatim tripwire, not a
   //    complete guard against "moved and rewritten" — do not over-trust it.
+  // No `-- docs/superpowers/` pathspec: a dated doc *moved out* of the scope
+  // prefix (e.g. into docs/internal/) rewrites the record just as an in-scope
+  // rename does, but a pathspec that excludes the rename's destination makes git
+  // report it as a plain deletion (allowed) instead of a rename (flagged). Diff
+  // every path and rely on isDatedDoc() applied to the *old* path to scope the
+  // check — that catches renames whether or not the destination is in scope.
+  // -z: NUL-delimited, unquoted output. Without it, git C-quotes paths with
+  // non-ASCII bytes or other unusual characters (wrapping them in double quotes
+  // with octal escapes), which both breaks tab-splitting and hides the real path
+  // from isDatedDoc(). With -z each field is a raw literal separated by NUL, so a
+  // renamed record is `R<score>\0<old>\0<new>\0` and a modified one is `M\0<path>\0`.
   const raw = git([
     'diff',
     '--name-status',
     '--find-renames',
+    '-z',
     '--diff-filter=MR',
     mergeBase,
     'HEAD',
-    '--',
-    DOCS_PREFIX,
   ]);
 
   /** @type {{ path: string; kind: 'modified' | 'renamed'; to?: string }[]} */
   const violations = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    const fields = line.split('\t');
-    const status = fields[0];
-    if (status.startsWith('R')) {
-      // R<score>\t<old>\t<new> — the old path is the record being rewritten.
-      const [, from, to] = fields;
+  const tokens = raw.split('\0');
+  let i = 0;
+  while (i < tokens.length) {
+    const status = tokens[i];
+    if (!status) {
+      i += 1; // skip empty trailing token (git terminates the last record with NUL)
+      continue;
+    }
+    if (status.startsWith('R') || status.startsWith('C')) {
+      // R<score>/C<score> carry two path fields: <old> then <new>. The old path
+      // is the record being rewritten.
+      const from = tokens[i + 1];
+      const to = tokens[i + 2];
+      i += 3;
       if (isDatedDoc(from)) violations.push({ path: from, kind: 'renamed', to });
-    } else if (status.startsWith('M')) {
-      const path = fields[1];
+    } else {
+      // Single-path statuses (M here; A/D/T never reach us under --diff-filter=MR).
+      const path = tokens[i + 1];
+      i += 2;
       if (isDatedDoc(path)) violations.push({ path, kind: 'modified' });
     }
   }
