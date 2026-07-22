@@ -221,7 +221,7 @@ export interface CommitRow {
   readonly claimControlsRun: boolean;
   /** Persisted delegation linkage for the presented claim, else null. */
   readonly claimDelegationJson: string | null;
-  /** Parent run id for a delegated claim, else null. */
+  /** Live joined parent run id; null after parent deletion or for a non-delegated claim. */
   readonly parentId: string | null;
   /** Parent lifecycle for a delegated claim, else null. */
   readonly parentLifecycle: string | null;
