@@ -234,7 +234,8 @@ export async function closeRunbookStores(): Promise<void> {
  * Close and forget the store for one project root.
  *
  * @param cwd - Project root whose store should be closed.
- * @returns Resolves once the store is disposed, or immediately when none is open.
+ * @returns Resolves once an open or already-closing store is disposed, or
+ *   immediately when the project is neither open nor closing.
  */
 export async function closeRunbookStore(cwd: string): Promise<void> {
   const key = runbookStoreKey(cwd);
