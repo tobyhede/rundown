@@ -75,6 +75,20 @@ function resolveBase(explicit) {
 }
 
 /**
+ * Whether the guard is running inside CI.
+ *
+ * In CI an unresolvable base or merge base is a misconfiguration (missing
+ * history, an `origin/main` that was never fetched, a renamed base branch) —
+ * not the offline clone that the local no-op path exists for — so it must fail
+ * loudly rather than pass while checking nothing (issue #612).
+ *
+ * @returns {boolean} true when GITHUB_ACTIONS is 'true' or CI is truthy
+ */
+function isCI() {
+  return process.env.GITHUB_ACTIONS === 'true' || Boolean(process.env.CI);
+}
+
+/**
  * Whether a repo-relative path is a dated write-once doc under docs/superpowers.
  *
  * @param {string} path - repo-relative path
@@ -90,22 +104,42 @@ function main() {
   const explicit = parseBaseArg(process.argv.slice(2));
   const base = resolveBase(explicit);
   if (!base) {
-    console.log(
-      'note: no base ref resolvable (need origin/main or --base); skipping dated-docs immutability check.',
-    );
+    const detail = 'no base ref resolvable (need full history / origin/main / --base)';
+    if (isCI()) {
+      console.error(
+        `error: ${detail}; refusing to pass the dated-docs immutability check without a real comparison — this is a CI misconfiguration (ensure fetch-depth: 0 so origin/main is available, or pass --base).`,
+      );
+      return 1;
+    }
+    console.log(`note: ${detail}; skipping dated-docs immutability check.`);
     return 0;
   }
 
   const mergeBase = git(['merge-base', base, 'HEAD'], { allowFailure: true });
   if (!mergeBase) {
-    console.log(
-      `note: no merge base between ${base} and HEAD; skipping dated-docs immutability check.`,
-    );
+    const detail = `no merge base between ${base} and HEAD`;
+    if (isCI()) {
+      console.error(
+        `error: ${detail}; refusing to pass the dated-docs immutability check without a real comparison — this is a CI misconfiguration (ensure full history is fetched with fetch-depth: 0).`,
+      );
+      return 1;
+    }
+    console.log(`note: ${detail}; skipping dated-docs immutability check.`);
     return 0;
   }
 
   // Modified (M) and renamed (R) entries only — additions and deletions are
   // allowed. --find-renames surfaces renames so we can flag them.
+  //
+  // Caveat: --find-renames uses git's default ~50% similarity threshold, so this
+  // rename branch only catches *near-verbatim* renames. Two consequences follow:
+  //  - A sanctioned "supersede with a new dated file" that copies most of the old
+  //    file's text into the new one can be paired by git as a rename and flagged
+  //    (a possible false positive — split the copy or reword to avoid it).
+  //  - A rename combined with a >50% rewrite is reported as delete+add, not a
+  //    rename, so it is NOT flagged. That is consistent with delete+add being
+  //    allowed, but it means the rename branch is a near-verbatim tripwire, not a
+  //    complete guard against "moved and rewritten" — do not over-trust it.
   const raw = git([
     'diff',
     '--name-status',
@@ -134,7 +168,11 @@ function main() {
   }
 
   if (violations.length === 0) {
-    console.log(`dated docs under ${DOCS_PREFIX} are unchanged relative to ${base} — OK`);
+    // Name the resolved base and the compared range so a CI log positively shows
+    // a real comparison happened rather than a silently skipped no-op.
+    console.log(
+      `dated docs under ${DOCS_PREFIX} are unchanged relative to ${base} (${mergeBase}..HEAD) — OK`,
+    );
     return 0;
   }
 

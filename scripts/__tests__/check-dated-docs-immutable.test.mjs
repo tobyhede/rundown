@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { after, before, test } from 'node:test';
+import { after, before, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const scriptPath = fileURLToPath(new URL('../check-dated-docs-immutable.mjs', import.meta.url));
@@ -15,6 +15,17 @@ const ISOLATED_GIT_ENV = {
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_SYSTEM: '/dev/null',
 };
+
+// Baseline env for the guard's own `node` spawn. It inherits the isolated git
+// config (so the guard's git invocations are hermetic too — Finding 4) and,
+// critically, strips any ambient CI signal from the test host: the guard's
+// CI-mode failure path (Finding 1) keys off GITHUB_ACTIONS / CI, so leaving them
+// set would flip the local-mode no-op tests. Each test opts back into CI mode by
+// passing an explicit `extraEnv`.
+const GUARD_BASE_ENV = { ...ISOLATED_GIT_ENV };
+delete GUARD_BASE_ENV.CI;
+delete GUARD_BASE_ENV.GITHUB_ACTIONS;
+delete GUARD_BASE_ENV.GITHUB_BASE_REF;
 
 /**
  * Run a git command in the given repo and return trimmed stdout.
@@ -37,14 +48,20 @@ function put(repo, relPath, contents) {
 }
 
 /**
- * Run the guard against a base ref. Returns { status, stdout, stderr }.
+ * Run the guard. Returns { status, stdout, stderr }.
+ *
+ * @param {string} repo - repo working directory
+ * @param {string | null} base - explicit `--base` ref, or null/undefined to omit it
+ *   (drives resolution through GITHUB_BASE_REF / origin fallbacks instead)
+ * @param {Record<string, string>} [extraEnv] - env overrides merged onto the
+ *   hermetic base env (e.g. `{ GITHUB_ACTIONS: 'true' }` or `{ GITHUB_BASE_REF }`)
  */
-function runGuard(repo, base) {
+function runGuard(repo, base, extraEnv = {}) {
+  const args = [scriptPath];
+  if (base) args.push('--base', base);
+  const env = { ...GUARD_BASE_ENV, ...extraEnv };
   try {
-    const stdout = execFileSync('node', [scriptPath, '--base', base], {
-      cwd: repo,
-      encoding: 'utf8',
-    });
+    const stdout = execFileSync('node', args, { cwd: repo, encoding: 'utf8', env });
     return { status: 0, stdout, stderr: '' };
   } catch (err) {
     return {
@@ -71,10 +88,23 @@ before(() => {
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'baseline');
   baseSha = git(repo, 'rev-parse', 'HEAD');
+
+  // Move the working branch off `main`/`master` so resolveBase's `origin/main` /
+  // `main` fallback cannot silently resolve to HEAD — that would mask the
+  // "unresolvable base" path the CI-mode and local-mode no-op tests exercise.
+  git(repo, 'branch', '-m', 'topic');
 });
 
 after(() => {
   rmSync(repo, { recursive: true, force: true });
+});
+
+// Restore the repo to the pristine baseline before every test, independent of
+// whether the previous test reached its happy path (Finding 3). A test that
+// throws before an inline reset can no longer leave the shared repo dirty.
+beforeEach(() => {
+  git(repo, 'reset', '-q', '--hard', baseSha);
+  git(repo, 'clean', '-q', '-f', '-d', '-x');
 });
 
 test('flags a modified committed dated plan and names it', () => {
@@ -93,9 +123,6 @@ test('flags a modified committed dated plan and names it', () => {
     /docs\/superpowers\/plans\/2026-07-15-example-plan\.md/,
     'guard must name the offending file',
   );
-
-  // Reset to baseline for isolation of subsequent tests.
-  git(repo, 'reset', '-q', '--hard', baseSha);
 });
 
 test('passes when a brand-new dated file is added', () => {
@@ -105,13 +132,23 @@ test('passes when a brand-new dated file is added', () => {
 
   const result = runGuard(repo, baseSha);
   assert.equal(result.status, 0, `added dated file must pass; stderr: ${result.stderr}`);
-
-  git(repo, 'reset', '-q', '--hard', baseSha);
 });
 
 test('passes on a clean tree (no changes vs base)', () => {
   const result = runGuard(repo, baseSha);
   assert.equal(result.status, 0, `clean tree must pass; stderr: ${result.stderr}`);
+});
+
+test('success output names the resolved base and the compared commit range', () => {
+  const mergeBase = git(repo, 'merge-base', baseSha, 'HEAD');
+  const result = runGuard(repo, baseSha);
+  assert.equal(result.status, 0, `clean tree must pass; stderr: ${result.stderr}`);
+  assert.match(
+    result.stdout,
+    new RegExp(`${mergeBase}\\.\\.HEAD`),
+    'success line must show the compared <mergeBase>..HEAD range so CI logs prove a real comparison',
+  );
+  assert.match(result.stdout, new RegExp(baseSha), 'success line must name the resolved base');
 });
 
 test('passes when a committed dated file is deleted', () => {
@@ -121,8 +158,6 @@ test('passes when a committed dated file is deleted', () => {
 
   const result = runGuard(repo, baseSha);
   assert.equal(result.status, 0, `deletion must pass; stderr: ${result.stderr}`);
-
-  git(repo, 'reset', '-q', '--hard', baseSha);
 });
 
 test('flags a renamed committed dated file (rename rewrites the record)', () => {
@@ -141,8 +176,6 @@ test('flags a renamed committed dated file (rename rewrites the record)', () => 
     /2026-07-15-example-plan\.md/,
     'guard must name the original dated path on rename',
   );
-
-  git(repo, 'reset', '-q', '--hard', baseSha);
 });
 
 test('ignores a modified non-dated doc under docs/superpowers', () => {
@@ -152,8 +185,6 @@ test('ignores a modified non-dated doc under docs/superpowers', () => {
 
   const result = runGuard(repo, baseSha);
   assert.equal(result.status, 0, `non-dated superpowers doc must pass; stderr: ${result.stderr}`);
-
-  git(repo, 'reset', '-q', '--hard', baseSha);
 });
 
 test('ignores a modified doc outside docs/superpowers', () => {
@@ -163,11 +194,57 @@ test('ignores a modified doc outside docs/superpowers', () => {
 
   const result = runGuard(repo, baseSha);
   assert.equal(result.status, 0, `docs/internal edits must pass; stderr: ${result.stderr}`);
-
-  git(repo, 'reset', '-q', '--hard', baseSha);
 });
 
-test('no-ops (exit 0) with a note when the base ref cannot be resolved', () => {
+test('resolves the base via GITHUB_BASE_REF (origin/<branch>) and flags a modification', () => {
+  // Stand in for the PR base branch's remote-tracking ref without a real remote.
+  git(repo, 'update-ref', 'refs/remotes/origin/release', baseSha);
+
+  put(
+    repo,
+    'docs/superpowers/plans/2026-07-15-example-plan.md',
+    '# Plan\n\nRewritten on a PR branch.\n',
+  );
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-qm', 'rewrite dated plan on PR branch');
+
+  // No --base: resolution must flow through GITHUB_BASE_REF -> origin/release.
+  const result = runGuard(repo, null, { GITHUB_BASE_REF: 'release' });
+  assert.equal(
+    result.status,
+    1,
+    `GITHUB_BASE_REF resolution must diff against origin/release and flag the edit; stderr: ${result.stderr}`,
+  );
+  assert.match(
+    result.stderr,
+    /docs\/superpowers\/plans\/2026-07-15-example-plan\.md/,
+    'guard must name the offending file when resolving via GITHUB_BASE_REF',
+  );
+});
+
+test('CI mode: unresolvable base exits non-zero naming the misconfiguration', () => {
+  const result = runGuard(repo, 'refs/heads/does-not-exist', { GITHUB_ACTIONS: 'true' });
+  assert.equal(
+    result.status,
+    1,
+    `CI mode must fail loudly on an unresolvable base rather than pass a no-op; stdout: ${result.stdout}`,
+  );
+  assert.match(
+    result.stderr,
+    /misconfiguration/i,
+    'CI-mode failure must explain the misconfiguration',
+  );
+  assert.match(
+    result.stderr,
+    /origin\/main|--base|full history/,
+    'CI-mode failure must point at the fix (full history / origin/main / --base)',
+  );
+});
+
+test('local mode (no CI env): unresolvable base no-ops with a note (exit 0)', () => {
+  // GUARD_BASE_ENV strips CI/GITHUB_ACTIONS, so an ambient CI=true on the test
+  // host cannot flip this into the CI-mode failure path.
   const result = runGuard(repo, 'refs/heads/does-not-exist');
-  assert.equal(result.status, 0, `unresolvable base must no-op; stderr: ${result.stderr}`);
+  assert.equal(result.status, 0, `unresolvable base must no-op locally; stderr: ${result.stderr}`);
+  assert.match(result.stdout, /skipping/, 'local no-op must print the skip note');
 });
