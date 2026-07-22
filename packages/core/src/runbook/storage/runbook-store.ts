@@ -23,12 +23,14 @@ import type {
   ResolvedCompletion,
   Lifecycle,
   ExecutionRecoveryReason,
+  SubstepState,
 } from '../types.js';
 import { type RunId, assertRunId } from '../run-id.js';
 import {
   type ClaimRecord,
   type ClaimLookupKey,
   type DelegationClaimLinkage,
+  type ClaimAndInitialLinkInput,
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
@@ -43,7 +45,6 @@ import {
   assertClaimGeneration,
   assertStateVersion,
   assertExecutionEpoch,
-  assertLinkageVersion,
   assertExecutionTokenHash,
   verifyExecutionToken,
   hashExecutionToken,
@@ -194,7 +195,6 @@ type ClaimRow = {
   readonly issued_generation: number;
   readonly status: string;
   readonly parent_run_id: string | null;
-  readonly parent_linkage_version: number | null;
   readonly delegation_json: string | null;
   readonly grants_json: string;
   readonly issued_at: string;
@@ -223,8 +223,6 @@ export interface CommitRow {
   readonly parentId: string | null;
   /** Parent lifecycle for a delegated claim, else null. */
   readonly parentLifecycle: string | null;
-  /** Parent linkage version for a delegated claim, else null. */
-  readonly parentLinkageVersion: number | null;
   /** Active attempt's hashed token, or null when unowned. */
   readonly execToken: string | null;
   /** Active attempt's epoch, or null when unowned. */
@@ -299,11 +297,7 @@ export function classifyCommitRow(
   }
   if (captured.parent) {
     const parentTerminal = row.parentLifecycle === 'completed' || row.parentLifecycle === 'stopped';
-    if (
-      row.parentId !== captured.parent.runId ||
-      parentTerminal ||
-      row.parentLinkageVersion !== captured.parent.linkageVersion
-    ) {
+    if (row.parentId !== captured.parent.runId || parentTerminal) {
       return {
         kind: 'claim_superseded',
         runId,
@@ -383,7 +377,6 @@ const COMMIT_ROW_SQL = `
     c.controlled_run         AS controlled_run,
     p.id                     AS parent_id,
     p.lifecycle              AS parent_lifecycle,
-    c.parent_linkage_version AS parent_linkage_version,
     r.exec_token             AS exec_token,
     r.exec_epoch             AS exec_epoch,
     a.phase                  AS exec_phase
@@ -403,7 +396,6 @@ type RawCommitRow = {
   readonly controlled_run: string | null;
   readonly parent_id: string | null;
   readonly parent_lifecycle: string | null;
-  readonly parent_linkage_version: number | null;
   readonly exec_token: string | null;
   readonly exec_epoch: number | null;
   readonly exec_phase: string | null;
@@ -436,7 +428,6 @@ export function selectCommitRow(
       claimControlsRun: false,
       parentId: null,
       parentLifecycle: null,
-      parentLinkageVersion: null,
       execToken: null,
       execEpoch: null,
       execPhase: null,
@@ -452,7 +443,6 @@ export function selectCommitRow(
     claimControlsRun: claimPresent && raw.controlled_run === runId,
     parentId: raw.parent_id,
     parentLifecycle: raw.parent_lifecycle,
-    parentLinkageVersion: raw.parent_linkage_version,
     execToken: raw.exec_token,
     execEpoch: raw.exec_epoch,
     execPhase: raw.exec_phase,
@@ -494,13 +484,7 @@ export function captureAuthority(
       message: `The presented claim does not control run ${runId}.`,
     };
   }
-  const parent =
-    row.parentId !== null && row.parentLinkageVersion !== null
-      ? {
-          runId: assertRunId(row.parentId),
-          linkageVersion: assertLinkageVersion(row.parentLinkageVersion),
-        }
-      : undefined;
+  const parent = row.parentId !== null ? { runId: assertRunId(row.parentId) } : undefined;
   return {
     kind: 'captured',
     authority: {
@@ -613,6 +597,16 @@ export interface RunbookStoreTxn {
   pendingRecovery(runId: RunId): { readonly epoch: ExecutionEpoch } | null;
   /** Return whether a run currently has active execution ownership. */
   executionOwned(runId: RunId): boolean;
+  /** Set a matching delegation's child id under its observed parent state version. */
+  linkInitialDelegation(
+    input: ClaimAndInitialLinkInput,
+    now: string,
+  ): 'linked' | 'already-linked' | 'conflict';
+  /** Clear a matching token+child initial link under its observed state version. */
+  clearInitialDelegation(
+    input: ClaimAndInitialLinkInput,
+    now: string,
+  ): 'cleared' | 'already-absent' | 'conflict';
 }
 
 /** Typed operations available inside a {@link RunbookStore.mutateSession} cycle. */
@@ -1343,7 +1337,98 @@ export class RunbookStore {
             .get<{ readonly owned: 1 }>({ runId }) !== undefined
         );
       },
+      linkInitialDelegation(input, now) {
+        return store.linkInitialDelegation(tx, input, now);
+      },
+      clearInitialDelegation(input, now) {
+        return store.clearInitialDelegation(tx, input, now);
+      },
     };
+  }
+
+  private linkInitialDelegation(
+    tx: SqlTransaction,
+    input: ClaimAndInitialLinkInput,
+    now: string,
+  ): 'linked' | 'already-linked' | 'conflict' {
+    const observed = this.readRunWithVersion(tx, input.linkage.parentRunId);
+    if (observed === null) return 'conflict';
+    const current = findSubstepState(
+      observed.state.substepStates ?? [],
+      input.linkage.parentStepId,
+      input.linkage.parentFrameKey,
+    );
+    if (current?.delegation?.tokenHash !== input.linkage.tokenHash) return 'conflict';
+    if (current.delegation.childRunId !== null) {
+      return current.delegation.childRunId === input.childRunId ? 'already-linked' : 'conflict';
+    }
+    const { token: _token, ...delegation } = current.delegation;
+    const updatedEntry: SubstepState = {
+      ...current,
+      delegation: { ...delegation, childRunId: input.childRunId },
+    };
+    const substepStates = (observed.state.substepStates ?? []).map((entry) =>
+      entry.id === current.id && entry.frameKey === current.frameKey ? updatedEntry : entry,
+    );
+    const next = patchStateSubsteps(observed.state, substepStates, now);
+    const changes = tx
+      .prepare(
+        `UPDATE runs SET state_json = :stateJson, lifecycle = :lifecycle, updated_at = :updatedAt
+         WHERE id = :id AND state_version = :stateVersion AND exec_token IS NULL`,
+      )
+      .run({
+        id: input.linkage.parentRunId,
+        stateVersion: observed.stateVersion,
+        stateJson: serializeStateJson(next),
+        lifecycle: next.lifecycle ?? 'running',
+        updatedAt: now,
+      }).changes;
+    if (changes !== 1) return 'conflict';
+    this.afterAuthoritativeStateWrite(tx, next);
+    return 'linked';
+  }
+
+  private clearInitialDelegation(
+    tx: SqlTransaction,
+    input: ClaimAndInitialLinkInput,
+    now: string,
+  ): 'cleared' | 'already-absent' | 'conflict' {
+    const observed = this.readRunWithVersion(tx, input.linkage.parentRunId);
+    if (observed === null) return 'already-absent';
+    const current = findSubstepState(
+      observed.state.substepStates ?? [],
+      input.linkage.parentStepId,
+      input.linkage.parentFrameKey,
+    );
+    if (
+      current?.delegation?.tokenHash !== input.linkage.tokenHash ||
+      current.delegation.childRunId !== input.childRunId
+    ) {
+      return 'already-absent';
+    }
+    const updatedEntry: SubstepState = {
+      ...current,
+      delegation: { ...current.delegation, childRunId: null },
+    };
+    const substepStates = (observed.state.substepStates ?? []).map((entry) =>
+      entry.id === current.id && entry.frameKey === current.frameKey ? updatedEntry : entry,
+    );
+    const next = patchStateSubsteps(observed.state, substepStates, now);
+    const changes = tx
+      .prepare(
+        `UPDATE runs SET state_json = :stateJson, lifecycle = :lifecycle, updated_at = :updatedAt
+         WHERE id = :id AND state_version = :stateVersion AND exec_token IS NULL`,
+      )
+      .run({
+        id: input.linkage.parentRunId,
+        stateVersion: observed.stateVersion,
+        stateJson: serializeStateJson(next),
+        lifecycle: next.lifecycle ?? 'running',
+        updatedAt: now,
+      }).changes;
+    if (changes !== 1) return 'conflict';
+    this.afterAuthoritativeStateWrite(tx, next);
+    return 'cleared';
   }
 
   /**
@@ -1622,11 +1707,11 @@ export class RunbookStore {
     tx.prepare(
       `INSERT INTO claims
          (key, controlled_run, secret_hash, issued_generation, status,
-          parent_run_id, parent_linkage_version, delegation_json, grants_json,
+          parent_run_id, delegation_json, grants_json,
           issued_at, updated_at, last_seen_at)
        VALUES
          (:key, :controlledRun, :secretHash, :issuedGeneration, 'active',
-          :parentRunId, :parentLinkageVersion, :delegationJson, :grantsJson,
+          :parentRunId, :delegationJson, :grantsJson,
           :issuedAt, :updatedAt, :lastSeenAt)`,
     ).run({
       key: record.claimKey,
@@ -1634,7 +1719,6 @@ export class RunbookStore {
       secretHash: record.secretHash,
       issuedGeneration,
       parentRunId: record.delegation?.parentRunId ?? null,
-      parentLinkageVersion: record.delegation ? 0 : null,
       delegationJson: record.delegation ? JSON.stringify(record.delegation) : null,
       grantsJson: JSON.stringify(record.grants),
       issuedAt: record.issuedAt,
@@ -1812,6 +1896,25 @@ function classificationToResult<T>(
  * @param state - Run state.
  * @returns JSON string for the `state_json` column.
  */
+function patchStateSubsteps(
+  state: RunbookState,
+  substepStates: readonly SubstepState[],
+  updatedAt: string,
+): RunbookState {
+  const snapshot = state.snapshot;
+  const patchedSnapshot =
+    snapshot && typeof snapshot === 'object' && 'context' in snapshot
+      ? {
+          ...(snapshot as Record<string, unknown>),
+          context: {
+            ...((snapshot as { context?: Record<string, unknown> }).context ?? {}),
+            substepStates,
+          },
+        }
+      : snapshot;
+  return { ...state, substepStates, snapshot: patchedSnapshot, updatedAt };
+}
+
 function serializeStateJson(state: RunbookState): string {
   const { resolvedCompletions: _rc, lifecycle: _lc, ...rest } = state;
   return JSON.stringify(rest);

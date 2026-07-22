@@ -20,11 +20,19 @@ import {
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../../src/testing/effective-vars.js';
-import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import { assertClaimLookupKey, type ClaimId } from '../../../src/runbook/claim-id.js';
 import { assertRunId } from '../../../src/runbook/run-id.js';
-import { buildFrameKey } from '../../../src/runbook/targeting.js';
+import { buildFrameKey, findSubstepState } from '../../../src/runbook/targeting.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
+import { SessionService } from '../../../src/runbook/session-service.js';
+import { closeRunbookStore, getRunbookStore } from '../../../src/runbook/storage/store-registry.js';
+import {
+  assertClaimed,
+  linkageFor,
+  seedLiveDelegation,
+  unwrapSessionMutation,
+} from '../claim-test-helpers.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
@@ -290,7 +298,6 @@ describe('classifier totality and single-row invariant', () => {
           claimControlsRun: fc.boolean(),
           parentId: fc.constant(null),
           parentLifecycle: fc.constant(null),
-          parentLinkageVersion: fc.constant(null),
           execToken: fc.oneof(fc.constant(null), fc.constant('sha256:x')),
           execEpoch: fc.oneof(fc.constant(null), fc.nat(5)),
           execPhase: fc.constant(null),
@@ -372,6 +379,139 @@ describe('classifier totality and single-row invariant', () => {
         },
       ),
       { numRuns: 25 },
+    );
+  });
+});
+
+describe.each(['native', 'sqljs'] as const)('atomic initial-link properties [%s]', (runtime) => {
+  it('commits claim insertion and parent linking all-or-none under injected CAS failure', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.boolean(), async (injectFailure) => {
+        const propertyDir = await fs.mkdtemp(path.join(os.tmpdir(), `rd-atomic-${runtime}-`));
+        const propertyManager = new RunbookStateManager(propertyDir, { storeOptions: { runtime } });
+        const service = new SessionService(propertyManager);
+        try {
+          const parent = await propertyManager.create(
+            { source: 'project', path: 'parent.md' },
+            mockRunbook,
+            { runbookPath: 'parent.md' },
+          );
+          const linkage = linkageFor(parent.id, 'a');
+          const child = await propertyManager.create(
+            { source: 'project', path: 'child.md' },
+            mockRunbook,
+            { runbookPath: 'child.md', parentLinkage: linkage },
+          );
+          await seedLiveDelegation(propertyManager, linkage);
+          if (injectFailure) {
+            const propertyStore = await getRunbookStore(propertyDir, { runtime });
+            await propertyStore.transaction((txn) => {
+              txn.tx.exec(`
+                CREATE TRIGGER fail_initial_link_property
+                BEFORE UPDATE OF state_json ON runs
+                WHEN OLD.id = '${parent.id}'
+                BEGIN SELECT RAISE(ABORT, 'injected_initial_link_failure'); END;
+              `);
+            });
+            await expect(
+              service.claimAndInitialLink({ childRunId: child.id, linkage }),
+            ).rejects.toThrow('injected_initial_link_failure');
+          } else {
+            expect(
+              unwrapSessionMutation(
+                await service.claimAndInitialLink({ childRunId: child.id, linkage }),
+              ).status,
+            ).toBe('claimed');
+          }
+
+          const claims = Object.values((await propertyManager.loadSession()).claims);
+          const persisted = await propertyManager.load(parent.id);
+          const linkedChild = findSubstepState(
+            persisted?.substepStates ?? [],
+            linkage.parentStepId,
+            linkage.parentFrameKey,
+          )?.delegation?.childRunId;
+          expect(claims).toHaveLength(injectFailure ? 0 : 1);
+          expect(linkedChild).toBe(injectFailure ? null : child.id);
+        } finally {
+          await closeRunbookStore(propertyDir);
+          await fs.rm(propertyDir, { recursive: true, force: true });
+        }
+      }),
+      { numRuns: 4 },
+    );
+  });
+
+  it('preserves idempotency, no-replacement, token rotation, metadata, and terminal invalidation', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(fc.constantFrom('1', '2', '3', '4', '5', '6'), {
+          minLength: 1,
+          maxLength: 4,
+        }),
+        async (fills) => {
+          const propertyDir = await fs.mkdtemp(path.join(os.tmpdir(), `rd-link-${runtime}-`));
+          const propertyManager = new RunbookStateManager(propertyDir, {
+            storeOptions: { runtime },
+          });
+          const service = new SessionService(propertyManager, () => '2026-07-22T00:00:00.000Z');
+          try {
+            const parent = await propertyManager.create(
+              { source: 'project', path: 'parent.md' },
+              mockRunbook,
+              { runbookPath: 'parent.md' },
+            );
+            let newestClaimId: ClaimId | undefined;
+            for (const fill of fills) {
+              const linkage = linkageFor(parent.id, fill);
+              await seedLiveDelegation(propertyManager, linkage);
+              const child = await propertyManager.create(
+                { source: 'project', path: `child-${fill}.md` },
+                mockRunbook,
+                { runbookPath: `child-${fill}.md`, parentLinkage: linkage },
+              );
+              const claimed = assertClaimed(
+                unwrapSessionMutation(
+                  await service.claimAndInitialLink({ childRunId: child.id, linkage }),
+                ),
+              );
+              newestClaimId = claimed.claimId;
+
+              const replay = unwrapSessionMutation(
+                await service.claimAndInitialLink({ childRunId: child.id, linkage }),
+              );
+              expect(replay.status).toBe('already-claimed');
+              expect(Object.keys((await propertyManager.loadSession()).claims)).toHaveLength(1);
+
+              const other = await propertyManager.create(
+                { source: 'project', path: `other-${fill}.md` },
+                mockRunbook,
+                { runbookPath: `other-${fill}.md`, parentLinkage: linkage },
+              );
+              expect(
+                unwrapSessionMutation(
+                  await service.claimAndInitialLink({ childRunId: other.id, linkage }),
+                ).status,
+              ).toBe('parent-concurrent-modification');
+              expect(await service.recordClaimSeen(claimed.claimId)).toMatchObject({
+                kind: 'recorded',
+              });
+              await propertyManager.update(parent.id, { prompted: true });
+              expect((await service.getActiveForClaimId(claimed.claimId)).status).toBe('claimed');
+            }
+
+            const activeClaims = Object.values((await propertyManager.loadSession()).claims);
+            expect(activeClaims).toHaveLength(1);
+            expect(newestClaimId).toBeDefined();
+            await propertyManager.update(parent.id, { lifecycle: 'completed' });
+            expect(Object.values((await propertyManager.loadSession()).claims)).toHaveLength(0);
+          } finally {
+            await closeRunbookStore(propertyDir);
+            await fs.rm(propertyDir, { recursive: true, force: true });
+          }
+        },
+      ),
+      { numRuns: 5 },
     );
   });
 });

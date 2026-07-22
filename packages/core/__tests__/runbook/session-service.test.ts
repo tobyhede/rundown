@@ -409,6 +409,184 @@ describe('SessionService', () => {
     });
   });
 
+  describe('atomic delegated claim and initial link', () => {
+    async function setupInitialLink(fill: string) {
+      const parent = await manager.create(
+        { source: 'project', path: `parent-${fill}.md` },
+        mockRunbook,
+        { runbookPath: `parent-${fill}.md` },
+      );
+      const linkage = linkageFor(parent.id, fill);
+      const child = await manager.create(
+        { source: 'project', path: `child-${fill}.md` },
+        mockRunbook,
+        { runbookPath: `child-${fill}.md`, parentLinkage: linkage },
+      );
+      await seedLiveDelegation(manager, linkage);
+      return { parent, child, linkage };
+    }
+
+    it('commits the child claim and matching parent childRunId together', async () => {
+      const { parent, child, linkage } = await setupInitialLink('a');
+
+      const result = unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({ childRunId: child.id, linkage }),
+      );
+
+      expect(result.status).toBe('claimed');
+      const persistedParent = await manager.load(parent.id);
+      expect(
+        findSubstepState(
+          persistedParent?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.delegation?.childRunId,
+      ).toBe(child.id);
+      expect(Object.values((await manager.loadSession()).claims)).toHaveLength(1);
+    });
+
+    it('rolls back the inserted claim when the parent state CAS cannot commit', async () => {
+      const { parent, child, linkage } = await setupInitialLink('b');
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      raw.exec(`
+        CREATE TRIGGER fail_initial_parent_link
+        BEFORE UPDATE OF state_json ON runs
+        WHEN OLD.id = '${parent.id}'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected_parent_cas_failure');
+        END;
+      `);
+      raw.close();
+
+      await expect(
+        sessionService.claimAndInitialLink({ childRunId: child.id, linkage }),
+      ).rejects.toThrow('injected_parent_cas_failure');
+
+      expect(Object.values((await manager.loadSession()).claims)).toHaveLength(0);
+      const persistedParent = await manager.load(parent.id);
+      expect(
+        findSubstepState(
+          persistedParent?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.delegation?.childRunId,
+      ).toBeNull();
+    });
+
+    it('is idempotent for the same request without bumping child generation', async () => {
+      const { child, linkage } = await setupInitialLink('c');
+      unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({ childRunId: child.id, linkage }),
+      );
+      const before = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'))
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(child.id) as { readonly generation: number };
+
+      const replay = unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({ childRunId: child.id, linkage }),
+      );
+
+      expect(replay.status).toBe('already-claimed');
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      const after = raw
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(child.id) as { readonly generation: number };
+      raw.close();
+      expect(after.generation).toBe(before.generation);
+    });
+
+    it('does not replace an existing live link with a different child', async () => {
+      const { parent, child, linkage } = await setupInitialLink('d');
+      unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({ childRunId: child.id, linkage }),
+      );
+      const other = await manager.create(
+        { source: 'project', path: 'other-child.md' },
+        mockRunbook,
+        { runbookPath: 'other-child.md', parentLinkage: linkage },
+      );
+
+      const result = unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({ childRunId: other.id, linkage }),
+      );
+
+      expect(result.status).toBe('parent-concurrent-modification');
+      const persistedParent = await manager.load(parent.id);
+      expect(
+        findSubstepState(
+          persistedParent?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.delegation?.childRunId,
+      ).toBe(child.id);
+      expect(Object.values((await manager.loadSession()).claims)).toHaveLength(1);
+    });
+
+    it('rollback clears only the matching token and child link and tombstones its claim', async () => {
+      const { parent, child, linkage } = await setupInitialLink('e');
+      unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({ childRunId: child.id, linkage }),
+      );
+
+      const result = unwrapSessionMutation(
+        await sessionService.rollbackInitialLink({ childRunId: child.id, linkage }),
+      );
+
+      expect(result.status).toBe('rolled-back');
+      const persistedParent = await manager.load(parent.id);
+      expect(
+        findSubstepState(
+          persistedParent?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.delegation?.childRunId,
+      ).toBeNull();
+      expect(Object.values((await manager.loadSession()).claims)).toHaveLength(0);
+    });
+
+    it('stale rollback cannot clear a newer token and child link', async () => {
+      const { parent, child: oldChild, linkage: oldLinkage } = await setupInitialLink('f');
+      unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({
+          childRunId: oldChild.id,
+          linkage: oldLinkage,
+        }),
+      );
+
+      const newLinkage = linkageFor(parent.id, '6');
+      await seedLiveDelegation(manager, newLinkage);
+      const newChild = await manager.create(
+        { source: 'project', path: 'newer-child.md' },
+        mockRunbook,
+        { runbookPath: 'newer-child.md', parentLinkage: newLinkage },
+      );
+      unwrapSessionMutation(
+        await sessionService.claimAndInitialLink({
+          childRunId: newChild.id,
+          linkage: newLinkage,
+        }),
+      );
+
+      const result = unwrapSessionMutation(
+        await sessionService.rollbackInitialLink({
+          childRunId: oldChild.id,
+          linkage: oldLinkage,
+        }),
+      );
+
+      expect(result.status).toBe('already-absent');
+      const persistedParent = await manager.load(parent.id);
+      expect(
+        findSubstepState(
+          persistedParent?.substepStates ?? [],
+          newLinkage.parentStepId,
+          newLinkage.parentFrameKey,
+        )?.delegation,
+      ).toMatchObject({ tokenHash: newLinkage.tokenHash, childRunId: newChild.id });
+      expect(Object.values((await manager.loadSession()).claims)).toHaveLength(1);
+    });
+  });
+
   describe('Runbook stack operations', () => {
     it('pushRunbook adds to stack', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
@@ -927,6 +1105,9 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
+      const before = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'))
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(child.id) as { readonly generation: number };
 
       await manager.update(parent.id, { lifecycle: 'completed' });
 
@@ -935,6 +1116,64 @@ describe('SessionService', () => {
       // as an active claim — the tombstone is not surfaced in loadSession.
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('missing');
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      const after = raw
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(child.id) as { readonly generation: number };
+      raw.close();
+      expect(after.generation).toBe(before.generation + 1);
+    });
+
+    it('invalidates a reissued token exactly once and leaves the newly claimed token active', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const oldLinkage = linkageFor(parent.id, '7');
+      const oldChild = await manager.create(
+        { source: 'project', path: 'old-child.md' },
+        mockRunbook,
+        { runbookPath: 'old-child.md', parentLinkage: oldLinkage },
+      );
+      await seedLiveDelegation(manager, oldLinkage);
+      const oldClaim = assertClaimed(
+        unwrapSessionMutation(
+          await sessionService.claimAndInitialLink({
+            childRunId: oldChild.id,
+            linkage: oldLinkage,
+          }),
+        ),
+      );
+      const rawBefore = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      const before = rawBefore
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(oldChild.id) as { readonly generation: number };
+      rawBefore.close();
+
+      const newLinkage = linkageFor(parent.id, '8');
+      await seedLiveDelegation(manager, newLinkage);
+
+      const rawAfter = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      const after = rawAfter
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(oldChild.id) as { readonly generation: number };
+      rawAfter.close();
+      expect(after.generation).toBe(before.generation + 1);
+      expect((await sessionService.getActiveForClaimId(oldClaim.claimId)).status).toBe('missing');
+
+      const newChild = await manager.create(
+        { source: 'project', path: 'new-child.md' },
+        mockRunbook,
+        { runbookPath: 'new-child.md', parentLinkage: newLinkage },
+      );
+      const newest = assertClaimed(
+        unwrapSessionMutation(
+          await sessionService.claimAndInitialLink({
+            childRunId: newChild.id,
+            linkage: newLinkage,
+          }),
+        ),
+      );
+      expect((await sessionService.getActiveForClaimId(newest.claimId)).status).toBe('claimed');
     });
 
     it('returns unlinked when the parent state is missing', async () => {

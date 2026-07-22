@@ -24,7 +24,7 @@ import type { SqlTransaction } from './sql-driver.js';
  * version is invalid and rejected with an {@link IncompatibleSchemaError}; the
  * recovery path is explicit user action (finish, stop, prune, restart).
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;
@@ -103,7 +103,6 @@ CREATE TABLE claims (
   status            TEXT    NOT NULL DEFAULT 'active',
   -- Delegation linkage, NULL for non-delegated claims.
   parent_run_id     TEXT,
-  parent_linkage_version INTEGER,
   delegation_json   TEXT,
   grants_json       TEXT    NOT NULL,
   issued_at         TEXT    NOT NULL,
@@ -202,7 +201,7 @@ END;
 -- pure metadata, so recording claim activity must neither be refused while an
 -- owner executes nor bump the generation (see claims_bump_gen_update below).
 CREATE TRIGGER claims_guard_update BEFORE UPDATE OF
-  status, controlled_run, secret_hash, parent_run_id, parent_linkage_version,
+  status, controlled_run, secret_hash, parent_run_id,
   delegation_json, grants_json
 ON claims
 BEGIN
@@ -230,7 +229,7 @@ END;
 -- would spuriously invalidate every live capture as claim_superseded at each
 -- authorization seam — exactly where #519 liveness recording happens.
 CREATE TRIGGER claims_bump_gen_update AFTER UPDATE OF
-  status, controlled_run, secret_hash, parent_run_id, parent_linkage_version,
+  status, controlled_run, secret_hash, parent_run_id,
   delegation_json, grants_json
 ON claims
 BEGIN

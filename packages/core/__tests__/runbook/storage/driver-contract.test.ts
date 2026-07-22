@@ -435,7 +435,7 @@ describe('positive driver selection', () => {
       (tx) =>
         tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>()?.user_version,
     );
-    expect(version).toBe(1);
+    expect(version).toBe(3);
   });
 
   it('disposes the just-opened driver and rethrows when schema init fails', async () => {

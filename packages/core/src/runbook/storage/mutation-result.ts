@@ -2,7 +2,7 @@
  * Typed vocabulary for guarded runbook mutations.
  *
  * Defines the branded concurrency counters (`ClaimGeneration`, `StateVersion`,
- * `ExecutionEpoch`, `LinkageVersion`), the branded execution-identity credential
+ * `ExecutionEpoch`), the branded execution-identity credential
  * (`ExecutionToken`, a bearer secret persisted only as a hash), the captured
  * authority a guarded mutation re-checks at commit (`CapturedAuthority`), and the
  * exhaustive mutation outcome (`GuardedMutationResult`). Every refusal variant
@@ -20,7 +20,6 @@ import type { ClaimLookupKey } from '../claim-id.js';
 declare const claimGenerationBrand: unique symbol;
 declare const stateVersionBrand: unique symbol;
 declare const executionEpochBrand: unique symbol;
-declare const linkageVersionBrand: unique symbol;
 declare const executionTokenBrand: unique symbol;
 declare const executionTokenHashBrand: unique symbol;
 
@@ -43,12 +42,6 @@ export type StateVersion = number & { readonly [stateVersionBrand]: true };
  * attempt.
  */
 export type ExecutionEpoch = number & { readonly [executionEpochBrand]: true };
-
-/**
- * Delegated-claim linkage counter. Advanced when a parent updates a linked
- * child's linkage; captured by a delegated child and re-checked at commit.
- */
-export type LinkageVersion = number & { readonly [linkageVersionBrand]: true };
 
 /**
  * Execution-identity bearer secret. Identifies one acquisition and prevents an
@@ -95,17 +88,6 @@ export function assertStateVersion(value: number): StateVersion {
  */
 export function assertExecutionEpoch(value: number): ExecutionEpoch {
   return assertCounter(value, 'ExecutionEpoch') as ExecutionEpoch;
-}
-
-/**
- * Brand a non-negative safe integer as a {@link LinkageVersion}.
- *
- * @param value - Candidate integer.
- * @returns Branded linkage version.
- * @throws {Error} When the value is not a non-negative safe integer.
- */
-export function assertLinkageVersion(value: number): LinkageVersion {
-  return assertCounter(value, 'LinkageVersion') as LinkageVersion;
 }
 
 /**
@@ -207,8 +189,6 @@ export interface CapturedAuthority {
   readonly parent?: {
     /** Parent run id. */
     readonly runId: RunId;
-    /** Parent linkage version captured at read. */
-    readonly linkageVersion: LinkageVersion;
   };
 }
 

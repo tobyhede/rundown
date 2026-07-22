@@ -181,6 +181,26 @@ export type ClaimRunbookResult =
       readonly childRunId?: RunId;
     };
 
+/** Inputs that identify one delegated child's initial parent link. */
+export interface ClaimAndInitialLinkInput {
+  /** Existing or freshly-created delegated child run. */
+  readonly childRunId: RunId;
+  /** Exact parent delegation linkage validated from the bearer token. */
+  readonly linkage: DelegationLinkage;
+}
+
+/** Result of atomically claiming a child and establishing its first parent link. */
+export type ClaimAndInitialLinkResult =
+  | ClaimRunbookResult
+  | {
+      /** The parent delegation changed before the initial link could commit. */
+      readonly status: 'parent-concurrent-modification';
+      /** Parent run whose matching initial-link slot was no longer available. */
+      readonly parentRunId: RunId;
+      /** Operator-facing refusal text. */
+      readonly message: string;
+    };
+
 /** Result of resolving a claim id to a usable child runbook. */
 export type ClaimIdResolution =
   | {

@@ -1184,47 +1184,6 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
   return 1;
 }
 
-/**
- * Update a parent step/substep delegation's childRunId after the child run is created.
- *
- * Loads the parent state, locates the delegation on the specified substep, and
- * patches the `childRunId` field to link parent and child runs.
- * Uses tokenHash for precise matching when available (unique per delegation).
- *
- * @param manager - State manager for loading and persisting runbook state
- * @param runId - Parent run ID whose delegation to update
- * @param substepId - Substep ID (or bare step ID) that owns the delegation
- * @param childRunId - The child run ID to set, or `null` to clear the link
- * @param tokenHash - Optional token hash for precise matching
- * @throws {Error} if the parent run is not found
- */
-async function updateStepDelegationChildRunId(
-  manager: RunbookStateManager,
-  runId: RunId,
-  substepId: string,
-  childRunId: RunId | null,
-  tokenHash?: string,
-): Promise<void> {
-  const state = await manager.load(runId);
-  if (!state) throw new Error(`Parent run ${runId} not found`);
-
-  const substepStates = state.substepStates ?? [];
-  const updated = substepStates.map((ss) => {
-    if (ss.id === substepId && ss.delegation) {
-      // When tokenHash is provided, match precisely; otherwise fall back to id match
-      if (tokenHash && ss.delegation.tokenHash !== tokenHash) return ss;
-      const { token: _claimedToken, ...claimedDelegation } = ss.delegation;
-      return {
-        ...ss,
-        delegation: { ...claimedDelegation, childRunId },
-      };
-    }
-    return ss;
-  });
-
-  await manager.update(runId, { substepStates: updated });
-}
-
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
@@ -1273,8 +1232,11 @@ async function claimChildForPipeline(
   ctx: RunPipelineContext,
   childRunId: RunId,
   linkage: DelegationLinkage,
+  initialLink = false,
 ): Promise<ClaimChildResult> {
-  const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
+  const claim = initialLink
+    ? await ctx.sessionService.claimAndInitialLink({ childRunId, linkage })
+    : await ctx.sessionService.claimRunbook(childRunId, linkage);
   switch (claim.status) {
     case 'execution-in-progress':
       return {
@@ -1324,6 +1286,8 @@ async function claimChildForPipeline(
       // this delegation between the pre-check and the claim transaction. Use the
       // pipeline's known child id (core omits it on the fresh-prelaunch path).
       return { ok: false, reason: 'delegation-superseded', childRunId };
+    case 'parent-concurrent-modification':
+      return { ok: false, reason: 'delegation-already-claimed', childRunId };
     default: {
       const _exhaustive: never = claim.value;
       throw new Error(
@@ -1654,20 +1618,11 @@ export async function claimAndLaunch(
         parentFrameKey: freshSubstep.frameKey,
         parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
       };
-      const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
+      const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage, true);
       if (!claimResult.ok) {
         return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       const adoptedChildRunId = claimResult.childRunId;
-      // Adopt the orphan only after claim validation confirms its persisted
-      // child linkage belongs to this delegation.
-      await updateStepDelegationChildRunId(
-        manager,
-        freshParent.id,
-        substepId ?? stepId,
-        adoptedChildRunId,
-        tokenHash,
-      );
       return emitClaimedSuccess({
         output,
         truncatedToken,
@@ -1720,17 +1675,11 @@ export async function claimAndLaunch(
         ctx,
         existingClaim.controlledRunId,
         delegationLinkage,
+        true,
       );
       if (!claimResult.ok) {
         return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
-      await updateStepDelegationChildRunId(
-        manager,
-        freshParent.id,
-        substepId ?? stepId,
-        claimResult.childRunId,
-        tokenHash,
-      );
       return emitClaimedSuccess({
         output,
         truncatedToken,
@@ -1826,7 +1775,7 @@ export async function claimAndLaunch(
       sessionActivation: { kind: 'none' },
       afterCreate: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
-        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
+        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage, true);
         if (!claimResult.ok) {
           // Capture and bail; the outer block translates this into a typed
           // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
@@ -1836,35 +1785,14 @@ export async function claimAndLaunch(
             `Claim invariant violated for fresh child ${claimResult.childRunId}: ${claimResult.reason}`,
           );
         }
-        await updateStepDelegationChildRunId(
-          manager,
-          freshParent.id,
-          substepId ?? stepId,
-          claimResult.childRunId,
-          tokenHash,
-        );
         capturedClaimId = 'claimId' in claimResult ? claimResult.claimId : undefined;
         capturedChildRunId = claimResult.childRunId;
       },
       afterCreateRollback: async (childStateId) => {
-        const release = await ctx.sessionService.releaseRunbook(childStateId);
-        switch (release.status) {
-          case 'committed':
-          case 'execution-in-progress':
-          case 'recovery-required':
-            break;
-          default: {
-            const _exhaustive: never = release;
-            return _exhaustive;
-          }
-        }
-        await updateStepDelegationChildRunId(
-          manager,
-          freshParent.id,
-          substepId ?? stepId,
-          null,
-          tokenHash,
-        );
+        await ctx.sessionService.rollbackInitialLink({
+          childRunId: childStateId,
+          linkage: delegationLinkage,
+        });
         capturedClaimId = undefined;
         capturedChildRunId = undefined;
       },

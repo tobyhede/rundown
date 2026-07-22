@@ -706,11 +706,11 @@ describe('session persistence and run listing', () => {
         .prepare(
           `INSERT INTO claims
              (key, controlled_run, secret_hash, issued_generation, status,
-              parent_run_id, parent_linkage_version, delegation_json, grants_json,
+              parent_run_id, delegation_json, grants_json,
               issued_at, updated_at, last_seen_at)
            VALUES
              (:key, :run, :hash, 1, 'active',
-              :run, 0, :linkage, '[]', :now, :now, :now)`,
+              :run, :linkage, '[]', :now, :now, :now)`,
         )
         .run({
           key: `rdclk_${'a'.repeat(32)}`,
@@ -745,11 +745,11 @@ describe('session persistence and run listing', () => {
         .prepare(
           `INSERT INTO claims
              (key, controlled_run, secret_hash, issued_generation, status,
-              parent_run_id, parent_linkage_version, delegation_json, grants_json,
+              parent_run_id, delegation_json, grants_json,
               issued_at, updated_at, last_seen_at)
            VALUES
              (:key, :run, :hash, 1, 'active',
-              :run, 0, :bad, '[]', :now, :now, :now)`,
+              :run, :bad, '[]', :now, :now, :now)`,
         )
         .run({
           key: `rdclk_${'f'.repeat(32)}`,
@@ -810,7 +810,6 @@ describe('classifyCommitRow totality', () => {
     claimControlsRun: true,
     parentId: null,
     parentLifecycle: null,
-    parentLinkageVersion: null,
     execToken: null,
     execEpoch: null,
     execPhase: null,
