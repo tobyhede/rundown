@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import {
   assertDelegationTokenHash,
@@ -9,6 +10,7 @@ import {
   RunbookActorService,
   RunbookCompletionService,
   RunbookStateManager,
+  SessionService,
   type RunbookState,
   type ResolvedStep,
 } from '../../src/runbook/index.js';
@@ -28,6 +30,7 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
+import { assertClaimed, claimLiveDelegation, linkageFor } from './claim-test-helpers.js';
 
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -1009,6 +1012,53 @@ describe('RunbookCompletionService', () => {
           substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'pass' })],
         }),
       );
+    });
+
+    it('recordManualCompletion tombstones an active delegated claim and bumps generation exactly once', async () => {
+      const current = state({
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      await manager.save(current);
+      const linkage = linkageFor(runbookId, 'd', '1');
+      const childRunId = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
+      await manager.save(
+        state({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
+      );
+      const sessionService = new SessionService(manager);
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, childRunId, linkage),
+      );
+      const beforeDb = new DatabaseSync(path.join(tmp, '.rundown', 'rundown.db'));
+      const before = beforeDb
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(childRunId) as { readonly generation: number };
+      beforeDb.close();
+
+      await service.recordManualCompletion({
+        runbookId,
+        currentState: (await manager.load(runbookId)) ?? current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      });
+
+      const afterDb = new DatabaseSync(path.join(tmp, '.rundown', 'rundown.db'));
+      const claim = afterDb
+        .prepare('SELECT status FROM claims WHERE key = ?')
+        .get(claimed.claim.claimKey) as { readonly status: string };
+      const after = afterDb
+        .prepare('SELECT claim_generation AS generation FROM runs WHERE id = ?')
+        .get(childRunId) as { readonly generation: number };
+      afterDb.close();
+      expect(claim.status).toBe('superseded');
+      expect(after.generation).toBe(before.generation + 1);
     });
 
     it('writes the resolved row and substep state in a single atomic update', async () => {
