@@ -59,7 +59,11 @@ export function isSqliteBusy(err: unknown): boolean {
     return false;
   }
   const errcode = (err as { errcode?: unknown }).errcode;
-  return errcode === SQLITE_BUSY || errcode === SQLITE_LOCKED;
+  if (typeof errcode !== 'number' || !Number.isInteger(errcode)) {
+    return false;
+  }
+  const primaryCode = errcode & 0xff;
+  return primaryCode === SQLITE_BUSY || primaryCode === SQLITE_LOCKED;
 }
 
 /** Wraps a `node:sqlite` prepared statement in the {@link SqlStatement} contract. */

@@ -93,7 +93,7 @@ console.log('shell=' + (process.env.SHELL ?? ''));
         const proc = await container.spawn(cmd, args);
         let out = '';
         const reader = proc.output.getReader();
-        (async () => {
+        const drain = (async () => {
           for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -101,6 +101,7 @@ console.log('shell=' + (process.env.SHELL ?? ''));
           }
         })();
         const code = await proc.exit;
+        await drain;
         return { out, code };
       }
 

@@ -35,14 +35,14 @@ describe('storage schema', () => {
 
     const tables = await driver.read((tx) =>
       tx
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
         .all<{ readonly name: string }>()
         .map((row) => row.name),
     );
 
-    for (const table of EXPECTED_TABLES) {
-      expect(tables).toContain(table);
-    }
+    expect(tables).toEqual([...EXPECTED_TABLES].sort());
   });
 
   it('stamps user_version to SCHEMA_VERSION on install', async () => {

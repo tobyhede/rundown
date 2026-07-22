@@ -278,6 +278,20 @@ describe('native adapter SQLITE_BUSY handling', () => {
     expect(isSqliteBusy(new Error('unrelated'))).toBe(false);
   });
 
+  it('classifies extended busy and locked result codes by their primary code', () => {
+    const busySnapshot = Object.assign(new Error('busy snapshot'), {
+      code: 'ERR_SQLITE_ERROR',
+      errcode: 5 | (2 << 8),
+    });
+    const lockedSharedCache = Object.assign(new Error('locked shared cache'), {
+      code: 'ERR_SQLITE_ERROR',
+      errcode: 6 | (1 << 8),
+    });
+
+    expect(isSqliteBusy(busySnapshot)).toBe(true);
+    expect(isSqliteBusy(lockedSharedCache)).toBe(true);
+  });
+
   it('throws after exhausting the busy-retry budget when the lock never frees', async () => {
     const dbPath = path.join(dir, 'busy.db');
     // A separate raw connection holds the write lock for the whole test.
