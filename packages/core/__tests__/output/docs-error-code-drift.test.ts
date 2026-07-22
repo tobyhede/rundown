@@ -130,13 +130,18 @@ function kindBefore(body: string, codeOffset: number): DocumentedCode['kind'] {
  */
 function extractDocumentedCodes(markdown: string): DocumentedCode[] {
   const results: DocumentedCode[] = [];
-  const fenceOpen = '```json\n';
   let fence = 0;
 
-  for (const match of markdown.matchAll(/```json\n([\s\S]*?)```/g)) {
+  // The opener is captured so the body offset is derived from the ACTUAL
+  // matched prefix length rather than a hardcoded constant: a CRLF-checked-out
+  // doc presents "```json\r\n" (9 chars), an LF one "```json\n" (8), and the
+  // captured length keeps reported line numbers correct either way. `\r?\n`
+  // requires a newline directly after `json`, so a ```jsonl fence — where the
+  // next char is `l` — still never matches.
+  for (const match of markdown.matchAll(/(```json\r?\n)([\s\S]*?)```/g)) {
     fence += 1;
-    const body = match[1];
-    const bodyOffset = match.index + fenceOpen.length;
+    const body = match[2];
+    const bodyOffset = match.index + match[1].length;
 
     let parsed: unknown;
     let parseable = true;
@@ -207,7 +212,10 @@ describe('docs/spec/cli-output.md error codes are registered (#615)', () => {
     // envelope, and one bogus code. If the guard could not tell these apart it
     // would be worthless, so these assertions pin the extractor's behaviour
     // BEFORE trusting a green run against the real doc.
-    const fixture = [
+    // A `jsonl` fence is deliberately included: its `"code"` must NEVER be
+    // extracted, because ```jsonl is a distinct language tag from ```json and
+    // documents a streaming format, not an error envelope.
+    const fixtureLines = [
       'Prose mentioning `"code": "IGNORED"` inline should not be extracted.',
       '',
       '```json',
@@ -216,6 +224,10 @@ describe('docs/spec/cli-output.md error codes are registered (#615)', () => {
       '',
       '```json',
       '{ "kind": "warning", "code": "NO_ACTIVE_RUNBOOK" }',
+      '```',
+      '',
+      '```jsonl',
+      '{ "kind": "error", "code": "JSONL_NEVER_EXTRACTED" }',
       '```',
       '',
       '```json',
@@ -235,7 +247,8 @@ describe('docs/spec/cli-output.md error codes are registered (#615)', () => {
       '{ "kind": "error", "code": "NOT_A_REAL_CODE_615", "command": "pass" }',
       '```',
       '',
-    ].join('\n');
+    ];
+    const fixture = fixtureLines.join('\n');
 
     it('extracts codes only from JSON fences, tagged by envelope kind and depth', () => {
       const codes = extractDocumentedCodes(fixture);
@@ -309,6 +322,45 @@ describe('docs/spec/cli-output.md error codes are registered (#615)', () => {
       const codes = extractDocumentedCodes(kindless);
       expect(codes).toEqual([expect.objectContaining({ code: 'STEP_NOT_FOUND', kind: 'unknown' })]);
       expect(codes.every((entry) => isRegistered(entry))).toBe(true);
+    });
+
+    it('never extracts a code from a ```jsonl fence', () => {
+      // ```jsonl is a distinct language tag from ```json; the extractor keys on
+      // the ```json opener followed directly by a newline, so the trailing "l"
+      // must keep jsonl fences out. Pinned so a loosened fence regex can never
+      // start sweeping streaming-format fences into the drift check.
+      const codes = extractDocumentedCodes(fixture);
+      expect(codes.some((c) => c.code === 'JSONL_NEVER_EXTRACTED')).toBe(false);
+    });
+
+    it('extracts codes from a CRLF-checked-out doc identically to LF (#624)', () => {
+      // A doc checked out with `\r\n` line endings presents the fence opener as
+      // "```json\r\n". A newline-strict extractor matches zero fences under
+      // CRLF, so the whole guard silently reports "no codes" and the sanity
+      // test fails for the wrong reason. The extraction — codes, kinds, and the
+      // jsonl exclusion — must be byte-ending-agnostic.
+      const crlfFixture = fixtureLines.join('\r\n');
+      const codes = extractDocumentedCodes(crlfFixture);
+
+      // Error and warning envelope codes are still tagged by their kind.
+      expect(codes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'STEP_NOT_FOUND', kind: 'error' }),
+          expect.objectContaining({ code: 'NO_ACTIVE_RUNBOOK', kind: 'warning' }),
+        ]),
+      );
+
+      // The bogus code is still flagged, and only it.
+      const invalid = codes.filter((c) => !isRegistered(c));
+      expect(invalid.map((c) => c.code)).toEqual(['NOT_A_REAL_CODE_615']);
+
+      // The jsonl fence stays excluded under CRLF as well.
+      expect(codes.some((c) => c.code === 'JSONL_NEVER_EXTRACTED')).toBe(false);
+
+      // CRLF must not corrupt reported line numbers: STEP_NOT_FOUND's first
+      // occurrence is the error envelope on line 4 of the fixture.
+      const firstStep = codes.find((c) => c.code === 'STEP_NOT_FOUND');
+      expect(firstStep?.line).toBe(4);
     });
   });
 
