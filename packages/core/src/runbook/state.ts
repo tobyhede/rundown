@@ -41,6 +41,7 @@ import { getRunbookStore } from './storage/store-registry.js';
 import type {
   ParentAdvanceGuard,
   RunbookStore,
+  SessionMutationResult,
   SessionMutationTxn,
   StateMutationResult,
 } from './storage/runbook-store.js';
@@ -876,6 +877,22 @@ export class RunbookStateManager {
   async mutateSession<T>(work: (ctx: SessionMutationTxn) => T): Promise<T> {
     const store = await this.store();
     return store.mutateSession(work);
+  }
+
+  /**
+   * Read-modify-write ownership-sensitive session state with typed refusals.
+   *
+   * @template T - Domain value returned after commit.
+   * @param runIds - Affected runs in deterministic refusal order.
+   * @param work - Synchronous session mutation callback.
+   * @returns The committed value or the first ownership refusal.
+   */
+  async mutateSessionGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => T,
+  ): Promise<SessionMutationResult<T>> {
+    const store = await this.store();
+    return store.mutateSessionGuarded(runIds, work);
   }
 
   /**

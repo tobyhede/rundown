@@ -666,7 +666,10 @@ Do the thing.
       const stashedId = await createStateFile(manager, { lifecycle: 'stopped' });
       await sessionService.pushRunbook(stackedId);
       await sessionService.pushRunbook(stashedId);
-      await expect(sessionService.stash()).resolves.toBe(stashedId);
+      await expect(sessionService.stash()).resolves.toEqual({
+        status: 'committed',
+        value: stashedId,
+      });
 
       const result = await runCliInProcess('prune --all', workspace);
       expect(result.exitCode).toBe(0);

@@ -181,12 +181,36 @@ export type RunbookStartResult =
       stateId: RunId;
       claimId?: ClaimId;
     }
-  | RunbookStartFailure;
+  | RunbookStartFailure
+  | {
+      readonly ok: false;
+      readonly reason: 'execution-in-progress';
+      readonly runId: RunId;
+      readonly message: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: 'recovery-required';
+      readonly runId: RunId;
+      readonly epoch: number;
+      readonly message: string;
+    };
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
 
 /** Failure variants from claiming and launching a delegated child runbook. */
 export type ClaimFailure =
+  | {
+      readonly reason: 'execution-in-progress';
+      readonly runId: RunId;
+      readonly message: string;
+    }
+  | {
+      readonly reason: 'recovery-required';
+      readonly runId: RunId;
+      readonly epoch: number;
+      readonly message: string;
+    }
   | { readonly reason: 'invalid-token'; readonly token: string }
   | { readonly reason: 'token-not-found'; readonly token: string }
   | { readonly reason: 'parent-missing'; readonly parentRunId: string }
@@ -940,6 +964,9 @@ async function launchRunbook(
   let sessionActivated = false;
   let afterCreateAttempted = false;
   let issuedRunControlClaimId: ClaimId | undefined;
+  let activationRefusal:
+    | Extract<RunbookStartResult, { reason: 'execution-in-progress' | 'recovery-required' }>
+    | undefined;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
     if (afterCreateAttempted && options.afterCreateRollback) {
@@ -951,7 +978,17 @@ async function launchRunbook(
     }
     if (sessionActivated) {
       try {
-        await sessionService.releaseRunbook(stateId);
+        const release = await sessionService.releaseRunbook(stateId);
+        switch (release.status) {
+          case 'committed':
+          case 'execution-in-progress':
+          case 'recovery-required':
+            break;
+          default: {
+            const _exhaustive: never = release;
+            return _exhaustive;
+          }
+        }
       } catch {
         // Preserve the launch error; cleanup is best effort.
       }
@@ -1001,8 +1038,26 @@ async function launchRunbook(
         // single session-lock cycle instead of two (removing the double-cycle
         // contention that made run-start flaky under heavy parallel load).
         const activation = await sessionService.pushRunbookWithRunControlClaim(state.id);
+        if (activation.status !== 'committed') {
+          activationRefusal =
+            activation.status === 'execution-in-progress'
+              ? {
+                  ok: false,
+                  reason: 'execution-in-progress',
+                  runId: activation.runId,
+                  message: activation.message,
+                }
+              : {
+                  ok: false,
+                  reason: 'recovery-required',
+                  runId: activation.runId,
+                  epoch: activation.epoch,
+                  message: activation.message,
+                };
+          throw new Error(activation.message);
+        }
         sessionActivated = true;
-        issuedRunControlClaimId = activation.claimId;
+        issuedRunControlClaimId = activation.value.claimId;
         break;
       }
       case 'none':
@@ -1026,6 +1081,9 @@ async function launchRunbook(
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
     await cleanupCreatedRun();
+    if (activationRefusal !== undefined) {
+      return activationRefusal;
+    }
     return {
       ok: false,
       reason: 'launch-failed',
@@ -1172,6 +1230,21 @@ type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
   | {
       readonly ok: false;
+      readonly reason: 'execution-in-progress';
+      readonly runId: RunId;
+      readonly message: string;
+      readonly childRunId: RunId;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: 'recovery-required';
+      readonly runId: RunId;
+      readonly epoch: number;
+      readonly message: string;
+      readonly childRunId: RunId;
+    }
+  | {
+      readonly ok: false;
       readonly reason:
         | 'child-missing'
         | 'delegation-resolved'
@@ -1203,31 +1276,56 @@ async function claimChildForPipeline(
 ): Promise<ClaimChildResult> {
   const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
   switch (claim.status) {
+    case 'execution-in-progress':
+      return {
+        ok: false,
+        reason: 'execution-in-progress',
+        runId: claim.runId,
+        message: claim.message,
+        childRunId,
+      };
+    case 'recovery-required':
+      return {
+        ok: false,
+        reason: 'recovery-required',
+        runId: claim.runId,
+        epoch: claim.epoch,
+        message: claim.message,
+        childRunId,
+      };
+    case 'committed':
+      break;
+    default: {
+      const _exhaustive: never = claim;
+      return _exhaustive;
+    }
+  }
+  switch (claim.value.status) {
     case 'claimed':
       return {
         ok: true,
-        claimId: claim.claimId,
-        childRunId: claim.claim.controlledRunId,
+        claimId: claim.value.claimId,
+        childRunId: claim.value.claim.controlledRunId,
       };
     case 'already-claimed':
       return {
         ok: false,
         reason: 'delegation-already-claimed',
-        childRunId: claim.childRunId,
+        childRunId: claim.value.childRunId,
       };
     case 'missing-child':
-      return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
+      return { ok: false, reason: 'child-missing', childRunId: claim.value.childRunId };
     case 'terminal-child':
-      return { ok: false, reason: 'delegation-resolved', childRunId: claim.childRunId };
+      return { ok: false, reason: 'delegation-resolved', childRunId: claim.value.childRunId };
     case 'linkage-mismatch':
-      return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
+      return { ok: false, reason: 'linkage-mismatch', childRunId: claim.value.childRunId };
     case 'delegation-superseded':
       // Core is authoritative for the post-launch race: the parent moved past
       // this delegation between the pre-check and the claim transaction. Use the
       // pipeline's known child id (core omits it on the fresh-prelaunch path).
       return { ok: false, reason: 'delegation-superseded', childRunId };
     default: {
-      const _exhaustive: never = claim;
+      const _exhaustive: never = claim.value;
       throw new Error(
         `Unhandled claimRunbook status: ${(_exhaustive as { status: string }).status}`,
       );
@@ -1249,6 +1347,22 @@ function claimResultToFailure(
   parentRunId: string,
   stepId: string,
 ): ClaimResult {
+  if (result.reason === 'execution-in-progress' || result.reason === 'recovery-required') {
+    return result.reason === 'execution-in-progress'
+      ? {
+          ok: false,
+          reason: result.reason,
+          runId: result.runId,
+          message: result.message,
+        }
+      : {
+          ok: false,
+          reason: result.reason,
+          runId: result.runId,
+          epoch: result.epoch,
+          message: result.message,
+        };
+  }
   return {
     ok: false,
     reason: result.reason,
@@ -1733,7 +1847,17 @@ export async function claimAndLaunch(
         capturedChildRunId = claimResult.childRunId;
       },
       afterCreateRollback: async (childStateId) => {
-        await ctx.sessionService.releaseRunbook(childStateId);
+        const release = await ctx.sessionService.releaseRunbook(childStateId);
+        switch (release.status) {
+          case 'committed':
+          case 'execution-in-progress':
+          case 'recovery-required':
+            break;
+          default: {
+            const _exhaustive: never = release;
+            return _exhaustive;
+          }
+        }
         await updateStepDelegationChildRunId(
           manager,
           freshParent.id,
@@ -1747,6 +1871,12 @@ export async function claimAndLaunch(
     });
 
     if (invariantViolation !== undefined) {
+      if (
+        invariantViolation.reason === 'execution-in-progress' ||
+        invariantViolation.reason === 'recovery-required'
+      ) {
+        return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
+      }
       return {
         ok: false,
         reason: 'launch-failed',
@@ -1761,6 +1891,25 @@ export async function claimAndLaunch(
     }
 
     if (!launchResult.ok) {
+      if (
+        launchResult.reason === 'execution-in-progress' ||
+        launchResult.reason === 'recovery-required'
+      ) {
+        return launchResult.reason === 'execution-in-progress'
+          ? {
+              ok: false,
+              reason: launchResult.reason,
+              runId: launchResult.runId,
+              message: launchResult.message,
+            }
+          : {
+              ok: false,
+              reason: launchResult.reason,
+              runId: launchResult.runId,
+              epoch: launchResult.epoch,
+              message: launchResult.message,
+            };
+      }
       return {
         ok: false,
         reason: 'launch-failed',

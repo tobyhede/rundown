@@ -320,4 +320,58 @@ describe('classifier totality and single-row invariant', () => {
       { numRuns: 40 },
     );
   });
+
+  it('rolls back the whole transaction when an authoritative CAS becomes stale', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc
+          .record({
+            stateVersionDelta: fc.integer({ min: 0, max: 20 }),
+            claimGenerationDelta: fc.integer({ min: 0, max: 20 }),
+          })
+          .filter(
+            ({ stateVersionDelta, claimGenerationDelta }) =>
+              stateVersionDelta + claimGenerationDelta > 0,
+          ),
+        async ({ stateVersionDelta, claimGenerationDelta }) => {
+          const state = await baseState();
+          await store.createRun(state);
+          const claimKey = assertClaimLookupKey(nextClaimKey());
+          await store.transaction((txn) => {
+            txn.insertClaim(
+              makeClaimRecord({ claimKey, controlledRunId: state.id }),
+              assertClaimGeneration(0),
+            );
+          });
+          const captured = await store.captureAuthority(state.id, claimKey);
+          if (captured.kind !== 'captured') throw new Error('capture failed');
+
+          await expect(
+            store.transaction((txn) => {
+              const row = txn.commitRow(state.id, claimKey);
+              expect(classifyCommitRow(row, captured.authority).kind).toBe('ok');
+              txn.setStack([state.id]);
+              txn.tx
+                .prepare(
+                  `UPDATE runs
+                      SET state_version = state_version + :stateVersionDelta,
+                          claim_generation = claim_generation + :claimGenerationDelta
+                    WHERE id = :runId`,
+                )
+                .run({ stateVersionDelta, claimGenerationDelta, runId: state.id });
+              assertExactlyOneRow(
+                txn.applyStateUpdate(captured.authority, { ...state, stepName: 'must-roll-back' }),
+                state.id,
+              );
+            }),
+          ).rejects.toBeInstanceOf(StoreInvariantError);
+
+          const session = await store.loadSession();
+          expect(session.defaultStack).toEqual([]);
+          expect(await store.loadRun(state.id)).toEqual(state);
+        },
+      ),
+      { numRuns: 25 },
+    );
+  });
 });

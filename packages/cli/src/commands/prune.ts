@@ -6,6 +6,7 @@ import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 
 async function listAllRunIds(cwd: string): Promise<string[]> {
   // Must include runs whose persisted state is INVALID — they are precisely what
@@ -176,11 +177,21 @@ export function registerPruneCommand(program: Command): void {
           // Selective prune removes each id from targeting under one lock.
           // `--all` already replaced all targeting with a canonical empty session.
           if (!options.all) {
-            await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
+            const releaseResult = await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
+            if (releaseResult.status !== 'committed') {
+              renderSessionMutationRefusal(output, releaseResult);
+              return;
+            }
             // Tombstone GC only for ids that are NOT parseable RunIds (invalid
             // state files) — releaseRunbooks already deleted claims for the
             // valid RunIds.
-            await sessionService.pruneClaimsForChildren(prunedIds.filter((id) => !isRunId(id)));
+            const pruneClaimsResult = await sessionService.pruneClaimsForChildren(
+              prunedIds.filter((id) => !isRunId(id)),
+            );
+            if (pruneClaimsResult.status !== 'committed') {
+              renderSessionMutationRefusal(output, pruneClaimsResult);
+              return;
+            }
           }
           // Perform deletion (state files last — see the ordering note above).
           for (const id of loadedRunIdsToDelete) {

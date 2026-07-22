@@ -142,6 +142,42 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     expect(Number(result.lastInsertRowid)).toBe(1);
   });
 
+  it('exposes the exact execution ownership trigger-abort shape', async () => {
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      tx.exec(`
+        CREATE TABLE owned_runs (id TEXT PRIMARY KEY, exec_token TEXT);
+        CREATE TABLE guarded_claims (run_id TEXT NOT NULL);
+        CREATE TRIGGER guarded_claims_insert
+        BEFORE INSERT ON guarded_claims
+        WHEN (SELECT exec_token FROM owned_runs WHERE id = NEW.run_id) IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'execution_in_progress');
+        END;
+      `);
+      tx.prepare('INSERT INTO owned_runs VALUES (:id, :token)').run({
+        id: 'rd_owned',
+        token: 'sha256:live',
+      });
+    });
+
+    let thrown: unknown;
+    try {
+      await driver.immediate((tx) => {
+        tx.prepare('INSERT INTO guarded_claims VALUES (:runId)').run({ runId: 'rd_owned' });
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(isError(thrown)).toBe(true);
+    if (!isError(thrown)) throw new Error('expected an Error from the ownership trigger');
+    expect(thrown.message).toBe('execution_in_progress');
+    expect((thrown as Error & { readonly code?: string }).code).toBe(
+      adapter.name === 'native' ? 'ERR_SQLITE_ERROR' : undefined,
+    );
+  });
+
   it('rejects an incompatible schema version rather than migrating', async () => {
     await using driver = await adapter.open();
     await driver.immediate((tx) => {

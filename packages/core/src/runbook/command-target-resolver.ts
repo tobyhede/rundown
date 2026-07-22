@@ -658,6 +658,8 @@ async function evaluateTransitionPolicy(
     case 'collection_frame_not_active':
     case 'collection_applied':
     case 'collection_failed':
+    case 'execution_in_progress':
+    case 'recovery_required':
       // Unreachable for a delegating-run-advance intent: the orchestrator gate
       // and the collection-operation outcomes belong to the collection path
       // only (emitted by collectDelegationOutcomes, never resolveCommandIntent).

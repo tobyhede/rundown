@@ -21,6 +21,7 @@ import {
   type ClaimId,
   type ClaimSeenRecordResult,
   type ReleaseRunbookResult,
+  type SessionMutationResult,
 } from '../../src/runbook/index.js';
 import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
@@ -73,7 +74,7 @@ describe('RunbookCollectionService', () => {
     (
       runbookId: RunId,
       options?: { readonly retainClaimsAsTerminal?: boolean },
-    ) => Promise<ReleaseRunbookResult>
+    ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
   >;
   // Held separately from the fake for the same unbound-method reason as
   // `releaseRunbookSpy` above.
@@ -157,10 +158,13 @@ describe('RunbookCollectionService', () => {
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
     releaseRunbookSpy = jest.fn(async (runbookId: RunId) => ({
-      status: 'released' as const,
-      runbookId,
-      removedFromDefaultStack: true,
-      nextDefaultRunbookId: null,
+      status: 'committed' as const,
+      value: {
+        status: 'released' as const,
+        runbookId,
+        removedFromDefaultStack: true,
+        nextDefaultRunbookId: null,
+      },
     }));
     recordClaimSeenSpy = jest.fn(async () => ({
       kind: 'recorded' as const,

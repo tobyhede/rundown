@@ -30,6 +30,18 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
   readonly details?: Record<string, unknown>;
 } {
   switch (failure.reason) {
+    case 'execution-in-progress':
+      return {
+        code: 'execution_in_progress',
+        message: failure.message,
+        details: { runId: failure.runId },
+      };
+    case 'recovery-required':
+      return {
+        code: 'recovery_required',
+        message: failure.message,
+        details: { runId: failure.runId, epoch: failure.epoch },
+      };
     case 'invalid-token':
       return {
         code: 'INVALID_TOKEN',

@@ -40,6 +40,7 @@ import {
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
 } from './refusal-renderers.js';
+import { renderSessionMutationRefusal } from './session-mutation-result.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
@@ -411,7 +412,17 @@ function renderTransitionEvents(
 function buildActionSink(output: OutputEmitter): TransitionEventSink {
   return {
     onErrorOccurred: (payload) => {
-      output.error(payload.message, payload.code);
+      const hasOwnershipDetails = payload.runId !== undefined || payload.epoch !== undefined;
+      output.error(
+        payload.message,
+        payload.code,
+        hasOwnershipDetails
+          ? {
+              ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+              ...(payload.epoch !== undefined ? { epoch: payload.epoch } : {}),
+            }
+          : undefined,
+      );
     },
     onStepTransitioned: (payload) => {
       output.action({
@@ -491,6 +502,21 @@ function renderRefusal(
       return renderClaimGrantRequiredRefusal(output, config.commandName);
     case 'unknown_run':
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
+    case 'execution_in_progress':
+      renderSessionMutationRefusal(output, {
+        status: 'execution-in-progress',
+        runId: outcome.runId,
+        message: outcome.message,
+      });
+      return true;
+    case 'recovery_required':
+      renderSessionMutationRefusal(output, {
+        status: 'recovery-required',
+        runId: outcome.runId,
+        epoch: outcome.epoch,
+        message: outcome.message,
+      });
       return true;
     default: {
       const _exhaustive: never = outcome;

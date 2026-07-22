@@ -3,6 +3,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import type { SessionService } from '../../src/runbook/session-service.js';
 import type { RunbookStateManager } from '../../src/runbook/state.js';
 import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
+import type { SessionMutationResult } from '../../src/runbook/storage/runbook-store.js';
 import type { DelegationLinkage, RunId, SubstepState } from '../../src/runbook/types.js';
 import { makeStepDelegation } from '../helpers/step-factories.js';
 
@@ -89,7 +90,22 @@ export async function claimLiveDelegation(
   linkage: DelegationLinkage,
 ): Promise<ClaimRunbookResult> {
   await seedLiveDelegation(manager, linkage);
-  return sessionService.claimRunbook(childRunId, linkage);
+  return unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage));
+}
+
+/**
+ * Unwrap a committed session mutation in tests whose setup cannot be owned.
+ *
+ * @template T - Domain value carried by the committed arm.
+ * @param result - Session mutation result to narrow.
+ * @returns The committed domain value.
+ * @throws {Error} When a fixture unexpectedly encounters an ownership refusal.
+ */
+export function unwrapSessionMutation<T>(result: SessionMutationResult<T>): T {
+  if (result.status !== 'committed') {
+    throw new Error(`Unexpected ${result.status} for ${result.runId}: ${result.message}`);
+  }
+  return result.value;
 }
 
 const isClaimed = <T extends { status: string }>(

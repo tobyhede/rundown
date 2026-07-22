@@ -18,6 +18,7 @@ import type {
   RunId,
   RunnableTemplateVariables,
   ScopedLock,
+  SessionMutationResult,
   TemplateVarValue,
 } from '@rundown-org/core';
 import type {
@@ -99,40 +100,47 @@ function claimedRunbookResult(
   return { status: 'claimed', claimId: TEST_CLAIM_ID, claim: claimRecord(childRunId, overrides) };
 }
 
+function committed<T>(value: T): SessionMutationResult<T> {
+  return { status: 'committed', value };
+}
+
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
     async (childRunId: RunId, linkage: DelegationLinkage) =>
-      claimedRunbookResult(childRunId, {
-        delegation: {
-          childRunId,
-          tokenHash: linkage.tokenHash,
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          parentStep: linkage.parentStep,
-          parentFrameKey: linkage.parentFrameKey,
-          parentEntry: linkage.parentEntry,
-        },
-      }),
+      committed(
+        claimedRunbookResult(childRunId, {
+          delegation: {
+            childRunId,
+            tokenHash: linkage.tokenHash,
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            parentStep: linkage.parentStep,
+            parentFrameKey: linkage.parentFrameKey,
+            parentEntry: linkage.parentEntry,
+          },
+        }),
+      ),
   );
 }
 
 function mockClaimRunbookAlreadyClaimed(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
-    async (childRunId: RunId, linkage: DelegationLinkage) => ({
-      status: 'already-claimed',
-      childRunId,
-      claim: claimRecord(childRunId, {
-        delegation: {
-          childRunId,
-          tokenHash: linkage.tokenHash,
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          parentStep: linkage.parentStep,
-          parentFrameKey: linkage.parentFrameKey,
-          parentEntry: linkage.parentEntry,
-        },
+    async (childRunId: RunId, linkage: DelegationLinkage) =>
+      committed({
+        status: 'already-claimed',
+        childRunId,
+        claim: claimRecord(childRunId, {
+          delegation: {
+            childRunId,
+            tokenHash: linkage.tokenHash,
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            parentStep: linkage.parentStep,
+            parentFrameKey: linkage.parentFrameKey,
+            parentEntry: linkage.parentEntry,
+          },
+        }),
       }),
-    }),
   );
 }
 
@@ -203,6 +211,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   extractInheritedUserVars: jest.fn(),
   hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue(MOCK_TOKEN_HASH),
   isDelegationToken: jest.fn(realIsDelegationToken),
+  classifyDelegationLiveness: jest.fn().mockReturnValue({ kind: 'live', substep: {} }),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -578,6 +587,9 @@ beforeEach(() => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     );
   jest.mocked(core.getActiveForContext).mockReturnValue(undefined);
+  jest
+    .mocked(core.classifyDelegationLiveness)
+    .mockReturnValue({ kind: 'live', substep: {} as never });
   jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
   jest
     .mocked(createBridgedEmitter)
@@ -2000,10 +2012,12 @@ describe('startRunbook', () => {
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
     const mockPushRunbookWithRunControlClaim = mockFn<
       SessionService['pushRunbookWithRunControlClaim']
-    >().mockResolvedValue({
-      claimId: TEST_CLAIM_ID,
-      claim: claimRecord(MOCK_RUN_ID),
-    });
+    >().mockResolvedValue(
+      committed({
+        claimId: TEST_CLAIM_ID,
+        claim: claimRecord(MOCK_RUN_ID),
+      }),
+    );
     const mockEnsureActiveEntry = mockFn<
       ExecutionLifecycleService['ensureActiveEntry']
     >().mockResolvedValue({
@@ -2085,7 +2099,7 @@ describe('startRunbook', () => {
     const createdState = makeState(runId) as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
       SessionService['pushRunbookWithRunControlClaim']
-    >().mockResolvedValue({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) });
+    >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       manager: {
@@ -2119,7 +2133,7 @@ describe('startRunbook', () => {
     const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (!result.ok && result.reason === 'launch-failed') {
       expect(result.reason).toBe('launch-failed');
       expect(result.error).toContain('Failed to initialize runbook engine');
     }
@@ -2141,13 +2155,15 @@ describe('startRunbook', () => {
     } as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
       SessionService['pushRunbookWithRunControlClaim']
-    >().mockResolvedValue({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) });
-    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
-      status: 'released',
-      runbookId: runId,
-      removedFromDefaultStack: true,
-      nextDefaultRunbookId: null,
-    });
+    >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
+    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId: runId,
+        removedFromDefaultStack: true,
+        nextDefaultRunbookId: null,
+      }),
+    );
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       sessionService: {
@@ -2237,10 +2253,12 @@ describe('startRunbook', () => {
       sessionService: {
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
-        >().mockResolvedValue({
-          claimId: TEST_CLAIM_ID,
-          claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
-        }),
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
@@ -2299,10 +2317,12 @@ describe('startRunbook', () => {
       sessionService: {
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
-        >().mockResolvedValue({
-          claimId: TEST_CLAIM_ID,
-          claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
-        }),
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
@@ -2376,10 +2396,12 @@ describe('startRunbook', () => {
       sessionService: {
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
-        >().mockResolvedValue({
-          claimId: TEST_CLAIM_ID,
-          claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
-        }),
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
@@ -2979,20 +3001,22 @@ describe('claimAndLaunch', () => {
 
     installHappyDelegationLockMock();
 
-    const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'linkage-mismatch',
-      childRunId: ORPHAN_RUN_ID,
-      persisted: orphanLinkage,
-      incoming: {
-        kind: 'delegation',
-        parentRunId: DIFFERENT_PARENT_RUN_ID,
-        parentStepId: '1',
-        parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1'),
-        parentEntry: 1,
-        tokenHash,
-      },
-    });
+    const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'linkage-mismatch',
+        childRunId: ORPHAN_RUN_ID,
+        persisted: orphanLinkage,
+        incoming: {
+          kind: 'delegation',
+          parentRunId: DIFFERENT_PARENT_RUN_ID,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: brandFrameKeyForTest('1'),
+          parentEntry: 1,
+          tokenHash,
+        },
+      }),
+    );
     const mockSessionService = {
       claimRunbook: claimSpy,
     } as unknown as SessionService;

@@ -191,8 +191,11 @@ export async function seedActiveRun(
     return seeded;
   }
 
-  const { claimId } = await sessions.pushRunbookWithRunControlClaim(seeded.runId);
-  return { ...seeded, claimId };
+  const activation = await sessions.pushRunbookWithRunControlClaim(seeded.runId);
+  if (activation.status !== 'committed') {
+    throw new Error(activation.message);
+  }
+  return { ...seeded, claimId: activation.value.claimId };
 }
 
 /**
@@ -215,7 +218,10 @@ export async function seedStashedRun(
   const seeded = await seedActiveRun(cwd, options);
   const sessions = new SessionService(new RunbookStateManager(cwd));
   const stashed = await sessions.stashRunbook(seeded.runId);
-  if (stashed === null) {
+  if (stashed.status !== 'committed') {
+    throw new Error(stashed.message);
+  }
+  if (stashed.value === null) {
     throw new Error(`seedStashedRun: stash slot unavailable for ${seeded.runId}`);
   }
   return seeded;
@@ -230,8 +236,11 @@ export async function seedStashedRun(
  */
 export async function issueRunControlClaimFor(cwd: string, runId: RunId): Promise<ClaimId> {
   const sessions = new SessionService(new RunbookStateManager(cwd));
-  const { claimId } = await sessions.issueRunControlClaim(runId);
-  return claimId;
+  const issued = await sessions.issueRunControlClaim(runId);
+  if (issued.status !== 'committed') {
+    throw new Error(issued.message);
+  }
+  return issued.value.claimId;
 }
 
 /**

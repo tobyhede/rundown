@@ -112,7 +112,8 @@ async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
   runbookId: RunId,
-): Promise<void> {
+  sink: TransitionEventSink,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
   if (policy.releaseRunbook) {
     // This is the natural pass/fail transition path (explicit teardown —
     // abort/stop/complete — releases claims directly elsewhere). When a claimed
@@ -120,8 +121,23 @@ async function applyTerminalSideEffects(
     // `rd pass/fail --claim-id` can confirm-or-conflict against the outcome.
     // For an unclaimed top-level runbook there is no matching claim, so this is
     // a no-op. Mirrors `applyExecutionTerminalRelease` in execution.ts.
-    await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
+    const release = await sessionService.releaseRunbook(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
+    if (release.status !== 'committed') {
+      sink.onErrorOccurred?.({
+        message: release.message,
+        runId: release.runId,
+        ...(release.status === 'recovery-required' ? { epoch: release.epoch } : {}),
+        code:
+          release.status === 'execution-in-progress'
+            ? 'execution_in_progress'
+            : 'recovery_required',
+      });
+      return { ok: false, message: release.message };
+    }
   }
+  return { ok: true };
 }
 
 /**
@@ -173,7 +189,21 @@ export async function orchestrateTransition(
   }
 
   if (observation.status === 'done') {
-    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
+    const sideEffect = await applyTerminalSideEffects(
+      sessionService,
+      policy.onComplete,
+      runbookId,
+      sink,
+    );
+    if (!sideEffect.ok) {
+      return {
+        status: 'stopped',
+        action: observation.action,
+        from: observation.from,
+        at: observation.at,
+        message: sideEffect.message,
+      };
+    }
     return {
       status: 'done',
       action: observation.action,
@@ -184,7 +214,21 @@ export async function orchestrateTransition(
   }
 
   if (observation.status === 'stopped') {
-    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
+    const sideEffect = await applyTerminalSideEffects(
+      sessionService,
+      policy.onStopped,
+      runbookId,
+      sink,
+    );
+    if (!sideEffect.ok) {
+      return {
+        status: 'stopped',
+        action: observation.action,
+        from: observation.from,
+        at: observation.at,
+        message: sideEffect.message,
+      };
+    }
     return {
       status: 'stopped',
       action: observation.action,

@@ -6,10 +6,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId, type DelegationClaimLinkage } from '../../src/runbook/claim-id.js';
+import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId, RunbookState, ParentLinkage } from '../../src/runbook/types.js';
+import type { SessionMutationResult } from '../../src/runbook/storage/runbook-store.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import {
   activeFrame,
   buildCompletionKey,
@@ -23,6 +26,7 @@ import {
   assertClaimed,
   claimLiveDelegation,
   seedLiveDelegation,
+  unwrapSessionMutation,
 } from './claim-test-helpers.js';
 
 let inlineForceRunIdSeq = 0;
@@ -97,6 +101,314 @@ describe('SessionService', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
+  /** Mark a run as actively execution-owned without changing its session rows. */
+  function markExecutionOwned(runId: RunId): void {
+    const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+    raw
+      .prepare(
+        `UPDATE runs
+            SET exec_pid = :pid, exec_token = :token, exec_epoch = :epoch
+          WHERE id = :runId`,
+      )
+      .run({ pid: process.pid, token: `sha256:${'a'.repeat(64)}`, epoch: 1, runId });
+    raw.close();
+  }
+
+  /** Seed a recovery-pending attempt for a run without active execution ownership. */
+  function markRecoveryPending(runId: RunId, epoch = 7): void {
+    const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+    raw
+      .prepare(
+        `INSERT INTO execution_attempts
+           (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+         VALUES (:runId, :epoch, :token, 'recovery_pending', :pid, :now)`,
+      )
+      .run({
+        runId,
+        epoch,
+        token: `sha256:${'b'.repeat(64)}`,
+        pid: process.pid,
+        now: '2026-07-22T00:00:00.000Z',
+      });
+    raw.close();
+  }
+
+  describe('ownership-sensitive session mutation results', () => {
+    type MutationFixture = {
+      readonly runId: RunId;
+      readonly invoke: () => Promise<SessionMutationResult<unknown>>;
+    };
+    type MutationCase = {
+      readonly name: string;
+      readonly setup: () => Promise<MutationFixture>;
+    };
+
+    async function createRun(name: string): Promise<RunbookState> {
+      return manager.create({ source: 'project', path: `${name}.md` }, mockRunbook, {
+        runbookPath: `${name}.md`,
+      });
+    }
+
+    const mutationCases: readonly MutationCase[] = [
+      {
+        name: 'issueRunControlClaim',
+        setup: async () => {
+          const run = await createRun('issue');
+          return { runId: run.id, invoke: () => sessionService.issueRunControlClaim(run.id) };
+        },
+      },
+      {
+        name: 'pushRunbookWithRunControlClaim',
+        setup: async () => {
+          const run = await createRun('push-with-claim');
+          return {
+            runId: run.id,
+            invoke: () => sessionService.pushRunbookWithRunControlClaim(run.id),
+          };
+        },
+      },
+      {
+        name: 'claimRunbook',
+        setup: async () => {
+          const parent = await createRun('claim-parent');
+          const linkage = linkageFor(parent.id, 'a');
+          const child = await manager.create(
+            { source: 'project', path: 'claim-child.md' },
+            mockRunbook,
+            { runbookPath: 'claim-child.md', parentLinkage: linkage },
+          );
+          await seedLiveDelegation(manager, linkage);
+          return {
+            runId: child.id,
+            invoke: () => sessionService.claimRunbook(child.id, linkage),
+          };
+        },
+      },
+      {
+        name: 'releaseRunbook',
+        setup: async () => {
+          const run = await createRun('release-one');
+          await sessionService.pushRunbook(run.id);
+          return { runId: run.id, invoke: () => sessionService.releaseRunbook(run.id) };
+        },
+      },
+      {
+        name: 'releaseRunbooks',
+        setup: async () => {
+          const run = await createRun('release-many');
+          await sessionService.pushRunbook(run.id);
+          return { runId: run.id, invoke: () => sessionService.releaseRunbooks([run.id]) };
+        },
+      },
+      {
+        name: 'pruneClaimsForChildren',
+        setup: async () => {
+          const run = await createRun('prune-claims');
+          unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
+          return {
+            runId: run.id,
+            invoke: () => sessionService.pruneClaimsForChildren([run.id]),
+          };
+        },
+      },
+      {
+        name: 'popRunbook',
+        setup: async () => {
+          const run = await createRun('pop');
+          await sessionService.pushRunbook(run.id);
+          return { runId: run.id, invoke: () => sessionService.popRunbook() };
+        },
+      },
+      {
+        name: 'stash',
+        setup: async () => {
+          const run = await createRun('stash-active');
+          await sessionService.pushRunbook(run.id);
+          return { runId: run.id, invoke: () => sessionService.stash() };
+        },
+      },
+      {
+        name: 'stashRunbook',
+        setup: async () => {
+          const run = await createRun('stash-specific');
+          await sessionService.pushRunbook(run.id);
+          return { runId: run.id, invoke: () => sessionService.stashRunbook(run.id) };
+        },
+      },
+      {
+        name: 'unstashForClaimId',
+        setup: async () => {
+          const parent = await createRun('unstash-claim-parent');
+          const linkage = linkageFor(parent.id, 'a');
+          const child = await manager.create(
+            { source: 'project', path: 'unstash-claim-child.md' },
+            mockRunbook,
+            { runbookPath: 'unstash-claim-child.md', parentLinkage: linkage },
+          );
+          await seedLiveDelegation(manager, linkage);
+          const claimed = assertClaimed(
+            unwrapSessionMutation(await sessionService.claimRunbook(child.id, linkage)),
+          );
+          unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+          return {
+            runId: child.id,
+            invoke: () => sessionService.unstashForClaimId(claimed.claimId),
+          };
+        },
+      },
+      {
+        name: 'unstash',
+        setup: async () => {
+          const run = await createRun('unstash');
+          await sessionService.pushRunbook(run.id);
+          unwrapSessionMutation(await sessionService.stash());
+          return { runId: run.id, invoke: () => sessionService.unstash() };
+        },
+      },
+    ];
+
+    describe.each(mutationCases)('$name', ({ setup }) => {
+      it('returns committed on success', async () => {
+        const fixture = await setup();
+        await expect(fixture.invoke()).resolves.toMatchObject({ status: 'committed' });
+      });
+
+      it('returns execution-in-progress for an owned affected run', async () => {
+        const fixture = await setup();
+        markExecutionOwned(fixture.runId);
+        await expect(fixture.invoke()).resolves.toEqual({
+          status: 'execution-in-progress',
+          runId: fixture.runId,
+          message: `Run ${fixture.runId} has an execution in progress.`,
+        });
+      });
+
+      it('returns recovery-required for a recovery-pending affected run', async () => {
+        const fixture = await setup();
+        markRecoveryPending(fixture.runId);
+        await expect(fixture.invoke()).resolves.toEqual({
+          status: 'recovery-required',
+          runId: fixture.runId,
+          epoch: assertExecutionEpoch(7),
+          message: `Run ${fixture.runId} needs recovery: its execution outcome is unknown.`,
+        });
+      });
+    });
+
+    it('wraps a successful domain result in the committed arm', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'owned-result.md' },
+        mockRunbook,
+        { runbookPath: 'owned-result.md' },
+      );
+
+      const result = await sessionService.issueRunControlClaim(state.id);
+
+      expect(result.status).toBe('committed');
+      if (result.status !== 'committed') return;
+      expect(result.value.claim.controlledRunId).toBe(state.id);
+    });
+
+    it('normalizes an exact trigger abort to execution-in-progress', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'execution-owned.md' },
+        mockRunbook,
+        { runbookPath: 'execution-owned.md' },
+      );
+      const issued = await sessionService.issueRunControlClaim(state.id);
+      expect(issued.status).toBe('committed');
+      markExecutionOwned(state.id);
+
+      await expect(sessionService.issueRunControlClaim(state.id)).resolves.toEqual({
+        status: 'execution-in-progress',
+        runId: state.id,
+        message: `Run ${state.id} has an execution in progress.`,
+      });
+    });
+
+    it('captures an exact trigger abort before rollback can erase its ownership witness', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'trigger-owned.md' },
+        mockRunbook,
+        { runbookPath: 'trigger-owned.md' },
+      );
+      const issued = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+
+      const result = await manager.mutateSessionGuarded([state.id], (ctx) => {
+        ctx.tx
+          .prepare(
+            `UPDATE runs
+                SET exec_pid = :pid, exec_token = :token, exec_epoch = :epoch
+              WHERE id = :runId`,
+          )
+          .run({
+            pid: process.pid,
+            token: `sha256:${'c'.repeat(64)}`,
+            epoch: 2,
+            runId: state.id,
+          });
+        ctx.session.claims[issued.claim.claimKey] = { ...issued.claim, grants: [] };
+        return 'must-roll-back';
+      });
+
+      expect(result).toEqual({
+        status: 'execution-in-progress',
+        runId: state.id,
+        message: `Run ${state.id} has an execution in progress.`,
+      });
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      expect(
+        raw.prepare('SELECT exec_token FROM runs WHERE id = :runId').get({ runId: state.id }),
+      ).toEqual({ exec_token: null });
+      raw.close();
+      expect((await manager.loadSession()).claims[issued.claim.claimKey].grants).toEqual(
+        issued.claim.grants,
+      );
+    });
+
+    it('refuses recovery-required before changing session state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'recovery-pending.md' },
+        mockRunbook,
+        { runbookPath: 'recovery-pending.md' },
+      );
+      markRecoveryPending(state.id);
+
+      await expect(sessionService.pushRunbookWithRunControlClaim(state.id)).resolves.toEqual({
+        status: 'recovery-required',
+        runId: state.id,
+        epoch: assertExecutionEpoch(7),
+        message: `Run ${state.id} needs recovery: its execution outcome is unknown.`,
+      });
+      expect((await manager.loadSession()).defaultStack).toEqual([]);
+    });
+
+    it('returns the first multi-run recovery refusal and rolls back every release', async () => {
+      const first = await manager.create(
+        { source: 'project', path: 'first-release.md' },
+        mockRunbook,
+        { runbookPath: 'first-release.md' },
+      );
+      const second = await manager.create(
+        { source: 'project', path: 'second-release.md' },
+        mockRunbook,
+        { runbookPath: 'second-release.md' },
+      );
+      await sessionService.pushRunbook(first.id);
+      await sessionService.pushRunbook(second.id);
+      markRecoveryPending(second.id, 9);
+      markRecoveryPending(first.id, 10);
+
+      await expect(sessionService.releaseRunbooks([second.id, first.id])).resolves.toEqual({
+        status: 'recovery-required',
+        runId: second.id,
+        epoch: assertExecutionEpoch(9),
+        message: `Run ${second.id} needs recovery: its execution outcome is unknown.`,
+      });
+      expect((await manager.loadSession()).defaultStack).toEqual([first.id, second.id]);
+    });
+  });
+
   describe('Runbook stack operations', () => {
     it('pushRunbook adds to stack', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
@@ -119,7 +431,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(parent.id);
       await sessionService.pushRunbook(child.id);
 
-      const newTopId = await sessionService.popRunbook();
+      const newTopId = unwrapSessionMutation(await sessionService.popRunbook());
       expect(newTopId).toBe(parent.id);
 
       const active = await sessionService.getActive();
@@ -142,11 +454,11 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(wf3.id);
 
       expect((await sessionService.getActive())?.id).toBe(wf3.id);
-      await sessionService.popRunbook();
+      unwrapSessionMutation(await sessionService.popRunbook());
       expect((await sessionService.getActive())?.id).toBe(wf2.id);
-      await sessionService.popRunbook();
+      unwrapSessionMutation(await sessionService.popRunbook());
       expect((await sessionService.getActive())?.id).toBe(wf1.id);
-      await sessionService.popRunbook();
+      unwrapSessionMutation(await sessionService.popRunbook());
       expect(await sessionService.getActive()).toBeNull();
     });
   });
@@ -193,7 +505,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(state.id);
 
-      const stashedId = await sessionService.stash();
+      const stashedId = unwrapSessionMutation(await sessionService.stash());
 
       expect(stashedId).toBe(state.id);
       expect(await sessionService.getActive()).toBeNull();
@@ -205,9 +517,9 @@ describe('SessionService', () => {
         runbookPath: 'test.md',
       });
       await sessionService.pushRunbook(state.id);
-      await sessionService.stash();
+      unwrapSessionMutation(await sessionService.stash());
 
-      const restored = await sessionService.unstash();
+      const restored = unwrapSessionMutation(await sessionService.unstash());
 
       expect(restored?.id).toBe(state.id);
       expect((await sessionService.getActive())?.id).toBe(state.id);
@@ -219,11 +531,11 @@ describe('SessionService', () => {
         runbookPath: 'temp.md',
       });
       await sessionService.pushRunbook(state.id);
-      await sessionService.stash();
+      unwrapSessionMutation(await sessionService.stash());
 
       await manager.delete(state.id);
 
-      const restored = await sessionService.unstash();
+      const restored = unwrapSessionMutation(await sessionService.unstash());
       expect(restored).toBeNull();
       expect(await sessionService.getStashedRunbookId()).toBeNull();
       expect(await sessionService.getActive()).toBeNull();
@@ -238,10 +550,10 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(s1.id);
 
-      const first = await sessionService.stash();
+      const first = unwrapSessionMutation(await sessionService.stash());
 
       await sessionService.pushRunbook(s2.id);
-      const second = await sessionService.stash();
+      const second = unwrapSessionMutation(await sessionService.stash());
 
       expect(first).toBe(s1.id);
       expect(second).toBeNull();
@@ -264,7 +576,7 @@ describe('SessionService', () => {
         },
       );
 
-      const issued = await sessionService.issueRunControlClaim(state.id);
+      const issued = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
       const session = await manager.loadSession();
 
       expect(issued.claimId).toMatch(/^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/);
@@ -288,7 +600,7 @@ describe('SessionService', () => {
           runId: PARENT_RUN_ID,
         },
       );
-      const issued = await sessionService.issueRunControlClaim(state.id);
+      const issued = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
 
       await expect(sessionService.verifyClaimId(issued.claimId)).resolves.toEqual({
         status: 'verified',
@@ -316,8 +628,8 @@ describe('SessionService', () => {
         },
       );
 
-      const first = await sessionService.issueRunControlClaim(state.id);
-      const second = await sessionService.issueRunControlClaim(state.id);
+      const first = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      const second = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
 
       // Exactly one run-control claim persists per run: re-issuing MUST NOT append a
       // duplicate that violates the SessionDataSchema controlledRunId uniqueness
@@ -353,9 +665,9 @@ describe('SessionService', () => {
       // take exactly one — asserted here on the store transaction that now carries
       // it, where the lock-cycle count used to stand in for the same property.
       const service = new SessionService(manager);
-      const mutateSpy = jest.spyOn(manager, 'mutateSession');
+      const mutateSpy = jest.spyOn(manager, 'mutateSessionGuarded');
 
-      const issued = await service.pushRunbookWithRunControlClaim(state.id);
+      const issued = unwrapSessionMutation(await service.pushRunbookWithRunControlClaim(state.id));
 
       expect(mutateSpy).toHaveBeenCalledTimes(1);
       mutateSpy.mockRestore();
@@ -735,7 +1047,9 @@ describe('SessionService', () => {
       // a rival claim against the same child. (Pre-R2 this surfaced as a
       // linkage-mismatch; the durable latch now decides on parent liveness first.)
       const incomingLinkage = linkageFor(parent.id, '6');
-      const result = await sessionService.claimRunbook(child.id, incomingLinkage);
+      const result = unwrapSessionMutation(
+        await sessionService.claimRunbook(child.id, incomingLinkage),
+      );
 
       expect(result.status).toBe('delegation-superseded');
       if (result.status === 'delegation-superseded') {
@@ -774,7 +1088,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      await sessionService.releaseRunbook(child.id);
+      unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
 
       expect((await sessionService.getActiveForClaimId(claimed.claimId)).status).toBe('missing');
     });
@@ -812,9 +1126,11 @@ describe('SessionService', () => {
     it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps the claim as a terminal tombstone', async () => {
       const { claimId, childRunId } = await setupClaimedChild('e', 'completed');
 
-      const result = await sessionService.releaseRunbook(childRunId, {
-        retainClaimsAsTerminal: true,
-      });
+      const result = unwrapSessionMutation(
+        await sessionService.releaseRunbook(childRunId, {
+          retainClaimsAsTerminal: true,
+        }),
+      );
 
       expect(result.status).toBe('released');
       const resolution = await sessionService.getActiveForClaimId(claimId);
@@ -827,7 +1143,7 @@ describe('SessionService', () => {
     it('releaseRunbook() (default) still deletes the claim record', async () => {
       const { claimId, childRunId } = await setupClaimedChild('7', 'completed');
 
-      await sessionService.releaseRunbook(childRunId);
+      unwrapSessionMutation(await sessionService.releaseRunbook(childRunId));
 
       const resolution = await sessionService.getActiveForClaimId(claimId);
       expect(resolution.status).toBe('missing');
@@ -840,9 +1156,11 @@ describe('SessionService', () => {
       // resolved lifecycle reflects `stopped`.
       const { claimId, childRunId } = await setupClaimedChild('d', 'stopped');
 
-      const result = await sessionService.releaseRunbook(childRunId, {
-        retainClaimsAsTerminal: true,
-      });
+      const result = unwrapSessionMutation(
+        await sessionService.releaseRunbook(childRunId, {
+          retainClaimsAsTerminal: true,
+        }),
+      );
 
       expect(result.status).toBe('released');
       const resolution = await sessionService.getActiveForClaimId(claimId);
@@ -854,9 +1172,13 @@ describe('SessionService', () => {
 
     it('pruneClaimsForChildren removes claims pointing at the given child run ids', async () => {
       const { claimId, claimKey, childRunId } = await setupClaimedChild('6', 'completed');
-      await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
+      unwrapSessionMutation(
+        await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true }),
+      );
 
-      const removed = await sessionService.pruneClaimsForChildren([childRunId]);
+      const removed = unwrapSessionMutation(
+        await sessionService.pruneClaimsForChildren([childRunId]),
+      );
 
       expect(removed).toEqual([claimKey]);
       const resolution = await sessionService.getActiveForClaimId(claimId);
@@ -869,10 +1191,16 @@ describe('SessionService', () => {
       // remove both claim records and resolve each to `missing` afterward.
       const a = await setupClaimedChild('8', 'completed');
       const b = await setupClaimedChild('9', 'stopped');
-      await sessionService.releaseRunbook(a.childRunId, { retainClaimsAsTerminal: true });
-      await sessionService.releaseRunbook(b.childRunId, { retainClaimsAsTerminal: true });
+      unwrapSessionMutation(
+        await sessionService.releaseRunbook(a.childRunId, { retainClaimsAsTerminal: true }),
+      );
+      unwrapSessionMutation(
+        await sessionService.releaseRunbook(b.childRunId, { retainClaimsAsTerminal: true }),
+      );
 
-      const removed = await sessionService.pruneClaimsForChildren([a.childRunId, b.childRunId]);
+      const removed = unwrapSessionMutation(
+        await sessionService.pruneClaimsForChildren([a.childRunId, b.childRunId]),
+      );
 
       expect(removed).toHaveLength(2);
       expect(new Set(removed)).toEqual(new Set([a.claimKey, b.claimKey]));
@@ -884,10 +1212,14 @@ describe('SessionService', () => {
       // A retained tombstone exists, but the prune targets an unrelated child id.
       // No claim is removed and the existing tombstone still resolves `terminal`.
       const { claimId, childRunId } = await setupClaimedChild('a', 'completed');
-      await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
+      unwrapSessionMutation(
+        await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true }),
+      );
 
       const unrelatedChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
-      const removed = await sessionService.pruneClaimsForChildren([unrelatedChildId]);
+      const removed = unwrapSessionMutation(
+        await sessionService.pruneClaimsForChildren([unrelatedChildId]),
+      );
 
       expect(removed).toEqual([]);
       const resolution = await sessionService.getActiveForClaimId(claimId);
@@ -910,7 +1242,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      await sessionService.stashRunbook(child.id);
+      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
@@ -919,7 +1251,9 @@ describe('SessionService', () => {
         expect(resolved.reason).toBe('stashed');
       }
 
-      const restored = await sessionService.unstashForClaimId(claimed.claimId);
+      const restored = unwrapSessionMutation(
+        await sessionService.unstashForClaimId(claimed.claimId),
+      );
       expect(restored.status).toBe('restored');
       if (restored.status === 'restored') {
         expect(restored.state.id).toBe(child.id);
@@ -943,14 +1277,18 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      const absent = await sessionService.unstashForClaimId(
-        assertClaimId(
-          'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+      const absent = unwrapSessionMutation(
+        await sessionService.unstashForClaimId(
+          assertClaimId(
+            'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+          ),
         ),
       );
       expect(absent.status).toBe('missing-claim');
 
-      const notStashed = await sessionService.unstashForClaimId(claimed.claimId);
+      const notStashed = unwrapSessionMutation(
+        await sessionService.unstashForClaimId(claimed.claimId),
+      );
       expect(notStashed.status).toBe('not-stashed');
       if (notStashed.status === 'not-stashed') {
         expect(notStashed.claim.controlledRunId).toBe(child.id);
@@ -973,10 +1311,12 @@ describe('SessionService', () => {
       const terminalClaimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, terminalChild.id, terminalLinkage),
       );
-      await sessionService.stashRunbook(terminalChild.id);
+      unwrapSessionMutation(await sessionService.stashRunbook(terminalChild.id));
       await manager.update(terminalChild.id, { lifecycle: 'completed' });
 
-      const terminal = await sessionService.unstashForClaimId(terminalClaimed.claimId);
+      const terminal = unwrapSessionMutation(
+        await sessionService.unstashForClaimId(terminalClaimed.claimId),
+      );
       expect(terminal.status).toBe('terminal-child');
       if (terminal.status === 'terminal-child') {
         expect(terminal.lifecycle).toBe('completed');
@@ -998,13 +1338,15 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, endedLinkage),
       );
       await manager.update(endedParent.id, { lifecycle: 'stopped' });
-      await sessionService.releaseRunbook(terminalChild.id);
-      await sessionService.stashRunbook(child.id);
+      unwrapSessionMutation(await sessionService.releaseRunbook(terminalChild.id));
+      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
 
       // R2: ending the parent superseded the delegated claim, so its bearer no
       // longer resolves as a live claim — it reports as a missing claim rather
       // than a live ended-parent outcome.
-      const parentEnded = await sessionService.unstashForClaimId(endedClaimed.claimId);
+      const parentEnded = unwrapSessionMutation(
+        await sessionService.unstashForClaimId(endedClaimed.claimId),
+      );
       expect(parentEnded.status).toBe('missing-claim');
     });
 
@@ -1021,7 +1363,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      await sessionService.stashRunbook(child.id);
+      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
 
       // Default (write) gate refuses.
       const gated = await sessionService.getActiveForClaimId(claimed.claimId);
@@ -1063,7 +1405,7 @@ describe('SessionService', () => {
       // Child completes: terminal release pops the default-stack entry and
       // removes the claim record in one pass.
       await manager.update(child.id, { lifecycle: 'completed' });
-      const released = await sessionService.releaseRunbook(child.id);
+      const released = unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
       expect(released.status).toBe('released');
 
       const session = await manager.loadSession();
@@ -1353,15 +1695,15 @@ describe('SessionService', () => {
       // Seed the parent's live delegation so the racing claim passes the R2 claim-side latch.
       await seedLiveDelegation(manager, linkage);
 
-      let claimed:
-        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
-        | undefined;
+      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
 
       const advanceResult = await sessionService.runGuardedParentAdvance(
         parent.id,
         async (guard) => {
           // Claim commits INSIDE the window, before the guarded decisive write.
-          claimed = assertClaimed(await claimant.claimRunbook(child.id, linkage));
+          claimed = assertClaimed(
+            unwrapSessionMutation(await claimant.claimRunbook(child.id, linkage)),
+          );
           // The decisive write, carrying the guard: resolve the delegated substep.
           await manager.update(
             parent.id,
@@ -1460,7 +1802,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(parent.id);
       await sessionService.pushRunbook(child.id);
 
-      const released = await sessionService.releaseRunbook(child.id);
+      const released = unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
       expect(released.status).toBe('released');
       if (released.status === 'released') {
         expect(released.removedFromDefaultStack).toBe(true);
@@ -1483,7 +1825,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(child.id);
       await sessionService.pushRunbook(sibling.id);
 
-      const released = await sessionService.releaseRunbook(child.id);
+      const released = unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
       expect(released.status).toBe('released');
       if (released.status === 'released') {
         expect(released.removedFromDefaultStack).toBe(true);
@@ -1491,7 +1833,7 @@ describe('SessionService', () => {
       }
 
       expect((await sessionService.getActive())?.id).toBe(sibling.id);
-      await sessionService.popRunbook();
+      unwrapSessionMutation(await sessionService.popRunbook());
       expect((await sessionService.getActive())?.id).toBe(parent.id);
     });
 
@@ -1507,7 +1849,9 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(root.id);
       await sessionService.pushRunbook(leaf.id);
 
-      const result = await sessionService.releaseRunbooks([leaf.id, root.id]);
+      const result = unwrapSessionMutation(
+        await sessionService.releaseRunbooks([leaf.id, root.id]),
+      );
 
       expect(result.releasedRunIds).toEqual([leaf.id, root.id]);
       expect(result.nextDefaultRunbookId).toBe(sibling.id);

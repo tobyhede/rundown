@@ -14,6 +14,8 @@ import {
   InvalidRunbookStateError,
   LegacySnapshotError,
   isError,
+  sessionMutationRefusalOutcome,
+  type SessionMutationRefusalOutcome,
 } from '@rundown-org/core';
 
 /**
@@ -58,7 +60,8 @@ export function isRecoverableActiveStackError(error: Error): boolean {
 export type OrphanCleanupResult =
   | { readonly kind: 'removed'; readonly runId: RunId }
   | { readonly kind: 'empty-stack' }
-  | { readonly kind: 'healthy-top'; readonly runId: RunId };
+  | { readonly kind: 'healthy-top'; readonly runId: RunId }
+  | SessionMutationRefusalOutcome;
 
 /**
  * Remove the top default-stack entry only after verifying it is unusable (#518).
@@ -102,7 +105,10 @@ export async function cleanupOrphanedActiveStack(
     return { kind: 'healthy-top', runId: topId };
   }
 
+  const released = await sessionService.releaseRunbook(topId);
+  if (released.status !== 'committed') {
+    return sessionMutationRefusalOutcome(released);
+  }
   await manager.delete(topId);
-  await sessionService.releaseRunbook(topId);
   return { kind: 'removed', runId: topId };
 }

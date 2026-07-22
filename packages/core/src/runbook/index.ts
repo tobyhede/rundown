@@ -28,6 +28,7 @@ export {
 // Storage is otherwise internal; the incompatible-schema error is public so the
 // CLI can classify it by type and surface the RD-305 envelope.
 export { IncompatibleSchemaError } from './storage/schema.js';
+export type { SessionMutationResult } from './storage/runbook-store.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
@@ -93,12 +94,15 @@ export {
 } from './state-update-ops.js';
 export {
   SessionService,
+  sessionMutationRefusalOutcome,
   type ActiveInlineForceTerminalPlan,
   type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
   type RunningStackMemberResolution,
+  type SessionMutationRefusal,
+  type SessionMutationRefusalOutcome,
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {

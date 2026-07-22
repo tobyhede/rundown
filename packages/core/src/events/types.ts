@@ -4,6 +4,8 @@ import type { ActionType } from '../runbook/transition-kernel.js';
 import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
 import type { ContextSnapshot } from '../runbook/types.js';
 import type { ClaimId } from '../runbook/claim-id.js';
+import type { RunId } from '../runbook/run-id.js';
+import type { ExecutionEpoch } from '../runbook/storage/mutation-result.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -206,6 +208,10 @@ export interface ErrorOccurredPayload {
   readonly message: string;
   readonly code?: string;
   readonly position?: StepPosition;
+  /** Run refused by an ownership-sensitive operation. */
+  readonly runId?: RunId;
+  /** Recovery epoch when the refused run requires recovery. */
+  readonly epoch?: ExecutionEpoch;
 }
 
 // ─── Event Union ─────────────────────────────────────────────────────────────

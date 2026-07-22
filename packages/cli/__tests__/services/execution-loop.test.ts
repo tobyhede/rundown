@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
+import type { ExecutionEventEmitter, RunbookStateManager, SessionService } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { mockFn } from '../helpers/typed-mocks.js';
 
@@ -30,8 +30,17 @@ const mockActorService = {
 const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
   pushRunbook: mockFn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
-  popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
-  releaseRunbook: mockFn<(id: string) => Promise<void>>() as any,
+  popRunbook: mockFn<SessionService['popRunbook']>().mockResolvedValue({
+    status: 'committed',
+    value: null,
+  }),
+  releaseRunbook: mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
+    status: 'committed',
+    value: {
+      status: 'not-found',
+      runbookId: `rd_${'0'.repeat(32)}` as never,
+    },
+  }),
 };
 
 const ensureActiveEntryFn =
@@ -400,7 +409,13 @@ describe('runExecutionLoop', () => {
     mockSessionService.pushRunbook.mockReset();
     mockSessionService.pushRunbook.mockResolvedValue(undefined);
     mockSessionService.releaseRunbook.mockReset();
-    mockSessionService.releaseRunbook.mockResolvedValue(undefined);
+    mockSessionService.releaseRunbook.mockResolvedValue({
+      status: 'committed',
+      value: {
+        status: 'not-found',
+        runbookId: `rd_${'0'.repeat(32)}` as never,
+      },
+    });
 
     // Default evaluate behavior. ConditionResult requires `action`; the test
     // bodies only check the `message` field so we cast through `unknown` to
@@ -1153,6 +1168,47 @@ describe('runExecutionLoop', () => {
       retainClaimsAsTerminal: true,
     });
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+  });
+
+  it('preserves recovery run and epoch in terminal release error events', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+    mockSessionService.releaseRunbook.mockResolvedValue({
+      status: 'recovery-required',
+      runId: runbookId,
+      epoch: 7 as never,
+      message: 'recovery required',
+    });
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: { ...makeLoopState(), lifecycle: 'completed' },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+      },
+      effects: [],
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { terminalReleaseMode: 'release-runbook' },
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: 'recovery required',
+        code: 'recovery_required',
+        runId: runbookId,
+        epoch: 7,
+      },
+    });
   });
 
   describe("terminalReleaseMode 'defer-to-caller' (#598)", () => {

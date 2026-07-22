@@ -249,7 +249,23 @@ export function registerRunCommand(program: Command): void {
             });
 
             if (!result.ok) {
-              output.error(result.error, result.code, result.details);
+              if (
+                result.reason === 'execution-in-progress' ||
+                result.reason === 'recovery-required'
+              ) {
+                output.error(
+                  result.message,
+                  result.reason === 'execution-in-progress'
+                    ? 'execution_in_progress'
+                    : 'recovery_required',
+                  {
+                    runId: result.runId,
+                    ...(result.reason === 'recovery-required' ? { epoch: result.epoch } : {}),
+                  },
+                );
+              } else {
+                output.error(result.error, result.code, result.details);
+              }
               output.flush();
               process.exit(1);
             }

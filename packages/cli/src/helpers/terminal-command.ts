@@ -40,6 +40,7 @@ import {
   isRecoverableActiveStackError,
   type OrphanCleanupResult,
 } from './active-runbook-cleanup.js';
+import { renderSessionMutationRefusal } from './session-mutation-result.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -209,6 +210,21 @@ export async function renderTerminalOutcome(
       output.complete(message ?? 'Runbook completed successfully');
       return false;
     }
+    case 'execution_in_progress':
+      renderSessionMutationRefusal(output, {
+        status: 'execution-in-progress',
+        runId: outcome.runId,
+        message: outcome.message,
+      });
+      return true;
+    case 'recovery_required':
+      renderSessionMutationRefusal(output, {
+        status: 'recovery-required',
+        runId: outcome.runId,
+        epoch: outcome.epoch,
+        message: outcome.message,
+      });
+      return true;
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -270,6 +286,20 @@ export async function runSeamTerminal(
       else output.stopped(removalMessage);
       output.flush();
       return { manager, exitError: false };
+    }
+    if (cleanup.kind === 'execution_in_progress' || cleanup.kind === 'recovery_required') {
+      renderSessionMutationRefusal(
+        output,
+        cleanup.kind === 'execution_in_progress'
+          ? { status: 'execution-in-progress', runId: cleanup.runId, message: cleanup.message }
+          : {
+              status: 'recovery-required',
+              runId: cleanup.runId,
+              epoch: cleanup.epoch,
+              message: cleanup.message,
+            },
+      );
+      return { manager, exitError: true };
     }
   }
 
@@ -464,6 +494,20 @@ export async function handleTerminalRecovery(
       if (command === 'complete') output.complete(removalMessage);
       else output.stopped(removalMessage);
       output.flush();
+      return;
+    }
+    if (cleanup.kind === 'execution_in_progress' || cleanup.kind === 'recovery_required') {
+      renderSessionMutationRefusal(
+        output,
+        cleanup.kind === 'execution_in_progress'
+          ? { status: 'execution-in-progress', runId: cleanup.runId, message: cleanup.message }
+          : {
+              status: 'recovery-required',
+              runId: cleanup.runId,
+              epoch: cleanup.epoch,
+              message: cleanup.message,
+            },
+      );
       return;
     }
     // empty-stack / healthy-top: the failure did not come from an orphaned top —

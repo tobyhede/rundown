@@ -7,6 +7,7 @@ import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 
 /**
  * Registers the 'stash' command for pausing runbook enforcement.
@@ -63,7 +64,12 @@ export function registerStashCommand(program: Command): void {
           const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
-          const stashedId = await sessionService.stashRunbook(state.id);
+          const stashResult = await sessionService.stashRunbook(state.id);
+          if (stashResult.status !== 'committed') {
+            renderSessionMutationRefusal(output, stashResult);
+            return;
+          }
+          const stashedId = stashResult.value;
           if (!stashedId) {
             output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
             output.flush();

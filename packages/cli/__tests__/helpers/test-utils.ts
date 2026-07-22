@@ -392,8 +392,9 @@ export async function withRunTarget(
   if (!state) throw new Error('withRunTarget: no active run to target');
   const manager = new RunbookStateManager(workspace.cwd);
   const sessionService = new SessionService(manager);
-  const { claimId } = await sessionService.issueRunControlClaim(state.id);
-  return [...args, '--claim-id', claimId];
+  const result = await sessionService.issueRunControlClaim(state.id);
+  if (result.status !== 'committed') throw new Error(result.message);
+  return [...args, '--claim-id', result.value.claimId];
 }
 
 /**
@@ -429,8 +430,9 @@ export async function issueRunControlClaim(
 ): Promise<ClaimId> {
   const manager = new RunbookStateManager(workspace.cwd);
   const sessionService = new SessionService(manager);
-  const { claimId } = await sessionService.issueRunControlClaim(runId);
-  return claimId;
+  const result = await sessionService.issueRunControlClaim(runId);
+  if (result.status !== 'committed') throw new Error(result.message);
+  return result.value.claimId;
 }
 
 /**

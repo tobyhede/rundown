@@ -29,6 +29,7 @@ import {
 } from './targeting.js';
 import { countNumberedSteps } from './step-utils.js';
 import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
+import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
@@ -52,7 +53,7 @@ export interface CollectionSessionService extends CommandTargetReader {
   releaseRunbook(
     runbookId: RunId,
     options?: { readonly retainClaimsAsTerminal?: boolean },
-  ): Promise<ReleaseRunbookResult>;
+  ): Promise<SessionMutationResult<ReleaseRunbookResult>>;
 
   /**
    * Record best-effort liveness for a presented bearer claim after collection
@@ -557,9 +558,19 @@ async function applyCollection(
     // acquirer via PID-aware stale detection). Swallow its rejection rather than let
     // cleanup mask the committed collection_applied outcome (RD-102).
     try {
-      await input.sessionService.releaseRunbook(input.targetState.id, {
+      const release = await input.sessionService.releaseRunbook(input.targetState.id, {
         retainClaimsAsTerminal: true,
       });
+      switch (release.status) {
+        case 'committed':
+        case 'execution-in-progress':
+        case 'recovery-required':
+          break;
+        default: {
+          const _exhaustive: never = release;
+          return _exhaustive;
+        }
+      }
     } catch {
       // Intentionally ignored — see best-effort note above.
     }

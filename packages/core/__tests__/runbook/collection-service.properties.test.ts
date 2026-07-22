@@ -20,6 +20,7 @@ import {
 } from '../../src/runbook/index.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import type { SubstepState } from '../../src/runbook/types.js';
+import { unwrapSessionMutation } from './claim-test-helpers.js';
 
 // The missing-outcome gate reads only from the passed `targetState` (no disk,
 // no drain), so these properties are pure: the service is wired with a real
@@ -100,7 +101,7 @@ describe('RunbookCollectionService properties', () => {
     // The run must exist before a claim can reference it (claims.controlled_run
     // FK). The properties themselves still drive the gate off in-memory states.
     await manager.save(state());
-    claimId = (await sessionService.issueRunControlClaim(runId)).claimId;
+    claimId = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId)).claimId;
     collectionService = new RunbookCollectionService({
       sessionService,
       manager,

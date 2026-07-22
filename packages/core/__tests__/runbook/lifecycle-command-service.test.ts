@@ -34,6 +34,7 @@ import {
   replaceSubstepStateEntry,
   type CallerEvidence,
   type ClaimId,
+  type ClaimRunbookResult,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
   type ResolveChildRunbook,
@@ -51,6 +52,7 @@ import {
   linkageFor,
   claimLiveDelegation,
   seedLiveDelegation,
+  unwrapSessionMutation,
 } from './claim-test-helpers.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
@@ -221,7 +223,7 @@ describe('RunbookLifecycleCommandService', () => {
   }
 
   async function issueRunControlClaimFor(id: RunbookState['id']): Promise<void> {
-    const { claimId } = await sessionService.issueRunControlClaim(id);
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(id));
     issuedRunControlClaims.set(id, claimId);
   }
 
@@ -2310,11 +2312,11 @@ describe('RunbookLifecycleCommandService', () => {
 
       const claimant = new SessionService(new RunbookStateManager(tmp));
       const realSendAndSync = actorService.sendAndSync.bind(actorService);
-      let claimed:
-        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
-        | undefined;
+      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
       jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (...args) => {
-        claimed = assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+        claimed = assertClaimed(
+          unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
+        );
         return realSendAndSync(...args);
       });
 
@@ -2351,13 +2353,13 @@ describe('RunbookLifecycleCommandService', () => {
 
       const claimant = new SessionService(new RunbookStateManager(tmp));
       const realRecord = completionService.recordManualCompletion.bind(completionService);
-      let claimed:
-        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
-        | undefined;
+      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
       jest
         .spyOn(completionService, 'recordManualCompletion')
         .mockImplementation(async (...args) => {
-          claimed = assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+          claimed = assertClaimed(
+            unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
+          );
           return realRecord(...args);
         });
 
@@ -3477,7 +3479,8 @@ describe('RunbookLifecycleCommandService', () => {
       // reentrant and terminal release cannot move back inside the span.
       const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
-      const sessionAcquireSpy = jest.spyOn(manager, 'mutateSession');
+      const recordingSessionSpy = jest.spyOn(manager, 'mutateSession');
+      const releaseSessionSpy = jest.spyOn(manager, 'mutateSessionGuarded');
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
 
       const outcome = await explicitPass(localSeam, '1.1');
@@ -3490,8 +3493,8 @@ describe('RunbookLifecycleCommandService', () => {
       // writes it only after that span closes.
       const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
       const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
-      const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
-      const releaseSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder.at(-1);
+      const recordingSessionAcquire = recordingSessionSpy.mock.invocationCallOrder[0];
+      const releaseSessionAcquire = releaseSessionSpy.mock.invocationCallOrder.at(-1);
       expect(completionAcquire).toBeDefined();
       expect(completionRelease).toBeDefined();
       expect(recordingSessionAcquire).toBeDefined();
@@ -4005,10 +4008,13 @@ describe('RunbookLifecycleCommandService', () => {
           .mockImplementation(async () => {
             order.push('release');
             return {
-              status: 'released',
-              runbookId: claimChildRunId,
-              removedFromDefaultStack: false,
-              nextDefaultRunbookId: null,
+              status: 'committed',
+              value: {
+                status: 'released',
+                runbookId: claimChildRunId,
+                removedFromDefaultStack: false,
+                nextDefaultRunbookId: null,
+              },
             };
           });
         const out = await seam.runTerminal({
@@ -4080,10 +4086,13 @@ describe('RunbookLifecycleCommandService', () => {
           .spyOn(actorService, 'sendAndSync')
           .mockImplementation(async (id, steps, ev) => realSend(id, steps, ev));
         jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
-          status: 'released',
-          runbookId: claimChildRunId,
-          removedFromDefaultStack: false,
-          nextDefaultRunbookId: null,
+          status: 'committed',
+          value: {
+            status: 'released',
+            runbookId: claimChildRunId,
+            removedFromDefaultStack: false,
+            nextDefaultRunbookId: null,
+          },
         });
 
         const out = await seam.runTerminal({
@@ -4131,10 +4140,13 @@ describe('RunbookLifecycleCommandService', () => {
           .spyOn(completionService, 'recordChildCompletion')
           .mockResolvedValue('recorded');
         jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
-          status: 'released',
-          runbookId: claimChildRunId,
-          removedFromDefaultStack: false,
-          nextDefaultRunbookId: null,
+          status: 'committed',
+          value: {
+            status: 'released',
+            runbookId: claimChildRunId,
+            removedFromDefaultStack: false,
+            nextDefaultRunbookId: null,
+          },
         });
 
         const out = await seam.runTerminal({
@@ -4370,17 +4382,23 @@ describe('RunbookLifecycleCommandService', () => {
           .spyOn(sessionService, 'releaseRunbooks')
           .mockImplementation(async () => {
             order.push('release-descendants');
-            return { releasedRunIds: [CHILD], nextDefaultRunbookId: null };
+            return {
+              status: 'committed',
+              value: { releasedRunIds: [CHILD], nextDefaultRunbookId: null },
+            };
           });
         const releaseRootSpy = jest
           .spyOn(sessionService, 'releaseRunbook')
           .mockImplementation(async () => {
             order.push('release-root');
             return {
-              status: 'released',
-              runbookId: ROOT,
-              removedFromDefaultStack: false,
-              nextDefaultRunbookId: null,
+              status: 'committed',
+              value: {
+                status: 'released',
+                runbookId: ROOT,
+                removedFromDefaultStack: false,
+                nextDefaultRunbookId: null,
+              },
             };
           });
 

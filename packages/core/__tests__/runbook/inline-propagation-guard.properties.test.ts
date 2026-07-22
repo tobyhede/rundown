@@ -200,7 +200,15 @@ async function walk(
     sessionService: {
       releaseRunbook: async (runbookId: RunId) => {
         released.push(runbookId);
-        return {} as never;
+        return {
+          status: 'committed',
+          value: {
+            status: 'released',
+            runbookId,
+            removedFromDefaultStack: true,
+            nextDefaultRunbookId: null,
+          },
+        };
       },
     },
     completionService: {

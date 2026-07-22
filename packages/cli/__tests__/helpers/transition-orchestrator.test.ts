@@ -30,6 +30,51 @@ const steps = [
 ] as any;
 
 describe('orchestrateTransition', () => {
+  it('preserves the refused run and epoch in terminal side-effect errors', async () => {
+    const releaseRunbook = jest.fn(async () => ({
+      status: 'recovery-required' as const,
+      runId: baseState.id,
+      epoch: 9 as never,
+      message: 'recovery required',
+    }));
+    const sink = {
+      onErrorOccurred: jest.fn(),
+      onStepTransitioned: jest.fn(),
+      onRunbookCompleted: jest.fn(),
+      onRunbookStopped: jest.fn(),
+    };
+
+    const result = await orchestrateTransition({
+      sessionService: { releaseRunbook } as unknown as SessionService,
+      sink,
+      runbookId: baseState.id,
+      steps,
+      currentStep: steps[0],
+      previousState: baseState,
+      updatedState: { ...baseState, lifecycle: 'completed' },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+      },
+      result: 'pass',
+      policy: {
+        onComplete: { releaseRunbook: true },
+        onStopped: { releaseRunbook: false },
+      },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ status: 'stopped', message: 'recovery required' }),
+    );
+    expect(sink.onErrorOccurred).toHaveBeenCalledWith({
+      message: 'recovery required',
+      code: 'recovery_required',
+      runId: baseState.id,
+      epoch: 9,
+    });
+  });
+
   it('renders core-projected internal failure events without mutating runbook state', async () => {
     const releaseRunbook = jest.fn(async () => undefined);
     const sessionService = {

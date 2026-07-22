@@ -73,6 +73,28 @@ export type StateMutationResult =
   | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
 
 /**
+ * Exhaustive outcome of an ownership-sensitive session mutation.
+ *
+ * Domain-specific results remain nested in the `committed` arm so ownership
+ * refusals cannot be confused with a domain-level `null` or status.
+ *
+ * @template T - Domain value returned after the session transaction commits.
+ */
+export type SessionMutationResult<T> =
+  | { readonly status: 'committed'; readonly value: T }
+  | {
+      readonly status: 'execution-in-progress';
+      readonly runId: RunId;
+      readonly message: string;
+    }
+  | {
+      readonly status: 'recovery-required';
+      readonly runId: RunId;
+      readonly epoch: ExecutionEpoch;
+      readonly message: string;
+    };
+
+/**
  * Marker instructing a guarded run-state write to refuse — inside the same
  * transaction, before the run `UPDATE` — when the run named by `parentRunId`
  * still has a live delegated child. Supplied only by
@@ -138,6 +160,14 @@ export class StoreInvariantError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'StoreInvariantError';
+  }
+}
+
+/** Internal rollback marker for an ownership trigger abort classified in-transaction. */
+class SessionExecutionInProgressError extends Error {
+  constructor(readonly runId: RunId) {
+    super('execution_in_progress');
+    this.name = 'SessionExecutionInProgressError';
   }
 }
 
@@ -579,6 +609,10 @@ export interface RunbookStoreTxn {
    * that another writer terminalizes before the session write lands.
    */
   readState(runId: RunId): RunbookState | null;
+  /** Read the latest recovery-pending epoch using this open transaction. */
+  pendingRecovery(runId: RunId): { readonly epoch: ExecutionEpoch } | null;
+  /** Return whether a run currently has active execution ownership. */
+  executionOwned(runId: RunId): boolean;
 }
 
 /** Typed operations available inside a {@link RunbookStore.mutateSession} cycle. */
@@ -930,6 +964,71 @@ export class RunbookStore {
   }
 
   /**
+   * Mutate ownership-sensitive session rows with typed execution refusals.
+   *
+   * Recovery is preflighted inside the same transaction, in caller-supplied run
+   * order. SQLite trigger aborts are normalized only when their exact message is
+   * `execution_in_progress`; every other error is rethrown unchanged.
+   *
+   * @template T - Domain value returned by the mutation callback.
+   * @param runIds - Affected runs, ordered by deterministic refusal priority.
+   * @param work - Synchronous session mutation callback.
+   * @returns The committed value or the first ownership refusal.
+   */
+  async mutateSessionGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => T,
+  ): Promise<SessionMutationResult<T>> {
+    let affectedRunIds: readonly RunId[] = [];
+    try {
+      return await this.transaction((txn) => {
+        const session = this.readSession(txn.tx);
+        affectedRunIds = typeof runIds === 'function' ? runIds(session) : runIds;
+        for (const runId of affectedRunIds) {
+          const pending = txn.pendingRecovery(runId);
+          if (pending !== null) {
+            return {
+              status: 'recovery-required',
+              runId,
+              epoch: pending.epoch,
+              message: `Run ${runId} needs recovery: its execution outcome is unknown.`,
+            } satisfies SessionMutationResult<T>;
+          }
+          if (txn.executionOwned(runId)) {
+            return {
+              status: 'execution-in-progress',
+              runId,
+              message: `Run ${runId} has an execution in progress.`,
+            } satisfies SessionMutationResult<T>;
+          }
+        }
+        try {
+          const value = work({ ...txn, session });
+          this.applySession(txn, session);
+          return { status: 'committed', value } satisfies SessionMutationResult<T>;
+        } catch (error: unknown) {
+          if (getErrorMessage(error) === 'execution_in_progress') {
+            const runId = affectedRunIds.find((candidate) => txn.executionOwned(candidate));
+            if (runId !== undefined) {
+              throw new SessionExecutionInProgressError(runId);
+            }
+          }
+          throw error;
+        }
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof SessionExecutionInProgressError)) {
+        throw error;
+      }
+      return {
+        status: 'execution-in-progress',
+        runId: error.runId,
+        message: `Run ${error.runId} has an execution in progress.`,
+      };
+    }
+  }
+
+  /**
    * Reconcile a session snapshot into the session tables.
    *
    * @param txn - Open store transaction.
@@ -1226,6 +1325,23 @@ export class RunbookStore {
       },
       readState(runId) {
         return store.readRun(tx, runId);
+      },
+      pendingRecovery(runId) {
+        const row = tx
+          .prepare(
+            `SELECT exec_epoch AS epoch FROM execution_attempts
+              WHERE run_id = :runId AND phase = 'recovery_pending'
+              ORDER BY exec_epoch DESC LIMIT 1`,
+          )
+          .get<{ readonly epoch: number }>({ runId });
+        return row === undefined ? null : { epoch: assertExecutionEpoch(row.epoch) };
+      },
+      executionOwned(runId) {
+        return (
+          tx
+            .prepare('SELECT 1 AS owned FROM runs WHERE id = :runId AND exec_token IS NOT NULL')
+            .get<{ readonly owned: 1 }>({ runId }) !== undefined
+        );
       },
     };
   }

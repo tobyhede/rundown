@@ -17,6 +17,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 
 function claimPopUnavailableMessage(
   claimId: ClaimId,
@@ -71,18 +72,27 @@ export function registerPopCommand(program: Command): void {
           let state: RunbookState | null;
           if (claimTarget.claimId !== undefined) {
             const restoreResult = await sessionService.unstashForClaimId(claimTarget.claimId);
-            if (restoreResult.status !== 'restored') {
+            if (restoreResult.status !== 'committed') {
+              renderSessionMutationRefusal(output, restoreResult);
+              return;
+            }
+            if (restoreResult.value.status !== 'restored') {
               output.error(
-                claimPopUnavailableMessage(claimTarget.claimId, restoreResult),
+                claimPopUnavailableMessage(claimTarget.claimId, restoreResult.value),
                 'CLAIMED_RUNBOOK_UNAVAILABLE',
               );
               output.flush();
               process.exitCode = 1;
               return;
             }
-            state = restoreResult.state;
+            state = restoreResult.value.state;
           } else {
-            state = await sessionService.unstash();
+            const restoreResult = await sessionService.unstash();
+            if (restoreResult.status !== 'committed') {
+              renderSessionMutationRefusal(output, restoreResult);
+              return;
+            }
+            state = restoreResult.value;
           }
 
           if (!state) {

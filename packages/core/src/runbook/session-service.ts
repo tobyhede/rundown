@@ -11,11 +11,12 @@
  */
 
 import type { RunbookStateManager, SessionData } from './state.js';
-import type { RunId } from './run-id.js';
+import { isRunId, type RunId } from './run-id.js';
 import {
   parentAdvanceGuard,
   isOpenDelegatedChildrenError,
   type ParentAdvanceGuard,
+  type SessionMutationResult,
   type SessionMutationTxn,
 } from './storage/runbook-store.js';
 import {
@@ -43,6 +44,7 @@ import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
+import type { ExecutionEpoch } from './storage/mutation-result.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
@@ -177,6 +179,59 @@ export type UnstashForClaimIdResult =
       readonly lifecycle: 'completed' | 'stopped';
     };
 
+/** Ownership refusal arm returned by a session mutation. */
+export type SessionMutationRefusal = Exclude<
+  SessionMutationResult<unknown>,
+  { readonly status: 'committed' }
+>;
+
+/** Command-facing spelling of a session ownership refusal. */
+export type SessionMutationRefusalOutcome =
+  | {
+      readonly kind: 'execution_in_progress';
+      readonly runId: RunId;
+      readonly message: string;
+    }
+  | {
+      readonly kind: 'recovery_required';
+      readonly runId: RunId;
+      readonly epoch: ExecutionEpoch;
+      readonly message: string;
+    };
+
+/**
+ * Convert the storage-facing session refusal spelling to the command-facing one.
+ *
+ * The payload is forwarded verbatim so callers never reconstruct run identity,
+ * recovery epoch, or operator text.
+ *
+ * @param refusal - Non-committed session mutation result.
+ * @returns The corresponding command-facing refusal.
+ */
+export function sessionMutationRefusalOutcome(
+  refusal: SessionMutationRefusal,
+): SessionMutationRefusalOutcome {
+  switch (refusal.status) {
+    case 'execution-in-progress':
+      return {
+        kind: 'execution_in_progress',
+        runId: refusal.runId,
+        message: refusal.message,
+      };
+    case 'recovery-required':
+      return {
+        kind: 'recovery_required',
+        runId: refusal.runId,
+        epoch: refusal.epoch,
+        message: refusal.message,
+      };
+    default: {
+      const _exhaustive: never = refusal;
+      return _exhaustive;
+    }
+  }
+}
+
 /**
  * True when persisted child linkage matches an incoming delegation linkage on the
  * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
@@ -274,6 +329,13 @@ export class SessionService {
     return this.manager.mutateSession(work);
   }
 
+  private mutateGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => T,
+  ): Promise<SessionMutationResult<T>> {
+    return this.manager.mutateSessionGuarded(runIds, work);
+  }
+
   private findClaimByChildRunId(
     claims: Record<string, ClaimRecord>,
     childRunId: RunId,
@@ -301,8 +363,8 @@ export class SessionService {
    */
   async issueRunControlClaim(
     runId: RunId,
-  ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
-    return this.mutate((ctx) => this.mintRunControlClaim(ctx.session, runId));
+  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+    return this.mutateGuarded([runId], (ctx) => this.mintRunControlClaim(ctx.session, runId));
   }
 
   /**
@@ -319,8 +381,8 @@ export class SessionService {
    */
   async pushRunbookWithRunControlClaim(
     id: RunId,
-  ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
-    return this.mutate((ctx) => {
+  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+    return this.mutateGuarded([id], (ctx) => {
       ctx.session.defaultStack.push(id);
       return this.mintRunControlClaim(ctx.session, id);
     });
@@ -564,8 +626,11 @@ export class SessionService {
    * @returns A claim record on success, or a failure variant when the child is
    *   missing, terminal, or its persisted linkage diverges from `linkage`.
    */
-  async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
-    return this.mutate((ctx): ClaimRunbookResult => {
+  async claimRunbook(
+    childRunId: RunId,
+    linkage: DelegationLinkage,
+  ): Promise<SessionMutationResult<ClaimRunbookResult>> {
+    return this.mutateGuarded([childRunId], (ctx): ClaimRunbookResult => {
       const { session } = ctx;
       const now = this.now();
 
@@ -956,8 +1021,10 @@ export class SessionService {
    * @param runbookIds - Run ids to release, in descendant-to-root order.
    * @returns The released run ids and the next default-stack runbook id, if any.
    */
-  async releaseRunbooks(runbookIds: readonly RunId[]): Promise<ReleaseRunbooksResult> {
-    return this.mutate((ctx) => {
+  async releaseRunbooks(
+    runbookIds: readonly RunId[],
+  ): Promise<SessionMutationResult<ReleaseRunbooksResult>> {
+    return this.mutateGuarded(runbookIds, (ctx) => {
       const releasedRunIds: RunId[] = [];
       for (const runbookId of runbookIds) {
         const released = this.releaseFromSession(ctx.session, runbookId);
@@ -1004,8 +1071,10 @@ export class SessionService {
   async releaseRunbook(
     runbookId: RunId,
     options: { readonly retainClaimsAsTerminal?: boolean } = {},
-  ): Promise<ReleaseRunbookResult> {
-    return this.mutate((ctx) => this.releaseFromSession(ctx.session, runbookId, options));
+  ): Promise<SessionMutationResult<ReleaseRunbookResult>> {
+    return this.mutateGuarded([runbookId], (ctx) =>
+      this.releaseFromSession(ctx.session, runbookId, options),
+    );
   }
 
   /**
@@ -1017,8 +1086,10 @@ export class SessionService {
    * @param childRunIds - Child run ids being pruned.
    * @returns The claim lookup keys that were removed.
    */
-  async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimLookupKey[]> {
-    return this.mutate((ctx) => {
+  async pruneClaimsForChildren(
+    childRunIds: readonly string[],
+  ): Promise<SessionMutationResult<ClaimLookupKey[]>> {
+    return this.mutateGuarded(childRunIds.filter(isRunId), (ctx) => {
       const targets = new Set<string>(childRunIds);
       const removed: ClaimLookupKey[] = [];
       for (const [claimKey, claim] of Object.entries(ctx.session.claims)) {
@@ -1100,14 +1171,20 @@ export class SessionService {
    *
    * @returns The new active runbook ID (parent), or null if the stack is empty
    */
-  async popRunbook(): Promise<RunId | null> {
-    return this.mutate((ctx) => {
-      const { defaultStack } = ctx.session;
-      const topId = defaultStack[defaultStack.length - 1];
-      if (!topId) return null;
-      const released = this.releaseFromSession(ctx.session, topId);
-      return released.status === 'released' ? released.nextDefaultRunbookId : null;
-    });
+  async popRunbook(): Promise<SessionMutationResult<RunId | null>> {
+    return this.mutateGuarded(
+      (session) => {
+        const topId = session.defaultStack[session.defaultStack.length - 1];
+        return topId ? [topId] : [];
+      },
+      (ctx) => {
+        const { defaultStack } = ctx.session;
+        const topId = defaultStack[defaultStack.length - 1];
+        if (!topId) return null;
+        const released = this.releaseFromSession(ctx.session, topId);
+        return released.status === 'released' ? released.nextDefaultRunbookId : null;
+      },
+    );
   }
 
   /**
@@ -1118,22 +1195,28 @@ export class SessionService {
    *
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
    */
-  async stash(): Promise<RunId | null> {
-    return this.mutate((ctx) => {
-      const { session } = ctx;
+  async stash(): Promise<SessionMutationResult<RunId | null>> {
+    return this.mutateGuarded(
+      (session) => {
+        const activeId = session.defaultStack[session.defaultStack.length - 1];
+        return activeId ? [activeId] : [];
+      },
+      (ctx) => {
+        const { session } = ctx;
 
-      // Refuse to overwrite an existing stash — caller must unstash first
-      if (session.stashedRunbookId) return null;
+        // Refuse to overwrite an existing stash — caller must unstash first
+        if (session.stashedRunbookId) return null;
 
-      const stack = session.defaultStack;
-      if (stack.length === 0) return null;
-      const activeId = stack.pop();
+        const stack = session.defaultStack;
+        if (stack.length === 0) return null;
+        const activeId = stack.pop();
 
-      if (!activeId) return null;
+        if (!activeId) return null;
 
-      session.stashedRunbookId = activeId;
-      return activeId;
-    });
+        session.stashedRunbookId = activeId;
+        return activeId;
+      },
+    );
   }
 
   /**
@@ -1142,8 +1225,8 @@ export class SessionService {
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    */
-  async stashRunbook(runbookId: RunId): Promise<RunId | null> {
-    return this.mutate((ctx) => {
+  async stashRunbook(runbookId: RunId): Promise<SessionMutationResult<RunId | null>> {
+    return this.mutateGuarded([runbookId], (ctx) => {
       const { session } = ctx;
       if (session.stashedRunbookId) return null;
 
@@ -1168,51 +1251,60 @@ export class SessionService {
    * @param claimId - Claim id for the stashed child runbook
    * @returns Discriminated restore result describing success or the refusal reason
    */
-  async unstashForClaimId(claimId: ClaimId): Promise<UnstashForClaimIdResult> {
-    return this.mutate((ctx): UnstashForClaimIdResult => {
-      const parsed = parseClaimBearer(claimId);
-      const { session } = ctx;
-      if (!Object.hasOwn(session.claims, parsed.claimKey)) {
-        return { status: 'missing-claim', claimId };
-      }
-      const claim = session.claims[parsed.claimKey];
-      if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
-        return { status: 'missing-claim', claimId };
-      }
-      if (session.stashedRunbookId !== claim.controlledRunId) {
-        return { status: 'not-stashed', claim };
-      }
+  async unstashForClaimId(
+    claimId: ClaimId,
+  ): Promise<SessionMutationResult<UnstashForClaimIdResult>> {
+    const parsed = parseClaimBearer(claimId);
+    return this.mutateGuarded(
+      (session) => {
+        if (!Object.hasOwn(session.claims, parsed.claimKey)) return [];
+        const claim = session.claims[parsed.claimKey];
+        return verifyClaimSecret(parsed.secret, claim.secretHash) ? [claim.controlledRunId] : [];
+      },
+      (ctx): UnstashForClaimIdResult => {
+        const { session } = ctx;
+        if (!Object.hasOwn(session.claims, parsed.claimKey)) {
+          return { status: 'missing-claim', claimId };
+        }
+        const claim = session.claims[parsed.claimKey];
+        if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
+          return { status: 'missing-claim', claimId };
+        }
+        if (session.stashedRunbookId !== claim.controlledRunId) {
+          return { status: 'not-stashed', claim };
+        }
 
-      const state = ctx.readState(claim.controlledRunId);
-      if (!state) {
-        // The claim's controlled run state cannot be read. The FK cascade deletes
-        // a claim with its run, so this is not reachable through a supported
-        // delete — but the caller-visible refusal taxonomy (superseded plan
-        // Task 6) returns a typed `missing-child` rather than throwing, so a
-        // corrupted database degrades gracefully.
-        return { status: 'missing-child', childRunId: claim.controlledRunId };
-      }
-      if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
-        return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
-      }
-      if (!linkageMatchesClaim(state.parentLinkage, claim)) {
-        return { status: 'child-linkage-mismatch', claim };
-      }
-      if (!claim.delegation) {
-        return { status: 'child-linkage-mismatch', claim };
-      }
-      const parent = ctx.readState(claim.delegation.parentRunId);
-      if (!parent) {
-        return { status: 'parent-missing', claim };
-      }
-      if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
-        return { status: 'parent-ended', claim, lifecycle: parent.lifecycle };
-      }
+        const state = ctx.readState(claim.controlledRunId);
+        if (!state) {
+          // The claim's controlled run state cannot be read. The FK cascade deletes
+          // a claim with its run, so this is not reachable through a supported
+          // delete — but the caller-visible refusal taxonomy (superseded plan
+          // Task 6) returns a typed `missing-child` rather than throwing, so a
+          // corrupted database degrades gracefully.
+          return { status: 'missing-child', childRunId: claim.controlledRunId };
+        }
+        if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
+          return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
+        }
+        if (!linkageMatchesClaim(state.parentLinkage, claim)) {
+          return { status: 'child-linkage-mismatch', claim };
+        }
+        if (!claim.delegation) {
+          return { status: 'child-linkage-mismatch', claim };
+        }
+        const parent = ctx.readState(claim.delegation.parentRunId);
+        if (!parent) {
+          return { status: 'parent-missing', claim };
+        }
+        if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+          return { status: 'parent-ended', claim, lifecycle: parent.lifecycle };
+        }
 
-      session.stashedRunbookId = undefined;
-      session.claims[parsed.claimKey] = refreshedClaimRecord(claim, this.now());
-      return { status: 'restored', claim: session.claims[parsed.claimKey], state };
-    });
+        session.stashedRunbookId = undefined;
+        session.claims[parsed.claimKey] = refreshedClaimRecord(claim, this.now());
+        return { status: 'restored', claim: session.claims[parsed.claimKey], state };
+      },
+    );
   }
 
   /**
@@ -1223,32 +1315,35 @@ export class SessionService {
    *
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
    */
-  async unstash(): Promise<RunbookState | null> {
-    return this.mutate((ctx) => {
-      const { session } = ctx;
-      const stashedId = session.stashedRunbookId;
+  async unstash(): Promise<SessionMutationResult<RunbookState | null>> {
+    return this.mutateGuarded(
+      (session) => (session.stashedRunbookId ? [session.stashedRunbookId] : []),
+      (ctx) => {
+        const { session } = ctx;
+        const stashedId = session.stashedRunbookId;
 
-      if (!stashedId) return null;
+        if (!stashedId) return null;
 
-      const targetedByDelegatedClaim = Object.values(session.claims).some(
-        (claim) => claim.delegation !== undefined && claim.controlledRunId === stashedId,
-      );
-      if (targetedByDelegatedClaim) {
-        return null;
-      }
+        const targetedByDelegatedClaim = Object.values(session.claims).some(
+          (claim) => claim.delegation !== undefined && claim.controlledRunId === stashedId,
+        );
+        if (targetedByDelegatedClaim) {
+          return null;
+        }
 
-      const state = ctx.readState(stashedId);
-      if (!state) {
+        const state = ctx.readState(stashedId);
+        if (!state) {
+          session.stashedRunbookId = undefined;
+          return null;
+        }
+
+        // Push back to stack
+        session.defaultStack.push(stashedId);
         session.stashedRunbookId = undefined;
-        return null;
-      }
 
-      // Push back to stack
-      session.defaultStack.push(stashedId);
-      session.stashedRunbookId = undefined;
-
-      return state;
-    });
+        return state;
+      },
+    );
   }
 
   /**

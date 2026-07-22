@@ -20,6 +20,7 @@
 import { projectDelegationTerminalOutcome } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import type { ReleaseRunbookResult } from './session-service.js';
+import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { FrameKey } from './targeting.js';
 import type { RunId } from './run-id.js';
 import type { DelegationOutcome, RunbookState } from './types.js';
@@ -131,7 +132,7 @@ export interface InlineParentAdvanceSessionService {
   releaseRunbook(
     runbookId: RunId,
     options?: { readonly retainClaimsAsTerminal?: boolean },
-  ): Promise<ReleaseRunbookResult>;
+  ): Promise<SessionMutationResult<ReleaseRunbookResult>>;
 }
 
 /**
@@ -429,9 +430,19 @@ async function propagateTerminalChildUpwardInner(
   // resolves `terminal`, not `missing`. Deciding disposition once, in one owner,
   // eliminates the old drain-deletes / loop-retains inconsistency.
   try {
-    await deps.sessionService.releaseRunbook(linkage.parentRunId, {
+    const release = await deps.sessionService.releaseRunbook(linkage.parentRunId, {
       retainClaimsAsTerminal: true,
     });
+    switch (release.status) {
+      case 'committed':
+      case 'execution-in-progress':
+      case 'recovery-required':
+        break;
+      default: {
+        const _exhaustive: never = release;
+        return _exhaustive;
+      }
+    }
   } catch {
     // Terminal state is already committed by the callable; a failed release only
     // leaks a self-healing session-stack entry (reclaimed by the next acquirer

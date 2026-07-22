@@ -8,6 +8,7 @@ import type {
   PrepareParsedRunbookResult,
   PreparedTemplateVariables,
   ReleaseRunbookResult,
+  SessionMutationResult,
   RunbookRef,
   RunId,
   RunbookStateManager,
@@ -80,17 +81,23 @@ function claimedRunbookResult(
   return { status: 'claimed', claimId: TEST_CLAIM_ID, claim: claimRecord(childRunId, overrides) };
 }
 
+function committed<T>(value: T): SessionMutationResult<T> {
+  return { status: 'committed', value };
+}
+
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
     async (childRunId: RunId, linkage: DelegationLinkage) =>
-      claimedRunbookResult(childRunId, {
-        tokenHash: linkage.tokenHash,
-        parentRunId: linkage.parentRunId,
-        parentStepId: linkage.parentStepId,
-        parentStep: linkage.parentStep,
-        parentFrameKey: linkage.parentFrameKey,
-        parentEntry: linkage.parentEntry,
-      }),
+      committed(
+        claimedRunbookResult(childRunId, {
+          tokenHash: linkage.tokenHash,
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: linkage.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        }),
+      ),
   );
 }
 
@@ -1039,12 +1046,14 @@ describe('claimAndLaunch', () => {
       parentEntry: 1,
       tokenHash: MOCK_TOKEN_HASH,
     };
-    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'linkage-mismatch',
-      childRunId: EXISTING_SESSION_CHILD_ID,
-      incoming,
-      persisted,
-    });
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'linkage-mismatch',
+        childRunId: EXISTING_SESSION_CHILD_ID,
+        incoming,
+        persisted,
+      }),
+    );
     const update = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
     const ctx = makeCtx({
       manager: {
@@ -1112,10 +1121,12 @@ describe('claimAndLaunch', () => {
       ],
     };
 
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-child',
-      childRunId: EXISTING_CHILD_RUN_ID,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-child',
+        childRunId: EXISTING_CHILD_RUN_ID,
+      }),
+    );
 
     const ctx = makeCtx({
       sessionService: {
@@ -1186,12 +1197,14 @@ describe('claimAndLaunch', () => {
       parentEntry: 1,
       tokenHash: DIFFERENT_TOKEN_HASH,
     };
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'linkage-mismatch',
-      childRunId: EXISTING_CHILD_RUN_ID,
-      incoming,
-      persisted,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'linkage-mismatch',
+        childRunId: EXISTING_CHILD_RUN_ID,
+        incoming,
+        persisted,
+      }),
+    );
 
     const ctx = makeCtx({
       sessionService: {
@@ -1840,10 +1853,12 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     // claimRunbook returns missing-child — simulates claimChildForPipeline failure
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-child',
-      childRunId: NEW_CHILD_ID,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-child',
+        childRunId: NEW_CHILD_ID,
+      }),
+    );
 
     const ctx = makeCtx({
       manager: {
@@ -1962,12 +1977,14 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     const mockClaimRunbook = mockClaimRunbookSuccess();
-    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
-      status: 'released',
-      runbookId: NEW_CHILD_ID,
-      removedFromDefaultStack: false,
-      nextDefaultRunbookId: null,
-    } satisfies ReleaseRunbookResult);
+    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId: NEW_CHILD_ID,
+        removedFromDefaultStack: false,
+        nextDefaultRunbookId: null,
+      } satisfies ReleaseRunbookResult),
+    );
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(
       parentState as unknown as RunbookState,
     );
@@ -2113,10 +2130,12 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     // claimRunbook returns missing-child — simulates claimChildForPipeline failure
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-child',
-      childRunId: NEW_CHILD_ID,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-child',
+        childRunId: NEW_CHILD_ID,
+      }),
+    );
 
     const mockDelete = mockFn<(id: RunId) => Promise<void>>().mockResolvedValue(undefined);
 

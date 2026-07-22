@@ -32,6 +32,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
@@ -338,6 +339,21 @@ function renderCollectOutcome(
   emitter: ExecutionEventEmitter,
 ): boolean {
   switch (outcome.kind) {
+    case 'execution_in_progress':
+      renderSessionMutationRefusal(output, {
+        status: 'execution-in-progress',
+        runId: outcome.runId,
+        message: outcome.message,
+      });
+      return true;
+    case 'recovery_required':
+      renderSessionMutationRefusal(output, {
+        status: 'recovery-required',
+        runId: outcome.runId,
+        epoch: outcome.epoch,
+        message: outcome.message,
+      });
+      return true;
     case 'allowed':
       // Unreachable: collectDelegationOutcomes never returns the raw `allowed`
       // policy member — it proceeds to apply and returns a collection outcome.

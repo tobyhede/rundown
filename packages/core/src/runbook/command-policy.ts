@@ -10,6 +10,7 @@ import {
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
+import type { SessionMutationRefusalOutcome } from './session-service.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
@@ -134,6 +135,7 @@ export interface ResolveCommandIntentInput {
  * collection target, so the orchestrator check is the only gate this slice needs.
  */
 export type DelegationPolicyOutcome =
+  | SessionMutationRefusalOutcome
   | {
       /** Policy allowed the command. */
       readonly kind: 'allowed';
