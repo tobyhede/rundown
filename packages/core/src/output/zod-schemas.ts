@@ -26,12 +26,26 @@ import { ErrorCodes } from '../errors/codes.js';
 // CLI Error Codes
 // ============================================================================
 
-const RundownErrorCodeValues = Object.values(ErrorCodes).map((code) => code.code) as [
+/**
+ * Every RD-NNN error code registered in the {@link ErrorCodes} factory table.
+ *
+ * These are the machine-readable codes carried by thrown `RundownError`
+ * envelopes. Exposed so drift guards can assert that a documented error code is
+ * a registered one (see the docs ↔ enum drift test for `docs/spec/cli-output.md`).
+ */
+export const RundownErrorCodeValues = Object.values(ErrorCodes).map((code) => code.code) as [
   string,
   ...string[],
 ];
 
-const CLISymbolicErrorCodeValues = [
+/**
+ * CLI-only symbolic error codes emitted outside the `RundownError` factory path.
+ *
+ * These codes originate in command validation paths rather than the RD-NNN
+ * factory table. Exposed alongside {@link RundownErrorCodeValues} so drift
+ * guards can treat the union as the full set of registered CLI error codes.
+ */
+export const CLISymbolicErrorCodeValues = [
   'RUNBOOK_NOT_FOUND',
   'STEP_NOT_FOUND',
   'INVALID_SYNTAX',
