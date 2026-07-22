@@ -426,6 +426,23 @@ describe('SessionService', () => {
       return { parent, child, linkage };
     }
 
+    it.each([
+      'completed',
+      'stopped',
+    ] as const)('refuses to claim a %s delegated child', async (lifecycle) => {
+      const { child, linkage } = await setupInitialLink('a');
+      await manager.update(child.id, { lifecycle });
+
+      const result = unwrapSessionMutation(await sessionService.claimRunbook(child.id, linkage));
+
+      expect(result).toEqual({
+        status: 'terminal-child',
+        childRunId: child.id,
+        lifecycle,
+      });
+      expect(Object.values((await manager.loadSession()).claims)).toHaveLength(0);
+    });
+
     it('commits the child claim and matching parent childRunId together', async () => {
       const { parent, child, linkage } = await setupInitialLink('a');
 
