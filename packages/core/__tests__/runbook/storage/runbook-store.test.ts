@@ -810,6 +810,7 @@ describe('classifyCommitRow totality', () => {
     claimControlsRun: true,
     parentId: null,
     parentLifecycle: null,
+    claimDelegationJson: null,
     execToken: null,
     execEpoch: null,
     execPhase: null,

@@ -298,6 +298,7 @@ describe('classifier totality and single-row invariant', () => {
           claimControlsRun: fc.boolean(),
           parentId: fc.constant(null),
           parentLifecycle: fc.constant(null),
+          claimDelegationJson: fc.constant(null),
           execToken: fc.oneof(fc.constant(null), fc.constant('sha256:x')),
           execEpoch: fc.oneof(fc.constant(null), fc.nat(5)),
           execPhase: fc.constant(null),
