@@ -73,6 +73,24 @@ for (const { pkg, filter } of perPackage) {
   });
 }
 
+// Issue #551: the dry-run variant is the CLI's `stryker run --dryRunOnly` and
+// must ride the same `--filter … exec stryker run` shape as the base scripts —
+// not the old nested `--filter … test:mutate:dry` that mangles forwarded args.
+// The trailing-`--` guard above already covers it; this pins the positive shape
+// so the `--dryRunOnly` flag can never regress to a foot-gun-prone delegation.
+test('test:mutate:cli:dry uses the `--filter @rundown-org/cli exec stryker run --dryRunOnly` form', async () => {
+  const scripts = await rootScripts();
+  const body = scripts['test:mutate:cli:dry'];
+  assert.ok(body, 'test:mutate:cli:dry script must exist');
+  assert.match(
+    body,
+    new RegExp(
+      `--filter\\s+${escapeRegExp('@rundown-org/cli')}\\s+exec\\s+stryker\\s+run\\s+--dryRunOnly`,
+    ),
+    'test:mutate:cli:dry must invoke `pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly` (not a nested `--filter … <script>` that mangles forwarded scoping args)',
+  );
+});
+
 // The aggregate must fan out to every per-package script so a bare
 // `pnpm run test:mutate` still runs the whole campaign.
 test('test:mutate aggregate runs every per-package script', async () => {
