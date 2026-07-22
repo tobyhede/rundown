@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { assertClaimId, type DelegationClaimLinkage } from '../../src/runbook/claim-id.js';
+import {
+  assertClaimId,
+  assertClaimLookupKey,
+  createDelegatedChildGrants,
+  type DelegationClaimLinkage,
+} from '../../src/runbook/claim-id.js';
 import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId, RunbookState, ParentLinkage } from '../../src/runbook/types.js';
 import type { SessionMutationResult } from '../../src/runbook/storage/runbook-store.js';
@@ -13,6 +18,7 @@ import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import {
   activeFrame,
   buildCompletionKey,
@@ -559,6 +565,140 @@ describe('SessionService', () => {
         )?.delegation?.childRunId,
       ).toBeNull();
       expect(Object.values((await manager.loadSession()).claims)).toHaveLength(0);
+    });
+
+    it('rollback removes only the claim matching every delegation coordinate', async () => {
+      const { parent, child, linkage } = await setupInitialLink('a');
+      const foreignParent = await manager.create(
+        { source: 'project', path: 'foreign-parent.md' },
+        mockRunbook,
+        { runbookPath: 'foreign-parent.md' },
+      );
+      const nondelegatedChild = await manager.create(
+        { source: 'project', path: 'nondelegated-decoy.md' },
+        mockRunbook,
+        {
+          runbookPath: 'nondelegated-decoy.md',
+          runId: brandRunIdForTest(`rd_${'0'.repeat(32)}`),
+        },
+      );
+      const decoySpecs = [
+        {
+          claimKey: assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`),
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentFrameKey: buildFrameKey('2'),
+          tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+        },
+        {
+          claimKey: assertClaimLookupKey(`rdclk_${'2'.repeat(32)}`),
+          parentRunId: linkage.parentRunId,
+          parentStepId: '1.2',
+          parentFrameKey: linkage.parentFrameKey,
+          tokenHash: linkage.tokenHash,
+        },
+        {
+          claimKey: assertClaimLookupKey(`rdclk_${'3'.repeat(32)}`),
+          parentRunId: foreignParent.id,
+          parentStepId: linkage.parentStepId,
+          parentFrameKey: linkage.parentFrameKey,
+          tokenHash: linkage.tokenHash,
+        },
+      ];
+      const decoys: ReturnType<typeof makeClaimRecord>[] = [
+        makeClaimRecord({
+          claimKey: assertClaimLookupKey(`rdclk_${'0'.repeat(32)}`),
+          controlledRunId: nondelegatedChild.id,
+          grants: [{ action: 'mutate-run', runId: nondelegatedChild.id }],
+        }),
+      ];
+      for (const [index, spec] of decoySpecs.entries()) {
+        const decoyRunId = brandRunIdForTest(`rd_${(index + 1).toString(16).padStart(32, '0')}`);
+        const decoyChild = await manager.create(
+          { source: 'project', path: `decoy-child-${index}.md` },
+          mockRunbook,
+          { runbookPath: `decoy-child-${index}.md`, runId: decoyRunId },
+        );
+        const delegation: DelegationClaimLinkage = {
+          childRunId: decoyChild.id,
+          tokenHash: spec.tokenHash,
+          parentRunId: spec.parentRunId,
+          parentStepId: spec.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: spec.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        };
+        await seedLiveDelegation(manager, { kind: 'delegation', ...delegation });
+        decoys.push(
+          makeClaimRecord({
+            claimKey: spec.claimKey,
+            controlledRunId: decoyChild.id,
+            delegation,
+            grants: createDelegatedChildGrants({ linkage: delegation }),
+          }),
+        );
+      }
+      await manager.mutateSession((ctx) => {
+        expect(
+          ctx.linkInitialDelegation({ childRunId: child.id, linkage }, '2026-07-22T12:00:00.000Z'),
+        ).toBe('linked');
+      });
+      const targetClaim = makeClaimRecord({
+        claimKey: assertClaimLookupKey(`rdclk_${'4'.repeat(32)}`),
+        controlledRunId: child.id,
+        delegation: {
+          childRunId: child.id,
+          tokenHash: linkage.tokenHash,
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: linkage.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        },
+        grants: createDelegatedChildGrants({
+          linkage: {
+            childRunId: child.id,
+            tokenHash: linkage.tokenHash,
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            parentStep: linkage.parentStep,
+            parentFrameKey: linkage.parentFrameKey,
+            parentEntry: linkage.parentEntry,
+          },
+        }),
+      });
+      await manager.mutateSession((ctx) => {
+        for (const decoy of decoys) {
+          ctx.session.claims[decoy.claimKey] = decoy;
+        }
+        ctx.session.claims[targetClaim.claimKey] = targetClaim;
+      });
+      expect(Object.keys((await manager.loadSession()).claims)).toEqual([
+        ...decoys.map((decoy) => decoy.claimKey),
+        targetClaim.claimKey,
+      ]);
+
+      const result = unwrapSessionMutation(
+        await sessionService.rollbackInitialLink({ childRunId: child.id, linkage }),
+      );
+
+      expect(result).toEqual({ status: 'rolled-back' });
+      const persistedParent = await manager.load(parent.id);
+      expect(
+        findSubstepState(
+          persistedParent?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.delegation?.childRunId,
+      ).toBeNull();
+      const persistedClaims = (await manager.loadSession()).claims;
+      expect(Object.keys(persistedClaims).sort()).toEqual(
+        decoys.map((decoy) => decoy.claimKey).sort(),
+      );
+      for (const decoy of decoys) {
+        expect(persistedClaims[decoy.claimKey]).toEqual(decoy);
+        expect(await manager.load(decoy.controlledRunId)).not.toBeNull();
+      }
     });
 
     it('stale rollback cannot clear a newer token and child link', async () => {

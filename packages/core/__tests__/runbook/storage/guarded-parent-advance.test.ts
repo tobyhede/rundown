@@ -8,6 +8,7 @@ import {
 } from '../../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import {
+  OpenDelegatedChildrenError,
   RunbookStore,
   isOpenDelegatedChildrenError,
 } from '../../../src/runbook/storage/runbook-store.js';
@@ -34,7 +35,10 @@ const PARENT_FRAME = buildFrameKey('1');
 const TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 /** Delegation linkage a child carries / a claim records for the seeded parent. */
-function delegationLinkage(parentRunId: RunId): DelegationLinkage {
+function delegationLinkage(
+  parentRunId: RunId,
+  overrides: Partial<DelegationLinkage> = {},
+): DelegationLinkage {
   return {
     kind: 'delegation',
     parentRunId,
@@ -43,6 +47,7 @@ function delegationLinkage(parentRunId: RunId): DelegationLinkage {
     parentFrameKey: PARENT_FRAME,
     parentEntry: 1,
     tokenHash: TOKEN_HASH,
+    ...overrides,
   };
 }
 
@@ -95,6 +100,44 @@ async function insertActiveDelegatedClaim(
   });
 }
 
+async function expectGuardRefusal(
+  store: RunbookStore,
+  parent: RunbookState,
+  controlledRunId: RunId,
+): Promise<void> {
+  const guard = { kind: 'refuse-open-delegated-children', parentRunId: parent.id } as const;
+  const before = await store.readRunJson(parent.id);
+
+  const error: unknown = await store
+    .mutateState(parent.id, (current) => ({ ...current, step: '2' }), { guard })
+    .then(
+      (value) => value,
+      (reason: unknown) => reason,
+    );
+
+  expect(error).toBeInstanceOf(OpenDelegatedChildrenError);
+  expect(isOpenDelegatedChildrenError(error)).toBe(true);
+  if (!isOpenDelegatedChildrenError(error)) {
+    throw new Error('Expected an OpenDelegatedChildrenError');
+  }
+  expect(error.claims.map((claim) => claim.controlledRunId)).toEqual([controlledRunId]);
+  expect(await store.readRunJson(parent.id)).toEqual(before);
+}
+
+async function expectGuardCommit(store: RunbookStore, parent: RunbookState): Promise<void> {
+  const guard = { kind: 'refuse-open-delegated-children', parentRunId: parent.id } as const;
+  const result = await store.mutateState(parent.id, (current) => ({ ...current, step: '2' }), {
+    guard,
+  });
+
+  expect(result.kind).toBe('committed');
+  if (result.kind !== 'committed') {
+    throw new Error(`Expected a committed mutation, received ${result.kind}`);
+  }
+  expect(result.value.step).toBe('2');
+  expect(await store.readRunJson(parent.id)).toEqual(result.value);
+}
+
 const RUNTIMES: readonly StorageRuntime[] = ['native', 'sqljs'];
 
 describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
@@ -120,18 +163,15 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
     const child = await seedRun(store, { parentLinkage: delegationLinkage(parent.id) });
     await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
 
-    const guard = { kind: 'refuse-open-delegated-children', parentRunId: parent.id } as const;
-    const before = await store.readRunJson(parent.id);
+    await expectGuardRefusal(store, parent, child.id);
+  });
 
-    const error: unknown = await store
-      .mutateState(parent.id, (current) => ({ ...current, substep: PARENT_STEP_ID }), { guard })
-      .then(
-        (value) => value,
-        (reason: unknown) => reason,
-      );
-    expect(isOpenDelegatedChildrenError(error)).toBe(true);
+  it('aborts and rolls back when a live delegated child has no parent substep state', async () => {
+    const parent = await seedRun(store, { substepStates: [] });
+    const child = await seedRun(store, { parentLinkage: delegationLinkage(parent.id) });
+    await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
 
-    expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
+    await expectGuardRefusal(store, parent, child.id);
   });
 
   it('commits a guarded write when the delegated substep is already resolved', async () => {
@@ -143,10 +183,53 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
     const child = await seedRun(store, { parentLinkage: delegationLinkage(parent.id) });
     await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
 
-    const guard = { kind: 'refuse-open-delegated-children', parentRunId: parent.id } as const;
-    const result = await store.mutateState(parent.id, (current) => ({ ...current, step: '2' }), {
-      guard,
+    await expectGuardCommit(store, parent);
+  });
+
+  it.each([
+    'completed',
+    'stopped',
+  ] as const)('commits a guarded write when the delegated child is %s', async (lifecycle) => {
+    const parent = await seedRun(store, {
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
     });
-    expect(result.kind).toBe('committed');
+    const child = await seedRun(store, {
+      lifecycle,
+      parentLinkage: delegationLinkage(parent.id),
+    });
+    await insertActiveDelegatedClaim(store, {
+      parentRunId: parent.id,
+      controlledRunId: child.id,
+    });
+
+    await expectGuardCommit(store, parent);
+  });
+
+  it('commits a guarded write when the child linkage does not match the claim', async () => {
+    const parent = await seedRun(store, {
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+    });
+    const child = await seedRun(store, {
+      parentLinkage: delegationLinkage(parent.id, { parentStepId: 'different-step' }),
+    });
+    await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
+
+    await expectGuardCommit(store, parent);
+  });
+
+  it('commits a guarded write after deleting the child cascades its claim', async () => {
+    const parent = await seedRun(store, {
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+    });
+    const child = await seedRun(store, { parentLinkage: delegationLinkage(parent.id) });
+    await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
+
+    await store.deleteRun(child.id);
+    const remainingClaims = await driver.read((tx) =>
+      tx.prepare('SELECT COUNT(*) AS count FROM claims').get<{ readonly count: number }>(),
+    );
+    expect(remainingClaims?.count).toBe(0);
+
+    await expectGuardCommit(store, parent);
   });
 });

@@ -13,7 +13,10 @@ import {
 } from '../../../src/runbook/storage/runbook-store.js';
 import {
   assertClaimGeneration,
+  assertExecutionEpoch,
+  assertExecutionToken,
   assertStateVersion,
+  hashExecutionToken,
   type CapturedAuthority,
 } from '../../../src/runbook/storage/mutation-result.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
@@ -999,6 +1002,8 @@ describe('CAS zero-row invariant', () => {
 });
 
 describe('classifyCommitRow totality', () => {
+  const runId = assertRunId(`rd_${'0'.repeat(32)}`);
+  const parentRunId = assertRunId(`rd_${'1'.repeat(32)}`);
   const base: CommitRow = {
     runPresent: true,
     stateVersion: 3,
@@ -1014,7 +1019,7 @@ describe('classifyCommitRow totality', () => {
     execPhase: null,
   };
   const captured: CapturedAuthority = {
-    runId: assertRunId(`rd_${'0'.repeat(32)}`),
+    runId,
     claimKey: assertClaimLookupKey(`rdclk_${'0'.repeat(32)}`),
     claimGeneration: assertClaimGeneration(5),
     stateVersion: assertStateVersion(3),
@@ -1041,5 +1046,90 @@ describe('classifyCommitRow totality', () => {
     expect(classifyCommitRow({ ...base, execToken: 'sha256:x' }, captured).kind).toBe(
       'execution_in_progress',
     );
+  });
+
+  describe('delegated-parent dependency', () => {
+    const delegatedCapture: CapturedAuthority = {
+      ...captured,
+      parent: { runId: parentRunId },
+    };
+    const superseded = {
+      kind: 'claim_superseded',
+      runId,
+      message: `The delegated parent of run ${runId} is missing, terminal, or relinked.`,
+    } as const;
+
+    it('accepts the exact live captured parent', () => {
+      expect(
+        classifyCommitRow(
+          { ...base, parentId: parentRunId, parentLifecycle: 'running' },
+          delegatedCapture,
+        ),
+      ).toEqual({ kind: 'ok' });
+    });
+
+    it.each([
+      ['completed', { parentId: parentRunId, parentLifecycle: 'completed' }],
+      ['stopped', { parentId: parentRunId, parentLifecycle: 'stopped' }],
+      ['missing', { parentId: null, parentLifecycle: null }],
+      [
+        'relinked',
+        {
+          parentId: assertRunId(`rd_${'2'.repeat(32)}`),
+          parentLifecycle: 'running',
+        },
+      ],
+    ] as const)('refuses a %s delegated parent', (_case, parent) => {
+      expect(classifyCommitRow({ ...base, ...parent }, delegatedCapture)).toEqual(superseded);
+    });
+  });
+
+  describe('execution identity and recovery', () => {
+    const token = assertExecutionToken('a'.repeat(43));
+    const wrongToken = assertExecutionToken('b'.repeat(43));
+    const epoch = assertExecutionEpoch(7);
+    const execution = { token, epoch };
+    const owned: CommitRow = {
+      ...base,
+      execToken: hashExecutionToken(token),
+      execEpoch: epoch,
+      execPhase: 'effect_started',
+    };
+    const executionInProgress = {
+      kind: 'execution_in_progress',
+      runId,
+      message: `Run ${runId} is owned by a different execution attempt.`,
+    } as const;
+    const recoveryRequired = {
+      kind: 'recovery_required',
+      runId,
+      epoch,
+      message: `Run ${runId} needs recovery: its execution outcome is unknown.`,
+    } as const;
+
+    it('accepts the exact token and epoch in effect_started', () => {
+      expect(classifyCommitRow(owned, captured, execution)).toEqual({ kind: 'ok' });
+    });
+
+    it.each([
+      ['epoch mismatch', { execEpoch: assertExecutionEpoch(8) }, execution],
+      ['null token', { execToken: null }, execution],
+      ['wrong token', {}, { token: wrongToken, epoch }],
+    ] as const)('refuses %s as execution_in_progress', (_case, rowOverrides, expectation) => {
+      expect(classifyCommitRow({ ...owned, ...rowOverrides }, captured, expectation)).toEqual(
+        executionInProgress,
+      );
+    });
+
+    it.each([
+      'claimed',
+      'recovery_pending',
+      'committed',
+      null,
+    ] as const)('requires recovery for execution phase %s', (execPhase) => {
+      expect(classifyCommitRow({ ...owned, execPhase }, captured, execution)).toEqual(
+        recoveryRequired,
+      );
+    });
   });
 });

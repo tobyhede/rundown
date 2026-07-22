@@ -9,7 +9,10 @@ import {
 import { assertDelegationTokenHash } from '../../../src/runbook/delegation-token.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.js';
-import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
+import {
+  assertClaimGeneration,
+  assertStateVersion,
+} from '../../../src/runbook/storage/mutation-result.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
@@ -24,7 +27,7 @@ const mockRunbook: Runbook = {
   steps: mockSteps,
 };
 
-describe('delegated authority after parent deletion', () => {
+describe('delegated parent authority capture', () => {
   let dir: string;
   let driver: SqlDriver;
   let store: RunbookStore;
@@ -53,10 +56,15 @@ describe('delegated authority after parent deletion', () => {
     return { ...state, ...overrides };
   }
 
-  it('refuses a delegated claim whose parent run was deleted', async () => {
+  async function createDelegatedClaim(seed = 'a'): Promise<{
+    readonly parent: RunbookState;
+    readonly child: RunbookState;
+    readonly claimKey: ReturnType<typeof assertClaimLookupKey>;
+    readonly linkage: DelegationClaimLinkage;
+  }> {
     const parent = await newState();
     const child = await newState();
-    const claimKey = assertClaimLookupKey(`rdclk_${'a'.repeat(32)}`);
+    const claimKey = assertClaimLookupKey(`rdclk_${seed.repeat(32)}`);
     const linkage: DelegationClaimLinkage = {
       childRunId: child.id,
       tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
@@ -81,6 +89,35 @@ describe('delegated authority after parent deletion', () => {
       );
     });
 
+    return { parent, child, claimKey, linkage };
+  }
+
+  function expectedParentRefusal(child: RunbookState) {
+    return {
+      kind: 'claim_superseded' as const,
+      runId: child.id,
+      message: `The delegated parent of run ${child.id} is missing, terminal, or relinked.`,
+    };
+  }
+
+  it('captures the exact live delegated parent authority', async () => {
+    const { parent, child, claimKey } = await createDelegatedClaim();
+
+    await expect(store.captureAuthority(child.id, claimKey)).resolves.toEqual({
+      kind: 'captured',
+      authority: {
+        runId: child.id,
+        claimKey,
+        claimGeneration: assertClaimGeneration(1),
+        stateVersion: assertStateVersion(0),
+        parent: { runId: parent.id },
+      },
+    });
+  });
+
+  it('refuses a delegated claim whose parent run was deleted', async () => {
+    const { parent, child, claimKey, linkage } = await createDelegatedClaim();
+
     await store.deleteRun(parent.id);
 
     const persisted = await store.read((txn) =>
@@ -94,7 +131,51 @@ describe('delegated authority after parent deletion', () => {
       delegation_json: JSON.stringify(linkage),
     });
 
-    const result = await store.captureAuthority(child.id, claimKey);
-    expect(result.kind).toBe('claim_superseded');
+    await expect(store.captureAuthority(child.id, claimKey)).resolves.toEqual(
+      expectedParentRefusal(child),
+    );
+  });
+
+  it.each([
+    'completed',
+    'stopped',
+  ] as const)('refuses exact claim_superseded authority when the parent is %s', async (lifecycle) => {
+    const { parent, child, claimKey } = await createDelegatedClaim();
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE runs SET lifecycle = :lifecycle WHERE id = :id')
+        .run({ id: parent.id, lifecycle });
+    });
+
+    await expect(store.captureAuthority(child.id, claimKey)).resolves.toEqual(
+      expectedParentRefusal(child),
+    );
+  });
+
+  it('refuses a claim relinked to another live parent while retaining original delegation', async () => {
+    const { parent, child, claimKey, linkage } = await createDelegatedClaim();
+    const replacementParent = await newState();
+    await store.createRun(replacementParent);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE claims SET parent_run_id = :parentRunId WHERE key = :key')
+        .run({ key: claimKey, parentRunId: replacementParent.id });
+    });
+
+    const persisted = await store.read((txn) =>
+      txn.tx.prepare('SELECT parent_run_id, delegation_json FROM claims WHERE key = :key').get<{
+        readonly parent_run_id: string | null;
+        readonly delegation_json: string | null;
+      }>({ key: claimKey }),
+    );
+    expect(persisted).toEqual({
+      parent_run_id: replacementParent.id,
+      delegation_json: JSON.stringify(linkage),
+    });
+    expect(linkage.parentRunId).toBe(parent.id);
+
+    await expect(store.captureAuthority(child.id, claimKey)).resolves.toEqual(
+      expectedParentRefusal(child),
+    );
   });
 });
