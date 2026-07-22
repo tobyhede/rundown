@@ -3,6 +3,18 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 /**
+ * Escape every RegExp metacharacter in a string so it can be embedded as a
+ * literal inside `new RegExp(...)`. Escapes backslash too, so no input byte can
+ * introduce an unintended escape sequence (CodeQL js/incomplete-sanitization).
+ *
+ * @param {string} literal - the string to embed literally in a pattern.
+ * @returns {string} the metacharacter-escaped string.
+ */
+function escapeRegExp(literal) {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Load the root package.json scripts block.
  *
  * @returns {Promise<Record<string, string>>} the `scripts` object.
@@ -55,7 +67,7 @@ for (const { pkg, filter } of perPackage) {
     assert.ok(body, `test:mutate:${pkg} script must exist`);
     assert.match(
       body,
-      new RegExp(`--filter\\s+${filter.replace(/[/@-]/g, '\\$&')}\\s+exec\\s+stryker\\s+run`),
+      new RegExp(`--filter\\s+${escapeRegExp(filter)}\\s+exec\\s+stryker\\s+run`),
       `test:mutate:${pkg} must invoke \`pnpm --filter ${filter} exec stryker run\` (not a nested \`--filter … <script>\` that mangles forwarded scoping args)`,
     );
   });
