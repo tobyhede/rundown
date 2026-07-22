@@ -68,6 +68,7 @@
     "docs:cli-help": "pnpm --filter @rundown-org/parser --filter @rundown-org/core --filter @rundown-org/cli build && node packages/cli/dist/scripts/gen-cli-help.js",
     "check:docs:cli-help": "pnpm --filter @rundown-org/parser --filter @rundown-org/core --filter @rundown-org/cli build && node packages/cli/dist/scripts/gen-cli-help.js --check",
     "check:docs:xstate-version": "node scripts/check-xstate-doc-version.mjs",
+    "check:docs:dated-immutable": "node scripts/check-dated-docs-immutable.mjs",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish",
