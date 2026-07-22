@@ -43,6 +43,9 @@ interface OpenStore {
  */
 const openStores = new Map<string, Promise<OpenStore>>();
 
+/** Active store disposals keyed by resolved database path. */
+const closingStores = new Map<string, Promise<void>>();
+
 /**
  * `chmod` error codes that mean the filesystem cannot carry a POSIX mode at all,
  * so the owner-only hardening is a no-op rather than a failure. Everything else
@@ -143,7 +146,9 @@ export function openRunbookStore(
   if (existing !== undefined) {
     return existing;
   }
+  const activeClose = closingStores.get(key);
   const opening = (async (): Promise<OpenStore> => {
+    await activeClose;
     const target = dbPath(cwd);
     await fs.mkdir(path.dirname(target), { recursive: true });
     const driver = await openRunbookDriver(target, options);
@@ -179,6 +184,36 @@ export function openRunbookStore(
 }
 
 /**
+ * Register and dispose one removed store entry.
+ *
+ * Registration is synchronous so a same-key open cannot miss an in-progress
+ * close. Disposal remains best-effort, and identity-checked cleanup prevents an
+ * older close from erasing a newer close for the same key.
+ *
+ * @param key - Canonical database path for the store.
+ * @param entry - Open or opening store entry to dispose.
+ * @returns The registered close promise.
+ */
+function registerStoreClose(key: string, entry: Promise<OpenStore>): Promise<void> {
+  let closing!: Promise<void>;
+  closing = (async (): Promise<void> => {
+    try {
+      const { driver } = await entry;
+      await driver[Symbol.asyncDispose]();
+    } catch {
+      // Best-effort teardown: an open or disposal failure must not mask the
+      // caller's work.
+    } finally {
+      if (closingStores.get(key) === closing) {
+        closingStores.delete(key);
+      }
+    }
+  })();
+  closingStores.set(key, closing);
+  return closing;
+}
+
+/**
  * Close and forget every open store.
  *
  * Intended for test teardown, where many temporary project roots are opened in
@@ -188,19 +223,11 @@ export function openRunbookStore(
  * @returns Resolves once every store has been disposed and the registry cleared.
  */
 export async function closeRunbookStores(): Promise<void> {
-  const entries = [...openStores.values()];
+  const activeClosings = [...closingStores.values()];
+  const entries = [...openStores.entries()];
   openStores.clear();
-  await Promise.all(
-    entries.map(async (entry) => {
-      try {
-        const { driver } = await entry;
-        await driver[Symbol.asyncDispose]();
-      } catch {
-        // Best-effort teardown: a store that failed to open or dispose must not
-        // prevent the others from closing.
-      }
-    }),
-  );
+  const newClosings = entries.map(([key, entry]) => registerStoreClose(key, entry));
+  await Promise.all([...activeClosings, ...newClosings]);
 }
 
 /**
@@ -213,13 +240,9 @@ export async function closeRunbookStore(cwd: string): Promise<void> {
   const key = runbookStoreKey(cwd);
   const entry = openStores.get(key);
   if (entry === undefined) {
+    await closingStores.get(key);
     return;
   }
   openStores.delete(key);
-  try {
-    const { driver } = await entry;
-    await driver[Symbol.asyncDispose]();
-  } catch {
-    // Best-effort teardown, as above.
-  }
+  await registerStoreClose(key, entry);
 }
