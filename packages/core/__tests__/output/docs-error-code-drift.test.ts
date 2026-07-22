@@ -90,15 +90,40 @@ function lineAt(text: string, offset: number): number {
 }
 
 /**
+ * Best-effort envelope kind for a `"code"` at `codeOffset` within a
+ * non-parseable fence `body`: the kind of the nearest `"kind"` marker preceding
+ * the code.
+ *
+ * Structured parsing is unavailable for such a fence, so the enclosing envelope
+ * is recovered textually. A code that sits under an explicit `"kind"` is tagged
+ * with it (so a mismatched kind is still checked against the matching enum); a
+ * genuinely kindless illustrative sketch keeps `unknown` and stays tolerant.
+ *
+ * @param body - The non-parseable JSON fence body.
+ * @param codeOffset - Offset of the `"code"` occurrence within `body`.
+ * @returns The nearest preceding envelope kind, or `unknown` when none precedes it.
+ */
+function kindBefore(body: string, codeOffset: number): DocumentedCode['kind'] {
+  const preceding = body.slice(0, codeOffset);
+  let kind: DocumentedCode['kind'] = 'unknown';
+  for (const marker of preceding.matchAll(/"kind"\s*:\s*"(error|warning)"/g)) {
+    kind = marker[1] as 'error' | 'warning';
+  }
+  return kind;
+}
+
+/**
  * Extract every documented `"code"` from the JSON fenced code blocks of a
  * markdown document.
  *
  * Structured parsing is preferred so each code can be tagged with its enclosing
  * envelope `kind`. A JSON fence that is not valid JSON (for example an
  * illustrative schema sketch with `//` comments) falls back to a textual scan
- * that still surfaces any `"code"` it contains, tagged `unknown`, so a real code
- * hidden in a non-parseable fence is never silently dropped. Fenced blocks with
- * no `"code"` contribute nothing.
+ * that still surfaces any `"code"` it contains — deriving each code's envelope
+ * kind from the nearest preceding `"kind"` marker, or `unknown` when none
+ * precedes it — so a real code hidden in a non-parseable fence is never silently
+ * dropped nor waved through in the wrong envelope. Fenced blocks with no
+ * `"code"` contribute nothing.
  *
  * @param markdown - Raw markdown source to scan.
  * @returns Every documented code with its kind and source location, in document order.
@@ -111,7 +136,7 @@ function extractDocumentedCodes(markdown: string): DocumentedCode[] {
   for (const match of markdown.matchAll(/```json\n([\s\S]*?)```/g)) {
     fence += 1;
     const body = match[1];
-    const bodyOffset = (match.index ?? 0) + fenceOpen.length;
+    const bodyOffset = match.index + fenceOpen.length;
 
     let parsed: unknown;
     let parseable = true;
@@ -131,11 +156,12 @@ function extractDocumentedCodes(markdown: string): DocumentedCode[] {
       }
     } else {
       for (const codeMatch of body.matchAll(/"code"\s*:\s*"([^"]+)"/g)) {
+        const codeOffset = codeMatch.index;
         results.push({
           code: codeMatch[1],
-          kind: 'unknown',
+          kind: kindBefore(body, codeOffset),
           fence,
-          line: lineAt(markdown, bodyOffset + (codeMatch.index ?? 0)),
+          line: lineAt(markdown, bodyOffset + codeOffset),
         });
       }
     }
@@ -171,7 +197,7 @@ function isRegistered(entry: DocumentedCode): boolean {
 
 /** Format an offending code for a failure message naming its source location. */
 function describeOffender(entry: DocumentedCode): string {
-  return `"${entry.code}" (${entry.kind} envelope, ${SPEC_LABEL} JSON fence #${entry.fence}, line ${entry.line})`;
+  return `"${entry.code}" (${entry.kind} envelope, ${SPEC_LABEL} JSON fence #${String(entry.fence)}, line ${String(entry.line)})`;
 }
 
 describe('docs/spec/cli-output.md error codes are registered (#615)', () => {
@@ -244,6 +270,45 @@ describe('docs/spec/cli-output.md error codes are registered (#615)', () => {
       for (const entry of valid) {
         expect(isRegistered(entry)).toBe(true);
       }
+    });
+
+    it('rejects a warning-only code documented inside a non-parseable error envelope', () => {
+      // A `//` comment makes this fence non-parseable, so the structured path
+      // cannot run. The fallback must still recover the envelope kind from the
+      // nearest `"kind"` marker — otherwise a warning-only code (NO_ACTIVE_RUNBOOK)
+      // wearing an `error` envelope would be waved through as kind `unknown`.
+      const mismatched = [
+        '```json',
+        '{',
+        '  "kind": "error", // illustrative sketch → not valid JSON',
+        '  "code": "NO_ACTIVE_RUNBOOK"',
+        '}',
+        '```',
+      ].join('\n');
+
+      const codes = extractDocumentedCodes(mismatched);
+      expect(codes).toEqual([
+        expect.objectContaining({ code: 'NO_ACTIVE_RUNBOOK', kind: 'error' }),
+      ]);
+      expect(codes.every((entry) => isRegistered(entry))).toBe(false);
+    });
+
+    it('keeps a kindless code in a non-parseable fence tolerant (unknown, accepted if registered)', () => {
+      // No envelope `"kind"` precedes the code, so the fallback cannot classify
+      // it. A genuinely kindless illustrative sketch must stay tolerant: tagged
+      // `unknown` and accepted when registered as either an error or warning.
+      const kindless = [
+        '```json',
+        '{',
+        '  "code": "STEP_NOT_FOUND", // sketch with no envelope kind',
+        '  "detail": "string"',
+        '}',
+        '```',
+      ].join('\n');
+
+      const codes = extractDocumentedCodes(kindless);
+      expect(codes).toEqual([expect.objectContaining({ code: 'STEP_NOT_FOUND', kind: 'unknown' })]);
+      expect(codes.every((entry) => isRegistered(entry))).toBe(true);
     });
   });
 
