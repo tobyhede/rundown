@@ -72,10 +72,15 @@ export interface RunbookScenarioSource {
 /**
  * Recursively list files under a directory, skipping build and vendor output.
  *
+ * Exported for `scenario-sources.test.ts`, which pins the exclusion set and the
+ * narrow ENOENT skip against a purpose-built tmpdir tree — the repository's own
+ * layout cannot exercise a dangling symlink or an unreadable entry on demand.
+ *
  * @param dir - Directory to walk
  * @returns Absolute paths of every file found
+ * @throws {Error} When an entry cannot be stat'd for any reason other than ENOENT
  */
-function getFilesSync(dir: string): string[] {
+export function getFilesSync(dir: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir)) {
     if (EXCLUDED_DIRS.has(entry)) continue;
