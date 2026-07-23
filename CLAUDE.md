@@ -412,14 +412,18 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     --testFiles __tests__/helpers/table-formatter.test.ts
   ```
 
-  Both obvious alternatives are unsafe, in different ways: the first fails
-  **loudly**, the second **silently looks like success**. Check the
+  This is the canonical form. Check the
   `Instrumented N source file(s) with M mutant(s)` line before trusting any
-  score:
-  - `pnpm run test:mutate:<pkg> -- --mutate <file>` dies on
-    `error: too many arguments for 'run'` (the script's own trailing `--`
-    doubles with yours and Stryker's Commander reads every flag as a
-    positional), or silently runs **unscoped** where the script has no `--`.
+  score — `N > 0` is what proves the scope actually resolved. Two ways a scoped
+  run can lie about success:
+  - Do **not** insert the `--` separator:
+    `pnpm --filter … exec stryker run -- --mutate <file>` (or
+    `pnpm run test:mutate:<pkg> -- --mutate <file>`) dies on
+    `error: too many arguments for 'run'` because pnpm forwards the literal `--`
+    into Stryker's Commander as a positional. The `test:mutate:<pkg>` root
+    scripts delegate to the `exec stryker run` form above, so the bare shortcut
+    `pnpm run test:mutate:<pkg> --mutate <pkg-relative-path>` (no `--`) forwards
+    cleanly and scopes correctly; adding the separator is the foot-gun.
   - Repo-relative paths (`--mutate packages/cli/src/x.ts`) match nothing:
     `pnpm --filter … exec` runs with cwd = the package dir, so Stryker reports
     `Instrumented 0 source file(s) with 0 mutant(s)` and **exits 0** — a gate
