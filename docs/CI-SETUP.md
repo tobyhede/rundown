@@ -132,9 +132,13 @@ with `security-extended`.
 
 ### `osv-scanner.yml` — dependency vulnerabilities
 
-Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans
-`pnpm-lock.yaml`, uploads SARIF (`continue-on-error: true` so a finding doesn't
-block; results visible in Code Scanning).
+Triggers: lockfile / `.osv-scanner.toml` changes (push/PR) + daily `0 5 * * *`.
+Scans `pnpm-lock.yaml` with `--config=.osv-scanner.toml` and uploads SARIF to
+Code Scanning (`if: always()`). **Blocking**: a finding red-fails the check (per
+commit `e6c908ded`), so a CVE regression on the lockfile cannot merge. The
+escape hatch is a dated `[[IgnoredVulns]]` entry in `.osv-scanner.toml`, not
+`continue-on-error`; everything else is fixed by the correct mechanism per
+[dependency-overrides.md](internal/dependency-overrides.md).
 
 ### `mutation.yml` — mutation tests
 

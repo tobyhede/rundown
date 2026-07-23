@@ -18,6 +18,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isNodeErrorCode } from '@rundown-org/core';
 import { extractFrontmatter } from '@rundown-org/parser';
 import { parseScenarios, type Scenarios } from '../../src/schemas/scenarios.js';
 
@@ -40,6 +41,7 @@ export const RUNBOOKS_DIR: string = join(REPO_ROOT, 'runbooks');
  */
 const EXCLUDED_DIRS = new Set([
   'node_modules',
+  '.pnpm-store',
   'dist',
   '.stryker-tmp',
   '.git',
@@ -78,7 +80,21 @@ function getFilesSync(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     if (EXCLUDED_DIRS.has(entry)) continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+    let isDirectory: boolean;
+    try {
+      isDirectory = statSync(full).isDirectory();
+    } catch (err) {
+      // Skip only a MISSING entry — a dangling symlink (e.g. a `logs/latest`
+      // pointer to a cleaned run) or an entry pruned mid-walk (a content-addressed
+      // store). The scan is for real source files, so a missing target is never a
+      // suite file; failing the whole scan on local filesystem detritus would make
+      // this guard environment-dependent. Any OTHER stat failure (permissions, I/O)
+      // is a real problem and must fail loudly, matching this module's
+      // no-silent-fallback discipline.
+      if (isNodeErrorCode(err, 'ENOENT')) continue;
+      throw err;
+    }
+    if (isDirectory) {
       files.push(...getFilesSync(full));
     } else {
       files.push(full);

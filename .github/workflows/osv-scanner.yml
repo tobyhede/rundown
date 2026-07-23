@@ -6,11 +6,13 @@ on:
     paths:
       - 'pnpm-lock.yaml'
       - 'packages/*/package.json'
+      - '.osv-scanner.toml'
   pull_request:
     branches: [main]
     paths:
       - 'pnpm-lock.yaml'
       - 'packages/*/package.json'
+      - '.osv-scanner.toml'
   schedule:
     - cron: '0 5 * * *' # Daily 05:00 UTC
 
@@ -25,11 +27,19 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
+      # Blocking by design (commit e6c908ded "block on OSV findings"): a lockfile
+      # CVE regression red-fails the check rather than only surfacing in Code
+      # Scanning. The escape hatch for a finding that cannot be fixed by the correct
+      # mechanism is a dated `[[IgnoredVulns]]` entry in .osv-scanner.toml (below),
+      # NOT continue-on-error — so acceptances are explicit, justified, and expire.
+      # SARIF still uploads (if: always()) so findings remain visible in Code
+      # Scanning. See docs/internal/dependency-overrides.md.
       - name: Run OSV-Scanner
         uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2  # v2.3.8
         with:
           scan-args: |-
             --lockfile=pnpm-lock.yaml
+            --config=.osv-scanner.toml
             --format=sarif
             --output=osv-results.sarif
 

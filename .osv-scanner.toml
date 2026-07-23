@@ -1,0 +1,23 @@
+# OSV-Scanner ignore file — dated, justified risk acceptances only.
+#
+# Every entry MUST carry a reason and an ignoreUntil review date. An ignore is for
+# a finding that cannot currently be fixed by the correct mechanism (a lockfile
+# bump, a scoped override in pnpm-workspace.yaml, or a direct-dep update). When the
+# ignoreUntil date passes, the scanner surfaces the finding again for re-review —
+# do not extend a date without re-checking whether the fix has become available.
+# See docs/internal/dependency-overrides.md.
+
+[[IgnoredVulns]]
+id = "GHSA-frvp-7c67-39w9"
+ignoreUntil = 2026-10-01
+# @hono/node-server serveStatic path traversal (CVSS 5.9). The fix is 2.0.5 — a
+# MAJOR bump that @modelcontextprotocol/sdk@1.29.0 forbids (declares ^1.19.9), so
+# no scoped override or lockfile bump can reach it without forcing an untested
+# major into the prod MCP transport. Reachability verified 2026-07-23: the SDK's
+# production transport (dist/*/server/streamableHttp.js) imports only
+# `getRequestListener` from @hono/node-server; `serveStatic` appears only in the
+# SDK's unused examples/, and rundown's own packages/mcp/src imports neither. So
+# the vulnerable code path is not reachable. Remove this ignore and drop
+# @hono/node-server to ^2 once the SDK ships a release depending on ^2 (watch
+# https://github.com/modelcontextprotocol/typescript-sdk releases).
+reason = "Fix requires a major (@hono/node-server 2.0.5) the MCP SDK forbids; serveStatic is unreachable — the SDK transport uses only getRequestListener (verified 2026-07-23). Re-review when the SDK moves to node-server ^2."
