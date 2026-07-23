@@ -15,7 +15,7 @@
  * @module runbook/storage/schema
  */
 
-import type { SqlTransaction } from './sql-driver.js';
+import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
 
 /**
  * Current schema version.
@@ -61,10 +61,15 @@ export class IncompatibleSchemaError extends Error {
 /**
  * DDL statements installing schema version {@link SCHEMA_VERSION}.
  *
- * Ordered so foreign-key targets precede their referrers. `PRAGMA user_version`
- * is set last, inside the same transaction, so a crash mid-install leaves the
- * version at `0` and the next open re-installs rather than adopting a partial
- * schema.
+ * Every closed union in the model is pinned by a `CHECK` constraint, so a value
+ * outside it cannot be persisted even by a caller that bypasses the typed store.
+ * `runs` and `execution_attempts` reference each other, so their foreign keys
+ * cannot both point backwards: the `runs` → `execution_attempts` direction is
+ * declared `DEFERRABLE INITIALLY DEFERRED` and checked at COMMIT, which also
+ * frees a write path from ordering the attempt insert against the run update.
+ * `PRAGMA user_version` is set last, inside the same transaction, so a crash
+ * mid-install leaves the version at `0` and the next open re-installs rather
+ * than adopting a partial schema.
  */
 const SCHEMA_DDL = `
 CREATE TABLE runs (
@@ -76,7 +81,7 @@ CREATE TABLE runs (
   claim_generation  INTEGER NOT NULL DEFAULT 0,
   -- Persisted machine lifecycle: running | completed | stopped. recoveryRequired
   -- persists as 'running'; it is a machine state, not a lifecycle value.
-  lifecycle         TEXT    NOT NULL,
+  lifecycle         TEXT    NOT NULL CHECK (lifecycle IN ('running', 'completed', 'stopped')),
   -- Authoritative RunbookState JSON, with the coordinated fields (claims, stack,
   -- stash, resolved completions) excluded — those tables are their sole home.
   state_json        TEXT    NOT NULL,
@@ -87,7 +92,19 @@ CREATE TABLE runs (
   exec_epoch        INTEGER,
   exec_start_id     TEXT,
   created_at        TEXT    NOT NULL,
-  updated_at        TEXT    NOT NULL
+  updated_at        TEXT    NOT NULL,
+  -- Execution identity is all-or-nothing: a half-populated identity would name
+  -- an owner the recovery path cannot resolve. exec_start_id stays optional
+  -- while owned, mirroring execution_attempts.owner_start_id — a host with no
+  -- process start id still owns the run — but must be absent when unowned.
+  CHECK (
+    (exec_epoch IS NULL AND exec_pid IS NULL AND exec_token IS NULL AND exec_start_id IS NULL)
+    OR (exec_epoch IS NOT NULL AND exec_pid IS NOT NULL AND exec_token IS NOT NULL)
+  ),
+  -- The named epoch must be a real attempt of THIS run. Deferred so the attempt
+  -- insert and the run update may land in either order within one transaction.
+  FOREIGN KEY (id, exec_epoch) REFERENCES execution_attempts(run_id, exec_epoch)
+    DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE claims (
@@ -99,7 +116,8 @@ CREATE TABLE claims (
   issued_generation INTEGER NOT NULL,
   -- active | superseded. Rotated/released claims remain as superseded tombstones
   -- while any active/recovery attempt can reference their issuance.
-  status            TEXT    NOT NULL DEFAULT 'active',
+  status            TEXT    NOT NULL DEFAULT 'active'
+                            CHECK (status IN ('active', 'superseded')),
   -- Delegation linkage, NULL for non-delegated claims.
   parent_run_id     TEXT,
   parent_linkage_version INTEGER,
@@ -148,7 +166,8 @@ CREATE TABLE execution_attempts (
   -- Hashed ExecutionToken bearer secret; never the raw token.
   exec_token        TEXT    NOT NULL,
   -- claimed | effect_started | recovery_pending | committed
-  phase             TEXT    NOT NULL,
+  phase             TEXT    NOT NULL
+                            CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed')),
   owner_pid         INTEGER NOT NULL,
   owner_start_id    TEXT,
   -- Closed recovery-reason union member, NULL until recovery.
@@ -164,10 +183,13 @@ CREATE TABLE execution_attempts (
 /**
  * Read the database's `user_version`.
  *
+ * Takes the read-only transaction type so it is callable from `read` work as
+ * well as from the writing `ensureSchema` path.
+ *
  * @param tx - Open transaction to read through.
  * @returns The integer schema version (`0` for a fresh database).
  */
-export function readSchemaVersion(tx: SqlTransaction): number {
+export function readSchemaVersion(tx: SqlReadTransaction): number {
   const row = tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>();
   return row?.user_version ?? UNINITIALIZED_VERSION;
 }

@@ -223,9 +223,15 @@ export default tseslint.config(
   // until the store applies Zod at its edge; the type parameter lets each
   // caller assert the row shape it expects at the single cast site rather than
   // pushing `as` casts to every query. `no-unnecessary-type-parameters` cannot
-  // see that value (T appears once, in the return), so it is scoped off here.
+  // see that value (T appears once, in the return), so it is scoped off here —
+  // for the three files that DECLARE or IMPLEMENT that boundary only, so schema,
+  // factory and any later storage module stay subject to the rule.
   {
-    files: ['packages/core/src/runbook/storage/**/*.ts'],
+    files: [
+      'packages/core/src/runbook/storage/sql-driver.ts',
+      'packages/core/src/runbook/storage/native-sqlite-driver.ts',
+      'packages/core/src/runbook/storage/sqljs-driver.ts',
+    ],
     rules: {
       '@typescript-eslint/no-unnecessary-type-parameters': 'off',
     },

@@ -11,18 +11,51 @@
  * the open transaction, structurally preventing an awaited external effect from
  * being held across `BEGIN IMMEDIATE`.
  *
+ * Each configuration choice below follows documented SQLite behaviour:
+ *
+ * - `BEGIN IMMEDIATE` for writes, never deferred. A deferred transaction that
+ *   later writes must upgrade, and "if some other database connection has
+ *   already modified the database … the write statement will fail with
+ *   SQLITE_BUSY" (https://www.sqlite.org/lang_transaction.html). Taking the
+ *   write lock up front converts a mid-transaction failure into an entry-point
+ *   one the retry loop can handle.
+ * - A bounded application-level retry ON TOP of `busy_timeout`, because the
+ *   timeout alone is not sufficient: "If SQLite determines that invoking the
+ *   busy handler could result in a deadlock, it will go ahead and return
+ *   SQLITE_BUSY to the application instead of invoking the busy handler"
+ *   (https://www.sqlite.org/c3ref/busy_handler.html).
+ * - `PRAGMA foreign_keys = ON` in the constructor, before any transaction
+ *   opens. Enforcement is per-connection and off by default, and "it is not
+ *   possible to enable or disable foreign key constraints in the middle of a
+ *   multi-statement transaction … it simply has no effect"
+ *   (https://www.sqlite.org/foreignkeys.html) — a misplaced pragma fails silently.
+ * - `PRAGMA synchronous` is deliberately left at SQLite's FULL default rather
+ *   than the NORMAL commonly paired with WAL. NORMAL "omits this sync" on
+ *   commit (https://www.sqlite.org/wal.html), trading durability across power
+ *   loss for throughput; runbook state is small and written rarely, so the
+ *   trade does not pay here.
+ *
+ * `capabilities.multiProcess` assumes a local filesystem. WAL's shared-memory
+ * index means "all processes using a database must be on the same host
+ * computer; WAL does not work over a network filesystem"
+ * (https://www.sqlite.org/wal.html), so a project directory on NFS or SMB
+ * voids the cross-process guarantee this adapter advertises.
+ *
  * @module runbook/storage/native-sqlite-driver
  */
 
 import { DatabaseSync } from 'node:sqlite';
 import { isNodeError } from '../../errors.js';
+import { assertSyncWorkResult, readOnlyTransaction, toPortableParams } from './sql-driver.js';
 import type {
   SqlDriver,
   SqlParams,
+  SqlReadTransaction,
   SqlRow,
   SqlRunResult,
   SqlStatement,
   SqlTransaction,
+  SyncWork,
 } from './sql-driver.js';
 
 /** SQLite primary result code for a contended write lock. */
@@ -67,7 +100,7 @@ class NativeStatement implements SqlStatement {
   constructor(private readonly stmt: ReturnType<DatabaseSync['prepare']>) {}
 
   run(params?: SqlParams): SqlRunResult {
-    const result = params === undefined ? this.stmt.run() : this.stmt.run(params);
+    const result = params === undefined ? this.stmt.run() : this.stmt.run(toPortableParams(params));
     return {
       changes: Number(result.changes),
       lastInsertRowid: result.lastInsertRowid,
@@ -75,12 +108,12 @@ class NativeStatement implements SqlStatement {
   }
 
   get<T extends SqlRow>(params?: SqlParams): T | undefined {
-    const row = params === undefined ? this.stmt.get() : this.stmt.get(params);
+    const row = params === undefined ? this.stmt.get() : this.stmt.get(toPortableParams(params));
     return row as unknown as T | undefined;
   }
 
   all<T extends SqlRow>(params?: SqlParams): readonly T[] {
-    const rows = params === undefined ? this.stmt.all() : this.stmt.all(params);
+    const rows = params === undefined ? this.stmt.all() : this.stmt.all(toPortableParams(params));
     return rows as unknown as readonly T[];
   }
 }
@@ -147,11 +180,12 @@ export class NativeSqlDriver implements SqlDriver {
   // synchronous `assertOpen` throw into the returned promise. Dropping it to
   // satisfy the rule reintroduces the defect this signature exists to prevent.
   // eslint-disable-next-line @typescript-eslint/require-await
-  async read<T>(work: (tx: SqlTransaction) => T): Promise<T> {
+  async read<T>(work: (tx: SqlReadTransaction) => SyncWork<T>): Promise<T> {
     this.assertOpen();
     this.db.exec('BEGIN');
     try {
-      const result = work(new NativeTransaction(this.db));
+      const result = work(readOnlyTransaction(new NativeTransaction(this.db)));
+      assertSyncWorkResult(result);
       this.db.exec('COMMIT');
       return result;
     } catch (err) {
@@ -168,7 +202,7 @@ export class NativeSqlDriver implements SqlDriver {
    * @param work - Synchronous callback receiving the open transaction.
    * @returns The callback's return value once the transaction commits.
    */
-  async immediate<T>(work: (tx: SqlTransaction) => T): Promise<T> {
+  async immediate<T>(work: (tx: SqlTransaction) => SyncWork<T>): Promise<T> {
     this.assertOpen();
     for (let attempt = 0; ; attempt++) {
       try {
@@ -182,6 +216,7 @@ export class NativeSqlDriver implements SqlDriver {
       }
       try {
         const result = work(new NativeTransaction(this.db));
+        assertSyncWorkResult(result);
         this.db.exec('COMMIT');
         return result;
       } catch (err) {

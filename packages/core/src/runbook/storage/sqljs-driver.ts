@@ -24,14 +24,17 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BindParams, Database, SqlJsStatic, SqlValue, Statement } from 'sql.js';
 import { isNodeError } from '../../errors.js';
-import { acquireFileLock, releaseFileLock } from '../file-lock.js';
+import { acquireFileLock, heldLock, releaseFileLock } from '../file-lock.js';
+import { assertSyncWorkResult, readOnlyTransaction, toPortableBindValue } from './sql-driver.js';
 import type {
   SqlDriver,
   SqlParams,
+  SqlReadTransaction,
   SqlRow,
   SqlRunResult,
   SqlStatement,
   SqlTransaction,
+  SyncWork,
 } from './sql-driver.js';
 
 /**
@@ -75,9 +78,11 @@ const TEMP_SUFFIX = '.tmp';
 function toSqljsParams(params: SqlParams): BindParams {
   const out: Record<string, SqlValue> = {};
   for (const [key, value] of Object.entries(params)) {
-    // sql.js's SqlValue excludes bigint; SQLite integers up to 2^53 round-trip
-    // safely as JS numbers, and the store never binds a value beyond that range.
-    out[`:${key}`] = typeof value === 'bigint' ? Number(value) : value;
+    // sql.js's SqlValue excludes bigint, and this build has no bind_int64, so
+    // an out-of-range value would reach SQLite through a float64 and be stored
+    // TRUNCATED with no error. The shared guard refuses it instead; in-range
+    // values narrow to number, which both adapters store identically.
+    out[`:${key}`] = toPortableBindValue(key, value);
   }
   return out;
 }
@@ -189,12 +194,14 @@ export class SqljsDriver implements SqlDriver {
    * @param work - Synchronous callback receiving the open transaction.
    * @returns The callback's return value.
    */
-  async read<T>(work: (tx: SqlTransaction) => T): Promise<T> {
+  async read<T>(work: (tx: SqlReadTransaction) => SyncWork<T>): Promise<T> {
     return this.runLocked(async () => {
       const db = await this.load();
       const tx = new SqljsTransaction(db);
       try {
-        return work(tx);
+        const result = work(readOnlyTransaction(tx));
+        assertSyncWorkResult(result);
+        return result;
       } finally {
         tx.dispose();
         db.close();
@@ -209,7 +216,7 @@ export class SqljsDriver implements SqlDriver {
    * @param work - Synchronous callback receiving the open transaction.
    * @returns The callback's return value once the image is persisted.
    */
-  async immediate<T>(work: (tx: SqlTransaction) => T): Promise<T> {
+  async immediate<T>(work: (tx: SqlTransaction) => SyncWork<T>): Promise<T> {
     return this.runLocked(async () => {
       const db = await this.load();
       const tx = new SqljsTransaction(db);
@@ -217,6 +224,7 @@ export class SqljsDriver implements SqlDriver {
       db.run('BEGIN');
       try {
         result = work(tx);
+        assertSyncWorkResult(result);
         db.run('COMMIT');
       } catch (err) {
         rollbackQuietly(db);
@@ -267,12 +275,16 @@ export class SqljsDriver implements SqlDriver {
         throw new Error('SqljsDriver used after disposal');
       }
       await acquireFileLock(this.lockFile, this.dir);
-      try {
-        await this.reclaimOrphanTemps();
-        return await fn();
-      } finally {
-        await releaseFileLock(this.lockFile);
-      }
+      // Best-effort scoped release (RD-102): a failed unlink leaks only a
+      // self-healing lock — the next acquirer reclaims it by PID — so it must
+      // never propagate and replace the committed outcome of the durable write
+      // this lock protected. A bare `finally` would do exactly that.
+      await using _guard = heldLock(
+        () => releaseFileLock(this.lockFile),
+        () => ({ lock: this.lockFile, driver: 'sqljs' }),
+      );
+      await this.reclaimOrphanTemps();
+      return await fn();
     });
     // Keep the mutex chain alive regardless of this section's outcome.
     this.mutexTail = run.then(
@@ -288,9 +300,25 @@ export class SqljsDriver implements SqlDriver {
    * A missing file yields an empty database (first init). Because the write path
    * renames atomically, a load never observes a torn image.
    *
+   * Every load is a NEW connection, and SQLite defaults `foreign_keys` OFF per
+   * connection, so the pragma is re-applied here rather than once at open —
+   * otherwise the schema's referential invariants would hold under the native
+   * adapter and silently not under this one.
+   *
    * @returns A newly opened in-memory database.
    */
   private async load(): Promise<Database> {
+    const db = await this.open();
+    db.run('PRAGMA foreign_keys = ON');
+    return db;
+  }
+
+  /**
+   * Open the stored image, or an empty database on first init.
+   *
+   * @returns A newly opened in-memory database with no pragmas applied.
+   */
+  private async open(): Promise<Database> {
     try {
       const bytes = await fs.readFile(this.dbPath);
       return new this.sql.Database(bytes);

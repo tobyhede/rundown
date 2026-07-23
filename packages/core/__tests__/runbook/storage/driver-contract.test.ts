@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { SqlJsStatic } from 'sql.js';
 import { getErrorMessage, isNodeError } from '../../../src/errors.js';
-import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
+import {
+  AsyncTransactionWorkError,
+  UnrepresentableIntegerError,
+  type SqlDriver,
+} from '../../../src/runbook/storage/sql-driver.js';
 import {
   NativeSqlDriver,
   openNativeDriver,
@@ -22,6 +27,7 @@ import {
   selectStorageRuntime,
   openRunbookDriver,
   NativeSqliteUnavailableError,
+  SqljsUnsupportedHostError,
   STORAGE_RUNTIME_ENV,
 } from '../../../src/runbook/storage/driver-factory.js';
 
@@ -173,6 +179,43 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     expect(Number(stored)).toBe(Number(bound));
   });
 
+  it('round-trips a bigint at the safe-integer boundary exactly', async () => {
+    await using driver = await adapter.open();
+    const bound = BigInt(Number.MAX_SAFE_INTEGER);
+    const storedText = await driver.immediate((tx) => {
+      tx.exec(CREATE_KV);
+      tx.prepare('INSERT INTO kv VALUES(:k, :v)').run({ k: 'edge', v: bound });
+      // Read the value back as TEXT so SQLite reports what it actually stored,
+      // rather than whatever the adapter's JS number conversion produces.
+      return tx
+        .prepare('SELECT CAST(v AS TEXT) AS t FROM kv WHERE k = :k')
+        .get<{ readonly t: string }>({ k: 'edge' })?.t;
+    });
+    expect(storedText).toBe(String(bound));
+  });
+
+  it('refuses a bigint beyond the safe-integer range instead of corrupting it', async () => {
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      tx.exec(CREATE_KV);
+    });
+    // MAX_SAFE_INTEGER + 2 is the smallest odd integer above the safe range.
+    // Unguarded, sql.js stores 9007199254740992 for it with no error, and the
+    // native adapter stores it exactly but then throws on every read.
+    const beyond = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('INSERT INTO kv VALUES(:k, :v)').run({ k: 'beyond', v: beyond });
+      }),
+    ).rejects.toBeInstanceOf(UnrepresentableIntegerError);
+
+    // The refusal happens at bind time, so nothing is written.
+    const count = await driver.read(
+      (tx) => tx.prepare('SELECT count(*) AS c FROM kv').get<{ readonly c: number }>()?.c,
+    );
+    expect(count).toBe(0);
+  });
+
   it('closes a completed read transaction so a later write still commits', async () => {
     await using driver = await adapter.open();
     await driver.immediate((tx) => {
@@ -243,7 +286,7 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     for (const op of [
       () =>
         driver.read((tx) => {
-          tx.exec('SELECT 1');
+          tx.prepare('SELECT 1').get();
         }),
       () =>
         driver.immediate((tx) => {
@@ -274,6 +317,145 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
       });
       expect(getErrorMessage(caught)).toMatch(/used after disposal/);
     }
+  });
+
+  it('hands read work a transaction with no mutating surface', async () => {
+    // A "read-only" transaction that still exposes exec()/run() is only read-only
+    // by convention: under the sql.js adapter a mutation made through read() is
+    // silently discarded (read never persists), so the restriction has to be real
+    // rather than documented.
+    await using driver = await adapter.open();
+    const surface = await driver.read((tx) => ({
+      hasExec: 'exec' in tx,
+      hasRun: 'run' in tx.prepare('SELECT 1 AS one'),
+      reads: tx.prepare('SELECT 1 AS one').get<{ readonly one: number }>()?.one,
+    }));
+    expect(surface).toEqual({ hasExec: false, hasRun: false, reads: 1 });
+  });
+
+  it('pins the read surface and the sync-only work contract at compile time', async () => {
+    await using driver = await adapter.open();
+    // Never invoked: every statement below is a type assertion. `@ts-expect-error`
+    // fails the build if the surface widens, which is the point — the runtime
+    // guards below are the backstop, not the primary constraint.
+    const compileOnly = async (): Promise<void> => {
+      await driver.read((tx) => {
+        // @ts-expect-error - a read transaction exposes no exec()
+        tx.exec('CREATE TABLE nope (x)');
+        // @ts-expect-error - a read statement exposes no run()
+        tx.prepare('DELETE FROM kv').run();
+      });
+      // @ts-expect-error - work must be synchronous: no awaiting under the lock
+      await driver.read(async () => 1);
+      // @ts-expect-error - work must be synchronous: no awaiting under the lock
+      await driver.immediate(async () => 1);
+      // @ts-expect-error - a promise-returning callback is async work by any name
+      await driver.immediate(() => Promise.resolve(1));
+    };
+    expect(typeof compileOnly).toBe('function');
+  });
+
+  it('refuses promise-returning read work instead of closing the transaction around it', async () => {
+    await using driver = await adapter.open();
+    // Cast: the type contract already rejects this. The runtime guard is what
+    // protects a JavaScript caller, or a callback whose promise return is
+    // hidden behind an `any`-typed helper.
+    const asyncWork = (): number => Promise.resolve(1) as unknown as number;
+
+    const err = await failureOf(() => driver.read(asyncWork));
+    expect(err).toBeInstanceOf(AsyncTransactionWorkError);
+    expect((err as Error).name).toBe('AsyncTransactionWorkError');
+    // The message has to say WHY, not just "no": the caller's next move is to
+    // hoist the await out of the transaction, which the wording has to imply.
+    expect(getErrorMessage(err)).toMatch(/must be synchronous/);
+    expect(getErrorMessage(err)).toMatch(/commit before the awaited work ran/);
+
+    // The refusal must leave no transaction open, so the next write still commits.
+    await driver.immediate((tx) => {
+      tx.exec(CREATE_KV);
+    });
+    const count = await driver.read(
+      (tx) => tx.prepare('SELECT count(*) AS c FROM kv').get<{ readonly c: number }>()?.c,
+    );
+    expect(count).toBe(0);
+  });
+
+  it('passes a null work result through rather than mistaking it for a thenable', async () => {
+    // `typeof null === 'object'`, so a thenable check that forgets the null case
+    // dereferences it and turns a perfectly valid "found nothing" into a crash.
+    await using driver = await adapter.open();
+    await expect(driver.read(() => null)).resolves.toBeNull();
+    await expect(driver.immediate(() => null)).resolves.toBeNull();
+  });
+
+  it('refuses promise-returning write work instead of committing around it', async () => {
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      tx.exec(CREATE_KV);
+    });
+
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('INSERT INTO kv VALUES(:k, :v)').run({ k: 'a', v: 1 });
+        return Promise.resolve(1) as unknown as number;
+      }),
+    ).rejects.toBeInstanceOf(AsyncTransactionWorkError);
+
+    // The write staged before the refusal must have rolled back, not committed.
+    const count = await driver.read(
+      (tx) => tx.prepare('SELECT count(*) AS c FROM kv').get<{ readonly c: number }>()?.c,
+    );
+    expect(count).toBe(0);
+  });
+
+  it('enforces foreign keys on write', async () => {
+    // The schema's referential invariants (claims → runs, and the deferred
+    // runs → execution_attempts identity link) are only real if BOTH adapters
+    // enforce them. SQLite defaults `foreign_keys` OFF, so this is a per-adapter
+    // configuration property, not something the DDL can guarantee on its own.
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      tx.exec('CREATE TABLE parent (id INTEGER PRIMARY KEY)');
+      tx.exec(
+        'CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))',
+      );
+    });
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('INSERT INTO child VALUES(:id, :parent)').run({ id: 1, parent: 99 });
+      }),
+    ).rejects.toThrow(/FOREIGN KEY/i);
+  });
+
+  it('enforces a deferred foreign key at commit', async () => {
+    // The runs → execution_attempts link is DEFERRABLE INITIALLY DEFERRED, so
+    // the violation surfaces from COMMIT rather than from the statement. An
+    // adapter that never reaches a real COMMIT would silently accept it.
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      tx.exec('CREATE TABLE parent (id INTEGER PRIMARY KEY)');
+      tx.exec(
+        `CREATE TABLE child (
+           id INTEGER PRIMARY KEY,
+           parent_id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED
+         )`,
+      );
+    });
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('INSERT INTO child VALUES(:id, :parent)').run({ id: 1, parent: 99 });
+      }),
+    ).rejects.toThrow(/FOREIGN KEY/i);
+
+    // The rejected transaction must leave the driver usable and the row absent.
+    await driver.immediate((tx) => {
+      tx.prepare('INSERT INTO parent VALUES(:id)').run({ id: 99 });
+      tx.prepare('INSERT INTO child VALUES(:id, :parent)').run({ id: 1, parent: 99 });
+    });
+    const rows = await driver.read(
+      (tx) => tx.prepare('SELECT count(*) AS c FROM child').get<{ readonly c: number }>()?.c,
+    );
+    expect(rows).toBe(1);
   });
 
   it('rejects an incompatible schema version rather than migrating', async () => {
@@ -525,13 +707,8 @@ describe('positive driver selection', () => {
     expect(selectStorageRuntime({})).toBe('native');
   });
 
-  it('honors an explicit runtime override', () => {
-    expect(
-      selectStorageRuntime({
-        [STORAGE_RUNTIME_ENV]: 'sqljs',
-        SHELL: '/bin/bash',
-      }),
-    ).toBe('sqljs');
+  it('honors an explicit runtime override in the safe direction', () => {
+    // Forcing NATIVE is always safe: it is the multi-process-capable adapter.
     expect(
       selectStorageRuntime({
         [STORAGE_RUNTIME_ENV]: 'native',
@@ -539,6 +716,25 @@ describe('positive driver selection', () => {
       }),
     ).toBe('native');
     expect(() => selectStorageRuntime({ [STORAGE_RUNTIME_ENV]: 'wat' })).toThrow();
+  });
+
+  it('refuses to force sql.js onto a host that is not WebContainer', () => {
+    // The env override is user-reachable, so it must not be a way to opt a real
+    // multi-process host into the single-writer adapter — that is the unsafe
+    // downgrade this module exists to prevent, just spelled differently.
+    const forced = { [STORAGE_RUNTIME_ENV]: 'sqljs', SHELL: '/bin/bash' };
+    expect(() => selectStorageRuntime(forced)).toThrow(SqljsUnsupportedHostError);
+    expect(() => selectStorageRuntime(forced)).toThrow(/WebContainer/);
+    expect(() => selectStorageRuntime(forced)).toThrow(new RegExp(STORAGE_RUNTIME_ENV));
+  });
+
+  it('honors a forced sql.js override inside WebContainer', () => {
+    expect(
+      selectStorageRuntime({
+        [STORAGE_RUNTIME_ENV]: 'sqljs',
+        SHELL: '/bin/jsh',
+      }),
+    ).toBe('sqljs');
   });
 
   it('names the override variable and the offending value when it is invalid', () => {
@@ -576,6 +772,27 @@ describe('positive driver selection', () => {
     expect(version).toBe(1);
   });
 
+  it('disposes the opened driver when schema initialization fails', async () => {
+    const dbPath = path.join(dir, 'incompatible.db');
+    {
+      await using seeded = openNativeDriver(dbPath);
+      await seeded.immediate((tx) => {
+        ensureSchema(tx);
+        tx.exec('PRAGMA user_version = 4242');
+      });
+    }
+
+    await expect(openRunbookDriver(dbPath, { runtime: 'native' })).rejects.toBeInstanceOf(
+      IncompatibleSchemaError,
+    );
+
+    // A connection that outlives the failed open keeps its WAL sidecars alive;
+    // SQLite removes them when the LAST connection closes. Their absence is the
+    // observable proof that the half-open driver was disposed rather than leaked.
+    const sidecars = (await fs.readdir(dir)).filter((name) => name.startsWith('incompatible.db-'));
+    expect(sidecars).toEqual([]);
+  });
+
   it('refuses to downgrade when the native driver cannot open', async () => {
     // node:sqlite cannot open a directory as a database file.
     const unopenable = path.join(dir, 'not-a-database');
@@ -592,6 +809,24 @@ describe('positive driver selection', () => {
     expect(message).toMatch(/unable to open database file/i);
     expect(message).toMatch(/does not downgrade/);
     expect(message).toMatch(/sql\.js/);
+  });
+
+  it('keeps the underlying open failure diagnosable behind the refusal', async () => {
+    // Flattening every native open failure into one message discards what the
+    // operator needs: a bad path, a permission denial and a corrupt file all
+    // reach the same catch, and only the original error distinguishes them.
+    const unopenable = path.join(dir, 'not-a-database');
+    await fs.mkdir(unopenable);
+
+    const err = await failureOf(() => openRunbookDriver(unopenable, { runtime: 'native' }));
+
+    expect(err).toBeInstanceOf(NativeSqliteUnavailableError);
+    const cause = (err as NativeSqliteUnavailableError).cause;
+    expect(isNodeError(cause)).toBe(true);
+    expect((cause as NodeJS.ErrnoException).code).toBe('ERR_SQLITE_ERROR');
+    expect(getErrorMessage(cause)).toMatch(/unable to open database file/i);
+    // The code is mirrored onto the refusal so a caller need not unwrap it.
+    expect((err as NodeJS.ErrnoException).code).toBe('ERR_SQLITE_ERROR');
   });
 });
 
@@ -696,7 +931,7 @@ describe('sql.js durability and crash boundaries', () => {
 
     const err = await failureOf(() =>
       driver.read((tx) => {
-        tx.exec('SELECT 1');
+        tx.prepare('SELECT 1').get();
       }),
     );
     expect(isNodeError(err)).toBe(true);
@@ -753,6 +988,39 @@ describe('sql.js durability and crash boundaries', () => {
     expect(isNodeError(err)).toBe(true);
     expect((err as NodeJS.ErrnoException).code).not.toBe('ENOENT');
     expect((err as NodeJS.ErrnoException).syscall).toBe('unlink');
+  });
+
+  it('never lets a failed lock release mask the committed result', async () => {
+    // RD-102: the file lock is best-effort on the way out. A failed unlink only
+    // leaks a self-healing lock (the next acquirer reclaims it by PID), so it
+    // must never replace the outcome of the work the lock protected. Revoking
+    // write permission on the directory from inside the critical section is what
+    // makes the release genuinely fail.
+    const dbPath = path.join(dir, 'release-fails.db');
+    await seed(dbPath);
+    await using driver = await openSqljsDriver(dbPath);
+
+    try {
+      const value = await driver.read((tx) => {
+        fsSync.chmodSync(dir, 0o500);
+        return tx.prepare('SELECT v FROM kv WHERE k = :k').get<{ readonly v: number }>({
+          k: 'seed',
+        })?.v;
+      });
+      expect(value).toBe(1);
+    } finally {
+      fsSync.chmodSync(dir, 0o700);
+    }
+
+    // What the swallowed failure costs is a leaked lock file, nothing more. It
+    // names a live PID (this process), so PID-aware reclaim frees it only once
+    // this process exits — that is the accepted trade: leak a lock, never lose a
+    // committed result.
+    const lockFile = `${dbPath}.lock`;
+    expect(fsSync.existsSync(lockFile)).toBe(true);
+
+    fsSync.unlinkSync(lockFile);
+    expect(await driver.read((tx) => tx.prepare('SELECT 1 AS one').get())).toEqual({ one: 1 });
   });
 
   it('makes the last durable rename win across sequential writes', async () => {
@@ -858,7 +1126,12 @@ describe('sql.js resource ownership and rollback', () => {
       }),
     ).rejects.toBe(boom);
 
-    expect(log.sql).toEqual(['BEGIN', 'INSERT INTO kv VALUES(1)', 'ROLLBACK']);
+    expect(log.sql).toEqual([
+      'PRAGMA foreign_keys = ON',
+      'BEGIN',
+      'INSERT INTO kv VALUES(1)',
+      'ROLLBACK',
+    ]);
     expect(log.freed).toEqual(['INSERT INTO kv VALUES(1)']);
     expect(log.closed).toBe(1);
   });
@@ -871,7 +1144,12 @@ describe('sql.js resource ownership and rollback', () => {
       tx.prepare('INSERT INTO kv VALUES(2)').run();
     });
 
-    expect(log.sql).toEqual(['BEGIN', 'INSERT INTO kv VALUES(2)', 'COMMIT']);
+    expect(log.sql).toEqual([
+      'PRAGMA foreign_keys = ON',
+      'BEGIN',
+      'INSERT INTO kv VALUES(2)',
+      'COMMIT',
+    ]);
     expect(log.freed).toEqual(['INSERT INTO kv VALUES(2)']);
     expect(log.closed).toBe(1);
   });

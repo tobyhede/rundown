@@ -95,7 +95,10 @@ console.log('shell=' + (process.env.SHELL ?? ''));
         const proc = await container.spawn(cmd, args);
         let out = '';
         const reader = proc.output.getReader();
-        (async () => {
+        // The drain must be awaited, not merely started: `proc.exit` can settle
+        // with chunks still queued, and the probe then parses a truncated buffer
+        // and reports a phantom failure.
+        const drained = (async () => {
           for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -103,6 +106,7 @@ console.log('shell=' + (process.env.SHELL ?? ''));
           }
         })();
         const code = await proc.exit;
+        await drained;
         return { out, code };
       }
 
