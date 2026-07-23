@@ -133,9 +133,23 @@ console.log('shell=' + (process.env.SHELL ?? ''));
         const native = await run(container, 'node', ['native.mjs']);
 
         setStatus('running sql.js persistence probe');
-        await run(container, 'node', ['probe.mjs', 'create']);
-        await run(container, 'node', ['probe.mjs', 'append']);
+        // Each phase must be checked, not just the last one. The persistence
+        // claim is that THREE sequential processes share state, so a create or
+        // append that died still leaves `read` able to print a total — from a
+        // stale or partial database — and an unchecked pipeline would report
+        // that as evidence of persistence. Failing loudly with the captured
+        // output also turns a broken phase into a diagnosis instead of a bare
+        // FAIL with an undefined total.
+        for (const phase of ['create', 'append']) {
+          const step = await run(container, 'node', ['probe.mjs', phase]);
+          if (step.code !== 0) {
+            throw new Error('probe.mjs ' + phase + ' exited ' + step.code + ': ' + step.out);
+          }
+        }
         const read = await run(container, 'node', ['probe.mjs', 'read']);
+        if (read.code !== 0) {
+          throw new Error('probe.mjs read exited ' + read.code + ': ' + read.out);
+        }
 
         const persistedTotal = /total=(\d+)/.exec(read.out)?.[1];
         const nativeWorks = /native_works=(true|false)/.exec(native.out)?.[1];

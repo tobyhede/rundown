@@ -380,6 +380,35 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     expect(count).toBe(0);
   });
 
+  it('consumes the rejection of the async work it refused', async () => {
+    // Refusing the work does not un-start it. The promise is already running and
+    // nothing will ever await it — the caller gets AsyncTransactionWorkError
+    // instead — so its eventual rejection has no handler. Under Node's default
+    // policy an unhandled rejection terminates the process, which would turn a
+    // refused transaction into a crash of the whole CLI.
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', record);
+    try {
+      await using driver = await adapter.open();
+      const rejectsLater = (): number =>
+        Promise.reject(new Error('rejected after the driver refused it')) as unknown as number;
+
+      await expect(driver.immediate(rejectsLater)).rejects.toBeInstanceOf(
+        AsyncTransactionWorkError,
+      );
+
+      // Unhandled rejections are reported a turn later, so yield the loop
+      // before asserting none arrived.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', record);
+    }
+  });
+
   it('passes a null work result through rather than mistaking it for a thenable', async () => {
     // `typeof null === 'object'`, so a thenable check that forgets the null case
     // dereferences it and turns a perfectly valid "found nothing" into a crash.

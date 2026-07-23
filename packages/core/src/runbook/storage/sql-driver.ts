@@ -268,6 +268,14 @@ export function assertSyncWorkResult(result: unknown): void {
     result !== null &&
     typeof (result as { then?: unknown }).then === 'function'
   ) {
+    // Refusing the work does not un-start it: the promise is already running,
+    // and the caller receives this throw instead of it, so nothing will ever
+    // await its outcome. Adopt it into a promise with a no-op rejection handler
+    // so a later rejection cannot terminate the process for work the driver has
+    // explicitly refused. `Promise.resolve` invokes `then` inside the resolution
+    // procedure, so even a hostile thenable rejects into the same handler
+    // instead of throwing over the top of the refusal.
+    void Promise.resolve(result as PromiseLike<unknown>).catch(() => undefined);
     throw new AsyncTransactionWorkError();
   }
 }

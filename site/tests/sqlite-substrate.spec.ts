@@ -9,9 +9,10 @@ import { test, expect } from '@playwright/test';
  * "SQLite everywhere". This test is the cheap guard so a WebContainer runtime
  * change re-validates the substrate choice instead of silently invalidating it.
  *
- * Requires the site dev server and a built `public/rundown-snapshot.bin`
- * (`pnpm --filter site run build:snapshot`); the probe page is a test-only
- * isolated route, not linked from any shipped page.
+ * Requires only the site dev server. The probe page is a test-only isolated
+ * route, not linked from any shipped page, and it mounts its own files into a
+ * fresh WebContainer rather than loading `public/rundown-snapshot.bin` — so
+ * unlike the homepage demo this spec runs without the snapshot built.
  */
 test.describe('SQLite WebContainer substrate', () => {
   test('sql.js persists across sequential processes; native is stubbed; marker holds', async ({
