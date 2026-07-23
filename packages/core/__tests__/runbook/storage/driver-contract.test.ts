@@ -4,6 +4,7 @@ import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { runInNewContext } from 'node:vm';
 import type { SqlJsStatic } from 'sql.js';
 import { getErrorMessage, isNodeError } from '../../../src/errors.js';
 import {
@@ -316,6 +317,32 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
         caught = err;
       });
       expect(getErrorMessage(caught)).toMatch(/used after disposal/);
+    }
+  });
+
+  it('rethrows a cross-realm error unchanged instead of re-wrapping it', async () => {
+    // Work callbacks are caller code, and caller code can hand back an Error
+    // minted in another realm — Jest's VM modules, vm.runInNewContext, a worker
+    // thread. `instanceof Error` is false for those, so a driver that narrows
+    // with it silently replaces the real failure with new Error(String(err)),
+    // discarding the stack and cause the caller needs to diagnose it.
+    await using driver = await adapter.open();
+    const foreign = runInNewContext('new Error("cross-realm boom")') as Error;
+    expect(foreign instanceof Error).toBe(false);
+
+    for (const op of [
+      () =>
+        driver.read(() => {
+          throw foreign;
+        }),
+      () =>
+        driver.immediate(() => {
+          throw foreign;
+        }),
+    ]) {
+      // Identity, not shape: a re-wrapped copy would still match a message
+      // assertion while having lost everything that made it diagnosable.
+      expect(await failureOf(op)).toBe(foreign);
     }
   });
 

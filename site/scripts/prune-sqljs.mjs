@@ -151,6 +151,24 @@ function prunePackage(pkgDir) {
           `Refusing to snapshot a package whose entry point cannot resolve.`,
       );
     }
+
+    // A retained loader is only half a working driver: sql-wasm.js resolves its
+    // payload by filename at runtime, so a loader without its .wasm imports
+    // cleanly and then fails at initSqlJs() — inside WebContainer, far from the
+    // build that could have caught it. The requirement keys off whether the
+    // loader actually names the sibling, because the asm.js builds legitimately
+    // ship no payload and must stay legal.
+    const wasmName = name.replace(/\.js$/, '.wasm');
+    if (wasmName === name || remaining.has(wasmName)) {
+      continue;
+    }
+    if (readFileSync(join(distDir, name), 'utf8').includes(wasmName)) {
+      throw new Error(
+        `sql.js at ${pkgDir} keeps loader dist/${name}, which resolves dist/${wasmName} at ` +
+          `runtime, but that payload is not present. Refusing to snapshot a driver that ` +
+          `imports cleanly and then fails to initialise.`,
+      );
+    }
   }
 
   return { pkgDir, kept: [...remaining].sort(), removed, bytesRemoved };

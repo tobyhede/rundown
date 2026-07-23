@@ -64,10 +64,33 @@ function installFakeSqlJs(nodeModulesDir, { packageJson, dist } = {}) {
     'sql-wasm-debug.js': 3000,
     'sql-wasm-debug.wasm': 4000,
   };
-  for (const [name, size] of Object.entries(files)) {
-    writeFileSync(join(pkgDir, 'dist', name), 'x'.repeat(size));
+  for (const [name, value] of Object.entries(files)) {
+    writeFileSync(join(pkgDir, 'dist', name), distContent(name, value));
   }
   return pkgDir;
+}
+
+/**
+ * Body for one fixture `dist/` file.
+ *
+ * A number produces a loader that resolves its own `.wasm` sibling by name,
+ * padded to exactly that many bytes — mirroring how the real `sql-wasm.js`
+ * locates its payload. A string is written literally, which is how an asm.js
+ * build (no payload at all) is expressed.
+ *
+ * @param {string} name - Filename within `dist/`.
+ * @param {number | string} value - Byte size, or literal content.
+ * @returns {string} File contents.
+ */
+function distContent(name, value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (!name.endsWith('.js')) {
+    return 'x'.repeat(value);
+  }
+  const locate = `locateFile("${name.replace(/\.js$/, '.wasm')}");`;
+  return locate + 'x'.repeat(Math.max(0, value - locate.length));
 }
 
 test('keeps every entry point the package declares, plus each one’s wasm sibling', () => {
@@ -136,6 +159,32 @@ test('refuses a tree with no sql.js at all', () => {
   mkdirSync(join(root, 'some-other-package'), { recursive: true });
 
   assert.throws(() => pruneSqlJsDist(root), /sql\.js/);
+});
+
+test('refuses a retained loader whose wasm payload is missing', () => {
+  // Keeping the loader without its payload yields a package that imports
+  // cleanly and then fails at initSqlJs() — inside WebContainer, long after the
+  // build that could have caught it.
+  installFakeSqlJs(root, {
+    packageJson: { name: 'sql.js', main: './dist/sql-wasm.js' },
+    dist: { 'sql-wasm.js': 100, 'sql-asm.js': 9000 },
+  });
+
+  assert.throws(() => pruneSqlJsDist(root), /sql-wasm\.wasm/);
+});
+
+test('allows an entry point that needs no wasm payload at all', () => {
+  // sql.js's asm.js builds ship no .wasm whatsoever. Demanding a payload for
+  // every retained loader would fail them for being correctly packaged, so the
+  // requirement keys off whether the loader actually names its sibling.
+  const pkgDir = installFakeSqlJs(root, {
+    packageJson: { name: 'sql.js', main: './dist/sql-asm.js' },
+    dist: { 'sql-asm.js': 'var Module = {};', 'sql-wasm.js': 9000 },
+  });
+
+  pruneSqlJsDist(root);
+
+  assert.deepEqual(readdirSync(join(pkgDir, 'dist')), ['sql-asm.js']);
 });
 
 test('refuses to leave a package whose declared entry point is missing', () => {

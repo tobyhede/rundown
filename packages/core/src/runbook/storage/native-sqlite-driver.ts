@@ -45,7 +45,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { isNodeError } from '../../errors.js';
+import { isError, isNodeError } from '../../errors.js';
 import { assertSyncWorkResult, readOnlyTransaction, toPortableParams } from './sql-driver.js';
 import type {
   SqlDriver,
@@ -190,7 +190,7 @@ export class NativeSqlDriver implements SqlDriver {
       return result;
     } catch (err) {
       this.rollback();
-      throw err instanceof Error ? err : new Error(String(err));
+      throw isError(err) ? err : new Error(String(err));
     }
   }
 
