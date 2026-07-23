@@ -20,6 +20,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+          # Full history so the dated-docs immutability check can diff against
+          # the merge base (origin/main). No other quality-check needs history.
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-node-deps
         with:
@@ -36,6 +39,9 @@ jobs:
 
       - name: Check xstate doc version banner
         run: pnpm run check:docs:xstate-version
+
+      - name: Check dated docs are immutable
+        run: pnpm run check:docs:dated-immutable
 
   complexity-checks:
     runs-on: ubuntu-latest
