@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -59,30 +59,174 @@ const EXPECTED_ALLOW_BUILDS = {
   'unrs-resolver': 'true',
 };
 
-// The intended security override pins (CVE patches). A dropped or downgraded
-// entry silently un-patches a CVE, so the set is asserted both ways.
-const EXPECTED_OVERRIDES = {
-  lodash: '^4.17.23',
-  flatted: '^3.4.0',
-  devalue: '^5.8.1',
-  'brace-expansion': '^5.0.6',
-  qs: '^6.15.2',
-  '@modelcontextprotocol/sdk>hono': '^4.12.21',
-  '@modelcontextprotocol/sdk>@hono/node-server': '^1.19.13',
-  '@modelcontextprotocol/sdk>express-rate-limit': '^8.5.2',
-  '@hono/node-server>hono': '^4.12.21',
-  'express-rate-limit>ip-address': '^10.1.1',
-  'astro>esbuild': '^0.28.1',
-  'astro>svgo': '^4.0.1',
-  'vite>esbuild': '^0.28.1',
-  'vite>postcss': '^8.5.10',
-  'tsx>esbuild': '^0.28.1',
-  'yaml-language-server>yaml': '^2.8.3',
-  'test-exclude>minimatch': '^3.1.3',
-  'gray-matter>js-yaml': '^4.2.0',
-  'read-yaml-file>js-yaml': '^4.2.0',
-  '@istanbuljs/load-nyc-config>js-yaml': '^4.2.0',
-};
+// Security overrides are justified in override-policy.json (the single source of
+// truth), not a static manifest here. The gate below enforces a 1:1 mapping between
+// the overrides block and that file, so an override cannot be added or removed
+// without a dated, CVE-annotated entry.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const VALID_OVERRIDE_CATEGORIES = new Set(['A', 'B']);
+
+/**
+ * Load the override justification manifest.
+ *
+ * @returns the `overrides` map from override-policy.json
+ */
+async function readOverridePolicy() {
+  return JSON.parse(await readRepoFile('override-policy.json')).overrides;
+}
+
+// Coverage floor for the derived workspace-manifest set below. Not the guard's
+// input — a hardcoded input would silently exempt a newly added workspace package
+// from the downgrade check. This exists only so a parser bug that returns an empty
+// set cannot make that check vacuously pass.
+const MINIMUM_WORKSPACE_MANIFESTS = [
+  'package.json',
+  'site/package.json',
+  'packages/cli/package.json',
+  'packages/core/package.json',
+  'packages/parser/package.json',
+  'packages/mcp/package.json',
+  'packages/claude-code-plugin/package.json',
+];
+
+/**
+ * Extract a top-level YAML sequence block (a `key:` line followed by `- item`
+ * lines) from pnpm-workspace.yaml, matching `extractBlock`'s deliberately minimal
+ * parser for the same strict layout.
+ *
+ * @param yaml - the full pnpm-workspace.yaml text
+ * @param blockName - the top-level key whose sequence to extract
+ * @returns the sequence items, unquoted
+ */
+function extractListBlock(yaml, blockName) {
+  const lines = yaml.split('\n');
+  const start = lines.indexOf(`${blockName}:`);
+  assert.notEqual(start, -1, `expected a top-level "${blockName}:" block in pnpm-workspace.yaml`);
+
+  const items = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+    // A column-0 non-space character ends the block (next top-level key).
+    if (!/^\s/.test(line)) break;
+    const match = line.match(/^\s+-\s*("?)(.+?)\1\s*$/);
+    if (!match) continue;
+    items.push(match[2].trim());
+  }
+  return items;
+}
+
+/**
+ * Every workspace package.json plus the root — the set whose directly-declared
+ * dependency floors a blanket override must never resolve below.
+ *
+ * Derived from pnpm-workspace.yaml's `packages:` globs rather than hardcoded, so
+ * a workspace package added later is covered by the downgrade guard from the
+ * commit that creates it instead of waiting for someone to remember this list.
+ *
+ * @returns repository-relative package.json paths
+ */
+async function workspaceManifestPaths() {
+  const yaml = await readRepoFile('pnpm-workspace.yaml');
+  // The root manifest is a member of no glob but declares dependencies of its own.
+  const paths = ['package.json'];
+
+  for (const pattern of extractListBlock(yaml, 'packages')) {
+    if (!pattern.includes('*')) {
+      paths.push(join(pattern, 'package.json'));
+      continue;
+    }
+    const [prefix, suffix] = pattern.split('*');
+    assert.equal(
+      suffix,
+      '',
+      `unsupported workspace glob "${pattern}" — this parser handles only a trailing *`,
+    );
+    const dir = prefix.replace(/\/$/, '');
+    for (const entry of await readdir(join(repoRoot, dir), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifest = join(dir, entry.name, 'package.json');
+      // pnpm ignores a matched directory with no manifest; so must we.
+      const exists = await access(join(repoRoot, manifest)).then(
+        () => true,
+        () => false,
+      );
+      if (exists) paths.push(manifest);
+    }
+  }
+  return paths;
+}
+
+/**
+ * Extract the [major, minor, patch] floor of a semver range like `^1.10.0`,
+ * `~1.9.0`, `>=1.2.3`, or a bare `1.2.3`.
+ *
+ * @param range - a semver range string
+ * @returns the floor triple, or null when no `x.y.z` is present
+ */
+function semverFloor(range) {
+  const m = range.match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * Compare two [major, minor, patch] triples.
+ *
+ * @param a - left triple
+ * @param b - right triple
+ * @returns negative when a < b, 0 when equal, positive when a > b
+ */
+function cmpSemver(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+/**
+ * Extract the package name from a blanket override key, stripping any trailing
+ * `@<version-selector>` (e.g. `brace-expansion@5` -> `brace-expansion`) while
+ * preserving a scoped package's leading `@` (e.g. `@babel/core`).
+ *
+ * A `@<selector>` suffix narrows WHICH copies of the package the override rewrites,
+ * not WHOSE — it still applies across the whole tree, including a workspace
+ * package's own declared range. So the name is stripped and the key stays subject
+ * to the downgrade check; only `parent>child` keys are genuinely subtree-scoped.
+ *
+ * @param key - a blanket (no `>`) override key
+ * @returns the bare package name
+ */
+function blanketOverrideName(key) {
+  const at = key.lastIndexOf('@');
+  return at > 0 ? key.slice(0, at) : key;
+}
+
+/**
+ * Find blanket overrides that would resolve a directly-declared workspace
+ * dependency below its declared floor.
+ *
+ * @param policy - the override-policy.json `overrides` map
+ * @param declared - package name -> [{ pkg, range }] declared across the workspace
+ * @returns one human-readable message per violation, empty when clean
+ */
+function findDowngradeViolations(policy, declared) {
+  const violations = [];
+  for (const [key, entry] of Object.entries(policy)) {
+    if (key.includes('>')) continue; // scoped: cannot touch a package's own direct dep
+    const name = blanketOverrideName(key);
+    const overrideFloor = semverFloor(entry.override);
+    if (!overrideFloor) continue;
+    for (const { pkg, range } of declared.get(name) ?? []) {
+      const declaredFloor = semverFloor(range);
+      if (declaredFloor && cmpSemver(overrideFloor, declaredFloor) < 0) {
+        violations.push(
+          `override "${key}" (${entry.override}) downgrades ${pkg}'s "${name}": "${range}" — scope the override to the vulnerable consumer or raise its floor`,
+        );
+      }
+    }
+  }
+  return violations;
+}
 
 // Security patches that swap js-yaml 3.x safeLoad/safeDump (GHSA-h67p-54hq-rp68)
 // for the 4.x load/dump equivalents. Dropping a patch silently re-exposes the DoS.
@@ -103,14 +247,168 @@ test('pnpm-workspace.yaml allowBuilds is exactly the reviewed supply-chain allow
   );
 });
 
-test('pnpm-workspace.yaml overrides match the security CVE manifest exactly', async () => {
+test('every pnpm override is justified in override-policy.json (1:1) and pins the recorded version', async () => {
   const yaml = await readRepoFile('pnpm-workspace.yaml');
   const overrides = extractBlock(yaml, 'overrides');
+  const policy = await readOverridePolicy();
+
+  // Set-equality both ways is the gate: a new override with no policy entry fails
+  // here, and so does a stale policy entry whose override was dropped. This is what
+  // stops an override being added without a dated, CVE-annotated justification.
   assert.deepEqual(
-    overrides,
-    EXPECTED_OVERRIDES,
-    'overrides drifted from the CVE manifest — a dropped/downgraded pin un-patches a CVE',
+    Object.keys(overrides).sort(),
+    Object.keys(policy).sort(),
+    'overrides <-> override-policy.json drift: every pin needs a dated CVE justification and vice-versa',
   );
+
+  // The policy records the exact pin, so a silently downgraded override (which can
+  // un-patch a CVE) fails against its own justification.
+  for (const [key, value] of Object.entries(overrides)) {
+    assert.equal(
+      value,
+      policy[key].override,
+      `override "${key}" pins ${value} but override-policy.json records ${policy[key].override}`,
+    );
+  }
+});
+
+test('override-policy.json entries carry a category, GHSA list, reason, and review date', async () => {
+  const policy = await readOverridePolicy();
+  for (const [key, entry] of Object.entries(policy)) {
+    assert.ok(
+      VALID_OVERRIDE_CATEGORIES.has(entry.category),
+      `override "${key}": category must be "A" (parent forbids fix) or "B" (in-range, override is the bump lever)`,
+    );
+    assert.ok(
+      Array.isArray(entry.ghsa) &&
+        entry.ghsa.length > 0 &&
+        entry.ghsa.every((g) => /^GHSA-/.test(g)),
+      `override "${key}": needs a non-empty ghsa list of GHSA-… ids`,
+    );
+    assert.ok(
+      typeof entry.reason === 'string' && entry.reason.trim().length >= 20,
+      `override "${key}": needs a substantive reason`,
+    );
+    assert.match(
+      entry.added,
+      ISO_DATE,
+      `override "${key}": "added" must be an ISO date (YYYY-MM-DD)`,
+    );
+    assert.match(
+      entry.reviewBy,
+      ISO_DATE,
+      `override "${key}": "reviewBy" must be an ISO date (YYYY-MM-DD)`,
+    );
+    assert.ok(entry.reviewBy > entry.added, `override "${key}": "reviewBy" must be after "added"`);
+  }
+});
+
+test('no blanket override downgrades a directly-declared workspace dependency', async () => {
+  // A bare (non-scoped) override REPLACES a package's declared version spec. If a
+  // workspace package declares the same dependency at a higher floor, the override
+  // silently downgrades it — discarding fixes and (for a security pin) potentially
+  // resolving BELOW the patched version. Scoped `parent>child` overrides cannot do
+  // this (they only touch the child inside parent's subtree), so only bare keys are
+  // checked. Regression guard for the shell-quote ^1.9.0 downgrade of cli/core's
+  // declared ^1.10.0.
+  const policy = await readOverridePolicy();
+
+  const declared = new Map(); // name -> [{ pkg, range }]
+  for (const path of await workspaceManifestPaths()) {
+    const pkg = JSON.parse(await readRepoFile(path));
+    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      for (const [name, range] of Object.entries(pkg[field] ?? {})) {
+        const list = declared.get(name) ?? [];
+        list.push({ pkg: path, range });
+        declared.set(name, list);
+      }
+    }
+  }
+
+  const violations = findDowngradeViolations(policy, declared);
+  assert.deepEqual(violations, [], violations.join('\n'));
+});
+
+test('the downgrade guard derives its manifest set from the pnpm-workspace.yaml packages globs', async () => {
+  const paths = await workspaceManifestPaths();
+
+  // A parser bug returning [] would make the downgrade guard vacuously pass, so
+  // assert a floor: every manifest the previously-hardcoded list named must still
+  // be covered. Anything BEYOND the floor is picked up automatically — a workspace
+  // package added tomorrow is guarded by the commit that creates it.
+  for (const manifest of MINIMUM_WORKSPACE_MANIFESTS) {
+    assert.ok(
+      paths.includes(manifest),
+      `derived workspace manifest set lost coverage of ${manifest}`,
+    );
+  }
+  // A derivation yielding a path with no manifest would throw inside the guard
+  // rather than report a violation, so prove every derived path really parses.
+  for (const path of paths) {
+    JSON.parse(await readRepoFile(path));
+  }
+});
+
+test('a version-selected override key is still checked for direct-dependency downgrades', () => {
+  // `pkg@<selector>` is a VERSION selector, NOT a subtree scope. Verified against
+  // pnpm 11.7.0: an override `brace-expansion@5: 5.0.2` rewrites a workspace's own
+  // directly-declared `brace-expansion: ^5.0.6` — the lockfile importer specifier
+  // itself becomes `5.0.2`. Only `parent>child` keys are subtree-scoped and safe to
+  // exempt. Exempting `@`-suffixed keys would reopen exactly the silent downgrade
+  // (and potential un-patching of a security pin) this guard exists to catch.
+  const violations = findDowngradeViolations(
+    { 'brace-expansion@5': { override: '5.0.2' } },
+    new Map([['brace-expansion', [{ pkg: 'packages/cli/package.json', range: '^5.0.6' }]]]),
+  );
+  assert.equal(
+    violations.length,
+    1,
+    'a version-selected override must not be exempt from the downgrade check',
+  );
+});
+
+test('a parent>child scoped override is exempt from the downgrade check', () => {
+  // The scoped form only rewrites the child inside the parent's subtree, so it
+  // cannot touch a workspace package's own declared range. This is why
+  // `npm-run-all2>shell-quote: ^1.9.0` is legal alongside cli/core's `^1.10.0`.
+  const violations = findDowngradeViolations(
+    { 'npm-run-all2>shell-quote': { override: '^1.9.0' } },
+    new Map([['shell-quote', [{ pkg: 'packages/cli/package.json', range: '^1.10.0' }]]]),
+  );
+  assert.deepEqual(violations, []);
+});
+
+test('.osv-scanner.toml exists and the OSV workflow wires it via --config', async () => {
+  // The OSV job is blocking and passes `--config=.osv-scanner.toml`; if the file is
+  // missing from the tree the scanner errors while loading config and the gate
+  // hard-fails. Guards the P1 "config not in the patch" foot-gun.
+  const toml = await readRepoFile('.osv-scanner.toml');
+  assert.ok(toml.includes('[[IgnoredVulns]]'), '.osv-scanner.toml must contain the ignore table');
+  const workflow = await readRepoFile('.github/workflows/osv-scanner.yml');
+  assert.match(
+    workflow,
+    /--config=\.osv-scanner\.toml/,
+    'osv-scanner.yml must pass --config=.osv-scanner.toml',
+  );
+});
+
+test('no per-package package.json carries a pnpm-11-dead overrides/pnpm block', async () => {
+  // pnpm 11 reads overrides ONLY from pnpm-workspace.yaml. A per-package block is
+  // silently ignored, so it is dead config that misleads readers into thinking a
+  // pin is in effect. These two files historically mirrored the workspace pins.
+  for (const path of ['packages/mcp/package.json', 'site/package.json']) {
+    const pkg = JSON.parse(await readRepoFile(path));
+    assert.equal(
+      pkg.overrides,
+      undefined,
+      `${path}: remove the dead "overrides" field — pins live only in pnpm-workspace.yaml`,
+    );
+    assert.equal(
+      pkg.pnpm,
+      undefined,
+      `${path}: remove the dead "pnpm" field — pnpm 11 ignores per-package pnpm config`,
+    );
+  }
 });
 
 test('pnpm-workspace.yaml patchedDependencies match the security-patch manifest', async () => {

@@ -1,0 +1,85 @@
+{
+  "//": "Justification manifest for every pnpm override in pnpm-workspace.yaml. This is the single source of truth: scripts/__tests__/pnpm-workspace-config.test.mjs enforces a 1:1 mapping (every override has an entry here and vice-versa) and that each `override` value matches the pin in pnpm-workspace.yaml. Adding an override without a dated, CVE-annotated entry here fails CI. category A = the declaring parent forbids the fixed version (out-of-range force); category B = the fix is in-range but pnpm resolves a vulnerable version without the pin (an override is pnpm's only lever to bump a deep transitive). Remove an entry when its parent ships a release carrying the fix — test by deleting the pin, installing, and confirming `osv-scanner` shows no regression. See docs/internal/dependency-overrides.md.",
+  "overrides": {
+    "yaml-language-server>yaml": {
+      "override": "^2.8.3",
+      "category": "A",
+      "ghsa": ["GHSA-48c2-rrv3-qjmp"],
+      "reason": "yaml parser DoS. yaml-language-server hard-pins yaml 2.7.1; the override forces past that exact pin.",
+      "added": "2026-06-16",
+      "reviewBy": "2026-12-01"
+    },
+    "gray-matter>js-yaml": {
+      "override": "^4.2.0",
+      "category": "A",
+      "ghsa": ["GHSA-h67p-54hq-rp68"],
+      "reason": "js-yaml merge-key quadratic DoS, no patched 3.x. gray-matter declares ^3.x; paired with patchedDependencies gray-matter@4.0.3 (safeLoad/safeDump -> load/dump).",
+      "added": "2026-06-16",
+      "reviewBy": "2026-12-01"
+    },
+    "read-yaml-file>js-yaml": {
+      "override": "^4.2.0",
+      "category": "A",
+      "ghsa": ["GHSA-h67p-54hq-rp68"],
+      "reason": "js-yaml merge-key quadratic DoS, no patched 3.x. read-yaml-file declares ^3.x; paired with patchedDependencies read-yaml-file@1.1.0 (safeLoad/safeDump -> load/dump).",
+      "added": "2026-06-16",
+      "reviewBy": "2026-12-01"
+    },
+    "@istanbuljs/load-nyc-config>js-yaml": {
+      "override": "^4.2.0",
+      "category": "A",
+      "ghsa": ["GHSA-h67p-54hq-rp68"],
+      "reason": "js-yaml merge-key quadratic DoS, no patched 3.x. @istanbuljs/load-nyc-config declares ^3.x but already uses load(), so it needs only the override (no patch).",
+      "added": "2026-06-16",
+      "reviewBy": "2026-12-01"
+    },
+    "qs": {
+      "override": "^6.15.2",
+      "category": "B",
+      "ghsa": ["GHSA-q8mj-m7cp-5q26"],
+      "reason": "qs stringify DoS. Without the pin, resolution picks the vulnerable 6.15.1 (proven by removal -> OSV regression on 2026-07-23). Reaches production via packages/mcp -> express -> qs.",
+      "added": "2026-06-16",
+      "reviewBy": "2026-10-01"
+    },
+    "hono": {
+      "override": "^4.12.27",
+      "category": "B",
+      "ghsa": ["GHSA-w62v-xxxg-mg59", "GHSA-hvrm-45r6-mjfj", "GHSA-xgm2-5f3f-mvvc"],
+      "reason": "hono XSS/JSX context/gateway-drop. Reaches production via packages/mcp -> @modelcontextprotocol/sdk (declares ^4.11.4, so in-range) but pnpm will not bump the transitive without the pin. Drop when the SDK ships a release resolving hono >= 4.12.27.",
+      "added": "2026-07-23",
+      "reviewBy": "2026-10-01"
+    },
+    "express>body-parser": {
+      "override": "^2.3.0",
+      "category": "B",
+      "ghsa": ["GHSA-v422-hmwv-36x6"],
+      "reason": "body-parser DoS on invalid limit. Reaches production via packages/mcp -> express (declares ^2.2.1, so in-range) but pnpm will not bump the transitive without the pin.",
+      "added": "2026-07-23",
+      "reviewBy": "2026-10-01"
+    },
+    "brace-expansion@5": {
+      "override": "^5.0.7",
+      "category": "B",
+      "ghsa": ["GHSA-3jxr-9vmj-r5cp"],
+      "reason": "brace-expansion 5.x exponential-time expansion DoS. Version-scoped to the 5.x line only so the 1.x/2.x copies (already patched) are untouched. Dev tooling (minimatch via eslint/stryker).",
+      "added": "2026-07-23",
+      "reviewBy": "2026-10-01"
+    },
+    "npm-run-all2>shell-quote": {
+      "override": "^1.9.0",
+      "category": "B",
+      "ghsa": ["GHSA-395f-4hp3-45gv"],
+      "reason": "shell-quote quadratic-complexity parse DoS (vulnerable <= 1.8.4). Scoped to the sole vulnerable consumer, the dev tool npm-run-all2 (declares ^1.8.4). NOT a blanket pin: packages/cli and packages/core declare shell-quote ^1.10.0 directly and must keep resolving to >= 1.10.0 — a blanket ^1.9.0 downgraded them.",
+      "added": "2026-07-23",
+      "reviewBy": "2026-10-01"
+    },
+    "fast-uri": {
+      "override": "^3.1.4",
+      "category": "B",
+      "ghsa": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx"],
+      "reason": "fast-uri host confusion via IDN/backslash. 3.1.4 fixes both on the 3.x line; ajv declares ^3.0.1, so in-range, but pnpm will not bump the transitive without the pin. Dev tooling (ajv via @astrojs/check, stryker).",
+      "added": "2026-07-23",
+      "reviewBy": "2026-10-01"
+    }
+  }
+}
