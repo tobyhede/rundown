@@ -1,6 +1,10 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from '@jest/globals';
+import {
+  listPersistedRunIds,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { createTestWorkspace } from '../helpers/test-utils.js';
 
@@ -113,8 +117,11 @@ rd echo "{{ marker }}"
       });
 
       expect(result.exitCode).toBe(0);
-      const stateFiles = await readFile(join(workspace.cwd, '.rundown/session.json'), 'utf-8');
-      expect(stateFiles).not.toContain('first');
+      const runIds = await listPersistedRunIds(workspace.cwd);
+      const persisted = await Promise.all(
+        runIds.map((id) => readPersistedRunState(workspace.cwd, id)),
+      );
+      expect(JSON.stringify(persisted)).not.toContain('first');
     } finally {
       await workspace.cleanup();
     }

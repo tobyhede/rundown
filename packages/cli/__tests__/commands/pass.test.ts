@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -20,6 +20,10 @@ import {
   ErrorResponseSchema,
   validateSchema,
 } from '../helpers/schema-validator.js';
+import {
+  patchPersistedRunState,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/pass.ts`
@@ -190,19 +194,18 @@ describe('pass command', () => {
     it('fails closed on invalid non-v1 schemaVersion state instead of migrating it', async () => {
       const state = await getActiveState(workspace);
       expect(state).toBeDefined();
-      await writeFile(
-        join(workspace.statePath(), `${state!.id}.json`),
-        JSON.stringify({ ...state, schemaVersion: 2 }),
-      );
+      await patchPersistedRunState(workspace.cwd, state!.id, {
+        schemaVersion: 2,
+      });
 
       const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.exitCode).not.toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toMatch(/invalid|schema|prune/i);
-      const reloaded = JSON.parse(
-        await readFile(join(workspace.statePath(), `${state!.id}.json`), 'utf-8'),
-      ) as { schemaVersion?: unknown };
-      expect(reloaded.schemaVersion).toBe(2);
+      const reloaded = (await readPersistedRunState(workspace.cwd, state!.id)) as {
+        schemaVersion?: unknown;
+      } | null;
+      expect(reloaded?.schemaVersion).toBe(2);
     });
   });
 
@@ -827,7 +830,11 @@ This step stops on pass.
 
       expect(result.exitCode).toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'action', action: 'pass', status: 'already-resolved' });
+      expect(json).toMatchObject({
+        kind: 'action',
+        action: 'pass',
+        status: 'already-resolved',
+      });
       // The idempotent already-resolved payload must satisfy ActionResponseSchema,
       // whose `kind` discriminant is the literal 'action' (not the command name).
       expect(ActionResponseSchema.safeParse(json).success).toBe(true);
@@ -840,7 +847,10 @@ This step stops on pass.
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'error', code: 'DELEGATION_RESULT_CONFLICT' });
+      expect(json).toMatchObject({
+        kind: 'error',
+        code: 'DELEGATION_RESULT_CONFLICT',
+      });
     }, 30_000);
 
     it('rd pass --claim-id on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
@@ -855,7 +865,10 @@ This step stops on pass.
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'error', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' });
+      expect(json).toMatchObject({
+        kind: 'error',
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      });
     });
   });
 });

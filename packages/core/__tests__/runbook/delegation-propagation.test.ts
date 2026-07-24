@@ -13,6 +13,7 @@ import {
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
 import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
@@ -92,8 +93,6 @@ describe('DelegationLinkage extended fields', () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'parent-linkage-load-'));
     try {
       const manager = new RunbookStateManager(tmpDir);
-      const runsDir = path.join(tmpDir, '.rundown', 'runs');
-      await fs.mkdir(runsDir, { recursive: true });
       const parentLinkage: Record<string, unknown> = {
         kind: 'delegation',
         parentRunId: PARENT_RUN_ID,
@@ -110,7 +109,7 @@ describe('DelegationLinkage extended fields', () => {
         lifecycle: 'running',
         frontmatterOutputs: [],
       };
-      await fs.writeFile(path.join(runsDir, `${CHILD_RUN_ID}.json`), JSON.stringify(state));
+      await seedRawRunState(tmpDir, state);
 
       await expect(manager.load(CHILD_RUN_ID)).rejects.toThrow(/schema validation failed/);
     } finally {

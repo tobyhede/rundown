@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DelegationStatusEntrySchema } from '@rundown-org/core';
 import {
@@ -13,6 +13,11 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { validateStatusOutput } from '../helpers/schema-validator.js';
+import {
+  patchPersistedRunState,
+  seedSession,
+  writeRawRunJson,
+} from '@rundown-org/core/testing/session-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/status.ts`
@@ -91,10 +96,9 @@ describe('status command', () => {
     const state = await getActiveState(workspace);
     expect(state).toBeDefined();
 
-    await writeFile(
-      join(workspace.statePath(), `${state!.id}.json`),
-      JSON.stringify({ ...state, schemaVersion: 2 }, null, 2),
-    );
+    await patchPersistedRunState(workspace.cwd, state!.id, {
+      schemaVersion: 2,
+    });
 
     const result = await runCliInProcess('status', workspace);
 
@@ -289,20 +293,17 @@ describe('claim-id delegated children', () => {
     const childRunId = claimOutput.run_id;
     const claimId = claimOutput.claim_id;
 
-    const stateFile = join(workspace.statePath(), `${childRunId}.json`);
-    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
-    state.variables = { secretOutput: 'top-secret-output' };
-    state.templateVars = {
-      ...(state.templateVars ?? {}),
-      secretInput: 'top-secret-input',
-    };
-    await writeFile(stateFile, JSON.stringify(state, null, 2));
+    await patchPersistedRunState(workspace.cwd, childRunId, (state) => ({
+      ...state,
+      variables: { secretOutput: 'top-secret-output' },
+      templateVars: {
+        ...(state.templateVars ?? {}),
+        secretInput: 'top-secret-input',
+      },
+    }));
 
     await runCliInProcess(['stash', '--claim-id', claimId, '--text'], workspace);
-    const sessionFile = workspace.sessionPath();
-    const session = JSON.parse(await readFile(sessionFile, 'utf-8')) as Record<string, unknown>;
-    session.defaultStack = [];
-    await writeFile(sessionFile, JSON.stringify(session, null, 2));
+    await seedSession(workspace.cwd, { defaultStack: [] });
     return { childRunId, claimId };
   }
 
@@ -349,9 +350,9 @@ describe('claim-id delegated children', () => {
 
   it('claim id renders terminal child status instead of unavailable', async () => {
     const { childRunId, claimId } = await setupOwnedStash();
-    const stateFile = join(workspace.statePath(), `${childRunId}.json`);
-    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
-    await writeFile(stateFile, JSON.stringify({ ...state, lifecycle: 'completed' }, null, 2));
+    await patchPersistedRunState(workspace.cwd, childRunId, {
+      lifecycle: 'completed',
+    });
 
     const status = await runCliInProcess(['status', '--claim-id', claimId], workspace);
     const output = JSON.parse(status.stdout);
@@ -567,7 +568,11 @@ Do work.
     const claimId = claimOutput?.claim_id;
     expect(typeof childRunId).toBe('string');
     expect(typeof claimId).toBe('string');
-    await rm(join(workspace.statePath(), `${String(childRunId)}.json`));
+    // Pre-SQLite this deleted `.rundown/runs/<child>.json`, leaving the claim
+    // behind. The store's `claims.controlled_run` FK cascades, so a claim whose
+    // run row is gone is unrepresentable; the surviving analogue of "claimed but
+    // unusable child state" is an unparseable state blob on a live run row.
+    await writeRawRunJson(workspace.cwd, String(childRunId), '{invalid');
 
     result = await runCliInProcess(
       ['complete', '--claim-id', String(claimId), '--text'],
@@ -656,7 +661,10 @@ Do work.
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     const stateId = state!.id;
-    await rm(join(workspace.statePath(), `${stateId}.json`));
+    // `session_stack.run_id` cascades on run delete, so a stack entry pointing at
+    // a missing run is unrepresentable. An empty state blob is the closest
+    // surviving analogue: the row exists, the state it should hold does not.
+    await writeRawRunJson(workspace.cwd, stateId, '{}');
 
     const result = await runCliInProcess('complete', workspace);
 
@@ -671,7 +679,7 @@ Do work.
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     const stateId = state!.id;
-    await writeFile(join(workspace.statePath(), `${stateId}.json`), '{invalid');
+    await writeRawRunJson(workspace.cwd, stateId, '{invalid');
 
     const result = await runCliInProcess('complete', workspace);
 
@@ -686,10 +694,7 @@ Do work.
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     const stateId = state!.id;
-    await writeFile(
-      join(workspace.statePath(), `${stateId}.json`),
-      JSON.stringify({ ...state, schemaVersion: 2 }),
-    );
+    await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: 2 });
 
     const result = await runCliInProcess('complete', workspace);
 
@@ -786,7 +791,10 @@ describe('claim ids on claimed delegations (#531)', () => {
     await workspace.cleanup();
   });
 
-  async function setupClaimedDelegation(): Promise<{ claimId: string; childRunId: string }> {
+  async function setupClaimedDelegation(): Promise<{
+    claimId: string;
+    childRunId: string;
+  }> {
     const parentRunbook = [
       '# Parent ClaimId',
       '',
@@ -883,12 +891,20 @@ describe('claim ids on claimed delegations (#531)', () => {
 
     const claimKey = `rdclk_${'b'.repeat(32)}`;
     expect(
-      DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId, claimKey })
-        .success,
+      DelegationStatusEntrySchema.safeParse({
+        ...base,
+        state: 'claimed',
+        childRunId,
+        claimKey,
+      }).success,
     ).toBe(true);
     expect(
-      DelegationStatusEntrySchema.safeParse({ ...base, state: 'claimed', childRunId, claimId })
-        .success,
+      DelegationStatusEntrySchema.safeParse({
+        ...base,
+        state: 'claimed',
+        childRunId,
+        claimId,
+      }).success,
     ).toBe(false);
     expect(
       DelegationStatusEntrySchema.safeParse({
@@ -900,15 +916,27 @@ describe('claim ids on claimed delegations (#531)', () => {
     ).toBe(true);
     // Cancelled-after-claim entries retain childRunId but must NOT carry claimId.
     expect(
-      DelegationStatusEntrySchema.safeParse({ ...base, state: 'cancelled', childRunId }).success,
+      DelegationStatusEntrySchema.safeParse({
+        ...base,
+        state: 'cancelled',
+        childRunId,
+      }).success,
     ).toBe(true);
     expect(
-      DelegationStatusEntrySchema.safeParse({ ...base, state: 'cancelled', childRunId, claimId })
-        .success,
+      DelegationStatusEntrySchema.safeParse({
+        ...base,
+        state: 'cancelled',
+        childRunId,
+        claimId,
+      }).success,
     ).toBe(false);
     // Pending entries must not carry claimId either.
     expect(
-      DelegationStatusEntrySchema.safeParse({ ...base, state: 'pending', claimId }).success,
+      DelegationStatusEntrySchema.safeParse({
+        ...base,
+        state: 'pending',
+        claimId,
+      }).success,
     ).toBe(false);
   });
 });

@@ -310,12 +310,6 @@ export async function resolveClaimTarget(
         claimId,
         message: `Claim id ${claimKey} is not valid for this session.`,
       };
-    case 'stale':
-      return {
-        kind: 'stale_claim',
-        claimId,
-        message: `Claim id ${claimKey} points at missing child state (${claimed.reason}).`,
-      };
     case 'unlinked':
       return {
         kind: 'stale_claim',

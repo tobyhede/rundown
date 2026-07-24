@@ -291,10 +291,6 @@ describe('resolveCommandTarget claim-id message redaction', () => {
       },
     },
     {
-      name: 'stale',
-      resolution: { status: 'stale', claim: verifiedClaim, reason: 'missing-state' },
-    },
-    {
       name: 'unlinked/stashed',
       resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'stashed' },
     },
@@ -617,11 +613,6 @@ describe('resolveTransitionTarget', () => {
       label: 'missing',
       resolution: { status: 'missing' as const, claimId },
       expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} does not exist.`,
-    },
-    {
-      label: 'stale',
-      resolution: { status: 'stale' as const, claim, reason: 'missing-state' as const },
-      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} points at missing child state (missing-state).`,
     },
     {
       label: 'unlinked stashed',

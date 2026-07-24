@@ -7,6 +7,8 @@ import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook
 import { CURRENT_SCHEMA_VERSION, applyRunbookStateUpdate } from '../../src/runbook/state.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import { seedRawRunState } from '../../src/testing/state-fixtures.js';
+import { writeRawRunJson } from '../../src/testing/session-fixtures.js';
 
 const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
 const INVALID_RUN_ID = `rd_${'2'.repeat(32)}`;
@@ -206,25 +208,15 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('throws InvalidRunbookStateError when loading non-v1 state', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const invalidState = { ...VALID_V1_STATE, schemaVersion: 2 };
-    await fs.writeFile(
-      path.join(runsDir, `${invalidState.id}.json`),
-      JSON.stringify(invalidState, null, 2),
-    );
+    await seedRawRunState(tmpDir, invalidState);
 
     await expect(manager.load(invalidState.id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
   });
 
   it('throws InvalidRunbookStateError with helpful message', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const invalidState = { ...VALID_V1_STATE, schemaVersion: 2 };
-    await fs.writeFile(
-      path.join(runsDir, `${invalidState.id}.json`),
-      JSON.stringify(invalidState, null, 2),
-    );
+    await seedRawRunState(tmpDir, invalidState);
 
     await expect(manager.load(invalidState.id)).rejects.toThrow('expected schema version 1');
   });
@@ -235,14 +227,12 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('loads valid v1 state successfully', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const v1State = {
       ...VALID_V1_STATE,
       runbook: { source: 'project', path: 'x.md' },
       schemaVersion: 1,
     };
-    await fs.writeFile(path.join(runsDir, `${v1State.id}.json`), JSON.stringify(v1State, null, 2));
+    await seedRawRunState(tmpDir, v1State);
 
     const result = await manager.load(v1State.id);
     expect(result).not.toBeNull();
@@ -250,8 +240,6 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('rejects v1 state carrying removed artifactVars instead of silently dropping it', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const id = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     const v1StateWithArtifactVars = {
       ...VALID_V1_STATE,
@@ -270,10 +258,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
         },
       },
     };
-    await fs.writeFile(
-      path.join(runsDir, `${id}.json`),
-      JSON.stringify(v1StateWithArtifactVars, null, 2),
-    );
+    await seedRawRunState(tmpDir, v1StateWithArtifactVars);
 
     await expect(manager.load(id)).rejects.toThrow(
       /Invalid runbook state.*schema validation failed/,
@@ -282,39 +267,39 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('rejects state with missing schemaVersion', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const id = 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
     const { schemaVersion: _omit, ...rest } = VALID_V1_STATE;
-    await fs.writeFile(path.join(runsDir, `${id}.json`), JSON.stringify({ ...rest, id }, null, 2));
+    await seedRawRunState(tmpDir, { ...rest, id });
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
   it('rejects state with future schemaVersion', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const id = 'rd_ffffffffffffffffffffffffffffffff';
-    await fs.writeFile(
-      path.join(runsDir, `${id}.json`),
-      JSON.stringify({ ...VALID_V1_STATE, id, schemaVersion: 2 }, null, 2),
-    );
+    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, schemaVersion: 2 });
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
   it('rejects state with non-numeric schemaVersion', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
     const id = 'rd_99999999999999999999999999999999';
-    await fs.writeFile(
-      path.join(runsDir, `${id}.json`),
-      JSON.stringify({ ...VALID_V1_STATE, id, schemaVersion: 'v2' }, null, 2),
-    );
+    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, schemaVersion: 'v2' });
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
+  });
+
+  it('rejects unparseable persisted state_json as invalid state, not a bare SyntaxError', async () => {
+    // A raw SyntaxError escaping `load` surfaces to users as RD-999 / "Unknown
+    // error" instead of a typed invalid-state refusal, and bypasses the
+    // InvalidRunbookStateError arm of the CLI's recoverable-state taxonomy.
+    const id = 'rd_dddddddddddddddddddddddddddddddd';
+    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id });
+    await writeRawRunJson(tmpDir, id, '{ not valid json');
+
+    await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(manager.load(id)).rejects.toThrow(/not valid JSON/);
   });
 
   // Not applicable: snapshot version travels with the wrapper schemaVersion.
@@ -334,22 +319,13 @@ describe('RunbookStateManager.update() — lastAction origin persistence', () =>
   });
 
   it('preserves aggregation origin across unrelated updates', async () => {
-    const runsDir = path.join(tmpDir, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(runsDir, `${BASE_RUN_ID}.json`),
-      JSON.stringify(
-        {
-          ...BASE_SCHEMA_STATE,
-          variables: {},
-          lifecycle: 'running',
-          schemaVersion: 1,
-          lastAction: { type: 'COMPLETE', origin: 'aggregation' },
-        },
-        null,
-        2,
-      ),
-    );
+    await seedRawRunState(tmpDir, {
+      ...BASE_SCHEMA_STATE,
+      variables: {},
+      lifecycle: 'running',
+      schemaVersion: 1,
+      lastAction: { type: 'COMPLETE', origin: 'aggregation' },
+    });
 
     await manager.update(BASE_RUN_ID, { stepName: 'updated' });
     const reloaded = await manager.load(BASE_RUN_ID);

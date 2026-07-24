@@ -11,7 +11,8 @@ import {
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
-import { writeFile, readFile } from 'node:fs/promises';
+import { readPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('Delegation propagation integration', () => {
@@ -75,13 +76,11 @@ describe('Delegation propagation integration', () => {
     return claimKeyFromBearer(assertClaimBearer(claimId));
   }
 
-  /** Helper: read resolvedCompletions from a run state file. */
+  /** Helper: read resolvedCompletions from a run's persisted state. */
   async function readResolvedCompletions(runId: string): Promise<Record<string, unknown>> {
     try {
-      const statePath = join(workspace.statePath(), `${runId}.json`);
-      const content = await readFile(statePath, 'utf-8');
-      const state = JSON.parse(content) as Record<string, unknown>;
-      const completions = state.resolvedCompletions;
+      const state = await readPersistedRunState(workspace.cwd, runId);
+      const completions = state?.resolvedCompletions;
       if (completions && typeof completions === 'object') {
         return completions as Record<string, unknown>;
       }

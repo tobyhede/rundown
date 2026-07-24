@@ -73,16 +73,6 @@ const FAULT_INJECTION_ALLOWLIST: readonly { readonly key: string; readonly reaso
     reason:
       'Forges an artifact record as an untrusted public input so the run can assert the input channel rejects it. The forgery is the fault under test; replacing it with a real producer would delete the test.',
   },
-  {
-    key: 'delegation/delegate-claim-corruption.runbook.md::child-linkage-mismatch::3',
-    reason:
-      'Rewrites parentLinkage.tokenHash in session.json to simulate a tampered claim linkage. The corruption is the fault under test and cannot be produced through the CLI.',
-  },
-  {
-    key: 'delegation/delegate-claim-corruption.runbook.md::child-missing::3',
-    reason:
-      'Deletes the child run state file to simulate a missing child run. The corruption is the fault under test and cannot be produced through the CLI.',
-  },
 ];
 
 describe('scenario sources', () => {

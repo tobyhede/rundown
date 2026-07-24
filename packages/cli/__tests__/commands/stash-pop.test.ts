@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { unlink, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -12,6 +12,10 @@ import {
   writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import {
+  patchPersistedRunState,
+  seedRawRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests` credits the
@@ -173,7 +177,14 @@ describe('stash command', () => {
     });
     const child = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+      steps: [
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          fail: 'STOP',
+          content: 'Run child.',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
@@ -236,7 +247,14 @@ describe('stash command', () => {
     });
     const child = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+      steps: [
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          fail: 'STOP',
+          content: 'Run child.',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
@@ -295,7 +313,14 @@ describe('stash command', () => {
     });
     const child = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+      steps: [
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          fail: 'STOP',
+          content: 'Run child.',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
@@ -329,60 +354,6 @@ describe('stash command', () => {
     );
   });
 
-  it('keeps a claimed stash when the stashed child state is missing', async () => {
-    const parent = createRunbook({
-      title: 'Parent',
-      steps: [
-        {
-          title: 'Review',
-          pass: 'CONTINUE',
-          substeps: [
-            {
-              title: 'Code review',
-              delegate: true,
-              content: 'Do code review.',
-              runbooks: ['child.runbook.md'],
-            },
-          ],
-        },
-      ],
-    });
-    const child = createRunbook({
-      title: 'Child',
-      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
-    });
-    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
-    await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
-
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = await getAutoIssuedToken();
-    result = await runCliInProcess(`claim ${token}`, workspace);
-    expect(result.exitCode).toBe(0);
-    const claimOutput = findActionOutput(result.stdout);
-    const childRunId = String(claimOutput?.run_id);
-    const claimId = String(claimOutput?.claim_id);
-
-    result = await runCliInProcess(['stash', '--claim-id', claimId, '--text'], workspace);
-    expect(result.exitCode).toBe(0);
-    await unlink(join(workspace.statePath(), `${childRunId}.json`));
-
-    result = await runCliInProcess(['pop', '--claim-id', claimId], workspace);
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toEqual(
-      expect.objectContaining({
-        kind: 'error',
-        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-        error: expect.stringContaining('missing child state'),
-      }),
-    );
-    const session = await readSession(workspace);
-    expect(session.stashed).toBe(childRunId);
-    expect(Object.values(session.claims)).toContainEqual(
-      expect.objectContaining({ controlledRunId: childRunId }),
-    );
-  });
-
   it('refuses to pop a claimed stash when the parent is terminal', async () => {
     const parent = createRunbook({
       title: 'Parent',
@@ -403,7 +374,14 @@ describe('stash command', () => {
     });
     const child = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+      steps: [
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          fail: 'STOP',
+          content: 'Run child.',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
@@ -427,10 +405,9 @@ describe('stash command', () => {
 
     const latestParent = await readRunbookState(workspace, parentState!.id);
     expect(latestParent).not.toBeNull();
-    await writeFile(
-      join(workspace.statePath(), `${parentState!.id}.json`),
-      JSON.stringify({ ...latestParent, lifecycle: 'completed' }),
-    );
+    await patchPersistedRunState(workspace.cwd, parentState!.id, {
+      lifecycle: 'completed',
+    });
 
     result = await runCliInProcess(['pop', '--claim-id', claimId], workspace);
     expect(result.exitCode).toBe(1);
@@ -557,7 +534,6 @@ describe('pop command', () => {
     // Create a state file with a step that doesn't exist in the runbook
     // runbookSrc must be present for pop to read from stored content
     const runbookId = `rd_${'3'.repeat(32)}`;
-    const stateFile = join(workspace.statePath(), `${runbookId}.json`);
     const runbookSrc = `# Test Runbook
 
 ## 1. First step
@@ -583,7 +559,7 @@ rd echo "hello"
       lifecycle: 'running',
       schemaVersion: 1,
     };
-    await writeFile(stateFile, JSON.stringify(state, null, 2));
+    await seedRawRunState(workspace.cwd, state);
 
     // Set up session to have this runbook stashed (with empty defaultStack)
     await writeSession(workspace, { stashed: runbookId, defaultStack: [] });
@@ -598,30 +574,22 @@ rd echo "hello"
   it('restores a claimed stash using captured claim provenance', async () => {
     const runbookId = `rd_${'4'.repeat(32)}`;
     const parentRunId = `rd_${'5'.repeat(32)}`;
-    await writeFile(
-      join(workspace.statePath(), `${parentRunId}.json`),
-      JSON.stringify(
-        {
-          id: parentRunId,
-          runbook: { source: 'project', path: 'parent.runbook.md' },
-          runbookPath: 'parent.runbook.md',
-          title: 'Parent Runbook',
-          step: '1',
-          stepName: 'Parent step',
-          retryCount: 0,
-          variables: {},
-          steps: [],
-          startedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          runbookSrc: '# Parent\n\n## 1. Parent step\n- PASS CONTINUE\n',
-          lifecycle: 'running',
-          schemaVersion: 1,
-        },
-        null,
-        2,
-      ),
-    );
-    const stateFile = join(workspace.statePath(), `${runbookId}.json`);
+    await seedRawRunState(workspace.cwd, {
+      id: parentRunId,
+      runbook: { source: 'project', path: 'parent.runbook.md' },
+      runbookPath: 'parent.runbook.md',
+      title: 'Parent Runbook',
+      step: '1',
+      stepName: 'Parent step',
+      retryCount: 0,
+      variables: {},
+      steps: [],
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      runbookSrc: '# Parent\n\n## 1. Parent step\n- PASS CONTINUE\n',
+      lifecycle: 'running',
+      schemaVersion: 1,
+    });
     const runbookSrc = [
       '# Test Runbook',
       '',
@@ -631,38 +599,31 @@ rd echo "hello"
       'Do work.',
       '',
     ].join('\n');
-    await writeFile(
-      stateFile,
-      JSON.stringify(
-        {
-          id: runbookId,
-          runbook: { source: 'project', path: 'owned.runbook.md' },
-          runbookPath: 'owned.runbook.md',
-          title: 'Test Runbook',
-          step: '1',
-          stepName: 'First step',
-          retryCount: 0,
-          variables: {},
-          steps: [],
-          startedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          runbookSrc,
-          parentLinkage: {
-            kind: 'delegation',
-            parentRunId,
-            parentStepId: '1',
-            parentStep: '1',
-            parentFrameKey: '1|',
-            parentEntry: 1,
-            tokenHash: `sha256:${'a'.repeat(64)}`,
-          },
-          lifecycle: 'running',
-          schemaVersion: 1,
-        },
-        null,
-        2,
-      ),
-    );
+    await seedRawRunState(workspace.cwd, {
+      id: runbookId,
+      runbook: { source: 'project', path: 'owned.runbook.md' },
+      runbookPath: 'owned.runbook.md',
+      title: 'Test Runbook',
+      step: '1',
+      stepName: 'First step',
+      retryCount: 0,
+      variables: {},
+      steps: [],
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      runbookSrc,
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        tokenHash: `sha256:${'a'.repeat(64)}`,
+      },
+      lifecycle: 'running',
+      schemaVersion: 1,
+    });
 
     const parsedClaim = parseClaimBearer(MANUAL_CLAIM_ID);
     const linkage = {

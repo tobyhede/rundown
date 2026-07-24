@@ -10,12 +10,17 @@ import {
   writeSession,
   getCliPath,
   parseCliJsonObject,
+  parseConcatenatedJson,
   parseFinalCliJsonObject,
   issueRunControlClaim,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
 import { mkdir, writeFile } from 'node:fs/promises';
+import {
+  deletePersistedRunState,
+  patchPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ErrorResponseSchema } from '@rundown-org/core';
@@ -848,8 +853,7 @@ rd echo --result fail
       const orphan = await getActiveState(workspace);
       expect(orphan).not.toBeNull();
 
-      const orphanState = {
-        ...orphan!,
+      await patchPersistedRunState(workspace.cwd, orphan!.id, {
         parentLinkage: {
           kind: 'delegation',
           parentRunId: parent!.id,
@@ -859,11 +863,7 @@ rd echo --result fail
           parentFrameKey: delegatedSubstep!.frameKey,
           parentEntry: delegatedParent!.activeEntry,
         },
-      };
-      await writeFile(
-        join(workspace.statePath(), `${orphan!.id}.json`),
-        JSON.stringify(orphanState, null, 2),
-      );
+      });
       await writeSession(workspace, { defaultStack: [parent!.id], claims: {} });
 
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -898,6 +898,45 @@ rd echo --result fail
             parentStepId: delegatedSubstep!.id,
             tokenHash: delegation!.tokenHash,
           }),
+        }),
+      );
+    }, 15_000);
+
+    it('refuses a replay claim with CHILD_RUN_MISSING when the claimed child run is deleted', async () => {
+      // Regression pin for the CHILD_RUN_MISSING refusal, previously covered only
+      // by the `delegate-claim-corruption` scenario's `node -e` edit of
+      // `.rundown/runs/*.json`. Those files no longer exist, and scenarios must
+      // never reach the database, so the fault is injected here instead.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = await getAutoIssuedToken();
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const childRunId = String(findActionOutput(result.stdout)?.run_id);
+      expect(childRunId).toMatch(/^rd_[a-f0-9]{32}$/);
+
+      // Deleting the run cascades its claim row away (`claims.controlled_run`
+      // FK, ON DELETE CASCADE), so the replay finds no existing claim for the
+      // delegation and falls through to the fresh-claim child load, which is
+      // still missing.
+      await deletePersistedRunState(workspace.cwd, childRunId);
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(1);
+      const envelope = parseConcatenatedJson(result.stdout).find(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          (entry as { kind?: string }).kind === 'error',
+      );
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CHILD_RUN_MISSING',
         }),
       );
     }, 15_000);

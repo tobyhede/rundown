@@ -6,7 +6,7 @@
 // mocks.
 
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,10 +14,14 @@ import {
   LegacySnapshotError,
   RunbookStateManager,
   SessionService,
-  statePath,
   type Runbook,
   type RunbookState,
 } from '@rundown-org/core';
+import {
+  patchPersistedRunState,
+  readPersistedRunState,
+  writeRawRunJson,
+} from '@rundown-org/core/testing/session-fixtures';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
@@ -86,7 +90,7 @@ describe('cleanupOrphanedActiveStack', () => {
   }
 
   async function corruptStateFile(id: string): Promise<void> {
-    await writeFile(statePath(tmpCwd, id), 'not json', 'utf8');
+    await writeRawRunJson(tmpCwd, id, 'not json');
   }
 
   it('returns empty-stack and touches nothing when the default stack is empty', async () => {
@@ -95,17 +99,6 @@ describe('cleanupOrphanedActiveStack', () => {
     expect(result).toEqual({ kind: 'empty-stack' });
     const session = await manager.loadSession();
     expect(session.defaultStack).toHaveLength(0);
-  });
-
-  it('removes the top when its state file is missing', async () => {
-    const run = await createRun();
-    await unlink(statePath(tmpCwd, run.id));
-
-    const result = await cleanupOrphanedActiveStack(manager, sessionService);
-
-    expect(result).toEqual({ kind: 'removed', runId: run.id });
-    const session = await manager.loadSession();
-    expect(session.defaultStack).not.toContain(run.id);
   });
 
   it('removes the top when its state file is corrupt JSON', async () => {
@@ -121,15 +114,7 @@ describe('cleanupOrphanedActiveStack', () => {
 
   it('removes the top when its state file has an invalid schemaVersion', async () => {
     const run = await createRun();
-    const raw = JSON.parse(await readFile(statePath(tmpCwd, run.id), 'utf8')) as Record<
-      string,
-      unknown
-    >;
-    await writeFile(
-      statePath(tmpCwd, run.id),
-      JSON.stringify({ ...raw, schemaVersion: 99 }),
-      'utf8',
-    );
+    await patchPersistedRunState(tmpCwd, run.id, { schemaVersion: 99 });
 
     const result = await cleanupOrphanedActiveStack(manager, sessionService);
 
@@ -140,15 +125,7 @@ describe('cleanupOrphanedActiveStack', () => {
 
   it('removes the top when its state file is a legacy dynamic-step snapshot', async () => {
     const run = await createRun();
-    const raw = JSON.parse(await readFile(statePath(tmpCwd, run.id), 'utf8')) as Record<
-      string,
-      unknown
-    >;
-    await writeFile(
-      statePath(tmpCwd, run.id),
-      JSON.stringify({ ...raw, lastAction: { type: 'GOTO_NEXT' } }),
-      'utf8',
-    );
+    await patchPersistedRunState(tmpCwd, run.id, { lastAction: { type: 'GOTO_NEXT' } });
 
     const result = await cleanupOrphanedActiveStack(manager, sessionService);
 
@@ -168,7 +145,7 @@ describe('cleanupOrphanedActiveStack', () => {
     );
 
     // Nothing was deleted or released — the probe failure is not authority to remove.
-    await expect(readFile(statePath(tmpCwd, run.id), 'utf8')).resolves.toBeDefined();
+    await expect(readPersistedRunState(tmpCwd, run.id)).resolves.not.toBeNull();
     const session = await manager.loadSession();
     expect(session.defaultStack).toContain(run.id);
   });

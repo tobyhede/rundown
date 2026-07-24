@@ -8,9 +8,9 @@ import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import {
   RunbookStore,
   classifyCommitRow,
+  type CommitRow,
   assertExactlyOneRow,
   StoreInvariantError,
-  type CommitRow,
 } from '../../../src/runbook/storage/runbook-store.js';
 import {
   assertClaimGeneration,

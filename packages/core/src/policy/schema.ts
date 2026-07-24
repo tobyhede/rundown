@@ -14,6 +14,7 @@ import {
   LOCKS_DIR,
   RUNS_DIR,
   SESSION_FILE,
+  DB_FILE,
   WORK_DIR,
 } from '../paths.js';
 
@@ -247,6 +248,13 @@ export const DEFAULT_POLICY: PolicyConfig = {
         `{repo}/${CONTEXTS_DIR}/**`,
         // Single-file entries: update this list when new top-level .rundown/*.json artifacts are introduced
         `{repo}/${SESSION_FILE}`,
+        // The state database, plus the WAL/shm sidecars SQLite creates beside it.
+        // A nested `rundown pass`/`fail` spawned from inside a runbook step runs
+        // under this policy and mutates run state, so losing write access here
+        // breaks in-runbook state transitions under a sandbox.
+        `{repo}/${DB_FILE}`,
+        `{repo}/${DB_FILE}-wal`,
+        `{repo}/${DB_FILE}-shm`,
         `{repo}/${WORK_DIR}/**`,
         '{tmp}/**',
         // NOTE: build-output directories (node_modules, dist, build, .next) are

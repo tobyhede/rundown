@@ -11,7 +11,11 @@ import {
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
+import {
+  patchPersistedRunState,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
@@ -137,24 +141,15 @@ describe('abort command - unit tests', () => {
       snapshot.context && typeof snapshot.context === 'object'
         ? (snapshot.context as Record<string, unknown>)
         : {};
-    const stateFile = join(workspace.statePath(), `${state.id}.json`);
-    await writeFile(
-      stateFile,
-      JSON.stringify(
-        {
-          ...state,
-          snapshot: {
-            ...snapshot,
-            context: {
-              ...context,
-              substepStates: state.substepStates,
-            },
-          },
+    await patchPersistedRunState(workspace.cwd, state.id, {
+      snapshot: {
+        ...snapshot,
+        context: {
+          ...context,
+          substepStates: state.substepStates,
         },
-        null,
-        2,
-      ),
-    );
+      },
+    });
   }
 
   describe('token validation', () => {
@@ -249,14 +244,13 @@ describe('abort command - unit tests', () => {
 
       const parent = await getActiveState(workspace);
       if (!parent) throw new Error('Expected parent state');
-      const persisted = JSON.parse(
-        await readFile(join(workspace.statePath(), `${parent.id}.json`), 'utf-8'),
-      ) as {
+      const persisted = (await readPersistedRunState(workspace.cwd, parent.id)) as {
         snapshot?: {
           context?: { substepStates?: Array<{ delegation?: Record<string, unknown> }> };
         };
-      };
-      const snapshotDelegation = persisted.snapshot?.context?.substepStates?.[0]?.delegation;
+      } | null;
+      expect(persisted).not.toBeNull();
+      const snapshotDelegation = persisted?.snapshot?.context?.substepStates?.[0]?.delegation;
       expect(snapshotDelegation?.cancelledAt).toEqual(expect.any(String));
       expect(snapshotDelegation?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
       expect(snapshotDelegation?.token).toBeUndefined();

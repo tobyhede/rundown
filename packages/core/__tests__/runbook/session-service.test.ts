@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { SessionLock } from '../../src/runbook/session-lock.js';
 import { assertClaimId, type DelegationClaimLinkage } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId, RunbookState, ParentLinkage } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
@@ -331,7 +330,7 @@ describe('SessionService', () => {
       });
     });
 
-    it('pushes and mints the run-control claim under a single session-lock cycle', async () => {
+    it('pushes and mints the run-control claim in one atomic session mutation', async () => {
       const state = await manager.create(
         { source: 'project', path: 'parent.runbook.md' },
         mockRunbook,
@@ -341,17 +340,18 @@ describe('SessionService', () => {
         },
       );
 
-      // Inject a lock we can observe: run-start (`rundown run`) previously took
-      // TWO lock cycles (pushRunbook + issueRunControlClaim), whose double
-      // acquire/release made the path flaky under heavy parallel load. The atomic
-      // variant MUST take exactly one.
-      const lock = new SessionLock(testDir);
-      const acquireSpy = jest.spyOn(lock, 'acquire');
-      const service = new SessionService(manager, lock);
+      // Run-start (`rundown run`) previously took TWO session mutations
+      // (pushRunbook + issueRunControlClaim), leaving a persisted window where the
+      // run was on the stack with no controlling claim. The atomic variant MUST
+      // take exactly one — asserted here on the store transaction that now carries
+      // it, where the lock-cycle count used to stand in for the same property.
+      const service = new SessionService(manager);
+      const mutateSpy = jest.spyOn(manager, 'mutateSession');
 
       const issued = await service.pushRunbookWithRunControlClaim(state.id);
 
-      expect(acquireSpy).toHaveBeenCalledTimes(1);
+      expect(mutateSpy).toHaveBeenCalledTimes(1);
+      mutateSpy.mockRestore();
 
       // Atomic: the run is on the stack AND controlled by exactly one claim, and
       // the persisted session is schema-valid (loadSession validates on read).
@@ -493,7 +493,10 @@ describe('SessionService', () => {
       });
     });
 
-    it('returns stale for a claim whose child state is missing', async () => {
+    it('deletes a claim together with the run it controls', async () => {
+      // Runs and their claims live in one database and are removed in a single
+      // transaction, so a delete can never half-apply the way two JSON files
+      // could. The claim resolves as `missing`, not as a dangling record.
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -506,11 +509,9 @@ describe('SessionService', () => {
 
       await manager.delete(child.id);
 
+      expect((await manager.loadSession()).claims).toEqual({});
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
-      expect(resolved.status).toBe('stale');
-      if (resolved.status === 'stale') {
-        expect(resolved.reason).toBe('missing-state');
-      }
+      expect(resolved.status).toBe('missing');
     });
 
     it('returns terminal for a completed claim child', async () => {
@@ -1249,7 +1250,19 @@ describe('SessionService', () => {
       expect(result).toEqual({ kind: 'advanced', value: 'ok' });
     });
 
-    it('serializes a concurrent claim against the guarded advance (session-lock mutual exclusion)', async () => {
+    it('does not let a claim that interleaves with the guarded advance wedge the parent', async () => {
+      // REPLACES a test that asserted mutual exclusion: the guarded advance used to
+      // hold the session file lock across its check AND the advance write, so a
+      // concurrent claim provably could not interleave. A transaction cannot span
+      // the advance (it is async, and a transaction must never be held across an
+      // await), so the claim CAN now land in that window.
+      //
+      // The safety argument never rested on the exclusion. The lock-era code already
+      // tolerated the reverse interleaving — advance first, claim second — and this
+      // pins the recovery that made it safe then and still does now: a claim that
+      // lands against an already-resolved substep stops counting as open, so it
+      // cannot wedge future bare parent transitions. If that recovery ever breaks,
+      // the orphaned claim becomes permanent and every later advance is refused.
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -1259,58 +1272,41 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(parent.id);
 
-      // A second SessionService models a second process racing for the same
-      // project's session lock (its own SessionLock on the same lock file).
+      // A second SessionService models a second process racing the same database.
       const claimant = new SessionService(new RunbookStateManager(testDir));
 
-      // Deterministic ordering log — the proof is the order, not a sleep guess.
-      const order: string[] = [];
-
-      // The guarded advance parks INSIDE the session lock until the test
-      // releases it. `advance` is a public parameter of runGuardedParentAdvance,
-      // so this injects nothing into production — it is the documented seam.
-      let releaseAdvance: (() => void) | undefined;
-      const parked = new Promise<void>((resolve) => {
-        releaseAdvance = resolve;
-      });
-      const advancePromise = sessionService.runGuardedParentAdvance(parent.id, async () => {
-        order.push('advance:enter');
-        await parked;
-        order.push('advance:exit');
+      // Claim from inside the advance window — the interleaving the lock forbade.
+      const linkage = linkageFor(parent.id, 'a');
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
+      const advanceResult = await sessionService.runGuardedParentAdvance(parent.id, async () => {
+        claimed = assertClaimed(await claimant.claimRunbook(child.id, linkage));
+        // The decisive write the guard protects: resolve the delegated substep.
+        await manager.update(parent.id, {
+          substepStates: [
+            {
+              id: linkage.parentStepId,
+              frameKey: linkage.parentFrameKey,
+              status: 'done',
+              result: 'pass',
+            },
+          ],
+        });
         return 'advanced';
       });
 
-      // Wait until the advance is provably inside the lock before racing.
-      // Exponential backoff keeps CPU churn down without affecting correctness
-      // (the test proves ordering deterministically, not via timing).
-      let backoff = 1;
-      while (!order.includes('advance:enter')) {
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        backoff = Math.min(backoff * 2, 10);
-      }
-
-      // The concurrent claim must block on the held lock — it cannot interleave.
-      const claimPromise = claimant
-        .claimRunbook(child.id, linkageFor(parent.id, 'a'))
-        .then((result) => {
-          order.push('claim:done');
-          return result;
-        });
-
-      // Give the blocked claim ample lock-retry attempts, then release.
-      setTimeout(() => releaseAdvance?.(), 100);
-
-      const [advanceResult, claimResult] = await Promise.all([advancePromise, claimPromise]);
-
+      // The claim did commit — this is a real interleave, not a race that missed.
+      expect(claimed?.claim.controlledRunId).toBe(child.id);
       expect(advanceResult).toEqual({ kind: 'advanced', value: 'advanced' });
-      expect(claimResult.status).toBe('claimed');
-      // Mutual exclusion proven by ordering: the claim completes only AFTER the
-      // advance leaves the lock — never interleaved between enter and exit.
-      // Composed with the existing "refuses when an open claimed child exists"
-      // test, both lock orderings are covered, so the TOCTOU is closed:
-      //   - claim wins the lock first  -> the advance re-check sees it -> refuse
-      //   - advance wins the lock first -> the claim waits and lands after
-      expect(order).toEqual(['advance:enter', 'advance:exit', 'claim:done']);
+
+      // ...and it is NOT counted as open, because the parent already resolved the
+      // substep it references. This is the whole recovery.
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+
+      // Therefore the next bare parent advance is not wedged by the orphan.
+      const next = await sessionService.runGuardedParentAdvance(parent.id, async () => 'again');
+      expect(next).toEqual({ kind: 'advanced', value: 'again' });
     });
 
     it('refuses the advance when a delegation outcome is waiting for collection', async () => {

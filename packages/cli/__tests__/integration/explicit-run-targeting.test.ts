@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { rm, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
+import { writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -434,7 +435,8 @@ describe('explicit --run targeting (R1, #460)', () => {
   it('surfaces a named-run failure for complete --run on unusable state instead of cleaning the default stack', async () => {
     // Two independent runs on the default stack: the NAMED run underneath, an
     // unrelated run on top. The named run's persisted state is corrupted and
-    // the top is orphaned (state file gone, session entry intact). A
+    // the top is orphaned (persisted state unusable, session entry intact —
+    // exactly what `cleanupOrphanedActiveStack` treats as removable). A
     // `complete --run <named>` must surface the named run's failure — it must
     // NOT fall into bare-path orphan cleanup, pop the OTHER run's session
     // entry, and exit 0 without terminating the named run.
@@ -446,8 +448,12 @@ describe('explicit --run targeting (R1, #460)', () => {
     if (!top) throw new Error('Expected top run');
     expect(top.id).not.toBe(named.id);
 
-    await writeFile(join(workspace.statePath(), `${named.id}.json`), '{ not valid json');
-    await rm(join(workspace.statePath(), `${top.id}.json`));
+    await writeRawRunJson(workspace.cwd, named.id, '{ not valid json');
+    // `deletePersistedRunState(top.id)` would cascade the run's session_stack
+    // row away via the `session_stack.run_id` FK, erasing the very session
+    // entry this test asserts survives. Empty (unusable) state keeps the row
+    // and drives the same orphan-cleanup branch a missing state file did.
+    await writeRawRunJson(workspace.cwd, top.id, '{}');
 
     const result = await runCliInProcess(['complete', '--run', named.id], workspace);
 

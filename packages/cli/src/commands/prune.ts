@@ -1,7 +1,5 @@
 // packages/cli/src/commands/prune.ts
 
-import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { Command } from 'commander';
 import { RunbookStateManager, SessionService, isRunId } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
@@ -10,13 +8,11 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
 
 async function listAllRunIds(cwd: string): Promise<string[]> {
-  try {
-    const runsDir = join(cwd, '.rundown', 'runs');
-    const files = await readdir(runsDir);
-    return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
-  } catch {
-    return [];
-  }
+  // Must include runs whose persisted state is INVALID — they are precisely what
+  // the invalid-state prune path exists to clear — so this reads raw ids rather
+  // than `manager.list()`, which validates and silently skips them.
+  const manager = new RunbookStateManager(cwd);
+  return [...(await manager.listRunIds())];
 }
 
 interface PruneOptions {

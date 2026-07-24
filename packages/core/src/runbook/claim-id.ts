@@ -179,7 +179,12 @@ export type ClaimIdResolution =
     }
   | { readonly status: 'missing'; readonly claimId: ClaimId }
   | { readonly status: 'invalid-secret'; readonly claimId: ClaimId }
-  | { readonly status: 'stale'; readonly claim: VerifiedClaim; readonly reason: 'missing-state' }
+  // NOTE: there is deliberately no `stale` status. It existed only to describe a
+  // half-applied delete under JSON persistence, where a run file and the session
+  // file could disagree. Runs and their claims now live in one database and are
+  // deleted together, so a claim referencing an absent run is an integrity
+  // violation, not an outcome — `getActiveForClaimId` throws rather than
+  // reporting it. Rundown never adapts to invalid persisted state.
   | {
       readonly status: 'terminal';
       readonly claim: VerifiedClaim;

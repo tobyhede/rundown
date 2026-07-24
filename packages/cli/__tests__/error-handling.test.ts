@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { listPersistedRunIds, writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
 import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
 
 describe('error handling', () => {
@@ -53,12 +54,11 @@ This doesn't have proper ## headers
       // Start a runbook
       runCli('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      // Corrupt the state file
-      const stateDir = workspace.statePath();
-      const stateFiles = await import('node:fs/promises').then((fs) => fs.readdir(stateDir));
-      const stateFile = stateFiles.find((f) => f.endsWith('.json'));
-      if (stateFile) {
-        await writeFile(join(stateDir, stateFile), 'not valid json');
+      // Corrupt the persisted state
+      const runIds = await listPersistedRunIds(workspace.cwd);
+      const runId = runIds[0];
+      if (runId) {
+        await writeRawRunJson(workspace.cwd, runId, 'not valid json');
       }
 
       // Try to use the runbook

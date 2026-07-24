@@ -8,7 +8,6 @@ import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
   ForContext,
-  Lifecycle,
   Substep,
   SubstepState,
   Runbook,
@@ -27,7 +26,7 @@ import {
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
-import { getErrorMessage, isNodeError } from '../errors.js';
+import { getErrorMessage, isError, isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
@@ -37,18 +36,15 @@ import {
 } from './effective-vars.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
-import {
-  runsDir as _runsDir,
-  sessionPath as _sessionPath,
-  statePath as _statePath,
-  LEGACY_SESSION_FILE,
-} from '../paths.js';
-import {
-  defaultRunStateLockFactory,
-  type RunStateLockFactory,
-  type RunStateLockLike,
-} from './run-state-lock.js';
-import { heldLock } from './file-lock.js';
+import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
+import { getRunbookStore } from './storage/store-registry.js';
+import type {
+  RunbookStore,
+  SessionMutationTxn,
+  StateMutationResult,
+} from './storage/runbook-store.js';
+import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
+import type { SyncWork } from './storage/sql-driver.js';
 
 /**
  * Current persisted state schema version for the v1 release.
@@ -118,29 +114,6 @@ function assertTrustedResolvedCompletions(
     }
   }
   return completions;
-}
-
-async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
-  // Unique per-write temp name so concurrent writers targeting the same final
-  // path never collide on the temp file; atomicity of the rename then does not
-  // depend on an external lock for collision-freedom. `randomBytes` (not
-  // `Math.random`) is a robust uniqueness source available on every runtime we
-  // support, including WebContainer's Node 22.x.
-  const tempPath = `${filePath}.${String(process.pid)}.${randomBytes(6).toString('hex')}.tmp`;
-  const content = JSON.stringify(value, null, 2);
-
-  try {
-    await fs.writeFile(tempPath, content, { encoding: 'utf8', mode: 0o600 });
-    await fs.chmod(tempPath, 0o600);
-    await fs.rename(tempPath, filePath);
-  } catch (error) {
-    try {
-      await fs.unlink(tempPath);
-    } catch {
-      // Best effort cleanup only. The caller-visible error is the failed write/rename.
-    }
-    throw error;
-  }
 }
 
 /**
@@ -347,10 +320,10 @@ interface CreateOptions {
  */
 export interface RunbookStateManagerOptions {
   /**
-   * Factory producing the per-run state lock. Defaults to the real
-   * filesystem-backed lock; tests inject a deterministic fake.
+   * Driver options for the project's store (runtime override, adapter settings).
+   * Tests pin `runtime: 'native'`; production relies on capability selection.
    */
-  readonly lockFactory?: RunStateLockFactory;
+  readonly storeOptions?: OpenRunbookDriverOptions;
 }
 
 /**
@@ -367,16 +340,16 @@ export class RunbookStateManager {
    */
   private static legacyWarningEmitted = false;
   private readonly _cwd: string;
-  private readonly lockFactory: RunStateLockFactory;
+  private readonly storeOptions: OpenRunbookDriverOptions;
 
   /**
    * Create a new RunbookStateManager.
    *
-   * @param cwd - The working directory (project root) for state file paths
-   * @param options - Optional overrides, including an injectable lock factory
+   * @param cwd - The working directory (project root) for state persistence
+   * @param options - Optional overrides, including store driver options
    */
   constructor(cwd: string, options: RunbookStateManagerOptions = {}) {
-    this.lockFactory = options.lockFactory ?? defaultRunStateLockFactory;
+    this.storeOptions = options.storeOptions ?? {};
     try {
       this._cwd = fsSync.realpathSync(cwd);
     } catch (err) {
@@ -399,33 +372,53 @@ export class RunbookStateManager {
     return this._cwd;
   }
 
-  private get stateDir(): string {
-    return _runsDir(this.cwd);
+  /**
+   * The project's shared store, opened on first use.
+   *
+   * @returns The shared {@link RunbookStore} for this project root.
+   */
+  private store(): Promise<RunbookStore> {
+    return getRunbookStore(this._cwd, this.storeOptions);
   }
 
-  private get sessionPath(): string {
-    return _sessionPath(this.cwd);
+  /**
+   * Narrow a caller-supplied id to a {@link RunId}.
+   *
+   * Rejects traversal-unsafe ids exactly as the old path builder did. A safe but
+   * non-canonical id cannot name a run, so it resolves to `null` — the caller
+   * treats that as "genuinely missing", matching the old file-not-found path.
+   *
+   * @param id - Caller-supplied runbook id.
+   * @returns The branded run id, or null when the id cannot name a run.
+   * @throws {Error} When the id is unsafe (path traversal).
+   */
+  private toRunId(id: string): RunId | null {
+    assertSafeId(id, 'runbook id');
+    try {
+      return assertRunId(id);
+    } catch {
+      return null;
+    }
   }
 
-  private statePath(id: string): string {
-    return _statePath(this.cwd, id);
-  }
-
-  private async withRunStateLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
-    const lock: RunStateLockLike = this.lockFactory(this.cwd);
-    await lock.acquire(id);
-    // Best-effort scoped release: a failed unlink only leaks a self-healing lock
-    // and must never mask the committed state mutation that `fn()` returns.
-    //
-    // Unlike the completion/delegation/session locks, this lock is consumed
-    // through the narrow `RunStateLockLike` DI interface (acquire/release only,
-    // so test fakes stay trivial), so there is no `held()`/`scope()` method to
-    // call here — wrapping `heldLock` inline is the correct adaptation.
-    await using _guard = heldLock(
-      () => lock.release(id),
-      () => ({ lock: 'run-state', runId: id }),
-    );
-    return await fn();
+  /**
+   * Unwrap a committed mutation, mapping refusals to the manager's error contract.
+   *
+   * @param result - The store mutation outcome.
+   * @param id - Runbook id, for the error message.
+   * @returns The committed (or unchanged) state.
+   * @throws {Error} When the run is missing, owned by an execution, or contended.
+   */
+  private requireCommitted(result: StateMutationResult, id: string): RunbookState {
+    switch (result.kind) {
+      case 'committed':
+      case 'unchanged':
+        return result.value;
+      case 'missing':
+        throw new Error(`Runbook ${id} not found`);
+      default:
+        throw new Error(result.message);
+    }
   }
 
   /** Emit a process-wide one-time warning when legacy `.claude/rundown/` state is detected. */
@@ -498,56 +491,61 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null if file not found
-   * @throws {InvalidRunbookStateError} If the state file exists but fails schema validation
-   *   or has an incompatible schemaVersion
+   * @throws {InvalidRunbookStateError} If the persisted row exists but its `state_json`
+   *   is unparseable, fails schema validation, or has an incompatible schemaVersion
    * @throws {LegacySnapshotError} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
-    let content: string;
+    const runId = this.toRunId(id);
+    if (runId === null) {
+      return null; // Not a run identifier — genuinely missing.
+    }
+    const store = await this.store();
+    // Unparseable `state_json` is invalid persisted state, not an unknown internal
+    // fault: surface it in this method's own taxonomy rather than letting a bare
+    // SyntaxError escape and surface to users as RD-999 / "Unknown error".
+    let raw: Record<string, unknown> | null;
     try {
-      content = await fs.readFile(this.statePath(id), 'utf8');
-    } catch (error: unknown) {
-      if (isNodeError(error) && error.code === 'ENOENT') {
-        return null; // File not found — genuinely missing
-      }
-      throw error; // Permission denied, disk errors, etc. — propagate
-    }
-
-    const parsed = JSON.parse(content) as unknown;
-
-    // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
-    if (typeof parsed === 'object' && parsed !== null) {
-      const obj = parsed as Record<string, unknown>;
-      const lastAction = obj.lastAction;
-      if (
-        typeof lastAction === 'object' &&
-        lastAction !== null &&
-        (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
-      ) {
-        throw new LegacySnapshotError(
-          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
-            'Please restart execution from the runbook entrypoint.',
+      raw = await store.readRunJson(runId);
+    } catch (error) {
+      if (isError(error) && error.name === 'SyntaxError') {
+        throw new InvalidRunbookStateError(
+          `Invalid runbook state for "${id}": persisted state is not valid JSON.`,
         );
       }
-      if (obj.instance !== undefined) {
-        throw new LegacySnapshotError(
-          'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
-            'Please restart execution from the runbook entrypoint.',
-        );
-      }
+      throw error;
+    }
+    if (raw === null) {
+      return null;
     }
 
+    // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field.
+    const obj = raw;
+    const lastAction = obj.lastAction;
     if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
+      typeof lastAction === 'object' &&
+      lastAction !== null &&
+      (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
     ) {
+      throw new LegacySnapshotError(
+        'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
+          'Please restart execution from the runbook entrypoint.',
+      );
+    }
+    if (obj.instance !== undefined) {
+      throw new LegacySnapshotError(
+        'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
+          'Please restart execution from the runbook entrypoint.',
+      );
+    }
+
+    if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 1.`,
       );
     }
 
-    const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
+    const result = makeRunbookStateSchema(this.cwd).safeParse(raw);
     if (!result.success) {
       throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": schema validation failed.`,
@@ -567,26 +565,23 @@ export class RunbookStateManager {
    * @param state - The runbook state to persist
    */
   async save(state: RunbookState): Promise<void> {
-    await this.withRunStateLock(state.id, async () => {
-      // `save` is only reached for fresh states (its sole core caller is
-      // `create`), so the prior lifecycle is always absent.
-      await this.saveUnlocked(state, null);
-    });
-  }
-
-  private async saveUnlocked(state: RunbookState, prev: Lifecycle | null): Promise<void> {
-    await fs.mkdir(this.stateDir, { recursive: true });
+    const store = await this.store();
     const updated: RunbookState = {
       ...state,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     };
-    await writeJsonFileAtomic(this.statePath(state.id), updated);
+    const existing = await store.readRunJson(state.id);
+    if (existing === null) {
+      await store.createRun(updated);
+    } else {
+      this.requireCommitted(await store.mutateState(state.id, () => updated), state.id);
+    }
     const next = updated.lifecycle ?? null;
-    if (next !== null && next !== prev) {
+    if (next !== null) {
       // Diagnostic trail for lifecycle transitions (#536 was found with this
       // signal). Enable with RUNDOWN_LOG_LEVEL=debug; the logger stamps pid.
-      void logger.debug('lifecycle-write', { runId: state.id, prev, next });
+      void logger.debug('lifecycle-write', { runId: state.id, next });
     }
   }
 
@@ -612,7 +607,11 @@ export class RunbookStateManager {
    * @throws {Error} If the runbook with the given ID is not found
    */
   async update(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
-    return await this.withRunStateLock(id, async () => this.updateUnlocked(id, updates));
+    const state = await this.mutate(id, () => updates, { missingIsError: true });
+    if (state === null) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    return state;
   }
 
   /**
@@ -664,17 +663,7 @@ export class RunbookStateManager {
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
   ): Promise<RunbookState | null> {
-    return await this.withRunStateLock(id, async () => {
-      const existing = await this.load(id);
-      if (!existing) {
-        return null;
-      }
-      const updates = await buildUpdates(existing);
-      if (updates === null) {
-        return existing;
-      }
-      return await this.updateUnlockedFromExisting(existing, updates);
-    });
+    return await this.mutate(id, buildUpdates, { missingIsError: false });
   }
 
   /**
@@ -705,36 +694,67 @@ export class RunbookStateManager {
       | { updates: RunbookStateUpdate | null; value: R }
       | Promise<{ updates: RunbookStateUpdate | null; value: R }>,
   ): Promise<{ state: RunbookState | null; value: R | null }> {
-    return await this.withRunStateLock(id, async () => {
-      const existing = await this.load(id);
-      if (!existing) {
-        return { state: null, value: null };
-      }
-      const { updates, value } = await buildResult(existing);
-      if (updates === null) {
-        return { state: existing, value };
-      }
-      const state = await this.updateUnlockedFromExisting(existing, updates);
-      return { state, value };
-    });
-  }
-
-  private async updateUnlocked(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
-    const existing = await this.load(id);
-    if (!existing) {
-      throw new Error(`Runbook ${id} not found`);
+    const runId = this.toRunId(id);
+    if (runId === null) {
+      return { state: null, value: null };
     }
-
-    return await this.updateUnlockedFromExisting(existing, updates);
+    const store = await this.store();
+    let captured: R | null = null;
+    const result = await store.mutateState(runId, async (current) => {
+      const { updates, value } = await buildResult(current);
+      // Captured on every attempt, so a retry against fresh state reports the
+      // value derived from the state that actually committed.
+      captured = value;
+      return updates === null
+        ? null
+        : applyRunbookStateUpdate(current, updates, new Date().toISOString());
+    });
+    if (result.kind === 'missing') {
+      return { state: null, value: null };
+    }
+    return { state: this.requireCommitted(result, id), value: captured };
   }
 
-  private async updateUnlockedFromExisting(
-    existing: RunbookState,
-    updates: RunbookStateUpdate,
-  ): Promise<RunbookState> {
-    const updated = applyRunbookStateUpdate(existing, updates, new Date().toISOString());
-    await this.saveUnlocked(updated, existing.lifecycle ?? null);
-    return updated;
+  /**
+   * Apply a derived patch to a run inside one guarded store cycle.
+   *
+   * The builder runs against the state read at the start of the cycle and reruns
+   * on a stale-version retry, which is what replaces holding the per-run lock
+   * across the read-modify-write.
+   *
+   * @param id - Runbook id.
+   * @param buildUpdates - Derives the patch; `null` means leave the state alone.
+   * @param options - Whether a missing run throws or resolves to null.
+   * @param options.missingIsError - When true, a missing run throws; when false, it resolves to null.
+   * @returns The resulting state, or null when missing and tolerated.
+   * @throws {Error} When the run is missing (and not tolerated), owned by an
+   *   execution, or lost to a concurrent writer.
+   */
+  private async mutate(
+    id: string,
+    buildUpdates: (
+      current: RunbookState,
+    ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+    options: { readonly missingIsError: boolean },
+  ): Promise<RunbookState | null> {
+    const runId = this.toRunId(id);
+    if (runId === null) {
+      if (options.missingIsError) {
+        throw new Error(`Runbook ${id} not found`);
+      }
+      return null;
+    }
+    const store = await this.store();
+    const result = await store.mutateState(runId, async (current) => {
+      const updates = await buildUpdates(current);
+      return updates === null
+        ? null
+        : applyRunbookStateUpdate(current, updates, new Date().toISOString());
+    });
+    if (result.kind === 'missing' && !options.missingIsError) {
+      return null;
+    }
+    return this.requireCommitted(result, id);
   }
 
   /**
@@ -750,33 +770,26 @@ export class RunbookStateManager {
    * @param id - The runbook state ID to delete
    */
   async delete(id: string): Promise<void> {
-    await this.withRunStateLock(id, async () => {
-      let removed = false;
-      try {
-        await fs.unlink(this.statePath(id));
-        removed = true;
-      } catch (error) {
-        if (!isNodeError(error) || error.code !== 'ENOENT') {
-          throw error;
-        }
+    const runId = this.toRunId(id);
+    if (runId !== null) {
+      const store = await this.store();
+      // The row delete cascades to claims, stack, stash, completions, and
+      // attempts, and refuses while an execution owns the run.
+      await store.deleteRun(runId);
+      // Logged immediately after the row is confirmed removed — and before the
+      // outputs-dir cleanup below — so a later `fs.rm` failure cannot suppress
+      // the trail of a deletion that actually committed.
+      void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
+    }
+    try {
+      // The per-run captured-output directory is still filesystem state.
+      // Use rm -rf semantics so a non-empty directory is removed cleanly.
+      await fs.rm(path.join(_runsDir(this.cwd), id), { recursive: true, force: true });
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
       }
-      if (removed) {
-        // Logged immediately after the state file is confirmed removed — and
-        // before the outputs-dir cleanup below — so a later `fs.rm` failure
-        // cannot suppress the trail of a deletion that actually committed.
-        void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
-      }
-      try {
-        // The per-run outputs directory shares the run id with the state file.
-        // Use rm -rf semantics so a non-empty directory is removed cleanly.
-        const runDir = this.statePath(id).replace(/\.json$/, '');
-        await fs.rm(runDir, { recursive: true, force: true });
-      } catch (error) {
-        if (!isNodeError(error) || error.code !== 'ENOENT') {
-          throw error;
-        }
-      }
-    });
+    }
   }
 
   /**
@@ -786,29 +799,44 @@ export class RunbookStateManager {
    *
    * @returns An array of all runbook states, or an empty array if none exist
    */
-  async list(): Promise<RunbookState[]> {
-    try {
-      const files = await fs.readdir(this.stateDir);
-      const states: RunbookState[] = [];
+  /**
+   * List the ids of every persisted run, including runs whose state is invalid.
+   *
+   * Distinct from {@link list}, which validates each run and silently skips the
+   * ones that fail. Callers that must see invalid runs in order to act on them —
+   * `rundown prune` is the motivating case — need the raw ids.
+   *
+   * @returns All persisted run ids in ascending order.
+   */
+  async listRunIds(): Promise<readonly RunId[]> {
+    const store = await this.store();
+    return await store.listRunIds();
+  }
 
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const id = file.replace('.json', '');
-          try {
-            const state = await this.load(id);
-            if (state) states.push(state);
-          } catch (err) {
-            if (err instanceof InvalidRunbookStateError) {
-              process.stderr.write(`[rundown] Warning: ${err.message}\n`);
-            }
-            // Other errors (corrupt JSON, missing files) — skip silently
-          }
+  /**
+   * Load every persisted run in the project, applying the same validation and
+   * error taxonomy as a direct {@link load}.
+   *
+   * @returns All runbook states currently persisted for this project root.
+   */
+  async list(): Promise<RunbookState[]> {
+    const store = await this.store();
+    const ids = await store.listRunIds();
+    const states: RunbookState[] = [];
+    for (const id of ids) {
+      try {
+        // Route each row through `load` so listing applies the same validation
+        // and error taxonomy as a direct read rather than a second, laxer path.
+        const state = await this.load(id);
+        if (state) states.push(state);
+      } catch (err) {
+        if (err instanceof InvalidRunbookStateError) {
+          process.stderr.write(`[rundown] Warning: ${err.message}\n`);
         }
+        // Other errors (invalid rows, legacy snapshots) — skip silently
       }
-      return states;
-    } catch {
-      return [];
     }
+    return states;
   }
 
   /**
@@ -829,76 +857,57 @@ export class RunbookStateManager {
    * @throws {SyntaxError} When the session file is not parseable JSON.
    */
   async loadSession(): Promise<SessionData> {
-    let content: string;
-    try {
-      content = await fs.readFile(this.sessionPath, 'utf8');
-    } catch (err: unknown) {
-      if (isNodeError(err) && err.code === 'ENOENT') {
-        await this.warnIfLegacyStateExists();
-        return { defaultStack: [], claims: {} };
-      }
-      throw err;
+    const store = await this.store();
+    const session = await store.loadSession();
+    if (session.defaultStack.length === 0 && Object.keys(session.claims).length === 0) {
+      await this.warnIfLegacyStateExists();
     }
-
-    const raw = JSON.parse(content) as Record<string, unknown>;
-
-    if ('ownedRunbooks' in raw || 'stashedRunbookOwnership' in raw || 'stacks' in raw) {
-      throw new Error(
-        'Legacy session ownership format detected. Finish or prune active runbooks and restart.',
-      );
-    }
-
-    // #519: `ClaimRecord.lastSeenAt` is required. A session persisted before
-    // it existed is INVALID, not upgradable — CLAUDE.md forbids runtime migration,
-    // fallback parsers, legacy field hydration, and warning-only adapters for
-    // persisted runbook state. This guard runs BEFORE `safeParse` purely to route
-    // this cause to the correct recovery path: Zod's failure message tells the user
-    // to delete session.json, while the sanctioned recovery here — as for the legacy
-    // ownership format above — is to finish or prune the active runbooks and restart.
-    const rawClaims = raw.claims;
-    if (typeof rawClaims === 'object' && rawClaims !== null && !Array.isArray(rawClaims)) {
-      const missingLastSeen = Object.values(rawClaims as Record<string, unknown>).some(
-        (claim) =>
-          typeof claim === 'object' &&
-          claim !== null &&
-          !Array.isArray(claim) &&
-          !('lastSeenAt' in claim),
-      );
-      if (missingLastSeen) {
-        throw new Error(
-          'Legacy claim record format detected. Finish or prune active runbooks and restart.',
-        );
-      }
-    }
-
-    const result = SessionDataSchema.safeParse(raw);
+    // The store reconstructs the session from typed columns, so the legacy-shape
+    // guards that policed hand-edited session.json have no analogue here: an
+    // incompatible database is rejected by schema version at open, not per read.
+    const result = SessionDataSchema.safeParse(session);
     if (!result.success) {
       throw new Error(
-        'Session file contains invalid runbook targeting data. Delete .rundown/session.json and restart active runbooks.',
+        'Session data is invalid for this runbook schema. Finish or prune active runbooks and restart.',
       );
     }
-
     return result.data;
   }
 
   /**
-   * Persist session data to disk.
+   * Persist session data.
    *
    * @remarks
-   * The write uses {@link writeJsonFileAtomic} (temp file + atomic rename), so a
-   * concurrent reader never observes a torn or partially written
-   * `session.json`. This atomicity does NOT serialize read-modify-write across
-   * processes: this method is not protected by the per-run `withRunStateLock`
-   * (that lock guards a single run-state file, not the shared session file), so
-   * two processes that load, mutate, and save the session concurrently can still
-   * lose updates. Callers that mutate session state concurrently must hold the
-   * higher-level `SessionLock` (`packages/core/src/runbook/session-lock.ts`).
+   * The write is one short transaction, so a concurrent reader never observes a
+   * partial session. It is still a wholesale replace: a caller that loads,
+   * mutates, and saves can lose a concurrent writer's change. Callers doing
+   * read-modify-write on session state should mutate inside a single store
+   * transaction rather than round-tripping through load/save.
    *
    * @param session - The session data to write
    */
   async saveSession(session: SessionData): Promise<void> {
-    await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
-    await writeJsonFileAtomic(this.sessionPath, session);
+    const store = await this.store();
+    await store.saveSession(session);
+  }
+
+  /**
+   * Read-modify-write the session inside a single store transaction.
+   *
+   * The atomic replacement for `loadSession` -> mutate -> `saveSession`, which is
+   * lossy under concurrency. Session mutations MUST use this: it is what makes the
+   * workspace session lock unnecessary.
+   *
+   * `work` is synchronous by type ({@link SyncWork}): a transaction must never be
+   * held across an `await`.
+   *
+   * @template T - Value the mutation returns to its caller.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The work's return value, once committed.
+   */
+  async mutateSession<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
+    const store = await this.store();
+    return store.mutateSession(work);
   }
 
   /**
@@ -918,26 +927,27 @@ export class RunbookStateManager {
     substeps: readonly Substep[],
     frameKey: FrameKey,
   ): Promise<void> {
-    await this.withRunStateLock(id, async () => {
-      const state = await this.load(id);
-      if (!state) throw new Error(`Runbook ${id} not found`);
+    await this.mutate(
+      id,
+      (state) => {
+        const existing = state.substepStates ?? [];
+        const authoredIds = new Set(substeps.map((substep) => substep.id));
+        const preserved = existing.filter(
+          (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
+        );
+        const existingSameFrameIds = new Set(
+          preserved
+            .filter((substepState) => substepState.frameKey === frameKey)
+            .map((substepState) => substepState.id),
+        );
+        const initialized: SubstepState[] = substeps
+          .filter((substep) => !existingSameFrameIds.has(substep.id))
+          .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
 
-      const existing = state.substepStates ?? [];
-      const authoredIds = new Set(substeps.map((substep) => substep.id));
-      const preserved = existing.filter(
-        (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
-      );
-      const existingSameFrameIds = new Set(
-        preserved
-          .filter((substepState) => substepState.frameKey === frameKey)
-          .map((substepState) => substepState.id),
-      );
-      const initialized: SubstepState[] = substeps
-        .filter((substep) => !existingSameFrameIds.has(substep.id))
-        .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
-
-      await this.updateUnlocked(id, { substepStates: [...preserved, ...initialized] });
-    });
+        return { substepStates: [...preserved, ...initialized] };
+      },
+      { missingIsError: true },
+    );
   }
 
   /**
@@ -954,23 +964,26 @@ export class RunbookStateManager {
    * @throws {Error} If the runbook with the given ID is not found
    */
   async updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState> {
-    return await this.withRunStateLock(id, async () => {
-      const state = await this.load(id);
-      if (!state) {
-        throw new Error(`Runbook ${id} not found`);
-      }
+    const state = await this.mutate(
+      id,
+      (current) => {
+        const snapshot = current.snapshot as Record<string, unknown> | undefined;
+        const patchedSnapshot =
+          snapshot && typeof snapshot === 'object' && 'context' in snapshot
+            ? {
+                ...snapshot,
+                context: { ...(snapshot.context as Record<string, unknown>), forStack },
+              }
+            : snapshot;
 
-      const snapshot = state.snapshot as Record<string, unknown> | undefined;
-      const patchedSnapshot =
-        snapshot && typeof snapshot === 'object' && 'context' in snapshot
-          ? {
-              ...snapshot,
-              context: { ...(snapshot.context as Record<string, unknown>), forStack },
-            }
-          : snapshot;
-
-      return await this.updateUnlocked(id, { forStack, snapshot: patchedSnapshot });
-    });
+        return { forStack, snapshot: patchedSnapshot };
+      },
+      { missingIsError: true },
+    );
+    if (state === null) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    return state;
   }
 
   /**
@@ -990,18 +1003,19 @@ export class RunbookStateManager {
     result: 'pass' | 'fail',
     frameKey: FrameKey,
   ): Promise<void> {
-    await this.withRunStateLock(runbookId, async () => {
-      const state = await this.load(runbookId);
-      if (!state) throw new Error(`Runbook ${runbookId} not found`);
+    await this.mutate(
+      runbookId,
+      (state) => {
+        const substepStates = state.substepStates ?? [];
+        const updated = substepStates.map((s) =>
+          s.id === substepId && s.frameKey === frameKey
+            ? { ...s, status: 'done' as const, result }
+            : s,
+        );
 
-      const substepStates = state.substepStates ?? [];
-      const updated = substepStates.map((s) =>
-        s.id === substepId && s.frameKey === frameKey
-          ? { ...s, status: 'done' as const, result }
-          : s,
-      );
-
-      await this.updateUnlocked(runbookId, { substepStates: updated });
-    });
+        return { substepStates: updated };
+      },
+      { missingIsError: true },
+    );
   }
 }
