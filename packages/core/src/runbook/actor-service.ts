@@ -275,6 +275,9 @@ function lastResultSyncForEvent(
     case 'DELEGATE_FRONTIER_CONSUMED':
     case 'INLINE_LAUNCH_CONSUMED':
     case 'INLINE_CHILD_STARTED':
+    // Recovery jumps to recoveryRequired; the interrupted step's result is
+    // unknown, so the prior lastResult is preserved rather than resolved.
+    case 'EXECUTION_OUTCOME_UNKNOWN':
       return { kind: 'preserve' };
     default: {
       const _exhaustive: never = event;

@@ -13,6 +13,8 @@ import type {
   SubstepState,
   TemplateVarValue,
   RunId,
+  ExecutionRecoveryReason,
+  ExecutionRecoveryEvent,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import {
@@ -119,6 +121,19 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
 export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as const;
 
 /**
+ * Tag carried by the non-final `recoveryRequired` state.
+ *
+ * Every "is this run recovering?" query MUST be the typed
+ * `snapshot.hasTag(RECOVERY_TAG)`, never an untyped
+ * `state.matches('recoveryRequired')` boolean. The state persists with lifecycle
+ * `running` — it is open-but-blocked, awaiting a typed reconcile/retry/stop.
+ */
+export const RECOVERY_TAG = 'recovery' as const;
+
+/** Name of the top-level non-final recoveryRequired state. */
+const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
+
+/**
  * Module-level XState setup with typed context, events, and named actions.
  *
  * Extracted to module scope so `runbookSetup.assign()` provides
@@ -180,7 +195,10 @@ const baseRunbookSetup = setup({
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
     output: {} as RunbookMachineOutput,
-    tags: {} as typeof PENDING_MACHINE_EFFECT_TAG | typeof PENDING_COMMAND_EXECUTION_TAG,
+    tags: {} as
+      | typeof PENDING_MACHINE_EFFECT_TAG
+      | typeof PENDING_COMMAND_EXECUTION_TAG
+      | typeof RECOVERY_TAG,
   },
   actions: {
     /** Set lastAction and optional lastMessage. */
@@ -712,6 +730,19 @@ export interface RunbookContext {
   readonly inlineLaunchIntent?: InlineLaunchIntentWithoutParentEntry;
   /** Parent linkage data used by machine-owned delegation issuance. */
   readonly parentLinkage?: ParentLinkage;
+  /**
+   * Ordering epoch of the interrupted attempt, captured on entry to
+   * `recoveryRequired`. Data only — never the secret execution token. Undefined
+   * unless the run is recovering.
+   */
+  readonly interruptedEpoch?: number;
+  /** Closed recovery cause captured on entry to `recoveryRequired`. */
+  readonly interruptedReason?: ExecutionRecoveryReason;
+  /**
+   * Step id captured on entry to `recoveryRequired` so a typed retry re-enters
+   * the exact interrupted step rather than the runbook's first step.
+   */
+  readonly interruptedStepId?: string;
 }
 
 /**
@@ -773,7 +804,8 @@ export type RunbookEvent =
       type: 'COMMAND_RESULT';
       result: 'pass' | 'fail';
       channels: readonly PreparedChannel[];
-    };
+    }
+  | ExecutionRecoveryEvent;
 
 /**
  * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
@@ -2405,6 +2437,70 @@ function buildIterationExhaustedStateConfig(steps: readonly ResolvedStep[]): Run
     }));
 
   return { id: ITERATION_EXHAUSTED_STATE_NAME, always } satisfies RunbookStateConfig;
+}
+
+/**
+ * Build the GOTO reconcile/retry transitions that leave `recoveryRequired`.
+ *
+ * Reuses the GOTO machinery keyed off the captured step id: one guarded
+ * transition per distinct step, matching the incoming GOTO's target step and
+ * re-entering that step's first state. A typed retry sends
+ * `GOTO { target: { step: interruptedStepId } }`, re-entering the exact
+ * interrupted step rather than the runbook's first step. Entry into the target
+ * clears the recovery context and resets the step retry counter.
+ *
+ * @param allStates - Flat list of all compiled states.
+ * @param steps - Resolved steps (for artifact routing).
+ * @returns Guarded GOTO transitions leaving `recoveryRequired`.
+ */
+function buildRecoveryReconcileTransitions(
+  allStates: readonly StateConfig[],
+  steps: readonly ResolvedStep[],
+): readonly RunbookAlwaysEntry[] {
+  const firstByStep = new Map<string, StateConfig>();
+  for (const state of allStates) {
+    if (state.isParentState) continue;
+    if (!firstByStep.has(state.stepName)) {
+      firstByStep.set(state.stepName, state);
+    }
+  }
+  return [...firstByStep.values()].map((first) => ({
+    guard: ({ event }: { event: RunbookEvent }) =>
+      event.type === 'GOTO' && event.target.step === first.stepName,
+    target: routeThroughParentArtifactsIfNeeded(first.id, steps),
+    actions: runbookSetup.assign({
+      interruptedEpoch: undefined,
+      interruptedReason: undefined,
+      interruptedStepId: undefined,
+      retryCount: 0,
+      lastAction: buildGotoLastActionFromEvent(first.substepId),
+    }),
+  }));
+}
+
+/**
+ * Build the non-final `recoveryRequired` state.
+ *
+ * The state persists with lifecycle `running` (it is open-but-blocked), carries
+ * the `RECOVERY_TAG`, and exposes GOTO reconcile/retry transitions. Stop is
+ * covered by the bubbling root `FORCE_STOP` handler, so it is not duplicated
+ * here.
+ *
+ * @param allStates - Flat list of all compiled states.
+ * @param steps - Resolved steps (for artifact routing).
+ * @returns The `recoveryRequired` state config.
+ */
+function buildRecoveryRequiredStateConfig(
+  allStates: readonly StateConfig[],
+  steps: readonly ResolvedStep[],
+): RunbookStateConfig {
+  return {
+    id: RECOVERY_REQUIRED_STATE_NAME,
+    tags: [RECOVERY_TAG],
+    on: {
+      GOTO: buildRecoveryReconcileTransitions(allStates, steps),
+    },
+  } satisfies RunbookStateConfig;
 }
 
 /**
@@ -4326,6 +4422,15 @@ export function compileRunbookToMachine(
     runbookSetup.createStateConfig(buildIterationExhaustedStateConfig(steps)),
   );
 
+  // Non-final recoveryRequired state. Reachable only via the root-level
+  // EXECUTION_OUTCOME_UNKNOWN handler below (which validateGraph does not scan),
+  // so it is pinned by an explicit structural-snapshot assertion instead.
+  checkedStateInsert(
+    states,
+    RECOVERY_REQUIRED_STATE_NAME,
+    runbookSetup.createStateConfig(buildRecoveryRequiredStateConfig(allStates, steps)),
+  );
+
   // Phase 5: Runtime graph validation — catch dynamic errors types cannot prove
   const terminalStates = new Set(['COMPLETE', 'STOPPED']);
   const initialState =
@@ -4338,6 +4443,26 @@ export function compileRunbookToMachine(
     on: {
       FORCE_STOP: buildForceStopTransition(),
       FORCE_COMPLETE: buildForceCompleteTransition(),
+      // One root-level handler covers every leaf: XState bubbles the unhandled
+      // event to the root. Lifecycle stays 'running' (recoveryRequired is
+      // non-final); only the interrupted epoch/reason/step are captured as data.
+      EXECUTION_OUTCOME_UNKNOWN: {
+        target: `.${RECOVERY_REQUIRED_STATE_NAME}`,
+        actions: runbookSetup.assign({
+          interruptedEpoch: ({ event }) => {
+            assertEvent(event, 'EXECUTION_OUTCOME_UNKNOWN');
+            return event.epoch;
+          },
+          interruptedReason: ({ event }) => {
+            assertEvent(event, 'EXECUTION_OUTCOME_UNKNOWN');
+            return event.reason;
+          },
+          interruptedStepId: ({ event }) => {
+            assertEvent(event, 'EXECUTION_OUTCOME_UNKNOWN');
+            return event.interruptedStepId;
+          },
+        }),
+      },
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {
@@ -4387,6 +4512,9 @@ export function compileRunbookToMachine(
       delegateFrontier: undefined,
       inlineLaunchIntent: undefined,
       parentLinkage: options?.parentLinkage,
+      interruptedEpoch: undefined,
+      interruptedReason: undefined,
+      interruptedStepId: undefined,
     },
     states: {
       ...states,

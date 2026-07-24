@@ -20,6 +20,7 @@ import {
 import {
   SqljsDriver,
   openSqljsDriver,
+  type SqljsDriverOptions,
   type SqljsPersistStage,
 } from '../../../src/runbook/storage/sqljs-driver.js';
 import { ensureSchema, IncompatibleSchemaError } from '../../../src/runbook/storage/schema.js';
@@ -1090,6 +1091,71 @@ describe('sql.js durability and crash boundaries', () => {
       tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 20, k: 'seed' });
     });
     expect(await readSeed(dbPath)).toBe(20);
+  });
+
+  it('does not let lock cleanup failure mask an already durable write', async () => {
+    const dbPath = path.join(dir, 'release-failure.db');
+    await seed(dbPath);
+    let releaseAttempted = false;
+    const options: SqljsDriverOptions = {
+      releaseLock: async () => {
+        releaseAttempted = true;
+        throw new Error('unlink denied');
+      },
+    };
+    await using driver = await openSqljsDriver(dbPath, options);
+
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 30, k: 'seed' });
+        return 'committed-result';
+      }),
+    ).resolves.toBe('committed-result');
+    expect(releaseAttempted).toBe(true);
+  });
+
+  it('propagates a real directory fsync failure after rename', async () => {
+    const dbPath = path.join(dir, 'dir-fsync-eio.db');
+    await seed(dbPath);
+    const originalOpen = fs.open;
+    const syncFailure = Object.assign(new Error('storage I/O failure'), { code: 'EIO' });
+    const options: SqljsDriverOptions = {
+      directoryOpen: async () =>
+        Object.assign(await originalOpen(dir, 'r'), {
+          sync: async () => Promise.reject(syncFailure),
+        }),
+    };
+
+    await using driver = await openSqljsDriver(dbPath, options);
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 40, k: 'seed' });
+      }),
+    ).rejects.toBe(syncFailure);
+  });
+
+  it('treats an unsupported directory fsync as non-fatal', async () => {
+    const dbPath = path.join(dir, 'dir-fsync-enosys.db');
+    await seed(dbPath);
+    const originalOpen = fs.open;
+    const unsupported = Object.assign(new Error('fsync unavailable'), { code: 'ENOSYS' });
+    let directoryOpened = false;
+    const options: SqljsDriverOptions = {
+      directoryOpen: async () => {
+        directoryOpened = true;
+        return Object.assign(await originalOpen(dir, 'r'), {
+          sync: async () => Promise.reject(unsupported),
+        });
+      },
+    };
+
+    await using driver = await openSqljsDriver(dbPath, options);
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 50, k: 'seed' });
+      }),
+    ).resolves.toBeUndefined();
+    expect(directoryOpened).toBe(true);
   });
 });
 
