@@ -91,6 +91,7 @@ env
 esac
 esm
 exfiltration
+extensionless
 fdisk
 featurebranch
 finalvars
@@ -123,6 +124,7 @@ landlock
 landrun
 lastaction
 lcov
+licence
 lifecycles
 lockfile
 materialise
@@ -348,6 +350,7 @@ unparseable
 unsynchronized
 precheck
 frontends
+recognises
 reconstructable
 fanout
 unsupplied

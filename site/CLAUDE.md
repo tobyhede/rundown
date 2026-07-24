@@ -71,6 +71,8 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 - Built via `npm run build:snapshot -w site` (or `npm run build -w site`)
 - **Not committed to git** — must be built locally before running dev server or tests
 
+**Size budget and pruning (issue #639):** the snapshot is a single static file under Cloudflare Pages' 25 MiB per-file cap, kept small by `scripts/prune-sqljs.mjs` + `scripts/prune-non-runtime.mjs` and guarded by a 12 MiB build assertion in `scripts/snapshot-budget.mjs`. See [docs/internal/architecture.md § Site snapshot](../docs/internal/architecture.md#site-snapshot-size-budget-and-pruning) for the design.
+
 **Spawn limitation workaround:**
 - WebContainer's nested `child_process.spawn()` doesn't propagate stdio properly
 - Solution: Internal command dispatcher in `packages/cli/src/services/internal-commands.ts`

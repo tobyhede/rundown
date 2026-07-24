@@ -160,9 +160,6 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
-      handlebars:
-        specifier: ^4.7.9
-        version: 4.7.9
       js-yaml:
         specifier: ^5.2.1
         version: 5.2.1
