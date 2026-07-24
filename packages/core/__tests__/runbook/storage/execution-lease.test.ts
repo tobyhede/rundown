@@ -8,6 +8,7 @@ import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import {
   SqliteExecutionLeaseService,
+  type AbandonedAttemptOutcome,
   type ExecutionAttempt,
 } from '../../../src/runbook/storage/execution-lease.js';
 import {
@@ -367,7 +368,13 @@ describe('self-abandon to recovery after a mid-effect failure', () => {
     const started = await lease.markEffectStarted(acquired.value);
     if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
 
-    const result = await lease.abandonToRecovery(started.value, 'effect_boundary_crossed');
+    // The declared return type admits exactly the two producible outcomes; a
+    // `committed` variant is unrepresentable, so no caller is forced to narrow a
+    // case this method cannot produce.
+    const result: AbandonedAttemptOutcome = await lease.abandonToRecovery(
+      started.value,
+      'effect_boundary_crossed',
+    );
     expect(result.kind).toBe('recovery_required');
 
     // The run stays owned (blocked) until recovery commits; only the phase moved.
@@ -389,9 +396,15 @@ describe('self-abandon to recovery after a mid-effect failure', () => {
     const started = await lease.markEffectStarted(acquired.value);
     if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
 
-    const first = await lease.abandonToRecovery(started.value, 'owner_dead');
+    const first: AbandonedAttemptOutcome = await lease.abandonToRecovery(
+      started.value,
+      'owner_dead',
+    );
     expect(first.kind).toBe('recovery_required');
-    const second = await lease.abandonToRecovery(started.value, 'owner_dead');
+    const second: AbandonedAttemptOutcome = await lease.abandonToRecovery(
+      started.value,
+      'owner_dead',
+    );
     expect(second.kind).toBe('execution_in_progress');
   });
 });

@@ -541,7 +541,7 @@ function deriveActorStatePatch(
 
   if (!steps.length) {
     throw new Error(
-      `updateFromActor called with empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
+      `Actor state derivation received an empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
     );
   }
 

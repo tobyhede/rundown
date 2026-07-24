@@ -402,7 +402,19 @@ All package scripts live in `package.json` — run `pnpm run` to list them
 `test:e2e*`). The one hard rule and the non-obvious invocations:
 
 - **`pnpm run verify`** — pre-PR gate (format, spell, lint, test). **MUST run
-  before every push.**
+  before every push.** Scoped `jest` runs are not a substitute: spelling
+  (`cspell`) and typed lint (`jsdoc/require-throws` and friends) only run here,
+  so a change can be green in every targeted suite and still fail the gate.
+- **Biome owns JS/TS/JSON/CSS; Prettier is Markdown-only** (`.prettierignore`
+  line 1). **Never run `prettier` on TypeScript** — it reformats to a different
+  quote/width style, and `biome format` will not undo it because it preserves
+  author-expanded literals, so the damage has to be reverted by hand. Use
+  `npx biome check --config-path=. --write <files>`, or `pnpm run format` for
+  the whole repo. Note `verify` runs Biome twice: `check:format` disables the
+  linter, and `check:lint:fast` (`biome lint .`) disables nothing but exits 0 on
+  warning-severity findings — so a `warn` rule such as
+  `noUnusedPrivateClassMembers` is reported by `verify` and still passes it.
+  ESLint (`check:lint:typed`) is the linter whose findings block.
 - **Scoped Stryker run** (any package) — use `exec`, and pass
   **package-relative** paths:
 
@@ -412,10 +424,30 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     --testFiles __tests__/helpers/table-formatter.test.ts
   ```
 
-  This is the canonical form. Check the
-  `Instrumented N source file(s) with M mutant(s)` line before trusting any
-  score — `N > 0` is what proves the scope actually resolved. Two ways a scoped
-  run can lie about success:
+  This is the canonical form. **Never run an unscoped Stryker run** — no
+  `pnpm run test:mutate:<pkg>` without `--mutate`, and never the package glob.
+
+  **Scope to changed lines, not to a file.** Whole-file `--mutate` is only
+  appropriate for a small file (roughly < 300 lines) or one that is entirely
+  new. Pointing it at a large existing module is a full run wearing a scoped
+  flag: `runbook-store.ts` is ~1450 lines, so mutating it whole to cover a
+  ~280-line change ran 17+ minutes without finishing. Use line ranges, which
+  Stryker accepts as `file:start-end` and comma-separates:
+
+  ```bash
+  # ranges from: git diff -U0 <file> | grep -E '^@@'
+  pnpm --filter @rundown-org/core exec stryker run \
+    --mutate 'src/runbook/storage/runbook-store.ts:693-820,src/runbook/storage/runbook-store.ts:1219-1240' \
+    --testFiles __tests__/runbook/storage/runbook-store.test.ts
+  ```
+
+  Judge the result on survivors **in the lines you changed**, never on the
+  aggregate score: a scope this narrow makes the percentage meaningless, and the
+  70% break threshold will fail the run regardless.
+
+  Check the `Instrumented N source file(s) with M mutant(s)` line before
+  trusting any score — `N > 0` is what proves the scope actually resolved. Two
+  ways a scoped run can lie about success:
   - Do **not** insert the `--` separator:
     `pnpm --filter … exec stryker run -- --mutate <file>` (or
     `pnpm run test:mutate:<pkg> -- --mutate <file>`) dies on

@@ -4,6 +4,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/index.js';
+import { CURRENT_SCHEMA_VERSION, applyRunbookStateUpdate } from '../../src/runbook/state.js';
+import type { RunbookState } from '../../src/runbook/types.js';
 
 const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
 const INVALID_RUN_ID = `rd_${'2'.repeat(32)}`;
@@ -352,5 +354,45 @@ describe('RunbookStateManager.update() — lastAction origin persistence', () =>
     const reloaded = await manager.load(BASE_RUN_ID);
 
     expect(reloaded?.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
+  });
+});
+
+describe('applyRunbookStateUpdate — stamps, never migrates', () => {
+  const derivable = {
+    ...BASE_SCHEMA_STATE,
+    variables: {},
+    lifecycle: 'running',
+  } as unknown as RunbookState;
+
+  it('stamps the current version on the derived state', () => {
+    const current = { ...derivable, schemaVersion: CURRENT_SCHEMA_VERSION };
+
+    const patched = applyRunbookStateUpdate(current, { stepName: 'x' }, '2026-04-19T00:00:01Z');
+
+    expect(patched.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  it('refuses a state carrying no schema version rather than stamping one on', () => {
+    // `load` rejects an absent version exactly as it rejects a wrong one, so
+    // exempting absent here would make this derivation MORE permissive than the
+    // loader it exists to keep faith with: a state `load` refuses would be
+    // laundered into one it accepts. Absent is the more degraded shape, and the
+    // only one the store can hand over unvalidated — its zod schema leaves the
+    // field optional so `load` can parse far enough to reach its own check.
+    expect(() =>
+      applyRunbookStateUpdate(derivable, { stepName: 'x' }, '2026-04-19T00:00:01Z'),
+    ).toThrow(InvalidRunbookStateError);
+  });
+
+  it('refuses a state carrying a different schema version instead of rewriting it', () => {
+    // Persisted state has no compatibility contract: the recovery path is
+    // explicit user action (finish/stop/prune/restart), never a silent rewrite.
+    // Stamping unconditionally would turn the fenced path into exactly the
+    // migration CLAUDE.md forbids, and would erase the only signal that says so.
+    const stale = { ...derivable, schemaVersion: CURRENT_SCHEMA_VERSION + 1 };
+
+    expect(() => applyRunbookStateUpdate(stale, { stepName: 'x' }, '2026-04-19T00:00:01Z')).toThrow(
+      InvalidRunbookStateError,
+    );
   });
 });

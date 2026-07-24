@@ -55,6 +55,7 @@ biomejs
 bisectable
 callsite
 callsites
+canonicalise
 canonicalises
 categorisation
 categorises
@@ -126,11 +127,13 @@ lastaction
 lcov
 licence
 lifecycles
+loadability
 lockfile
 materialise
 materialised
 materialising
 mdast
+misattributes
 microstep
 minimatch
 Misordered
@@ -209,6 +212,7 @@ rustc
 sandboxing
 sarif
 selfref
+serialisation
 serialise
 serialised
 serialises
@@ -220,6 +224,7 @@ statelessly
 stderr
 stdin
 stdout
+stringifying
 stringly
 stryker
 stryMutAct

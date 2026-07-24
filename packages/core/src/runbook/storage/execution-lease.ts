@@ -90,6 +90,21 @@ export interface LeaseWaitProgress {
   readonly remainingMs: number;
 }
 
+/**
+ * The outcomes {@link ExecutionLeaseService.abandonToRecovery} can produce.
+ *
+ * The guarded update either moves this process's own `effect_started` attempt to
+ * `recovery_pending` (`recovery_required`, carrying the run and epoch that now
+ * need recovery), or matches no row because the attempt already moved
+ * (`execution_in_progress`). There is no committed value to hand back, so the
+ * `committed` variant is deliberately unrepresentable: no caller has to narrow a
+ * case this operation cannot return.
+ */
+export type AbandonedAttemptOutcome = Extract<
+  GuardedMutationResult<never>,
+  { readonly kind: 'recovery_required' | 'execution_in_progress' }
+>;
+
 /** Phase-aware dead-owner recovery outcome. */
 export type DeadOwnerRecovery =
   | { readonly kind: 'reclaimed_pre_effect'; readonly cleared: ClearedAttemptRef }
@@ -138,7 +153,7 @@ export interface ExecutionLeaseService {
   abandonToRecovery(
     attempt: ExecutionAttempt,
     reason: ExecutionRecoveryReason,
-  ): Promise<GuardedMutationResult<{ readonly runId: RunId; readonly epoch: ExecutionEpoch }>>;
+  ): Promise<AbandonedAttemptOutcome>;
   /**
    * Recover a run whose owner may be dead, using out-of-SQLite liveness and
    * exact-tuple CAS.
@@ -234,7 +249,7 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
   async abandonToRecovery(
     attempt: ExecutionAttempt,
     reason: ExecutionRecoveryReason,
-  ): Promise<GuardedMutationResult<{ readonly runId: RunId; readonly epoch: ExecutionEpoch }>> {
+  ): Promise<AbandonedAttemptOutcome> {
     const hash = hashExecutionToken(attempt.token);
     return this.driver.immediate((tx) => {
       const changes = tx

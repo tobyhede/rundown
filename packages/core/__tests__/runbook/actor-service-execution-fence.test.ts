@@ -23,6 +23,7 @@ import { assertClaimLookupKey } from '../../src/runbook/claim-id.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import { createRunbook } from './fixtures.js';
+import { logger } from '../../src/logger.js';
 
 const RUNBOOK = `## 1. First
 - PASS CONTINUE
@@ -51,6 +52,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // `logger` is a module singleton; a leaked spy would silence later suites.
+  jest.restoreAllMocks();
   await driver[Symbol.asyncDispose]();
   await fs.rm(dir, { recursive: true, force: true });
 });
@@ -188,6 +191,7 @@ describe('CoreEffectfulMutationExecutor', () => {
     const committer = new RunbookStoreActorCommitter(store, captured);
     let computeCalls = 0;
     let commitCalls = 0;
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
 
     const result = await executor.run({
       captured,
@@ -216,6 +220,11 @@ describe('CoreEffectfulMutationExecutor', () => {
     // The ambiguous effect's state was NOT committed.
     const loaded = await store.loadRun(runId);
     expect(loaded?.step).toBe('1');
+    // Recovery WAS recorded, so the refusal log must stay silent — logging "no
+    // recovery was recorded" here would be a false statement about durable state.
+    expect(
+      warn.mock.calls.filter((call) => call[0].includes('guarded abandon refused')),
+    ).toHaveLength(0);
     void state;
   });
 
@@ -261,6 +270,7 @@ describe('CoreEffectfulMutationExecutor', () => {
     const executor = new CoreEffectfulMutationExecutor(lease);
     const committer = new RunbookStoreActorCommitter(store, captured);
     const abandon = jest.spyOn(lease, 'abandonToRecovery');
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
     const commitError = new Error('response lost after durable commit');
 
     await expect(
@@ -275,9 +285,31 @@ describe('CoreEffectfulMutationExecutor', () => {
       }),
     ).rejects.toBe(commitError);
 
+    // In THIS branch `execution_in_progress` is ambiguous in a way it is not
+    // after a failed compute: `commitOwnedState` moves the very same
+    // (run, epoch, token) tuple to `committed`, so the refusal conflates "another
+    // actor is recovering" with "WE committed durably and lost the response".
+    // Returning it as a typed refusal would tell the caller the mutation did not
+    // happen when it did — and because a durable commit CLEARS ownership, a
+    // caller retrying on that signal would acquire a fresh attempt and re-run the
+    // effect. That is the ambiguous-effect repeat this fence exists to forbid, so
+    // the branch throws instead. The compute branch, where our commit provably
+    // never ran, returns the refusal.
     expect(abandon).toHaveBeenCalledTimes(1);
     expect((await store.loadRun(runId))?.step).toBe('2');
     expect(await store.readPendingRecovery(runId)).toBeNull();
+    // The cause is still logged even though the caller now receives it, so the
+    // durable-commit case is attributable from the log alone.
+    expect(
+      warn.mock.calls.filter((call) => {
+        const payload = JSON.stringify(call[1] ?? {});
+        return (
+          call[0].includes('commit failed after the execution boundary') &&
+          payload.includes(commitError.message) &&
+          payload.includes(runId)
+        );
+      }),
+    ).toHaveLength(1);
   });
 
   it('preserves the commit exception when recording recovery also throws', async () => {
@@ -296,6 +328,117 @@ describe('CoreEffectfulMutationExecutor', () => {
       }),
     ).rejects.toBe(commitError);
     expect(abandon).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the compute exception when recording recovery also throws', async () => {
+    const { runId, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const computeError = new Error('effect crashed mid-flight');
+    const abandon = jest
+      .spyOn(lease, 'abandonToRecovery')
+      .mockRejectedValue(new Error('recovery write failed'));
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+
+    await expect(
+      executor.run({
+        captured,
+        compute: () => Promise.reject(computeError),
+        commit: () => Promise.reject(new Error('commit must be unreachable')),
+      }),
+    ).rejects.toBe(computeError);
+    expect(abandon).toHaveBeenCalledTimes(1);
+    // The swallowed recovery-write failure is the only record that the attempt
+    // was left to dead-owner recovery; it must not vanish silently.
+    expect(
+      warn.mock.calls.filter((call) => {
+        const payload = JSON.stringify(call[1] ?? {});
+        return payload.includes('recovery write failed') && payload.includes(runId);
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('returns the lease refusal verbatim when the guarded abandon refuses', async () => {
+    const { runId, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const computeError = new Error('effect crashed mid-flight');
+    // The attempt is no longer effect_started (a concurrent dead-owner recovery
+    // already moved it), so the guarded abandon writes nothing.
+    const refusal = {
+      kind: 'execution_in_progress',
+      runId,
+      message: 'the interrupted attempt was no longer effect-started',
+    } as const;
+    const abandon = jest.spyOn(lease, 'abandonToRecovery').mockResolvedValue(refusal);
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+
+    // The executor must not report a recovery record it did not write — but the
+    // refusal is a typed domain outcome, not an infrastructure fault: recovery is
+    // already in flight, just not ours. Collapsing it into the raw compute throw
+    // would erase that.
+    const result = await executor.run({
+      captured,
+      compute: () => Promise.reject(computeError),
+      commit: () => Promise.reject(new Error('commit must be unreachable')),
+    });
+
+    expect(result).toEqual(refusal);
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(await store.readPendingRecovery(runId)).toBeNull();
+    // The refusal is the reason no recovery exists; record which run it was and
+    // which outcome refused.
+    expect(
+      warn.mock.calls.filter((call) => {
+        const payload = JSON.stringify(call[1] ?? {});
+        return (
+          call[0].includes('guarded abandon refused') &&
+          payload.includes('execution_in_progress') &&
+          payload.includes(runId)
+        );
+      }),
+    ).toHaveLength(1);
+    // The compute failure is no longer returned to the caller, so it must survive
+    // in the log.
+    expect(
+      warn.mock.calls.filter((call) => {
+        const payload = JSON.stringify(call[1] ?? {});
+        return payload.includes(computeError.message) && payload.includes(runId);
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('surfaces the effect cause when a mid-effect failure is abandoned to recovery', async () => {
+    const { runId, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const computeError = new Error('effect crashed mid-flight');
+    // `GuardedMutationResult.recovery_required` has no field for the cause, so
+    // the executor must not drop it on the floor — it is logged instead.
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+    // Capture the raw token so we can prove it never reaches a log payload.
+    const markEffectStarted = lease.markEffectStarted.bind(lease);
+    let rawToken = '';
+    jest.spyOn(lease, 'markEffectStarted').mockImplementation(async (attempt) => {
+      const marked = await markEffectStarted(attempt);
+      if (marked.kind === 'committed') rawToken = marked.value.token;
+      return marked;
+    });
+
+    const result = await executor.run({
+      captured,
+      compute: () => Promise.reject(computeError),
+      commit: () => Promise.reject(new Error('commit must be unreachable')),
+    });
+
+    expect(result.kind).toBe('recovery_required');
+    expect(rawToken).not.toBe('');
+    const logged = warn.mock.calls.filter((call) =>
+      JSON.stringify(call[1] ?? {}).includes(computeError.message),
+    );
+    expect(logged).toHaveLength(1);
+    const payload = logged[0][1];
+    // Attribution needs the run identity…
+    expect(JSON.stringify(payload)).toContain(runId);
+    // …but the raw execution token is a secret and must never be logged.
+    expect(JSON.stringify(payload)).not.toContain(rawToken);
   });
 
   it('refuses without running the effect when the boundary mark loses ownership', async () => {

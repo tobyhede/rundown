@@ -34,6 +34,7 @@ import {
 import { assertDelegationTokenHash } from '../delegation-token.js';
 import { assertFrameKey } from '../targeting.js';
 import { getErrorMessage } from '../../errors.js';
+import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import {
@@ -690,8 +691,23 @@ export class RunbookStore {
    * verification), exactly as it was under the lock — this method guards only
    * atomicity and execution ownership.
    *
+   * `build` is re-invoked from scratch on every retry, so it MUST be free of
+   * external side effects: under contention it can run `attempts` times (default
+   * 8), and the retry loop applies NO backoff — all 8 invocations can land within
+   * a few milliseconds. Only the final, committed return value is persisted;
+   * anything a losing attempt did outside the returned state is unwound by nothing.
+   *
+   * Note the CAS asymmetry: {@link writeStateAtVersion} guards on `state_version`
+   * only, NOT on `claim_generation` (unlike {@link applyStateUpdate}). A claim
+   * revoked between an out-of-band authority check and this commit is therefore
+   * invisible here. That is sound for the claim-free contract this method
+   * documents, but callers MUST NOT treat a `committed` result as evidence that
+   * their authority was still valid at commit time — use
+   * {@link RunbookStore.saveState} when the write must be claim-guarded.
+   *
    * @param runId - Run to mutate.
-   * @param build - Derives the next state from the current one; `null` means no change.
+   * @param build - Derives the next state from the current one; `null` means no
+   *   change. May be invoked once per attempt — see the side-effect constraint above.
    * @param options - Optional attempt budget (default 8).
    * @param options.attempts - Maximum optimistic retry cycles before reporting
    *   `concurrent_modification`.
@@ -740,12 +756,35 @@ export class RunbookStore {
   /**
    * Replace the persisted session (default stack, stash slot, active claims).
    *
-   * Claims are reconciled rather than rewritten: a claim absent from `session`
-   * becomes a tombstone (never a hard delete, so issuance history survives), and a
-   * newly present claim is inserted. Existing claims are left untouched so this
-   * wholesale save never churns `claim_generation` or clobbers `last_seen_at` —
-   * claim activity is written only at the authorization seam via
-   * {@link RunbookStoreTxn.recordClaimSeen}.
+   * Claims are reconciled rather than rewritten: an active claim absent from
+   * `session` becomes a tombstone (never a hard delete, so issuance history
+   * survives), and a genuinely new claim is inserted. Existing active claims are
+   * left untouched so this wholesale save never churns `claim_generation` or
+   * clobbers `last_seen_at` — claim activity is written only at the authorization
+   * seam via {@link RunbookStoreTxn.recordClaimSeen}.
+   *
+   * Incoming claims are classified against ALL persisted claims, not just the
+   * active ones, because "not active" is not "absent". A session snapshot may be
+   * stale — the store is the transactional replacement for `SessionLock`, so a
+   * lost update is a normal race, not a lock violation — and both stale shapes
+   * must reconcile rather than surface a raw SQLite constraint error:
+   *
+   * - **Persisted and active** — left untouched (see above).
+   * - **Persisted but superseded** — skipped, never reactivated. The tombstone is
+   *   an authoritative revocation recorded at the claim lifecycle seam; letting a
+   *   stale bulk save resurrect it would restore revoked authority, bump
+   *   `claim_generation` through `claims_bump_gen_update` (invalidating every live
+   *   capture), and be refused outright by `claims_guard_update` whenever the
+   *   controlled run is owned. Skipping converges on the newer, authoritative
+   *   state.
+   * - **Absent, controlling a run that no longer exists** — skipped. The
+   *   `controlled_run` FK is `ON DELETE CASCADE`, so the row was removed by an
+   *   authoritative run deletion (`rd prune`); the claim is dead by definition and
+   *   there is nothing left to reference. Skipping (rather than throwing) keeps
+   *   this void bulk reconciler convergent for a race it is expected to lose;
+   *   persisted state already reflects the deletion.
+   * - **Absent, controlling a live run** — inserted at that run's current
+   *   generation.
    *
    * @param session - The session data to persist.
    * @returns Resolves once committed.
@@ -754,20 +793,37 @@ export class RunbookStore {
     return this.transaction((txn) => {
       txn.setStack(session.defaultStack);
       txn.setStash(session.stashedRunbookId ?? null);
-      const stale = new Set(
+      const persisted = new Map(
         txn.tx
-          .prepare("SELECT key FROM claims WHERE status = 'active'")
-          .all<{ readonly key: string }>()
-          .map((row) => row.key),
+          .prepare('SELECT key, status FROM claims')
+          .all<{ readonly key: string; readonly status: string }>()
+          .map((row) => [row.key, row.status] as const),
+      );
+      // Only active claims are droppable; re-marking an existing tombstone would
+      // fire the resolution-affecting claim triggers for no change.
+      const stale = new Set(
+        [...persisted].filter(([, status]) => status === 'active').map(([key]) => key),
       );
       for (const [key, record] of Object.entries(session.claims)) {
-        if (stale.delete(key)) {
+        if (persisted.has(key)) {
+          stale.delete(key);
           continue;
         }
-        const generation =
-          txn.tx
-            .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
-            .get<{ readonly g: number }>({ id: record.controlledRunId })?.g ?? 0;
+        const generation = txn.tx
+          .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
+          .get<{ readonly g: number }>({ id: record.controlledRunId })?.g;
+        if (generation === undefined) {
+          // Converging on the deletion is right for a bulk reconciler losing a
+          // race it is expected to lose, but the drop must not be silent: the
+          // mint path returns a claim_id to its caller once this resolves, so an
+          // unrecorded claim resurfaces much later as an unexplained
+          // ACTOR_CONTEXT_REQUIRED with nothing pointing back to here.
+          void logger.warn('session claim skipped: controlled run no longer exists', {
+            claimKey: key,
+            runId: record.controlledRunId,
+          });
+          continue;
+        }
         txn.insertClaim(record, assertClaimGeneration(generation));
       }
       for (const key of stale) {
@@ -1170,10 +1226,26 @@ export class RunbookStore {
   /**
    * Set or clear the stash slot.
    *
+   * A request that matches the persisted value performs no write at all. The slot
+   * is guarded by `stash_guard_insert`/`stash_guard_delete`, which refuse while
+   * the slot's run has an active execution owner; an unconditional
+   * delete-then-insert therefore made an owned run sitting in the stash poison
+   * every unrelated session save. An unchanged slot cannot change claim
+   * resolution, which is exactly what those guards exist to protect, so the
+   * refusal was spurious. Every real transition (null→id, id→null, id→other) still
+   * performs its guarded write and still bumps `claim_generation` on both affected
+   * runs via `stash_bump_gen_insert`/`stash_bump_gen_delete`.
+   *
    * @param tx - Open transaction.
    * @param runId - Run to stash, or null to clear.
    */
   private setStash(tx: SqlTransaction, runId: RunId | null): void {
+    if (this.readStash(tx) === runId) {
+      return;
+    }
+    // Past the equality check the slot is guaranteed to differ, so this DELETE
+    // either removes the one row that must go (firing its guard and bump) or
+    // matches nothing — a row-level trigger cannot fire on an empty table.
     tx.prepare('DELETE FROM stash_slot').run();
     if (runId !== null) {
       tx.prepare('INSERT INTO stash_slot (slot, run_id) VALUES (0, :runId)').run({ runId });
