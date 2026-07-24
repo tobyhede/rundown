@@ -474,6 +474,219 @@ describe('tombstone preservation (#519 lastSeenAt survives)', () => {
     );
     expect(seen).toBe(now);
   });
+
+  it('records claim activity without bumping claim_generation', async () => {
+    // #519 liveness is pure metadata: it cannot change which claim resolves to
+    // which run, so it must not invalidate live captures as claim_superseded.
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'a'.repeat(32));
+    const before = (await counters(state.id)).claimGeneration;
+
+    await store.transaction((txn) => {
+      txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T02:02:02.000Z');
+    });
+
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    // A previously captured authority therefore still commits.
+    const cap = await store.captureAuthority(state.id, assertClaimLookupKey(key));
+    if (cap.kind !== 'captured') throw new Error('capture failed');
+    await store.transaction((txn) => {
+      txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T03:03:03.000Z');
+    });
+    const saved = await store.saveState(cap.authority, { ...state, stepName: 'after-seen' });
+    expect(saved.kind).toBe('committed');
+  });
+
+  it('records claim activity even while the run has an active execution owner', async () => {
+    // The authorization seam runs precisely when an owner may be executing;
+    // refusing liveness there would drop #519 exactly when it matters most.
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'b'.repeat(32));
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+
+    await expect(
+      store.transaction((txn) => {
+        txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T04:04:04.000Z');
+      }),
+    ).resolves.toBeUndefined();
+
+    // Resolution-affecting claim writes are still refused under ownership.
+    await expect(
+      store.transaction((txn) => {
+        txn.tombstoneClaim(assertClaimLookupKey(key));
+      }),
+    ).rejects.toThrow(/execution_in_progress/);
+  });
+});
+
+describe('mutateState (transactional replacement for the per-run lock)', () => {
+  it('commits a derived state and bumps only state_version', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+
+    const result = await store.mutateState(state.id, (current) => ({
+      ...current,
+      stepName: 'mutated',
+    }));
+
+    expect(result.kind).toBe('committed');
+    expect((await store.loadRun(state.id))?.stepName).toBe('mutated');
+    const after = await counters(state.id);
+    expect(after.stateVersion).toBe(before.stateVersion + 1);
+    expect(after.claimGeneration).toBe(before.claimGeneration);
+  });
+
+  it('writes nothing when the builder declines', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+
+    const result = await store.mutateState(state.id, () => null);
+
+    expect(result.kind).toBe('unchanged');
+    expect((await counters(state.id)).stateVersion).toBe(before.stateVersion);
+  });
+
+  it('retries against fresh state when a concurrent writer bumps the version', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    let builds = 0;
+
+    const result = await store.mutateState(state.id, async (current) => {
+      builds += 1;
+      if (builds === 1) {
+        // A concurrent writer lands between this read and our write.
+        await store.mutateState(state.id, (other) => ({ ...other, description: 'interloper' }));
+      }
+      return { ...current, stepName: `build-${String(builds)}` };
+    });
+
+    expect(result.kind).toBe('committed');
+    // The first attempt went stale and rebuilt from the interloper's state.
+    expect(builds).toBe(2);
+    const loaded = await store.loadRun(state.id);
+    expect(loaded?.stepName).toBe('build-2');
+    expect(loaded?.description).toBe('interloper');
+  });
+
+  it('refuses immediately while an execution owns the run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+
+    const result = await store.mutateState(state.id, (current) => ({
+      ...current,
+      stepName: 'blocked',
+    }));
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect((await store.loadRun(state.id))?.stepName).not.toBe('blocked');
+  });
+
+  it('reports a missing run without invoking the builder', async () => {
+    let builds = 0;
+    const result = await store.mutateState(assertRunId(`rd_${'e'.repeat(32)}`), (current) => {
+      builds += 1;
+      return current;
+    });
+    expect(result.kind).toBe('missing');
+    expect(builds).toBe(0);
+  });
+
+  it('gives up as concurrent_modification once the attempt budget is spent', async () => {
+    const state = await newState();
+    await store.createRun(state);
+
+    const result = await store.mutateState(
+      state.id,
+      async (current) => {
+        // Always bump the version behind our back, so no attempt can ever land.
+        await store.transaction((txn) => {
+          txn.tx
+            .prepare(
+              "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+            )
+            .run({ id: state.id });
+        });
+        return { ...current, stepName: 'never' };
+      },
+      { attempts: 2 },
+    );
+
+    expect(result.kind).toBe('concurrent_modification');
+    expect((await store.loadRun(state.id))?.stepName).not.toBe('never');
+  });
+});
+
+describe('session persistence and run listing', () => {
+  it('round-trips the default stack and stash slot', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+
+    await store.saveSession({ defaultStack: [a.id, b.id], claims: {}, stashedRunbookId: b.id });
+
+    const session = await store.loadSession();
+    expect(session.defaultStack).toEqual([a.id, b.id]);
+    expect(session.stashedRunbookId).toBe(b.id);
+  });
+
+  it('tombstones claims dropped from the session without churning generation', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'c'.repeat(32));
+    const record = makeClaimRecord({
+      claimKey: assertClaimLookupKey(key),
+      controlledRunId: state.id,
+    });
+
+    // Re-saving the same claim leaves it untouched.
+    const before = (await counters(state.id)).claimGeneration;
+    await store.saveSession({ defaultStack: [], claims: { [key]: record } });
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    expect((await store.loadSession()).claims[key]).toBeDefined();
+
+    // Dropping it tombstones rather than hard-deletes.
+    await store.saveSession({ defaultStack: [], claims: {} });
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: key })?.status,
+    );
+    expect(status).toBe('superseded');
+  });
+
+  it('lists and deletes runs', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+
+    expect((await store.listRuns()).map((s) => s.id).sort()).toEqual([a.id, b.id].sort());
+
+    await store.deleteRun(a.id);
+    expect((await store.listRuns()).map((s) => s.id)).toEqual([b.id]);
+    expect(await store.loadRun(a.id)).toBeNull();
+  });
+
+  it('refuses to delete a run with an active execution owner', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+    await expect(store.deleteRun(state.id)).rejects.toThrow(/execution_in_progress/);
+  });
 });
 
 describe('CAS zero-row invariant', () => {

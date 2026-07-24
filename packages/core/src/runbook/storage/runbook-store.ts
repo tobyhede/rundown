@@ -47,6 +47,7 @@ import {
   assertLinkageVersion,
   assertExecutionTokenHash,
   verifyExecutionToken,
+  hashExecutionToken,
   type ExecutionToken,
 } from './mutation-result.js';
 
@@ -55,6 +56,22 @@ const LIFECYCLES: readonly Lifecycle[] = ['running', 'completed', 'stopped'];
 
 /** Execution phases persisted in `execution_attempts.phase`. */
 export type ExecutionPhase = 'claimed' | 'effect_started' | 'recovery_pending' | 'committed';
+
+/** Attempt budget for an optimistic {@link RunbookStore.mutateState} cycle. */
+const DEFAULT_MUTATE_ATTEMPTS = 8;
+
+/**
+ * Outcome of a claim-free guarded state mutation.
+ *
+ * `unchanged` is distinct from `committed`: the builder declined to produce a new
+ * state, so nothing was written and no version was consumed.
+ */
+export type StateMutationResult =
+  | { readonly kind: 'committed'; readonly value: RunbookState }
+  | { readonly kind: 'unchanged'; readonly value: RunbookState }
+  | { readonly kind: 'missing'; readonly runId: RunId; readonly message: string }
+  | { readonly kind: 'execution_in_progress'; readonly runId: RunId; readonly message: string }
+  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
 
 /**
  * Raised when a classified-success guarded write changes anything other than
@@ -590,6 +607,274 @@ export class RunbookStore {
       assertExactlyOneRow(txn.applyStateUpdate(captured, next), captured.runId);
       return { kind: 'committed', value: next };
     });
+  }
+
+  /**
+   * Commit an effectful mutation under active execution ownership.
+   *
+   * Re-selects and classifies the commit row against both the captured claim/state
+   * CAS and the presented execution identity (token + epoch). Unlike
+   * {@link saveState}, this path requires the run to be owned by exactly this
+   * attempt in phase `effect_started`; a moved phase surfaces as
+   * `recovery_required`, a reissued attempt as `execution_in_progress`. On `ok`,
+   * one atomic UPDATE writes the new state, clears active ownership, and (via the
+   * `state_json` trigger) bumps `state_version`; the resolved-completion table is
+   * rewritten from `next`, and the owning attempt is marked `committed`.
+   *
+   * Ownership is cleared in the same UPDATE that writes `state_json`, before any
+   * completion/attempt writes, so no trigger-guarded write in this transaction is
+   * refused by the owned-run guard.
+   *
+   * @param captured - Authority captured before the effect.
+   * @param execution - The owning attempt's raw token and epoch.
+   * @param next - The new run state to persist (already reflecting any consumed
+   *   resolved completion).
+   * @returns The committed state, or a typed refusal.
+   */
+  commitOwnedState(
+    captured: CapturedAuthority,
+    execution: ExecutionExpectation,
+    next: RunbookState,
+  ): Promise<GuardedMutationResult<RunbookState>> {
+    const hash = hashExecutionToken(execution.token);
+    return this.transaction((txn) => {
+      const row = txn.commitRow(captured.runId, captured.claimKey);
+      const classification = classifyCommitRow(row, captured, execution);
+      if (classification.kind !== 'ok') {
+        return classificationToResult(classification);
+      }
+      const changes = txn.tx
+        .prepare(
+          `UPDATE runs
+              SET state_json = :stateJson,
+                  lifecycle  = :lifecycle,
+                  updated_at = :updatedAt,
+                  exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
+            WHERE id = :id
+              AND state_version = :stateVersion
+              AND exec_token = :hash
+              AND exec_epoch = :epoch`,
+        )
+        .run({
+          id: captured.runId,
+          stateJson: serializeStateJson(next),
+          lifecycle: next.lifecycle ?? 'running',
+          updatedAt: next.updatedAt,
+          stateVersion: captured.stateVersion,
+          hash,
+          epoch: execution.epoch,
+        }).changes;
+      assertExactlyOneRow(changes, captured.runId);
+      this.writeResolvedCompletions(txn.tx, captured.runId, next.resolvedCompletions);
+      txn.tx
+        .prepare(
+          `UPDATE execution_attempts
+              SET phase = 'committed', finished_at = :now
+            WHERE run_id = :runId AND exec_epoch = :epoch
+              AND exec_token = :hash AND phase = 'effect_started'`,
+        )
+        .run({ now: next.updatedAt, runId: captured.runId, epoch: execution.epoch, hash });
+      return { kind: 'committed', value: next };
+    });
+  }
+
+  /**
+   * Apply a claim-free, guarded read-modify-write to a run's state.
+   *
+   * This is the transactional replacement for the per-run file lock: the read
+   * captures `state_version`, the caller's `build` runs OUTSIDE any transaction
+   * (so it may await), and the write commits only if the version is unchanged and
+   * the run is unowned. A version that moved under a concurrent writer retries the
+   * whole cycle within a finite attempt budget; an active execution owner refuses
+   * immediately. Mutation *authority* is enforced above this layer (claim
+   * verification), exactly as it was under the lock — this method guards only
+   * atomicity and execution ownership.
+   *
+   * @param runId - Run to mutate.
+   * @param build - Derives the next state from the current one; `null` means no change.
+   * @param options - Optional attempt budget (default 8).
+   * @param options.attempts - Maximum optimistic retry cycles before reporting
+   *   `concurrent_modification`.
+   * @returns The committed state, the unchanged state, or a typed refusal.
+   */
+  async mutateState(
+    runId: RunId,
+    build: (current: RunbookState) => RunbookState | null | Promise<RunbookState | null>,
+    options: { readonly attempts?: number } = {},
+  ): Promise<StateMutationResult> {
+    const attempts = options.attempts ?? DEFAULT_MUTATE_ATTEMPTS;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const snapshot = await this.driver.read((tx) => this.readRunWithVersion(tx, runId));
+      if (snapshot === null) {
+        return { kind: 'missing', runId, message: `Run ${runId} does not exist.` };
+      }
+      const next = await build(snapshot.state);
+      if (next === null) {
+        return { kind: 'unchanged', value: snapshot.state };
+      }
+      const outcome = await this.transaction((txn) =>
+        this.writeStateAtVersion(txn.tx, runId, snapshot.stateVersion, next),
+      );
+      if (outcome === 'committed') {
+        return { kind: 'committed', value: next };
+      }
+      if (outcome === 'missing') {
+        return { kind: 'missing', runId, message: `Run ${runId} does not exist.` };
+      }
+      if (outcome === 'owned') {
+        return {
+          kind: 'execution_in_progress',
+          runId,
+          message: `Run ${runId} has an execution in progress.`,
+        };
+      }
+      // 'stale': a concurrent writer bumped state_version — rebuild from fresh state.
+    }
+    return {
+      kind: 'concurrent_modification',
+      runId,
+      message: `Run ${runId} was modified concurrently by another writer.`,
+    };
+  }
+
+  /**
+   * Replace the persisted session (default stack, stash slot, active claims).
+   *
+   * Claims are reconciled rather than rewritten: a claim absent from `session`
+   * becomes a tombstone (never a hard delete, so issuance history survives), and a
+   * newly present claim is inserted. Existing claims are left untouched so this
+   * wholesale save never churns `claim_generation` or clobbers `last_seen_at` —
+   * claim activity is written only at the authorization seam via
+   * {@link RunbookStoreTxn.recordClaimSeen}.
+   *
+   * @param session - The session data to persist.
+   * @returns Resolves once committed.
+   */
+  saveSession(session: SessionData): Promise<void> {
+    return this.transaction((txn) => {
+      txn.setStack(session.defaultStack);
+      txn.setStash(session.stashedRunbookId ?? null);
+      const stale = new Set(
+        txn.tx
+          .prepare("SELECT key FROM claims WHERE status = 'active'")
+          .all<{ readonly key: string }>()
+          .map((row) => row.key),
+      );
+      for (const [key, record] of Object.entries(session.claims)) {
+        if (stale.delete(key)) {
+          continue;
+        }
+        const generation =
+          txn.tx
+            .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
+            .get<{ readonly g: number }>({ id: record.controlledRunId })?.g ?? 0;
+        txn.insertClaim(record, assertClaimGeneration(generation));
+      }
+      for (const key of stale) {
+        txn.tombstoneClaim(assertClaimLookupKey(key));
+      }
+    });
+  }
+
+  /**
+   * Delete an unowned run and its cascaded rows.
+   *
+   * @param runId - Run to delete.
+   * @returns Resolves once committed.
+   * @throws {Error} With `execution_in_progress` when the run is actively owned.
+   */
+  deleteRun(runId: RunId): Promise<void> {
+    return this.transaction((txn) => {
+      txn.deleteRun(runId);
+    });
+  }
+
+  /**
+   * Load every persisted run.
+   *
+   * @returns All run states in ascending id order.
+   */
+  listRuns(): Promise<readonly RunbookState[]> {
+    return this.driver.read((tx) => {
+      const ids = tx
+        .prepare('SELECT id FROM runs ORDER BY id')
+        .all<{ readonly id: string }>()
+        .map((row) => assertRunId(row.id));
+      const states: RunbookState[] = [];
+      for (const id of ids) {
+        const state = this.readRun(tx, id);
+        if (state !== null) {
+          states.push(state);
+        }
+      }
+      return states;
+    });
+  }
+
+  /**
+   * Read a run together with its current `state_version`.
+   *
+   * @param tx - Open transaction.
+   * @param runId - Run to read.
+   * @returns The state and its version, or null when absent.
+   */
+  private readRunWithVersion(
+    tx: SqlReadTransaction,
+    runId: RunId,
+  ): { readonly state: RunbookState; readonly stateVersion: number } | null {
+    const row = tx
+      .prepare('SELECT state_version FROM runs WHERE id = :id')
+      .get<{ readonly state_version: number }>({ id: runId });
+    if (row === undefined) {
+      return null;
+    }
+    const state = this.readRun(tx, runId);
+    return state === null ? null : { state, stateVersion: row.state_version };
+  }
+
+  /**
+   * Write run state under a `state_version` CAS, requiring an unowned run.
+   *
+   * @param tx - Open transaction.
+   * @param runId - Run to write.
+   * @param stateVersion - Version captured at read.
+   * @param next - New state.
+   * @returns Why the write did or did not land.
+   */
+  private writeStateAtVersion(
+    tx: SqlTransaction,
+    runId: RunId,
+    stateVersion: number,
+    next: RunbookState,
+  ): 'committed' | 'stale' | 'owned' | 'missing' {
+    const changes = tx
+      .prepare(
+        `UPDATE runs
+            SET state_json = :stateJson,
+                lifecycle  = :lifecycle,
+                updated_at = :updatedAt
+          WHERE id = :id
+            AND state_version = :stateVersion
+            AND exec_token IS NULL`,
+      )
+      .run({
+        id: runId,
+        stateJson: serializeStateJson(next),
+        lifecycle: next.lifecycle ?? 'running',
+        updatedAt: next.updatedAt,
+        stateVersion,
+      }).changes;
+    if (changes === 1) {
+      this.writeResolvedCompletions(tx, runId, next.resolvedCompletions);
+      return 'committed';
+    }
+    const row = tx
+      .prepare('SELECT exec_token FROM runs WHERE id = :id')
+      .get<{ readonly exec_token: string | null }>({ id: runId });
+    if (row === undefined) {
+      return 'missing';
+    }
+    return row.exec_token !== null ? 'owned' : 'stale';
   }
 
   /**

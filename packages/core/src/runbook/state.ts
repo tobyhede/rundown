@@ -223,6 +223,68 @@ export type RunbookStateUpdate = Partial<
   readonly frameEntryCounts?: FrameEntryCountsOp;
 };
 
+/**
+ * Apply a {@link RunbookStateUpdate} patch to a state value, purely.
+ *
+ * The single application of tagged merge/replace ops and artifact/completion
+ * trust re-assertion. Shared by {@link RunbookStateManager}'s locked write path
+ * and by the actor compute/commit seam, which derives the next state without
+ * persisting — so both produce byte-identical next states from the same inputs
+ * and can never drift.
+ *
+ * @param existing - The state to patch.
+ * @param updates - The typed patch with tagged ops on record-shaped fields.
+ * @param now - The ISO timestamp to stamp as `updatedAt`.
+ * @returns The patched state (not persisted).
+ */
+export function applyRunbookStateUpdate(
+  existing: RunbookState,
+  updates: RunbookStateUpdate,
+  now: string,
+): RunbookState {
+  // Pull tagged-op fields out of updates so the subsequent `...updates` spread
+  // does not leak the wrapper shapes into the strictly-typed RunbookState literal.
+  const {
+    variables: variablesOp,
+    templateVars: templateVarsOp,
+    resolvedCompletions: resolvedCompletionsOp,
+    frameEntryCounts: frameEntryCountsOp,
+    ...restUpdates
+  } = updates;
+  const shouldPatchSnapshotSubstepStates =
+    restUpdates.substepStates !== undefined && restUpdates.snapshot === undefined;
+  const patchedRestUpdates = shouldPatchSnapshotSubstepStates
+    ? {
+        ...restUpdates,
+        snapshot: patchSnapshotSubstepStates(existing.snapshot, restUpdates.substepStates),
+      }
+    : restUpdates;
+
+  return {
+    ...existing,
+    ...patchedRestUpdates,
+    ...(patchedRestUpdates.finalVars !== undefined
+      ? { finalVars: assertTrustedArtifactValues(patchedRestUpdates.finalVars) }
+      : {}),
+    variables:
+      variablesOp !== undefined
+        ? brandStoredOutputs(assertTrustedArtifactValues(applyOp(existing.variables, variablesOp)))
+        : existing.variables,
+    ...(templateVarsOp !== undefined
+      ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
+      : {}),
+    ...(resolvedCompletionsOp !== undefined
+      ? {
+          resolvedCompletions: assertTrustedResolvedCompletions(
+            applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
+          ),
+        }
+      : {}),
+    ...(frameEntryCountsOp !== undefined ? { frameEntryCounts: frameEntryCountsOp.value } : {}),
+    updatedAt: now,
+  };
+}
+
 interface CreateOptions {
   readonly runbookPath: string;
   readonly runId?: RunId;
@@ -628,51 +690,7 @@ export class RunbookStateManager {
     existing: RunbookState,
     updates: RunbookStateUpdate,
   ): Promise<RunbookState> {
-    // Pull tagged-op fields out of updates so the subsequent `...updates`
-    // spread does not leak the wrapper shapes into the strictly-typed
-    // RunbookState literal.
-    const {
-      variables: variablesOp,
-      templateVars: templateVarsOp,
-      resolvedCompletions: resolvedCompletionsOp,
-      frameEntryCounts: frameEntryCountsOp,
-      ...restUpdates
-    } = updates;
-    const shouldPatchSnapshotSubstepStates =
-      restUpdates.substepStates !== undefined && restUpdates.snapshot === undefined;
-    const patchedRestUpdates = shouldPatchSnapshotSubstepStates
-      ? {
-          ...restUpdates,
-          snapshot: patchSnapshotSubstepStates(existing.snapshot, restUpdates.substepStates),
-        }
-      : restUpdates;
-
-    const updated: RunbookState = {
-      ...existing,
-      ...patchedRestUpdates,
-      ...(patchedRestUpdates.finalVars !== undefined
-        ? { finalVars: assertTrustedArtifactValues(patchedRestUpdates.finalVars) }
-        : {}),
-      variables:
-        variablesOp !== undefined
-          ? brandStoredOutputs(
-              assertTrustedArtifactValues(applyOp(existing.variables, variablesOp)),
-            )
-          : existing.variables,
-      ...(templateVarsOp !== undefined
-        ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
-        : {}),
-      ...(resolvedCompletionsOp !== undefined
-        ? {
-            resolvedCompletions: assertTrustedResolvedCompletions(
-              applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
-            ),
-          }
-        : {}),
-      ...(frameEntryCountsOp !== undefined ? { frameEntryCounts: frameEntryCountsOp.value } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-
+    const updated = applyRunbookStateUpdate(existing, updates, new Date().toISOString());
     await this.saveUnlocked(updated, existing.lifecycle ?? null);
     return updated;
   }
