@@ -169,6 +169,39 @@ describe('RunbookStore round-trip', () => {
     expect(await store.listRunIds()).toEqual([b.id]);
     expect(await store.loadRun(a.id)).toBeNull();
   });
+
+  it('refuses to delete a run with active execution ownership', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          `INSERT INTO execution_attempts
+             (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+           VALUES (:id, 1, 'sha256:live', 'claimed', 1234, :startedAt)`,
+        )
+        .run({ id: state.id, startedAt: '2026-01-02T00:00:00.000Z' });
+      txn.tx
+        .prepare(
+          "UPDATE runs SET exec_pid = 1234, exec_token = 'sha256:live', exec_epoch = 1 WHERE id = :id",
+        )
+        .run({ id: state.id });
+    });
+
+    await expect(
+      store.transaction((txn) => {
+        txn.deleteRun(state.id);
+      }),
+    ).rejects.toThrow(/execution_in_progress/);
+    expect(await store.loadRun(state.id)).toEqual(state);
+    expect(
+      await store.read((txn) =>
+        txn.tx
+          .prepare('SELECT phase FROM execution_attempts WHERE run_id = :id')
+          .get<{ readonly phase: string }>({ id: state.id }),
+      ),
+    ).toEqual({ phase: 'claimed' });
+  });
 });
 
 describe('structural generation and version triggers', () => {

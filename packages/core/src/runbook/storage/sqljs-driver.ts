@@ -58,6 +58,10 @@ export interface SqljsDriverOptions {
    * at that boundary. Never set in production.
    */
   readonly faultHook?: (stage: SqljsPersistStage) => void;
+  /** Test-only replacement for opening the directory fsync handle. */
+  readonly directoryOpen?: (directory: string) => Promise<fs.FileHandle>;
+  /** Test-only replacement for releasing the adapter lock. */
+  readonly releaseLock?: (lockFile: string) => Promise<void>;
 }
 
 /** Suffix marking an in-flight export temp file for this driver. */
@@ -278,9 +282,10 @@ export class SqljsDriver implements SqlDriver {
       // Best-effort scoped release (RD-102): a failed unlink leaks only a
       // self-healing lock — the next acquirer reclaims it by PID — so it must
       // never propagate and replace the committed outcome of the durable write
-      // this lock protected. A bare `finally` would do exactly that.
+      // this lock protected. A bare `finally` would do exactly that. Release
+      // routes through the `releaseLock` seam so tests can inject failure.
       await using _guard = heldLock(
-        () => releaseFileLock(this.lockFile),
+        () => this.releaseLock(),
         () => ({ lock: this.lockFile, driver: 'sqljs' }),
       );
       await this.reclaimOrphanTemps();
@@ -362,15 +367,35 @@ export class SqljsDriver implements SqlDriver {
   private async fsyncDir(): Promise<void> {
     let dh: fs.FileHandle | undefined;
     try {
-      dh = await fs.open(this.dir, 'r');
+      dh = await this.openDirectory();
       await dh.sync();
-    } catch {
-      // Directory fsync is unsupported on some hosts (and on directories opened
-      // read-only on others); the atomic rename already provides the durability
-      // ordering that matters, so a failed dir fsync is non-fatal.
+    } catch (err) {
+      if (!isUnsupportedDirectoryFsyncError(err)) {
+        throw err;
+      }
+      // Some hosts do not support opening or syncing directories. Atomic rename
+      // remains the strongest durability boundary those hosts expose.
     } finally {
       await dh?.close();
     }
+  }
+
+  /**
+   * Open the containing directory through the production filesystem or test seam.
+   *
+   * @returns The opened file handle.
+   */
+  private openDirectory(): Promise<fs.FileHandle> {
+    return this.options.directoryOpen?.(this.dir) ?? fs.open(this.dir, 'r');
+  }
+
+  /**
+   * Release the adapter lock through the production filesystem or test seam.
+   *
+   * @returns A promise settled once release finishes.
+   */
+  private releaseLock(): Promise<void> {
+    return this.options.releaseLock?.(this.lockFile) ?? releaseFileLock(this.lockFile);
   }
 
   /**
@@ -405,6 +430,26 @@ export class SqljsDriver implements SqlDriver {
   private fault(stage: SqljsPersistStage): void {
     this.options.faultHook?.(stage);
   }
+}
+
+/**
+ * Identify host errors that specifically mean directory fsync is unsupported.
+ *
+ * Permission and I/O failures are deliberately excluded: acknowledging those
+ * would report durability that the filesystem did not provide.
+ *
+ * @param err - Failure from opening or syncing the containing directory.
+ * @returns Whether the host lacks directory-open/fsync support.
+ */
+function isUnsupportedDirectoryFsyncError(err: unknown): boolean {
+  return (
+    isNodeError(err) &&
+    (err.code === 'EINVAL' ||
+      err.code === 'ENOTSUP' ||
+      err.code === 'EOPNOTSUPP' ||
+      err.code === 'EISDIR' ||
+      err.code === 'ENOSYS')
+  );
 }
 
 /**

@@ -955,6 +955,40 @@ export function assertResolvedVariableForContext(
 export type Lifecycle = 'running' | 'completed' | 'stopped';
 
 /**
+ * Closed cause for an interrupted-execution recovery.
+ *
+ * A closed literal union (never a freeform string) so consumers switch
+ * exhaustively on the recovery cause.
+ *
+ * - `owner_dead`: the previous owner process died before recording an outcome.
+ * - `effect_boundary_crossed`: the owner crashed after the effect boundary; the
+ *   external effect may or may not have run.
+ * - `stale_commit`: a commit arrived from an execution attempt no longer active.
+ */
+export type ExecutionRecoveryReason = 'owner_dead' | 'effect_boundary_crossed' | 'stale_commit';
+
+/**
+ * Machine event that jumps a run to the `recoveryRequired` state when its
+ * execution outcome cannot be reconstructed.
+ *
+ * `epoch` is the ordering integer of the interrupted attempt (data, never the
+ * secret execution token). It is typed as a plain `number` here — not the
+ * storage-branded `ExecutionEpoch` — because the machine layer must not depend on
+ * the storage layer (that would form an import cycle). The storage-aware recovery
+ * service supplies a branded epoch, which widens to `number`.
+ */
+export type ExecutionRecoveryEvent = {
+  /** Discriminant. */
+  readonly type: 'EXECUTION_OUTCOME_UNKNOWN';
+  /** Ordering integer of the interrupted attempt (data, never the token). */
+  readonly epoch: number;
+  /** Closed recovery cause. */
+  readonly reason: ExecutionRecoveryReason;
+  /** Step id captured at recovery entry so retry re-enters the exact step. */
+  readonly interruptedStepId: string;
+};
+
+/**
  * Runbook execution state (persisted)
  */
 export interface RunbookState {
