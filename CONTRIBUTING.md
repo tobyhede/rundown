@@ -54,10 +54,28 @@ pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-ru
 ### Prerequisites
 
 - **Node.js**: v24.0.0 or later (bundles Corepack).
-- **pnpm**: v11 (the monorepo's package manager). Enable it once via Corepack —
-  `corepack enable` — and it will use the version pinned in the root
-  `package.json` `packageManager` field. Do not run `npm install` at the repo
-  root.
+- **pnpm**: v11 (the monorepo's package manager). Enable it once via Corepack
+  and it will use the version pinned in the root `package.json` `packageManager`
+  field. Do not run `npm install` at the repo root.
+
+  Install the shims outside the Node installation:
+
+  ```bash
+  corepack enable --install-directory ~/.local/bin   # any stable dir on PATH
+  ```
+
+  Bare `corepack enable` writes its shims into the _active Node installation's_
+  `bin/`, so they vanish on the next Node upgrade — and if a version manager
+  (mise, asdf, nvm, volta) has its own pnpm on PATH, that older pnpm silently
+  takes over. It will not warn: pnpm below v10 does not self-switch to
+  `packageManager`, and it ignores every setting in `pnpm-workspace.yaml`,
+  including the `nodeOptions` that Jest's ESM support depends on. Run
+  `which -a pnpm` and make sure no other pnpm precedes the shim.
+
+  `pnpm run verify` starts with `check:toolchain`, which fails loudly on exactly
+  this mismatch. Run `pnpm run check:toolchain` any time the test suite fails to
+  parse rather than to assert.
+
 - **npm**: only needed for the consumer-facing global install
   (`npm install -g @rundown-org/cli`) and the Docker e2e fixtures, not for
   monorepo development.
