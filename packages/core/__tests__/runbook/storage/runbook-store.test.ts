@@ -1214,6 +1214,86 @@ describe('session reconstruction', () => {
     expect(session.claims[claimKey]).toEqual(record);
     expect(session.claims[claimKey].delegation).toEqual(record.delegation);
   });
+
+  /**
+   * Seed a delegated claim, then overwrite its persisted blob with `overrides`.
+   *
+   * The writer only ever stores a linkage built from branded values, so these
+   * rows reproduce a database corrupted outside this store.
+   */
+  async function corruptDelegationBlob(
+    keyHex: string,
+    overrides: Record<string, unknown>,
+  ): Promise<void> {
+    const parent = await newState();
+    const child = await newState();
+    await store.createRun(parent);
+    await store.createRun(child);
+    const claimKey = assertClaimLookupKey(`rdclk_${keyHex}`);
+    const linkage = {
+      childRunId: child.id,
+      parentRunId: parent.id,
+      tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+      parentStepId: '2',
+      parentStep: '2',
+      parentFrameKey: buildFrameKey('2'),
+      parentEntry: 1,
+    };
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({ claimKey, controlledRunId: child.id, delegation: linkage }),
+        assertClaimGeneration(0),
+      );
+    });
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE claims SET delegation_json = :j WHERE key = :k')
+        .run({ j: JSON.stringify({ ...linkage, ...overrides }), k: claimKey });
+    });
+  }
+
+  it('refuses to hydrate a claim whose persisted delegation token hash is not a hash', async () => {
+    await corruptDelegationBlob('e4'.repeat(16), { tokenHash: 'not-a-delegation-token-hash' });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+  });
+
+  it('refuses to hydrate a claim whose persisted delegation run ids are not run ids', async () => {
+    await corruptDelegationBlob('e8'.repeat(16), { parentRunId: 'not-a-run-id' });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+  });
+
+  it('names the offending field when the persisted delegation blob is structurally invalid', async () => {
+    await corruptDelegationBlob('e6'.repeat(16), { parentEntry: 'not-a-number' });
+    // Naming the field is what distinguishes a rejected schema from a blob that
+    // slipped past the structural gate and only tripped over a later brand.
+    await expect(store.loadSession()).rejects.toThrow(
+      /Invalid persisted delegation linkage[\s\S]*parentEntry/,
+    );
+  });
+
+  it('refuses to hydrate a claim whose parent frame key has no iteration separator', async () => {
+    await corruptDelegationBlob('e5'.repeat(16), { parentFrameKey: 'no-iteration-separator' });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+  });
+
+  it('refuses to hydrate a claim whose parent frame key has a non-numeric iteration', async () => {
+    await corruptDelegationBlob('e7'.repeat(16), { parentFrameKey: '2|abc' });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+  });
+
+  it('refuses to hydrate a claim whose parent frame key carries an extra separator', async () => {
+    // The step segment is anchored, so a key with a second separator is not
+    // rescued by a suffix that happens to look well-formed.
+    await corruptDelegationBlob('e9'.repeat(16), { parentFrameKey: 'a|b|3' });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+  });
+
+  it('hydrates a claim whose parent frame key carries a multi-digit iteration', async () => {
+    await corruptDelegationBlob('ea'.repeat(16), { parentFrameKey: buildFrameKey('2', 12) });
+    const session = await store.loadSession();
+    const claimKey = assertClaimLookupKey(`rdclk_${'ea'.repeat(16)}`);
+    expect(session.claims[claimKey].delegation?.parentFrameKey).toBe('2|12');
+  });
 });
 
 describe('StoreInvariantError', () => {

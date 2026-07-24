@@ -22,9 +22,13 @@ import { type RunId, assertRunId } from '../run-id.js';
 import {
   type ClaimRecord,
   type ClaimLookupKey,
+  type DelegationClaimLinkage,
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
+import { assertDelegationTokenHash } from '../delegation-token.js';
+import { assertFrameKey } from '../targeting.js';
+import { getErrorMessage } from '../../errors.js';
 import type { SessionData } from '../state.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import {
@@ -931,6 +935,50 @@ function assertLifecycle(value: string): Lifecycle {
 /** Zod schema for the grants JSON blob, kept permissive at this edge. */
 const GrantsSchema = z.array(z.record(z.string(), z.unknown()));
 
+/** Structural schema for the delegation linkage blob, branded below. */
+const DelegationSchema = z.object({
+  childRunId: z.string(),
+  tokenHash: z.string(),
+  parentRunId: z.string(),
+  parentStepId: z.string(),
+  parentStep: z.string(),
+  parentFrameKey: z.string(),
+  parentEntry: z.number().int().nonnegative(),
+});
+
+/**
+ * Reconstruct a delegation linkage from its persisted blob.
+ *
+ * The writer only ever stores a linkage built from branded values, so a blob
+ * that fails here means the database was corrupted outside this store. Every
+ * branded field is re-validated rather than cast, so a corrupt row cannot
+ * re-enter the domain wearing brands it does not satisfy.
+ *
+ * @param json - Raw `delegation_json` column value.
+ * @returns The validated delegation linkage.
+ * @throws {Error} When the blob is not a well-formed delegation linkage.
+ */
+function deserializeDelegation(json: string): DelegationClaimLinkage {
+  const parsed = DelegationSchema.safeParse(JSON.parse(json));
+  if (!parsed.success) {
+    throw new Error(`Invalid persisted delegation linkage: ${parsed.error.message}`);
+  }
+  const raw = parsed.data;
+  try {
+    return {
+      childRunId: assertRunId(raw.childRunId),
+      tokenHash: assertDelegationTokenHash(raw.tokenHash),
+      parentRunId: assertRunId(raw.parentRunId),
+      parentStepId: raw.parentStepId,
+      parentStep: raw.parentStep,
+      parentFrameKey: assertFrameKey(raw.parentFrameKey),
+      parentEntry: raw.parentEntry,
+    };
+  } catch (error) {
+    throw new Error(`Invalid persisted delegation linkage: ${getErrorMessage(error)}`);
+  }
+}
+
 /**
  * Reconstruct a claim record from its row.
  *
@@ -942,9 +990,7 @@ function deserializeClaim(row: ClaimRow): ClaimRecord {
     JSON.parse(row.grants_json),
   ) as unknown as ClaimRecord['grants'];
   const delegation =
-    row.delegation_json !== null
-      ? (JSON.parse(row.delegation_json) as ClaimRecord['delegation'])
-      : undefined;
+    row.delegation_json !== null ? deserializeDelegation(row.delegation_json) : undefined;
   return {
     claimKey: assertClaimLookupKey(row.key),
     secretHash: assertClaimSecretHash(row.secret_hash),

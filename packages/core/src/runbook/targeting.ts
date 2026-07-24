@@ -169,6 +169,26 @@ export function buildFrameKey(step: string, iteration?: number): FrameKey {
   return `${step}|${iterationPart}` as FrameKey;
 }
 
+/** Shape every {@link buildFrameKey} result matches: `<step>|<iteration-or-empty>`. */
+const FRAME_KEY_PATTERN = /^[^|]+\|(?:\d+)?$/;
+
+/**
+ * Validate a frame key string arriving from an untrusted edge.
+ *
+ * Lives beside {@link buildFrameKey} so the format has one owner: a validator
+ * that restated the pattern elsewhere would drift the day the format changes.
+ *
+ * @param value - Raw frame key string.
+ * @returns The validated frame key.
+ * @throws {Error} When the value is not in `<step>|<iteration-or-empty>` form.
+ */
+export function assertFrameKey(value: string): FrameKey {
+  if (!FRAME_KEY_PATTERN.test(value)) {
+    throw new Error(`Invalid frame key: ${JSON.stringify(value)}`);
+  }
+  return value as FrameKey;
+}
+
 /**
  * Runtime completion identity key.
  *
