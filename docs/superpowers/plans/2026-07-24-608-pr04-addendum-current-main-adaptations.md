@@ -34,7 +34,7 @@ Replace each of the three inline `UPDATE` blocks with `takeOwnership(txn.tx, sta
 
 `e203ec905` adds `RunbookStore.mutateState`, which calls `this.readRunWithVersion(tx, runId)` inside `this.driver.read(...)` but declares the helper's parameter as `SqlTransaction`. PR 1 and PR 3 introduced the narrower `SqlReadTransaction` that `driver.read` supplies, so this is a hard compile error:
 
-```
+```text
 src/runbook/storage/runbook-store.ts(705,79): error TS2345: Argument of type
 'SqlReadTransaction' is not assignable to parameter of type 'SqlTransaction'.
   Property 'exec' is missing in type 'SqlReadTransaction' but required in type 'SqlTransaction'.

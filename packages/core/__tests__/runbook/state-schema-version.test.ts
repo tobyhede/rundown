@@ -6,6 +6,7 @@ import { RunbookStateSchema } from '../../src/schemas.js';
 import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/index.js';
 import { CURRENT_SCHEMA_VERSION, applyRunbookStateUpdate } from '../../src/runbook/state.js';
 import type { RunbookState } from '../../src/runbook/types.js';
+import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
 const INVALID_RUN_ID = `rd_${'2'.repeat(32)}`;
@@ -358,11 +359,18 @@ describe('RunbookStateManager.update() — lastAction origin persistence', () =>
 });
 
 describe('applyRunbookStateUpdate — stamps, never migrates', () => {
-  const derivable = {
+  // Fully typed rather than cast: `schemaVersion` is optional on RunbookState, so
+  // the "carries none" case below is expressible without escaping the type. A
+  // blanket `as unknown as RunbookState` would also suppress the compile error a
+  // future RunbookState field ought to raise here. Only the two branded fields
+  // (`id`, `variables`) need helpers, and those exist for tests.
+  const derivable: RunbookState = {
     ...BASE_SCHEMA_STATE,
-    variables: {},
+    id: brandRunIdForTest(BASE_SCHEMA_STATE.id),
+    runbook: { source: 'project', path: 'x.md' },
+    variables: brandStoredOutputsForTest({}),
     lifecycle: 'running',
-  } as unknown as RunbookState;
+  };
 
   it('stamps the current version on the derived state', () => {
     const current = { ...derivable, schemaVersion: CURRENT_SCHEMA_VERSION };
