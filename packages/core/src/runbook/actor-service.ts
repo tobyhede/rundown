@@ -175,6 +175,42 @@ export function stateValueAsString(value: unknown): string | null {
   return null;
 }
 
+/**
+ * Maximum length for step state-value regex inputs to prevent ReDoS.
+ *
+ * A legitimate state ID is `step::<name>[::<substep>]`, bounded by step-name
+ * length; 1000 is far beyond any real runbook. Mirrors the parser's
+ * `MAX_REGEX_INPUT_LENGTH` guard (`packages/parser/src/helpers.ts`).
+ */
+const MAX_STATE_VALUE_LENGTH = 1000;
+
+/** Matches the current XState step state ID format: `step::<name>[::<substep>]`. */
+const STEP_STATE_VALUE_RE = /^step::(.+?)(?:::(.+))?$/;
+
+/**
+ * Parse a persisted XState step state ID into its step name and optional substep.
+ *
+ * The pattern is ambiguous — the lazy `(.+?)` sweeps every `::` split point and
+ * the trailing `(.+)` backtracks against `$` — so a *rejecting* input takes time
+ * quadratic in its length. (Matching inputs are linear; rejection requires an
+ * embedded line terminator, which `.` cannot match.) The length guard bounds the
+ * worst case rather than rewriting the pattern, because its semantics are subtler
+ * than they look: `step::a::` parses as step `a::` with no substep, and
+ * `step::a:b` as step `a:b`. Over-length input returns `null`, which every caller
+ * already treats as invalid state.
+ *
+ * @param stateValue - The flattened persisted state ID to parse
+ * @returns The parsed step name and optional substep, or `null` when unparseable
+ */
+function parseStepStateValue(
+  stateValue: string,
+): { readonly stepName: string; readonly substep: string | undefined } | null {
+  if (stateValue.length > MAX_STATE_VALUE_LENGTH) return null;
+  const match = STEP_STATE_VALUE_RE.exec(stateValue);
+  if (!match) return null;
+  return { stepName: match[1], substep: match[2] };
+}
+
 function isPendingMachineEffectSnapshotValue(value: unknown): boolean {
   if (
     value === null ||
@@ -560,18 +596,18 @@ function deriveActorStatePatch(
 
   // Parse only the current XState state ID format. Older or malformed
   // persisted snapshots are invalid state and must fail closed.
-  const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-  if (!match) {
+  const parsed = parseStepStateValue(stateValue);
+  if (!parsed) {
     throw new Error(
       `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
         'Prune invalid runbook state and restart execution.',
     );
   }
-  const stepName = match[1];
+  const stepName = parsed.stepName;
 
   let substep = snapshot.context?.substep;
-  if (!substep && match[2]) {
-    substep = match[2];
+  if (!substep && parsed.substep) {
+    substep = parsed.substep;
   }
 
   // Find step by name (unified lookup)
@@ -692,14 +728,14 @@ export class RunbookActorService {
       );
     }
 
-    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-    if (!match) {
+    const parsed = parseStepStateValue(stateValue);
+    if (!parsed) {
       throw new Error(
         `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
           'Prune invalid runbook state and restart execution.',
       );
     }
-    const stepName = match[1];
+    const stepName = parsed.stepName;
     if (!steps.find((s) => s.name === stepName)) {
       throw new Error(
         `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
@@ -1265,8 +1301,7 @@ export class RunbookActorService {
         const preValue = stateValueAsString(preSnapshot.value) ?? JSON.stringify(preSnapshot.value);
         const preCtx = preSnapshot.context as Record<string, unknown> | undefined;
         const preSubstep = preCtx?.substep as string | undefined;
-        const stepMatch = /^step::(.+?)(?:::(.+))?$/.exec(preValue);
-        const currentStepName = stepMatch?.[1];
+        const currentStepName = parseStepStateValue(preValue)?.stepName;
         const currentStep = currentStepName
           ? steps.find((s) => s.name === currentStepName)
           : undefined;

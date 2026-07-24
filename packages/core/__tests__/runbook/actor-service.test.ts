@@ -274,6 +274,54 @@ npm test
       );
     });
 
+    it('rejects an over-length persisted stateValue before the step-ID regex runs', async () => {
+      // CodeQL js/polynomial-redos: `/^step::(.+?)(?:::(.+))?$/` is ambiguous —
+      // the lazy group sweeps every `::` split point and the trailing `(.+)`
+      // backtracks against `$`, so a *rejecting* input costs O(n^2). Rejection
+      // requires an embedded line terminator, which `.` cannot match. Without
+      // the length guard this input takes seconds; with it, the regex never runs.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: `step::a::${'a::a'.repeat(8192)}\n`,
+        context: { variables: {}, retryCount: 0 },
+      });
+
+      await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
+        /Unsupported persisted stateValue/,
+      );
+    });
+
+    it('parses a persisted stateValue at exactly the length guard boundary', async () => {
+      // 'step::' is 6 chars, so a 994-char name lands the value on 1000 exactly.
+      // Reaching the *missing step* diagnostic proves the parse ran rather than
+      // being short-circuited by the guard — this is the off-by-one pin.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const value = `step::${'x'.repeat(994)}`;
+      expect(value).toHaveLength(1000);
+      const actor = mockActor({ value, context: { variables: {}, retryCount: 0 } });
+
+      await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
+        /references missing step/,
+      );
+    });
+
+    it('rejects a persisted stateValue one character past the length guard', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const value = `step::${'x'.repeat(995)}`;
+      expect(value).toHaveLength(1001);
+      const actor = mockActor({ value, context: { variables: {}, retryCount: 0 } });
+
+      await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
+        /Unsupported persisted stateValue/,
+      );
+    });
+
     it('persists and rehydrates a compound-leaf snapshot through a sendAndSync round-trip', async () => {
       // Create a runbook with OUTPUTS + RETRY transitions
       const steps = createRunbook(`## 1. capture
