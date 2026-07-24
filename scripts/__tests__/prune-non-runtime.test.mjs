@@ -94,6 +94,36 @@ test('removes published TypeScript sources', () => {
   assert.ok(!existsSync(join(pkgDir, 'src/types.ts')));
 });
 
+test('removes published .tsx sources', () => {
+  // A component library ships .tsx source alongside its build. Node cannot load
+  // .tsx any more than .ts, so it is weight of the same kind — the extension
+  // pattern must reach it.
+  const pkgDir = installFakePackage(root, 'ui-kit', {
+    files: { 'dist/index.js': 'module.exports = 1;', 'src/Button.tsx': 'export const Button = 1;' },
+  });
+
+  pruneNonRuntimeFiles(root);
+
+  assert.ok(existsSync(join(pkgDir, 'dist/index.js')), 'the runtime build survives');
+  assert.ok(!existsSync(join(pkgDir, 'src/Button.tsx')));
+});
+
+test('prunes TypeScript even when a bundler-only module field points at it', () => {
+  // `module` is bundler metadata Node never resolves — the same category as the
+  // @zod/source condition. A package with a real `main` and a `module` pointing
+  // at its .ts entry must still have those sources pruned: honouring `module`
+  // would keep them for a resolver that does not exist in the snapshot.
+  const pkgDir = installFakePackage(root, 'dual-entry', {
+    packageJson: { main: './dist/index.js', module: './src/index.ts' },
+    files: { 'dist/index.js': 'module.exports = 1;', 'src/index.ts': 'export default 1;' },
+  });
+
+  pruneNonRuntimeFiles(root);
+
+  assert.ok(existsSync(join(pkgDir, 'dist/index.js')), 'the Node entry survives');
+  assert.ok(!existsSync(join(pkgDir, 'src/index.ts')), 'the bundler-only source does not');
+});
+
 test('keeps TypeScript sources a package declares as its own entry point', () => {
   // Source-first packages resolve to `.ts` at runtime under Node's type
   // stripping. Deriving the keep-set from the package's own manifest — as the

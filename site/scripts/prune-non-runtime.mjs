@@ -39,8 +39,8 @@ const KEEP_DIRS = new Set(['runbooks']);
 /** Source maps: dangling references to sources no tarball ships. */
 const SOURCE_MAP = /\.map$/;
 
-/** TypeScript, declarations included. Nothing in the snapshot compiles. */
-const TYPESCRIPT = /\.(c|m)?ts$/;
+/** TypeScript, declarations and `.tsx` included. Nothing in the snapshot compiles. */
+const TYPESCRIPT = /\.(c|m)?tsx?$/;
 
 /**
  * Package docs, matched only with a documentation extension or none.
@@ -74,20 +74,21 @@ const RESOLVABLE_CONDITIONS = new Set([
 /**
  * Collect every path a package declares as runnable *here*.
  *
- * `main`, `module`, `bin` and the `exports` leaves reachable under
+ * `main`, `bin` and the `exports` leaves reachable under
  * {@link RESOLVABLE_CONDITIONS} are what a resolver in the snapshot can land
- * on. Two exclusions are deliberate: `types`, because it is compiler-facing and
- * nothing here type-checks; and bundler-specific conditions, because honouring
+ * on. Three exclusions are deliberate: `types`, because it is compiler-facing
+ * and nothing here type-checks; `module`, because it is bundler metadata Node
+ * never resolves; and bundler-specific export conditions, because honouring
  * them protects sources no import in the demo can reach.
  *
- * @param {{ main?: unknown, module?: unknown, exports?: unknown, bin?: unknown }} packageJson - Parsed package.json.
+ * @param {{ main?: unknown, exports?: unknown, bin?: unknown }} packageJson - Parsed package.json.
  * @returns {string[]} Declared targets, as written (e.g. `./dist/index.js`).
  */
 function declaredTargets(packageJson) {
   /** @type {string[]} */
   const targets = [];
 
-  /** @param {unknown} node - A `main`/`module`/`bin` value: string, or map of names to strings. */
+  /** @param {unknown} node - A `main`/`bin` value: string, or map of names to strings. */
   const walkPaths = (node) => {
     if (typeof node === 'string') {
       targets.push(node);
@@ -124,7 +125,6 @@ function declaredTargets(packageJson) {
   };
 
   walkPaths(packageJson.main);
-  walkPaths(packageJson.module);
   walkPaths(packageJson.bin);
   walkExports(packageJson.exports);
 

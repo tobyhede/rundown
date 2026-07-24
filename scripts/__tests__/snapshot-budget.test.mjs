@@ -61,3 +61,28 @@ test('names the measured size, the budget and the hard limit when it refuses', (
     },
   );
 });
+
+test('renders the refusal as one flat line, byte for byte', () => {
+  // Pins the exact CLI output so a rewrite of the message construction (e.g.
+  // concatenation → a single template literal) cannot silently insert a newline
+  // or drop a space. The segments are one continuous sentence, not a list.
+  const error = /** @type {Error} */ (
+    (() => {
+      try {
+        assertSnapshotWithinBudget(24 * 1024 * 1024);
+        return new Error('did not throw');
+      } catch (thrown) {
+        return thrown;
+      }
+    })()
+  );
+
+  assert.equal(
+    error.message,
+    'WebContainer snapshot is 24.00 MiB, over its 12.00 MiB budget (Cloudflare Pages rejects ' +
+      'any single file over 25.00 MiB, so this fails the deploy long before it fails a test). ' +
+      'Every runtime dependency of @rundown-org/cli is paid for twice: once as a dependency and ' +
+      'again as weight in this asset. Either drop what was added, or split the asset so no single ' +
+      'file approaches the limit — see issue #639.',
+  );
+});

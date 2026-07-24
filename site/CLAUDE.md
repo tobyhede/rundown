@@ -71,11 +71,7 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 - Built via `npm run build:snapshot -w site` (or `npm run build -w site`)
 - **Not committed to git** — must be built locally before running dev server or tests
 
-**Size budget (issue #639):**
-- The snapshot is ONE static file and Cloudflare Pages rejects any single file over 25 MiB
-- `scripts/snapshot-budget.mjs` fails the build at 12 MiB — kept close to the ~9.4 MiB asset, not just below the cap — so growth is caught in a GitHub check instead of a post-merge deploy failure
-- Every runtime dependency of `@rundown-org/cli` is paid for twice: once as a dependency, again as weight in this asset
-- `scripts/prune-sqljs.mjs` drops unused sql.js build variants; `scripts/prune-non-runtime.mjs` drops declarations, TypeScript sources, source maps and package docs — nothing in the snapshot compiles or debugs. Bundled runbooks (`dist/runbooks/`) and licence texts are never pruned
+**Size budget and pruning (issue #639):** the snapshot is a single static file under Cloudflare Pages' 25 MiB per-file cap, kept small by `scripts/prune-sqljs.mjs` + `scripts/prune-non-runtime.mjs` and guarded by a 12 MiB build assertion in `scripts/snapshot-budget.mjs`. See [docs/internal/architecture.md § Site snapshot](../docs/internal/architecture.md#site-snapshot-size-budget-and-pruning) for the design.
 
 **Spawn limitation workaround:**
 - WebContainer's nested `child_process.spawn()` doesn't propagate stdio properly

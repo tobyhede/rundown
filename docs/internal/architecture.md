@@ -723,3 +723,38 @@ process.
 - `executeRdCommandInternal()` dispatches to internal handlers
 - Currently supported: `echo`, `prompt` commands
 - Unsupported commands fall back to standard spawn behavior
+
+### Site snapshot: size budget and pruning
+
+The marketing site (`site/`) boots the CLI in the browser from a prebuilt
+WebContainer snapshot, `site/public/rundown-snapshot.bin`. The snapshot is a
+single static file that packs the CLI's entire installed `node_modules`, and
+Cloudflare Pages — where the site deploys — rejects any single file over 25 MiB.
+Every runtime dependency of `@rundown-org/cli` is therefore paid for twice: once
+as a real dependency, and again as static-asset weight against that hard ceiling
+(issue #639).
+
+`site/scripts/build-snapshot.ts` installs the packed `parser`/`core`/`cli`
+tarballs into a temp directory, prunes, snapshots the result, and asserts the
+size:
+
+- **`prune-sqljs.mjs`** drops the sql.js build variants the driver never loads
+  (asm.js fallbacks, debug builds, browser workers — ~17 MiB), keeping the
+  loader and its `.wasm` derived from the package's own `main`/`exports`.
+- **`prune-non-runtime.mjs`** drops files nothing in the snapshot can execute:
+  type declarations, published TypeScript sources (`.ts`/`.tsx`), source maps
+  and package docs. There is no `tsc`, bundler or devtools inside the snapshot,
+  so these are weight and nothing else; source maps are doubly dead, naming
+  `../src/*` sources the tarballs never ship. Two things are deliberately kept:
+  `runbooks/` trees (the CLI's bundled `.runbook.md` files are runtime data that
+  happens to be markdown) and licence/notice texts (the snapshot redistributes
+  third-party code to every visitor). TypeScript pruning is gated per package on
+  the package's own manifest — a source-first package that resolves to `.ts` at
+  runtime keeps its sources — and honours only export conditions Node can
+  resolve, so bundler-only metadata (`module`, `@zod/source`) does not protect
+  sources the demo can never reach.
+- **`snapshot-budget.mjs`** fails the build at 12 MiB — kept close to the ~9.4
+  MiB asset, not just below the 25 MiB cap — so growth is caught in a GitHub
+  check (the CI `playwright` job builds the snapshot) with a readable log,
+  instead of a post-merge Cloudflare deploy failure. Retune the budget
+  deliberately when the asset itself moves.

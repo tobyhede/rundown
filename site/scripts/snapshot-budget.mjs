@@ -47,12 +47,15 @@ export function assertSnapshotWithinBudget(byteLength) {
     return;
   }
 
+  // One multiline template literal; the `\` line continuations keep the thrown
+  // message a single flat line despite the wrapped source (pinned exactly by
+  // snapshot-budget.test.mjs).
   throw new Error(
-    `WebContainer snapshot is ${formatMiB(byteLength)}, over its ` +
-      `${formatMiB(SNAPSHOT_BUDGET_BYTES)} budget (Cloudflare Pages rejects any single file ` +
-      `over ${formatMiB(CLOUDFLARE_PAGES_FILE_LIMIT_BYTES)}, so this fails the deploy long ` +
-      `before it fails a test). Every runtime dependency of @rundown-org/cli is paid for twice: ` +
-      `once as a dependency and again as weight in this asset. Either drop what was added, or ` +
-      `split the asset so no single file approaches the limit — see issue #639.`,
+    `WebContainer snapshot is ${formatMiB(byteLength)}, over its \
+${formatMiB(SNAPSHOT_BUDGET_BYTES)} budget (Cloudflare Pages rejects any single file over \
+${formatMiB(CLOUDFLARE_PAGES_FILE_LIMIT_BYTES)}, so this fails the deploy long before it fails \
+a test). Every runtime dependency of @rundown-org/cli is paid for twice: once as a dependency \
+and again as weight in this asset. Either drop what was added, or split the asset so no single \
+file approaches the limit — see issue #639.`,
   );
 }
