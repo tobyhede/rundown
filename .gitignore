@@ -27,6 +27,12 @@ coverage/
 **/.claude/rundown/
 .claude-docker/
 .codex-docker/
+# Agent scratch output (SDD task reports etc.) — never part of the repo.
+.superpowers/
+# Local pnpm content-addressable store.
+.pnpm-store/
+# Machine-local Serena overrides (project.yml itself is tracked).
+.serena/project.local.yml
 logs/
 # Captured output from the end-to-end-test runbook (FeedbackPath); not a fixture.
 **/end-to-end-test-feedback.json
