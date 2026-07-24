@@ -417,3 +417,12 @@ linecap
 linejoin
 offsetless
 Vulns
+sqljs
+errcode
+unbindable
+rowids
+unawaited
+fsyncs
+webcontainer
+unopenable
+parameterless

@@ -5,6 +5,7 @@
  * Uses local packages when @rundown-org/cli is not published to npm.
  */
 import { snapshot } from '@webcontainer/snapshot';
+import { pruneSqlJsDist } from './prune-sqljs.mjs';
 import { execSync } from 'child_process';
 import {
   mkdtempSync,
@@ -174,6 +175,16 @@ async function buildSnapshot() {
     if (existsSync(nodeModulesDir)) {
       console.log('Resolving symlinks in node_modules/.bin directories...');
       resolveAllBinSymlinks(nodeModulesDir);
+
+      // The snapshot is ONE static asset and Cloudflare Pages caps a file at
+      // 25 MiB. sql.js ships ~18 MB of build variants for the ~0.7 MB the
+      // driver loads, which alone pushes the asset over. See issue #639: this
+      // buys headroom, it does not fix the snapshot's proximity to the limit.
+      console.log('Pruning unused sql.js build variants...');
+      const pruned = pruneSqlJsDist(nodeModulesDir);
+      console.log(
+        `✓ Reclaimed ${(pruned.bytesRemoved / 1024 / 1024).toFixed(1)} MB from ${String(pruned.packages.length)} sql.js copy(ies)`,
+      );
     }
 
     // 5. Create binary snapshot (includes node_modules!)
