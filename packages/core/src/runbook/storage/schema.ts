@@ -178,6 +178,137 @@ CREATE TABLE execution_attempts (
   PRIMARY KEY (run_id, exec_epoch),
   FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
 );
+
+-- ==========================================================================
+-- Structural lease/version triggers.
+--
+-- The two concurrency counters on runs are owned SOLELY by these triggers, never
+-- by direct store writes:
+--   * state_version  is bumped whenever a run's authoritative state_json changes.
+--   * claim_generation is bumped whenever any claim or the stash slot controlling
+--     a run changes — the set of writes that can change claim resolution.
+-- This makes the invariant "every claim/stash writer bumps generation" and
+-- "every state writer bumps state_version" hold by construction for ANY writer,
+-- present or future, rather than by an enumerated call-site list.
+--
+-- The claim UPDATE triggers are scoped with UPDATE OF to the claim-resolution
+-- columns. The timestamp columns are deliberately excluded: last_seen_at carries
+-- the #519 activity signal and updated_at is record bookkeeping, so neither can
+-- change how a presented claim resolves. An unscoped trigger would make a
+-- liveness touch invalidate every authority captured before it (surfacing as a
+-- spurious claim_superseded) and would fence liveness out of exactly the window
+-- where it matters — while an owner holds the run.
+--
+-- The claim/stash BEFORE triggers additionally RAISE(ABORT) when the controlled
+-- run has active execution ownership (exec_token IS NOT NULL). A trigger never
+-- waits while holding the writer lock; the store converts the abort to a typed
+-- execution_in_progress. An owner's own final transaction clears exec_token to
+-- NULL first (in the same transaction), so its subsequent claim/stash writes pass
+-- the guard.
+--
+-- The stash UPDATE triggers read BOTH endpoints: moving the slot from run A to
+-- run B changes claim resolution for A and B alike, so both are guarded and both
+-- generations bump. The store's own setStash clears and re-inserts, but the
+-- invariant must hold for any writer of the slot, not just that path.
+-- ==========================================================================
+
+CREATE TRIGGER claims_guard_insert BEFORE INSERT ON claims
+BEGIN
+  SELECT CASE
+    WHEN (SELECT exec_token FROM runs WHERE id = NEW.controlled_run) IS NOT NULL
+    THEN RAISE(ABORT, 'execution_in_progress')
+  END;
+END;
+
+CREATE TRIGGER claims_guard_update BEFORE UPDATE OF
+  key, controlled_run, secret_hash, issued_generation, status,
+  parent_run_id, parent_linkage_version, delegation_json, grants_json
+ON claims
+BEGIN
+  SELECT CASE
+    WHEN (SELECT exec_token FROM runs WHERE id = NEW.controlled_run) IS NOT NULL
+    THEN RAISE(ABORT, 'execution_in_progress')
+  END;
+END;
+
+CREATE TRIGGER claims_guard_delete BEFORE DELETE ON claims
+BEGIN
+  SELECT CASE
+    WHEN (SELECT exec_token FROM runs WHERE id = OLD.controlled_run) IS NOT NULL
+    THEN RAISE(ABORT, 'execution_in_progress')
+  END;
+END;
+
+CREATE TRIGGER claims_bump_gen_insert AFTER INSERT ON claims
+BEGIN
+  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.controlled_run;
+END;
+
+CREATE TRIGGER claims_bump_gen_update AFTER UPDATE OF
+  key, controlled_run, secret_hash, issued_generation, status,
+  parent_run_id, parent_linkage_version, delegation_json, grants_json
+ON claims
+BEGIN
+  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.controlled_run;
+END;
+
+CREATE TRIGGER claims_bump_gen_delete AFTER DELETE ON claims
+BEGIN
+  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = OLD.controlled_run;
+END;
+
+CREATE TRIGGER stash_guard_insert BEFORE INSERT ON stash_slot
+BEGIN
+  SELECT CASE
+    WHEN (SELECT exec_token FROM runs WHERE id = NEW.run_id) IS NOT NULL
+    THEN RAISE(ABORT, 'execution_in_progress')
+  END;
+END;
+
+-- EXISTS, not a scalar exec_token subquery: with two candidate rows a scalar
+-- subquery returns only the first, so an owned endpoint could slip past behind an
+-- unowned one.
+CREATE TRIGGER stash_guard_update BEFORE UPDATE ON stash_slot
+BEGIN
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1 FROM runs WHERE id IN (OLD.run_id, NEW.run_id) AND exec_token IS NOT NULL
+    )
+    THEN RAISE(ABORT, 'execution_in_progress')
+  END;
+END;
+
+CREATE TRIGGER stash_guard_delete BEFORE DELETE ON stash_slot
+BEGIN
+  SELECT CASE
+    WHEN (SELECT exec_token FROM runs WHERE id = OLD.run_id) IS NOT NULL
+    THEN RAISE(ABORT, 'execution_in_progress')
+  END;
+END;
+
+CREATE TRIGGER stash_bump_gen_insert AFTER INSERT ON stash_slot
+BEGIN
+  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.run_id;
+END;
+
+CREATE TRIGGER stash_bump_gen_update AFTER UPDATE ON stash_slot
+BEGIN
+  UPDATE runs SET claim_generation = claim_generation + 1
+   WHERE id IN (OLD.run_id, NEW.run_id);
+END;
+
+CREATE TRIGGER stash_bump_gen_delete AFTER DELETE ON stash_slot
+BEGIN
+  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = OLD.run_id;
+END;
+
+-- state_version fires only when authoritative state_json changes, so the
+-- generation-bump UPDATEs above (which touch only claim_generation) never move
+-- state_version, and this trigger's own state_version UPDATE never re-fires it.
+CREATE TRIGGER runs_bump_state_version AFTER UPDATE OF state_json ON runs
+BEGIN
+  UPDATE runs SET state_version = state_version + 1 WHERE id = NEW.id;
+END;
 `;
 
 /**
