@@ -91,6 +91,7 @@ env
 esac
 esm
 exfiltration
+extensionless
 fdisk
 featurebranch
 finalvars
@@ -349,6 +350,7 @@ unparseable
 unsynchronized
 precheck
 frontends
+recognises
 reconstructable
 fanout
 unsupplied

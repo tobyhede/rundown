@@ -157,6 +157,46 @@ test('removes package README and CHANGELOG files', () => {
   assert.ok(!existsSync(join(pkgDir, 'readme.markdown')));
 });
 
+test('keeps a doc-named module that carries a runtime extension', () => {
+  // The doc match keys off doc-shaped names, so it must not fire on
+  // `history.js` or `changes.json`. Those are ordinary modules that a package
+  // requires internally — never a declared entry point, so nothing else here
+  // would protect them — and deleting one is a MODULE_NOT_FOUND in the browser,
+  // at runtime, long after the build.
+  const pkgDir = installFakePackage(root, 'doc-shaped-runtime', {
+    files: {
+      'dist/index.js': "module.exports = require('./history.js');",
+      'dist/history.js': 'module.exports = [];',
+      'dist/changes.json': '[]',
+      'lib/authors.cjs': 'module.exports = {};',
+    },
+  });
+
+  pruneNonRuntimeFiles(root);
+
+  assert.ok(existsSync(join(pkgDir, 'dist/history.js')), 'history.js is a module, not a doc');
+  assert.ok(existsSync(join(pkgDir, 'dist/changes.json')));
+  assert.ok(existsSync(join(pkgDir, 'lib/authors.cjs')));
+});
+
+test('removes docs across every doc extension it recognises', () => {
+  const pkgDir = installFakePackage(root, 'many-docs', {
+    files: {
+      'dist/index.js': 'module.exports = 1;',
+      README: '# extensionless',
+      'CHANGES.txt': 'changes',
+      'HISTORY.rst': 'history',
+      'contributing.markdown': 'how to contribute',
+    },
+  });
+
+  pruneNonRuntimeFiles(root);
+
+  for (const file of ['README', 'CHANGES.txt', 'HISTORY.rst', 'contributing.markdown']) {
+    assert.ok(!existsSync(join(pkgDir, file)), `${file} is pruned`);
+  }
+});
+
 test('keeps bundled runbooks, which are runtime data despite being markdown', () => {
   // @rundown-org/cli ships its bundled runbooks as .runbook.md under
   // dist/runbooks/. A blanket markdown prune would break `rundown ls --all` and

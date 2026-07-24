@@ -42,8 +42,17 @@ const SOURCE_MAP = /\.map$/;
 /** TypeScript, declarations included. Nothing in the snapshot compiles. */
 const TYPESCRIPT = /\.(c|m)?ts$/;
 
-/** Package docs. Licence and notice texts are deliberately excluded. */
-const PACKAGE_DOC = /^(readme|changelog|changes|history|contributing|authors)(\.[^.]+)*$/i;
+/**
+ * Package docs, matched only with a documentation extension or none.
+ *
+ * The extension is anchored to a doc-shaped set rather than "anything", because
+ * `history.js` and `changes.json` are ordinary modules a package requires
+ * internally — never declared entry points, so nothing else here would protect
+ * them — and deleting one is a runtime `MODULE_NOT_FOUND` in the browser.
+ * Licence and notice texts are deliberately absent from the name set.
+ */
+const PACKAGE_DOC =
+  /^(readme|changelog|changes|history|contributing|contributors|authors)(\.(md|markdown|mdown|txt|rst|adoc))?$/i;
 
 /**
  * Export conditions the snapshot's Node can actually resolve.

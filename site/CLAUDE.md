@@ -73,7 +73,7 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 
 **Size budget (issue #639):**
 - The snapshot is ONE static file and Cloudflare Pages rejects any single file over 25 MiB
-- `scripts/snapshot-budget.mjs` fails the build at 20 MiB, so growth is caught in a GitHub check instead of a post-merge deploy failure
+- `scripts/snapshot-budget.mjs` fails the build at 12 MiB — kept close to the ~9.4 MiB asset, not just below the cap — so growth is caught in a GitHub check instead of a post-merge deploy failure
 - Every runtime dependency of `@rundown-org/cli` is paid for twice: once as a dependency, again as weight in this asset
 - `scripts/prune-sqljs.mjs` drops unused sql.js build variants; `scripts/prune-non-runtime.mjs` drops declarations, TypeScript sources, source maps and package docs — nothing in the snapshot compiles or debugs. Bundled runbooks (`dist/runbooks/`) and licence texts are never pruned
 

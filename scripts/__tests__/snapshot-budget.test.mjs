@@ -25,6 +25,17 @@ test('the budget leaves headroom below the hard Cloudflare limit', () => {
   );
 });
 
+test('the budget stays tight enough to make growth a diff-time conversation', () => {
+  // The point of the guardrail (issue #639) is that a sql.js-sized addition
+  // trips it in the PR that adds it, not ten quiet megabytes later. A budget
+  // far above the asset it guards defeats that, so it is bounded from above too
+  // — retune it deliberately alongside the asset, not by drifting upward.
+  assert.ok(
+    SNAPSHOT_BUDGET_BYTES <= 13 * 1024 * 1024,
+    'budget must stay close to the asset it guards',
+  );
+});
+
 test('the hard limit is Cloudflare Pages’ documented 25 MiB', () => {
   assert.equal(CLOUDFLARE_PAGES_FILE_LIMIT_BYTES, 25 * 1024 * 1024);
 });
@@ -44,7 +55,7 @@ test('names the measured size, the budget and the hard limit when it refuses', (
     () => assertSnapshotWithinBudget(24 * 1024 * 1024),
     (error) => {
       assert.match(error.message, /24\.00 MiB/, 'measured size');
-      assert.match(error.message, /20\.00 MiB/, 'budget');
+      assert.match(error.message, /12\.00 MiB/, 'budget');
       assert.match(error.message, /25\.00 MiB/, 'hard limit');
       return true;
     },

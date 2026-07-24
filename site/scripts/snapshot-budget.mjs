@@ -16,8 +16,14 @@
 /** Cloudflare Pages' documented per-file ceiling. */
 export const CLOUDFLARE_PAGES_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 
-/** Where the build refuses, leaving 5 MiB between it and the deploy failing. */
-export const SNAPSHOT_BUDGET_BYTES = 20 * 1024 * 1024;
+/**
+ * Where the build refuses. Kept close to the asset it guards (~9.4 MiB), not
+ * just below the cap: a budget far above the asset lets ten quiet megabytes
+ * accrete before anyone hears about it, when the point is that a sql.js-sized
+ * addition trips the check in the PR that adds it. Retune deliberately when the
+ * asset itself moves.
+ */
+export const SNAPSHOT_BUDGET_BYTES = 12 * 1024 * 1024;
 
 /**
  * Format a byte count for a build log.
