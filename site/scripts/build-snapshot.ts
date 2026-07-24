@@ -5,7 +5,9 @@
  * Uses local packages when @rundown-org/cli is not published to npm.
  */
 import { snapshot } from '@webcontainer/snapshot';
+import { pruneNonRuntimeFiles } from './prune-non-runtime.mjs';
 import { pruneSqlJsDist } from './prune-sqljs.mjs';
+import { SNAPSHOT_BUDGET_BYTES, assertSnapshotWithinBudget } from './snapshot-budget.mjs';
 import { execSync } from 'child_process';
 import {
   mkdtempSync,
@@ -183,7 +185,16 @@ async function buildSnapshot() {
       console.log('Pruning unused sql.js build variants...');
       const pruned = pruneSqlJsDist(nodeModulesDir);
       console.log(
-        `✓ Reclaimed ${(pruned.bytesRemoved / 1024 / 1024).toFixed(1)} MB from ${String(pruned.packages.length)} sql.js copy(ies)`,
+        `✓ Reclaimed ${(pruned.bytesRemoved / 1024 / 1024).toFixed(1)} MiB from ${String(pruned.packages.length)} sql.js copy(ies)`,
+      );
+
+      // Nothing inside the snapshot compiles, type-checks or debugs, so
+      // declarations, published TypeScript sources, source maps and package
+      // docs are weight against the same ceiling and nothing else.
+      console.log('Pruning files the snapshot runtime cannot execute...');
+      const nonRuntime = pruneNonRuntimeFiles(nodeModulesDir);
+      console.log(
+        `✓ Reclaimed ${(nonRuntime.bytesRemoved / 1024 / 1024).toFixed(1)} MiB from ${String(nonRuntime.filesRemoved)} non-runtime file(s)`,
       );
     }
 
@@ -199,8 +210,16 @@ async function buildSnapshot() {
     }
     writeFileSync(outputPath, Buffer.from(binarySnapshot));
 
-    const sizeMB = (binarySnapshot.byteLength / (1024 * 1024)).toFixed(2);
-    console.log(`✓ Snapshot created: public/rundown-snapshot.bin (${sizeMB} MB)`);
+    const sizeMiB = (binarySnapshot.byteLength / (1024 * 1024)).toFixed(2);
+    const budgetMiB = (SNAPSHOT_BUDGET_BYTES / (1024 * 1024)).toFixed(2);
+    console.log(
+      `✓ Snapshot created: public/rundown-snapshot.bin (${sizeMiB} MiB of a ${budgetMiB} MiB budget)`,
+    );
+
+    // Asserted after the write, in a GitHub check with a readable log, so an
+    // oversized asset is on disk to inspect rather than being discovered at
+    // upload time in Cloudflare after merge.
+    assertSnapshotWithinBudget(binarySnapshot.byteLength);
   } finally {
     // Clean up temp directory
     try {

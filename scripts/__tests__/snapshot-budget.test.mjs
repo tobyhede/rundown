@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import {
+  CLOUDFLARE_PAGES_FILE_LIMIT_BYTES,
+  SNAPSHOT_BUDGET_BYTES,
+  assertSnapshotWithinBudget,
+} from '../../site/scripts/snapshot-budget.mjs';
+
+// The snapshot is ONE static asset and Cloudflare Pages rejects any single file
+// over 25 MiB. Before this budget existed the ceiling was enforced by Cloudflare
+// after merge, in a log behind their dashboard, while every GitHub check passed.
+// See issue #639.
+
+test('the budget leaves headroom below the hard Cloudflare limit', () => {
+  // A budget at the wall is not a guardrail: it fails the build at the same
+  // moment the deploy would, with none of the room a fix needs.
+  assert.ok(
+    SNAPSHOT_BUDGET_BYTES < CLOUDFLARE_PAGES_FILE_LIMIT_BYTES,
+    'budget must trip before Cloudflare does',
+  );
+  assert.ok(
+    CLOUDFLARE_PAGES_FILE_LIMIT_BYTES - SNAPSHOT_BUDGET_BYTES >= 4 * 1024 * 1024,
+    'at least 4 MiB between the build failing and the deploy failing',
+  );
+});
+
+test('the hard limit is Cloudflare Pages’ documented 25 MiB', () => {
+  assert.equal(CLOUDFLARE_PAGES_FILE_LIMIT_BYTES, 25 * 1024 * 1024);
+});
+
+test('accepts a snapshot within budget', () => {
+  assert.doesNotThrow(() => assertSnapshotWithinBudget(SNAPSHOT_BUDGET_BYTES));
+});
+
+test('rejects a snapshot one byte over budget', () => {
+  assert.throws(() => assertSnapshotWithinBudget(SNAPSHOT_BUDGET_BYTES + 1));
+});
+
+test('names the measured size, the budget and the hard limit when it refuses', () => {
+  // The whole point is a readable GitHub check: whoever hits this needs to see
+  // how far over they are and what the real wall is, without leaving the log.
+  assert.throws(
+    () => assertSnapshotWithinBudget(24 * 1024 * 1024),
+    (error) => {
+      assert.match(error.message, /24\.00 MiB/, 'measured size');
+      assert.match(error.message, /20\.00 MiB/, 'budget');
+      assert.match(error.message, /25\.00 MiB/, 'hard limit');
+      return true;
+    },
+  );
+});

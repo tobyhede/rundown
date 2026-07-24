@@ -123,6 +123,7 @@ landlock
 landrun
 lastaction
 lcov
+licence
 lifecycles
 lockfile
 materialise
