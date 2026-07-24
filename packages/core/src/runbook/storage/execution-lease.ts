@@ -19,6 +19,7 @@
 
 import { isProcessAlive } from '../file-lock.js';
 import type { RunId } from '../run-id.js';
+import type { ExecutionRecoveryReason } from '../types.js';
 import type { ClaimLookupKey } from '../claim-id.js';
 import type { SqlDriver, SqlReadTransaction, SqlTransaction } from './sql-driver.js';
 import {
@@ -89,6 +90,21 @@ export interface LeaseWaitProgress {
   readonly remainingMs: number;
 }
 
+/**
+ * The outcomes {@link ExecutionLeaseService.abandonToRecovery} can produce.
+ *
+ * The guarded update either moves this process's own `effect_started` attempt to
+ * `recovery_pending` (`recovery_required`, carrying the run and epoch that now
+ * need recovery), or matches no row because the attempt already moved
+ * (`execution_in_progress`). There is no committed value to hand back, so the
+ * `committed` variant is deliberately unrepresentable: no caller has to narrow a
+ * case this operation cannot return.
+ */
+export type AbandonedAttemptOutcome = Extract<
+  GuardedMutationResult<never>,
+  { readonly kind: 'recovery_required' | 'execution_in_progress' }
+>;
+
 /** Phase-aware dead-owner recovery outcome. */
 export type DeadOwnerRecovery =
   | { readonly kind: 'reclaimed_pre_effect'; readonly cleared: ClearedAttemptRef }
@@ -119,6 +135,25 @@ export interface ExecutionLeaseService {
    * @returns The effect-started attempt, or a typed refusal on lost ownership.
    */
   markEffectStarted(attempt: ExecutionAttempt): Promise<GuardedMutationResult<ExecutionAttempt>>;
+  /**
+   * Abandon this process's own `effect_started` attempt to `recovery_pending`
+   * after a mid-effect failure whose external outcome is unknown.
+   *
+   * Unlike {@link recoverDeadOwner}, no liveness check runs: the caller holds the
+   * attempt and has already decided the effect outcome is ambiguous. The run stays
+   * owned (its `exec_*` columns are untouched) so it remains blocked until
+   * {@link RunbookStore.commitRecovery} clears ownership. Recording recovery is
+   * strictly preferred over re-running the effect.
+   *
+   * @param attempt - The `effect_started` attempt this process owns.
+   * @param reason - The recovery cause to record.
+   * @returns `recovery_required` on success, or `execution_in_progress` when the
+   *   attempt was already moved by another actor.
+   */
+  abandonToRecovery(
+    attempt: ExecutionAttempt,
+    reason: ExecutionRecoveryReason,
+  ): Promise<AbandonedAttemptOutcome>;
   /**
    * Recover a run whose owner may be dead, using out-of-SQLite liveness and
    * exact-tuple CAS.
@@ -208,6 +243,36 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
         };
       }
       return { kind: 'committed', value: { ...attempt, phase: 'effect_started' } };
+    });
+  }
+
+  async abandonToRecovery(
+    attempt: ExecutionAttempt,
+    reason: ExecutionRecoveryReason,
+  ): Promise<AbandonedAttemptOutcome> {
+    const hash = hashExecutionToken(attempt.token);
+    return this.driver.immediate((tx) => {
+      const changes = tx
+        .prepare(
+          `UPDATE execution_attempts
+              SET phase = 'recovery_pending', reason = COALESCE(reason, :reason)
+            WHERE run_id = :runId AND exec_epoch = :epoch
+              AND exec_token = :hash AND phase = 'effect_started'`,
+        )
+        .run({ reason, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
+      if (changes !== 1) {
+        return {
+          kind: 'execution_in_progress',
+          runId: attempt.runId,
+          message: `The interrupted attempt for run ${attempt.runId} was no longer effect-started.`,
+        };
+      }
+      return {
+        kind: 'recovery_required',
+        runId: attempt.runId,
+        epoch: attempt.epoch,
+        message: `Run ${attempt.runId} needs recovery: its execution outcome is unknown after a mid-effect failure.`,
+      };
     });
   }
 

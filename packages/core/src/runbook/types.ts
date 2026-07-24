@@ -961,8 +961,10 @@ export type Lifecycle = 'running' | 'completed' | 'stopped';
  * exhaustively on the recovery cause.
  *
  * - `owner_dead`: the previous owner process died before recording an outcome.
- * - `effect_boundary_crossed`: the owner crashed after the effect boundary; the
- *   external effect may or may not have run.
+ * - `effect_boundary_crossed`: an ambiguous failure occurred after the effect
+ *   boundary; the owner may have crashed, or a live owner may have observed an
+ *   uncertain commit outcome, so the external effect or state commit may or may
+ *   not have completed.
  * - `stale_commit`: a commit arrived from an execution attempt no longer active.
  */
 export type ExecutionRecoveryReason = 'owner_dead' | 'effect_boundary_crossed' | 'stale_commit';

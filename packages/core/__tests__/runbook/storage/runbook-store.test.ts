@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -26,6 +26,7 @@ import {
   type ExecutionTokenHash,
 } from '../../../src/runbook/storage/mutation-result.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { logger } from '../../../src/logger.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../../src/runbook/delegation-token.js';
@@ -50,6 +51,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // `logger` is a module singleton; a leaked spy would silence later suites.
+  jest.restoreAllMocks();
   await driver[Symbol.asyncDispose]();
   await fs.rm(dir, { recursive: true, force: true });
 });
@@ -473,6 +476,399 @@ describe('tombstone preservation (#519 lastSeenAt survives)', () => {
           .get<{ readonly last_seen_at: string }>({ k: key2 })?.last_seen_at,
     );
     expect(seen).toBe(now);
+  });
+
+  it('records claim activity without bumping claim_generation', async () => {
+    // #519 liveness is pure metadata: it cannot change which claim resolves to
+    // which run, so it must not invalidate live captures as claim_superseded.
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'a'.repeat(32));
+    const before = (await counters(state.id)).claimGeneration;
+
+    await store.transaction((txn) => {
+      txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T02:02:02.000Z');
+    });
+
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    // A previously captured authority therefore still commits.
+    const cap = await store.captureAuthority(state.id, assertClaimLookupKey(key));
+    if (cap.kind !== 'captured') throw new Error('capture failed');
+    await store.transaction((txn) => {
+      txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T03:03:03.000Z');
+    });
+    const saved = await store.saveState(cap.authority, { ...state, stepName: 'after-seen' });
+    expect(saved.kind).toBe('committed');
+  });
+
+  it('records claim activity even while the run has an active execution owner', async () => {
+    // The authorization seam runs precisely when an owner may be executing;
+    // refusing liveness there would drop #519 exactly when it matters most.
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'b'.repeat(32));
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+
+    await expect(
+      store.transaction((txn) => {
+        txn.recordClaimSeen(assertClaimLookupKey(key), '2026-02-02T04:04:04.000Z');
+      }),
+    ).resolves.toBeUndefined();
+
+    // Resolution-affecting claim writes are still refused under ownership.
+    await expect(
+      store.transaction((txn) => {
+        txn.tombstoneClaim(assertClaimLookupKey(key));
+      }),
+    ).rejects.toThrow(/execution_in_progress/);
+  });
+});
+
+describe('mutateState (transactional replacement for the per-run lock)', () => {
+  it('commits a derived state and bumps only state_version', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+
+    const result = await store.mutateState(state.id, (current) => ({
+      ...current,
+      stepName: 'mutated',
+    }));
+
+    expect(result.kind).toBe('committed');
+    expect((await store.loadRun(state.id))?.stepName).toBe('mutated');
+    const after = await counters(state.id);
+    expect(after.stateVersion).toBe(before.stateVersion + 1);
+    expect(after.claimGeneration).toBe(before.claimGeneration);
+  });
+
+  it('writes nothing when the builder declines', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+
+    const result = await store.mutateState(state.id, () => null);
+
+    expect(result.kind).toBe('unchanged');
+    expect((await counters(state.id)).stateVersion).toBe(before.stateVersion);
+  });
+
+  it('retries against fresh state when a concurrent writer bumps the version', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    let builds = 0;
+
+    const result = await store.mutateState(state.id, async (current) => {
+      builds += 1;
+      if (builds === 1) {
+        // A concurrent writer lands between this read and our write.
+        await store.mutateState(state.id, (other) => ({ ...other, description: 'interloper' }));
+      }
+      return { ...current, stepName: `build-${String(builds)}` };
+    });
+
+    expect(result.kind).toBe('committed');
+    // The first attempt went stale and rebuilt from the interloper's state.
+    expect(builds).toBe(2);
+    const loaded = await store.loadRun(state.id);
+    expect(loaded?.stepName).toBe('build-2');
+    expect(loaded?.description).toBe('interloper');
+  });
+
+  it('refuses immediately while an execution owns the run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+
+    const result = await store.mutateState(state.id, (current) => ({
+      ...current,
+      stepName: 'blocked',
+    }));
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect((await store.loadRun(state.id))?.stepName).not.toBe('blocked');
+  });
+
+  it('reports a missing run without invoking the builder', async () => {
+    let builds = 0;
+    const result = await store.mutateState(assertRunId(`rd_${'e'.repeat(32)}`), (current) => {
+      builds += 1;
+      return current;
+    });
+    expect(result.kind).toBe('missing');
+    expect(builds).toBe(0);
+  });
+
+  it('gives up as concurrent_modification once the attempt budget is spent', async () => {
+    const state = await newState();
+    await store.createRun(state);
+
+    const result = await store.mutateState(
+      state.id,
+      async (current) => {
+        // Always bump the version behind our back, so no attempt can ever land.
+        await store.transaction((txn) => {
+          txn.tx
+            .prepare(
+              "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+            )
+            .run({ id: state.id });
+        });
+        return { ...current, stepName: 'never' };
+      },
+      { attempts: 2 },
+    );
+
+    expect(result.kind).toBe('concurrent_modification');
+    expect((await store.loadRun(state.id))?.stepName).not.toBe('never');
+  });
+});
+
+describe('session persistence and run listing', () => {
+  it('round-trips the default stack and stash slot', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+
+    await store.saveSession({ defaultStack: [a.id, b.id], claims: {}, stashedRunbookId: b.id });
+
+    const session = await store.loadSession();
+    expect(session.defaultStack).toEqual([a.id, b.id]);
+    expect(session.stashedRunbookId).toBe(b.id);
+  });
+
+  it('tombstones claims dropped from the session without churning generation', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'c'.repeat(32));
+    const record = makeClaimRecord({
+      claimKey: assertClaimLookupKey(key),
+      controlledRunId: state.id,
+    });
+
+    // Re-saving the same claim leaves it untouched.
+    const before = (await counters(state.id)).claimGeneration;
+    await store.saveSession({ defaultStack: [], claims: { [key]: record } });
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    expect((await store.loadSession()).claims[key]).toBeDefined();
+
+    // Dropping it tombstones rather than hard-deletes.
+    await store.saveSession({ defaultStack: [], claims: {} });
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: key })?.status,
+    );
+    expect(status).toBe('superseded');
+  });
+
+  it('re-saves a session holding a previously tombstoned claim without a constraint error', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'c1'.repeat(16));
+    const record = makeClaimRecord({
+      claimKey: assertClaimLookupKey(key),
+      controlledRunId: state.id,
+    });
+    await store.saveSession({ defaultStack: [], claims: {} });
+    const before = (await counters(state.id)).claimGeneration;
+
+    // A key that is persisted-but-superseded is NOT absent: blind-inserting it
+    // dies on the `claims.key` primary key.
+    await expect(
+      store.saveSession({ defaultStack: [], claims: { [key]: record } }),
+    ).resolves.toBeUndefined();
+
+    // The tombstone stands — a wholesale session save never resurrects revoked
+    // authority, and therefore never churns the generation.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: key })?.status,
+    );
+    expect(status).toBe('superseded');
+    expect((await counters(state.id)).claimGeneration).toBe(before);
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+  });
+
+  it('inserts a genuinely new session claim at its controlled run current generation', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    // An existing claim so the run's generation is already non-zero.
+    const existing = await mintClaim(state.id, 'f1'.repeat(16));
+    const existingRecord = makeClaimRecord({
+      claimKey: assertClaimLookupKey(existing),
+      controlledRunId: state.id,
+    });
+    const fresh = assertClaimLookupKey(`rdclk_${'f2'.repeat(16)}`);
+    const freshRecord = makeClaimRecord({ claimKey: fresh, controlledRunId: state.id });
+    const before = (await counters(state.id)).claimGeneration;
+
+    await store.saveSession({
+      defaultStack: [],
+      claims: { [existing]: existingRecord, [fresh]: freshRecord },
+    });
+
+    const session = await store.loadSession();
+    expect(session.claims[existing]).toBeDefined();
+    expect(session.claims[fresh]).toBeDefined();
+    // Only the new claim was written: one insert, one generation bump, and the
+    // issuance metadata records the generation observed at insert time.
+    expect((await counters(state.id)).claimGeneration).toBe(before + 1);
+    const issued = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT issued_generation AS g FROM claims WHERE key = :k')
+          .get<{ readonly g: number }>({ k: fresh })?.g,
+    );
+    expect(issued).toBe(before);
+  });
+
+  it('does not re-mark an existing tombstone when the session still omits it', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'f3'.repeat(16));
+    await store.saveSession({ defaultStack: [], claims: {} });
+    const after = (await counters(state.id)).claimGeneration;
+
+    // The claim is already superseded, so a second dropping save has nothing to
+    // change: re-marking it would fire the resolution-affecting claim triggers.
+    await store.saveSession({ defaultStack: [], claims: {} });
+
+    expect((await counters(state.id)).claimGeneration).toBe(after);
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+  });
+
+  it('skips a session claim whose controlled run was deleted instead of violating the FK', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'd1'.repeat(16));
+    const record = makeClaimRecord({
+      claimKey: assertClaimLookupKey(key),
+      controlledRunId: state.id,
+    });
+    // `rd prune` shape: the run is deleted and cascades the claim away while an
+    // in-memory SessionData still holds it.
+    await store.deleteRun(state.id);
+
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+
+    await expect(
+      store.saveSession({ defaultStack: [], claims: { [key]: record } }),
+    ).resolves.toBeUndefined();
+
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+    // Converging on the deletion is right for a bulk reconciler, but dropping a
+    // caller's claim without a trace is not: the mint path hands back a claim_id
+    // after this resolves, so a silent skip resurfaces much later as an
+    // unexplained ACTOR_CONTEXT_REQUIRED with nothing pointing here.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({ runId: state.id });
+  });
+
+  it('saves a stale session snapshot whose claim a concurrent save tombstoned', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'e1'.repeat(16));
+
+    // Reader captures the session…
+    const snapshot = await store.loadSession();
+    expect(snapshot.claims[key]).toBeDefined();
+    // …a concurrent writer drops the claim (tombstone) before the reader saves…
+    await store.saveSession({ defaultStack: [], claims: {} });
+
+    // …and the plain lost-update save must not die on a raw constraint error.
+    await expect(store.saveSession(snapshot)).resolves.toBeUndefined();
+    expect((await store.loadSession()).claims[key]).toBeUndefined();
+  });
+
+  it('saves a stack-only session change while the stashed run has an active execution owner', async () => {
+    const stashed = await newState();
+    const other = await newState();
+    await store.createRun(stashed);
+    await store.createRun(other);
+    await store.saveSession({ defaultStack: [], claims: {}, stashedRunbookId: stashed.id });
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, stashed.id);
+    });
+    const before = (await counters(stashed.id)).claimGeneration;
+
+    // The stash slot is unchanged, so claim resolution cannot change: the
+    // ownership guard must not refuse a save that only touches the stack.
+    await expect(
+      store.saveSession({ defaultStack: [other.id], claims: {}, stashedRunbookId: stashed.id }),
+    ).resolves.toBeUndefined();
+
+    const session = await store.loadSession();
+    expect(session.defaultStack).toEqual([other.id]);
+    expect(session.stashedRunbookId).toBe(stashed.id);
+    expect((await counters(stashed.id)).claimGeneration).toBe(before);
+  });
+
+  it('bumps claim_generation on every real stash transition and on no no-op save', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+    const gen = async (id: RunId): Promise<number> => (await counters(id)).claimGeneration;
+    const noStash = { defaultStack: [], claims: {} };
+
+    // null -> null: nothing to change.
+    const zeroA = await gen(a.id);
+    await store.saveSession(noStash);
+    expect(await gen(a.id)).toBe(zeroA);
+
+    // null -> a
+    await store.saveSession({ ...noStash, stashedRunbookId: a.id });
+    const setA = await gen(a.id);
+    expect(setA).toBe(zeroA + 1);
+
+    // a -> a: unchanged slot, no guarded write, no bump.
+    await store.saveSession({ ...noStash, stashedRunbookId: a.id });
+    expect(await gen(a.id)).toBe(setA);
+
+    // a -> b: both endpoints change resolution, so both bump.
+    const beforeB = await gen(b.id);
+    await store.saveSession({ ...noStash, stashedRunbookId: b.id });
+    expect(await gen(a.id)).toBe(setA + 1);
+    expect(await gen(b.id)).toBe(beforeB + 1);
+
+    // b -> null
+    const setB = await gen(b.id);
+    await store.saveSession(noStash);
+    expect(await gen(b.id)).toBe(setB + 1);
+    expect(await store.loadSession()).toMatchObject({ defaultStack: [] });
+    expect((await store.loadSession()).stashedRunbookId).toBeUndefined();
+  });
+
+  it('lists and deletes runs', async () => {
+    const a = await newState();
+    const b = await newState();
+    await store.createRun(a);
+    await store.createRun(b);
+
+    expect((await store.listRuns()).map((s) => s.id).sort()).toEqual([a.id, b.id].sort());
+
+    await store.deleteRun(a.id);
+    expect((await store.listRuns()).map((s) => s.id)).toEqual([b.id]);
+    expect(await store.loadRun(a.id)).toBeNull();
+  });
+
+  it('refuses to delete a run with an active execution owner', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+    await expect(store.deleteRun(state.id)).rejects.toThrow(/execution_in_progress/);
   });
 });
 
