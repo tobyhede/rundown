@@ -959,12 +959,12 @@ const DelegationSchema = z.object({
  * @throws {Error} When the blob is not a well-formed delegation linkage.
  */
 function deserializeDelegation(json: string): DelegationClaimLinkage {
-  const parsed = DelegationSchema.safeParse(JSON.parse(json));
-  if (!parsed.success) {
-    throw new Error(`Invalid persisted delegation linkage: ${parsed.error.message}`);
-  }
-  const raw = parsed.data;
   try {
+    const parsed = DelegationSchema.safeParse(JSON.parse(json));
+    if (!parsed.success) {
+      throw new Error(parsed.error.message);
+    }
+    const raw = parsed.data;
     return {
       childRunId: assertRunId(raw.childRunId),
       tokenHash: assertDelegationTokenHash(raw.tokenHash),

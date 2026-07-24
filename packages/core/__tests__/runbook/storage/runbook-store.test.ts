@@ -1216,7 +1216,8 @@ describe('session reconstruction', () => {
   });
 
   /**
-   * Seed a delegated claim, then overwrite its persisted blob with `overrides`.
+   * Seed a delegated claim, then overwrite its persisted blob with `overrides`,
+   * or with `raw` verbatim when the blob under test is not valid JSON.
    *
    * The writer only ever stores a linkage built from branded values, so these
    * rows reproduce a database corrupted outside this store.
@@ -1224,6 +1225,7 @@ describe('session reconstruction', () => {
   async function corruptDelegationBlob(
     keyHex: string,
     overrides: Record<string, unknown>,
+    raw?: string,
   ): Promise<void> {
     const parent = await newState();
     const child = await newState();
@@ -1248,9 +1250,16 @@ describe('session reconstruction', () => {
     await store.transaction((txn) => {
       txn.tx
         .prepare('UPDATE claims SET delegation_json = :j WHERE key = :k')
-        .run({ j: JSON.stringify({ ...linkage, ...overrides }), k: claimKey });
+        .run({ j: raw ?? JSON.stringify({ ...linkage, ...overrides }), k: claimKey });
     });
   }
+
+  it('refuses to hydrate a claim whose persisted delegation blob is not JSON', async () => {
+    // A column holding non-JSON bytes must be refused in the same shape as every
+    // other corrupt blob, not as a bare SyntaxError from the parse itself.
+    await corruptDelegationBlob('eb'.repeat(16), {}, '{not valid json');
+    await expect(store.loadSession()).rejects.toThrow(/^Invalid persisted delegation linkage:/);
+  });
 
   it('refuses to hydrate a claim whose persisted delegation token hash is not a hash', async () => {
     await corruptDelegationBlob('e4'.repeat(16), { tokenHash: 'not-a-delegation-token-hash' });
