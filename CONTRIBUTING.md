@@ -64,6 +64,13 @@ pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-ru
   corepack enable --install-directory ~/.local/bin   # any stable dir on PATH
   ```
 
+  `~/.local/bin` is not on `PATH` by default everywhere. Check with
+  `command -v pnpm`; if it comes back empty, put the directory on `PATH`
+  persistently — `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc` (or
+  `~/.bashrc`, or `fish_add_path ~/.local/bin`) — then open a new shell and
+  check again before running any `pnpm` command. Passing a directory that is
+  already on `PATH` to `--install-directory` works just as well.
+
   Bare `corepack enable` writes its shims into the _active Node installation's_
   `bin/`, so they vanish on the next Node upgrade — and if a version manager
   (mise, asdf, nvm, volta) has its own pnpm on PATH, that older pnpm silently

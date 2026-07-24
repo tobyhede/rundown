@@ -118,17 +118,18 @@ function parsePackageManager(field) {
 /**
  * Run every toolchain check and collect the failures.
  *
- * Both environment facts are parameters rather than direct `process` reads, so
- * tests can drive the node-version dimension without spawning a different node.
+ * Every input is a parameter rather than a direct `process` or filesystem read,
+ * so tests can drive each dimension: the node version without spawning a
+ * different node, the declarations without corrupting the repo's own files.
  *
  * @param env - the environment to inspect
  * @param nodeVersion - the running node version, e.g. `v24.18.0`
+ * @param pkg - the parsed `package.json`
+ * @param workspaceYaml - the raw `pnpm-workspace.yaml` text
  * @returns an array of human-readable failure messages, empty when all pass
  */
-export function checkToolchain(env, nodeVersion) {
+export function checkToolchain(env, nodeVersion, pkg, workspaceYaml) {
   const failures = [];
-  const pkg = JSON.parse(readRepoFile('package.json'));
-  const workspaceYaml = readRepoFile('pnpm-workspace.yaml');
 
   // --- pnpm: packageManager vs the pnpm actually running this script ---------
   const declared = parsePackageManager(pkg.packageManager);
@@ -169,7 +170,9 @@ export function checkToolchain(env, nodeVersion) {
 
   // --- node: engines.node vs the running interpreter -------------------------
   // Only the simple `>=<major>` form is enforced; a more elaborate range is left
-  // to pnpm's own engine checking rather than reimplemented here.
+  // to pnpm's own engine checking rather than reimplemented here. An absent
+  // field is a different case: it is not a range this script declines to parse,
+  // it is no lower bound at all, so it fails rather than passing silently.
   const enginesNode = pkg.engines?.node;
   const minMajorMatch = /^>=\s*(\d+)/.exec(enginesNode ?? '');
   if (minMajorMatch) {
@@ -180,6 +183,10 @@ export function checkToolchain(env, nodeVersion) {
         `node too old: package.json requires node ${enginesNode} but ${nodeVersion} is running.`,
       );
     }
+  } else if (!enginesNode) {
+    failures.push(
+      'package.json declares no "engines.node" — there is no node lower bound to check the running interpreter against.',
+    );
   }
 
   // --- nodeOptions: declared in pnpm-workspace.yaml vs applied to the env ----
@@ -211,7 +218,12 @@ export function checkToolchain(env, nodeVersion) {
 // Only run when invoked as a script; importing this module (from its tests)
 // must not execute the checks or call process.exit.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const failures = checkToolchain(process.env, process.version);
+  const failures = checkToolchain(
+    process.env,
+    process.version,
+    JSON.parse(readRepoFile('package.json')),
+    readRepoFile('pnpm-workspace.yaml'),
+  );
 
   if (failures.length > 0) {
     console.error("error: toolchain does not match this repository's declarations.\n");

@@ -11,9 +11,11 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 const workspaceYaml = readFileSync(new URL('../../pnpm-workspace.yaml', import.meta.url), 'utf8');
 
-// The values this repo actually declares. The guard reads the real files, so the
-// tests drive it by varying only the ENVIRONMENT — which is exactly the axis that
-// broke in practice (right repo, wrong host toolchain).
+// The values this repo actually declares. The spawned guard reads the real files,
+// so those tests drive it by varying only the ENVIRONMENT — which is exactly the
+// axis that broke in practice (right repo, wrong host toolchain). Tests that call
+// checkToolchain directly pass the declarations in, so they can drive that axis
+// too, without touching the repo's own package.json or pnpm-workspace.yaml.
 const DECLARED_PNPM_MAJOR = /^pnpm@(\d+)\./.exec(pkg.packageManager)[1];
 const DECLARED_NODE_OPTIONS = /^nodeOptions:[ \t]*(.*)$/m.exec(workspaceYaml)[1].trim();
 
@@ -126,7 +128,7 @@ test('fails when the running node is older than engines.node', () => {
   assert.ok(required, 'expected package.json engines.node to use the >=<major> form');
   const tooOld = `v${Number(required[1]) - 1}.0.0`;
 
-  const failures = checkToolchain(envWith(), tooOld);
+  const failures = checkToolchain(envWith(), tooOld, pkg, workspaceYaml);
   assert.equal(failures.length, 1, `unexpected failures: ${failures.join(' | ')}`);
   assert.match(failures[0], /node too old/);
   assert.match(failures[0], new RegExp(`${tooOld} is running`));
@@ -135,5 +137,46 @@ test('fails when the running node is older than engines.node', () => {
 test('accepts a node newer than engines.node requires', () => {
   const required = /^>=\s*(\d+)/.exec(pkg.engines?.node ?? '');
   const newer = `v${Number(required[1]) + 5}.0.0`;
-  assert.deepEqual(checkToolchain(envWith(), newer), []);
+  assert.deepEqual(checkToolchain(envWith(), newer, pkg, workspaceYaml), []);
+});
+
+// These branches describe a repo whose own declarations are wrong, so spawning
+// the guard against this repo cannot reach them — only a fixture can.
+test('fails when packageManager is absent or malformed', () => {
+  const failures = checkToolchain(
+    envWith(),
+    process.version,
+    { ...pkg, packageManager: 'pnpm' },
+    workspaceYaml,
+  );
+  assert.equal(failures.length, 1, `unexpected failures: ${failures.join(' | ')}`);
+  assert.match(failures[0], /no parseable "packageManager" field/);
+});
+
+test('fails when packageManager names something other than pnpm', () => {
+  const failures = checkToolchain(
+    envWith(),
+    process.version,
+    { ...pkg, packageManager: 'yarn@4.5.0' },
+    workspaceYaml,
+  );
+  assert.equal(failures.length, 1, `unexpected failures: ${failures.join(' | ')}`);
+  assert.match(failures[0], /declares packageManager "yarn"/);
+});
+
+test('fails when package.json declares no engines.node', () => {
+  const failures = checkToolchain(
+    envWith(),
+    process.version,
+    { ...pkg, engines: {} },
+    workspaceYaml,
+  );
+  assert.equal(failures.length, 1, `unexpected failures: ${failures.join(' | ')}`);
+  assert.match(failures[0], /no "engines\.node"/);
+});
+
+test('fails when pnpm-workspace.yaml declares no nodeOptions', () => {
+  const failures = checkToolchain(envWith(), process.version, pkg, 'packages:\n  - packages/*\n');
+  assert.equal(failures.length, 1, `unexpected failures: ${failures.join(' | ')}`);
+  assert.match(failures[0], /declares no top-level "nodeOptions:"/);
 });
