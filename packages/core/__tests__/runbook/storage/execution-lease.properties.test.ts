@@ -7,7 +7,10 @@ import * as path from 'node:path';
 import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
-import { SqliteExecutionLeaseService } from '../../../src/runbook/storage/execution-lease.js';
+import {
+  SqliteExecutionLeaseService,
+  type LeaseWaitProgress,
+} from '../../../src/runbook/storage/execution-lease.js';
 import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
@@ -15,6 +18,7 @@ import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
 import type { RunId } from '../../../src/runbook/run-id.js';
 import type { Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
+import { makeFakeWaitClock } from '../../helpers/lease-wait-clock.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
@@ -89,6 +93,68 @@ describe('exec_epoch monotonicity', () => {
         expect(new Set(epochs).size).toBe(epochs.length);
       }),
       { numRuns: 12 },
+    );
+  });
+});
+
+describe('finite wait budget', () => {
+  it('never sleeps longer than the budget, whatever the backoff asks for', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 500 }),
+        // Bounded below by 1: virtual time advances only on sleep, so a
+        // zero-length backoff would never reach the deadline.
+        fc.array(fc.integer({ min: 1, max: 5000 }), { minLength: 1, maxLength: 12 }),
+        async (budgetMs, requestedDelays) => {
+          const { runId, claimKey } = await newRun();
+          const cap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
+          if (cap.kind !== 'captured') throw new Error('capture failed');
+          const owned = await lease.acquire(cap.authority, process.pid);
+          if (owned.kind !== 'committed') throw new Error('acquire failed');
+          // pid 1 is EPERM for a non-root caller → permanently "alive", so every
+          // attempt is refused and the loop always runs to one of its exits.
+          await store.transaction((txn) => {
+            txn.tx.prepare('UPDATE runs SET exec_pid = 1 WHERE id = :id').run({ id: runId });
+          });
+          const recap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
+          if (recap.kind !== 'captured') throw new Error('recapture failed');
+
+          const clock = makeFakeWaitClock();
+          const progress: LeaseWaitProgress[] = [];
+          const requested: number[] = [];
+          const waiting = new SqliteExecutionLeaseService(driver, (p) => progress.push(p), clock);
+
+          const result = await waiting.acquire(recap.authority, process.pid, {
+            budgetMs,
+            backoff: (attempt) => {
+              const ms = requestedDelays[attempt % requestedDelays.length] ?? 1;
+              requested.push(ms);
+              return ms;
+            },
+          });
+
+          // It always terminates, and always as contention.
+          expect(result.kind).toBe('execution_in_progress');
+          // Total sleep never exceeds the budget the caller granted …
+          const slept = clock.sleeps.reduce((sum, ms) => sum + ms, 0);
+          expect(slept).toBeLessThanOrEqual(budgetMs);
+          // … and each applied delay is at most what the policy asked for.
+          clock.sleeps.forEach((applied, i) => {
+            expect(applied).toBeLessThanOrEqual(requested[i] ?? 0);
+          });
+          // Attempts are reported as a dense 1-based series on a monotonically
+          // shrinking budget.
+          expect(progress.map((p) => p.attempts)).toEqual(progress.map((_, i) => i + 1));
+          progress.forEach((p, i) => {
+            expect(p.runId).toBe(runId);
+            expect(p.remainingMs).toBeLessThanOrEqual(budgetMs);
+            if (i > 0) {
+              expect(p.remainingMs).toBeLessThan(progress[i - 1].remainingMs);
+            }
+          });
+        },
+      ),
+      { numRuns: 20 },
     );
   });
 });

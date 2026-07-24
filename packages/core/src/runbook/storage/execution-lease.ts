@@ -79,6 +79,53 @@ export interface LeaseWaitPolicy {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * Time source for the contended-wait loop.
+ *
+ * The loop's whole observable contract is temporal — how many attempts it makes,
+ * how long each backoff actually sleeps once capped to the remaining budget, and
+ * whether it gave up for the deadline or for the abort. Reading the clock through
+ * this seam lets a test drive that contract deterministically instead of asserting
+ * wall-clock tolerances, which pass under almost any mutation of the loop body.
+ *
+ * Governs the wait loop ONLY. Persisted attempt timestamps
+ * (`started_at`, `effect_started_at`) always come from the real clock: they are
+ * stored data, not wait arithmetic.
+ */
+export interface LeaseWaitClock {
+  /**
+   * Current time in milliseconds, on the same origin as the wait deadline.
+   *
+   * @returns Milliseconds since an arbitrary but consistent epoch.
+   */
+  now(): number;
+  /**
+   * Sleep between wait attempts, resolving early if the signal aborts.
+   *
+   * @param ms - Delay in milliseconds, already capped to the remaining budget.
+   * @param signal - Optional cancellation that resolves the sleep early.
+   * @returns A promise resolving after the delay or cancellation.
+   */
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
+}
+
+/**
+ * Build the real-time {@link LeaseWaitClock} used when no clock is injected.
+ *
+ * A factory rather than a module-level constant: a constant's initializer runs at
+ * import time, which puts its contents outside every test's reach (a "static"
+ * mutant that no assertion can falsify). Built per construction, the same code is
+ * ordinary runtime behaviour and is pinned by the tests like anything else.
+ *
+ * @returns A clock reading real time and sleeping on a real timer.
+ */
+export function createDefaultLeaseWaitClock(): LeaseWaitClock {
+  return {
+    now: () => Date.now(),
+    sleep: (ms, signal) => delay(ms, signal),
+  };
+}
+
 /** Progress diagnostic emitted between contended wait attempts. */
 export interface LeaseWaitProgress {
   /** Run being waited on. */
@@ -168,10 +215,12 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
    *
    * @param driver - Capability-selected SQL driver.
    * @param onWaitProgress - Optional progress callback for contended waits.
+   * @param clock - Time source for the contended-wait loop; defaults to real time.
    */
   constructor(
     private readonly driver: SqlDriver,
     private readonly onWaitProgress?: (progress: LeaseWaitProgress) => void,
+    private readonly clock: LeaseWaitClock = createDefaultLeaseWaitClock(),
   ) {}
 
   async acquire(
@@ -363,14 +412,14 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     wait: LeaseWaitPolicy | undefined,
     once: () => Promise<GuardedMutationResult<T>>,
   ): Promise<GuardedMutationResult<T>> {
-    const deadline = Date.now() + (wait?.budgetMs ?? 0);
+    const deadline = this.clock.now() + (wait?.budgetMs ?? 0);
     let attempts = 0;
     for (;;) {
       const result = await once();
       if (result.kind !== 'execution_in_progress' || wait === undefined) {
         return result;
       }
-      if (wait.signal?.aborted || Date.now() >= deadline) {
+      if (wait.signal?.aborted || this.clock.now() >= deadline) {
         return result;
       }
       const runId = result.runId;
@@ -387,14 +436,14 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
         continue; // The dead lease is cleared; retry immediately.
       }
       attempts += 1;
-      const remainingMs = Math.max(0, deadline - Date.now());
+      const remainingMs = Math.max(0, deadline - this.clock.now());
       this.onWaitProgress?.({ runId, attempts, remainingMs });
       if (remainingMs === 0) {
         return result;
       }
       const requestedBackoff = Math.max(0, wait.backoff(attempts - 1));
-      await delay(Math.min(requestedBackoff, remainingMs), wait.signal);
-      if (wait.signal?.aborted || Date.now() >= deadline) {
+      await this.clock.sleep(Math.min(requestedBackoff, remainingMs), wait.signal);
+      if (wait.signal?.aborted || this.clock.now() >= deadline) {
         return result;
       }
     }
@@ -522,7 +571,13 @@ function dedupeByRun(captured: readonly CapturedAuthority[]): readonly CapturedA
 
 /**
  * Resolve after `ms` milliseconds. Used only between wait retries, never inside a
- * transaction.
+ * transaction. Backs {@link createDefaultLeaseWaitClock}.
+ *
+ * `finish` always detaches the abort listener, so `{ once: true }` would be pure
+ * redundancy. The unconditional removal is the load-bearing half: one wait loop
+ * calls this repeatedly with the SAME long-lived signal, and the common exit is
+ * the timer firing, not the abort — leaving that listener attached would
+ * accumulate one per retry.
  *
  * @param ms - Delay in milliseconds.
  * @param signal - Optional cancellation signal that resolves the delay early.
@@ -532,7 +587,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(finish, ms);
-    signal?.addEventListener('abort', finish, { once: true });
+    signal?.addEventListener('abort', finish);
 
     function finish(): void {
       clearTimeout(timer);
