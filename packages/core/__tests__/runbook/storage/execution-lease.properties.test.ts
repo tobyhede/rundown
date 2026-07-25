@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import fc from 'fast-check';
-import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
-import { SqliteExecutionLeaseService } from '../../../src/runbook/storage/execution-lease.js';
+import {
+  SqliteExecutionLeaseService,
+  type LeaseWaitProgress,
+} from '../../../src/runbook/storage/execution-lease.js';
 import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
@@ -15,6 +17,7 @@ import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
 import type { RunId } from '../../../src/runbook/run-id.js';
 import type { Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
+import { makeFakeWaitClock } from '../../helpers/lease-wait-clock.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
@@ -40,9 +43,16 @@ afterEach(async () => {
 
 let seq = 0;
 
-function deadPid(): number {
-  return spawnSync(process.execPath, ['-e', '0']).pid;
-}
+/**
+ * A pid that can never be alive: above every platform's pid_max (Linux
+ * 4194304, macOS 99998), so `kill(pid, 0)` is always ESRCH.
+ *
+ * A spawned-and-reaped pid is only dead until the OS recycles it, and this
+ * property holds one pid across every cycle of a run — matching the constant
+ * already used by the file-lock and delegation-lock suites removes that window
+ * entirely, and the spawn with it.
+ */
+const DEAD_PID = 999999999;
 
 async function newRun(): Promise<{ runId: RunId; claimKey: string }> {
   const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
@@ -76,7 +86,7 @@ describe('exec_epoch monotonicity', () => {
           await store.transaction((txn) => {
             txn.tx
               .prepare('UPDATE runs SET exec_pid = :pid WHERE id = :id')
-              .run({ pid: deadPid(), id: runId });
+              .run({ pid: DEAD_PID, id: runId });
           });
           const recovered = await lease.recoverDeadOwner(runId);
           expect(recovered.kind).toBe('reclaimed_pre_effect');
@@ -89,6 +99,73 @@ describe('exec_epoch monotonicity', () => {
         expect(new Set(epochs).size).toBe(epochs.length);
       }),
       { numRuns: 12 },
+    );
+  });
+});
+
+describe('finite wait budget', () => {
+  it('never sleeps longer than the budget, whatever the backoff asks for', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 500 }),
+        // Bounded below by 1: virtual time advances only on sleep, so a
+        // zero-length backoff would never reach the deadline.
+        fc.array(fc.integer({ min: 1, max: 5000 }), { minLength: 1, maxLength: 12 }),
+        async (budgetMs, requestedDelays) => {
+          const { runId, claimKey } = await newRun();
+          const cap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
+          if (cap.kind !== 'captured') throw new Error('capture failed');
+          const owned = await lease.acquire(cap.authority, process.pid);
+          if (owned.kind !== 'committed') throw new Error('acquire failed');
+          // pid 1 is EPERM for a non-root caller → permanently "alive", so every
+          // attempt is refused and the loop always runs to one of its exits.
+          await store.transaction((txn) => {
+            txn.tx.prepare('UPDATE runs SET exec_pid = 1 WHERE id = :id').run({ id: runId });
+          });
+          const recap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
+          if (recap.kind !== 'captured') throw new Error('recapture failed');
+
+          // Every applied delay is `min(requested, remaining)` with requested
+          // >= 1, and the loop exits once the budget is spent, so a healthy run
+          // sleeps at most `budgetMs` times. The default cap of 64 is below the
+          // 500 this generator permits, which made the guard fire on correct
+          // behaviour; sizing it to the budget keeps it a runaway detector.
+          const clock = makeFakeWaitClock({ maxSleeps: budgetMs + 1 });
+          const progress: LeaseWaitProgress[] = [];
+          const requested: number[] = [];
+          const waiting = new SqliteExecutionLeaseService(driver, (p) => progress.push(p), clock);
+
+          const result = await waiting.acquire(recap.authority, process.pid, {
+            budgetMs,
+            backoff: (attempt) => {
+              const ms = requestedDelays[attempt % requestedDelays.length] ?? 1;
+              requested.push(ms);
+              return ms;
+            },
+          });
+
+          // It always terminates, and always as contention.
+          expect(result.kind).toBe('execution_in_progress');
+          // Total sleep never exceeds the budget the caller granted …
+          const slept = clock.sleeps.reduce((sum, ms) => sum + ms, 0);
+          expect(slept).toBeLessThanOrEqual(budgetMs);
+          // … and each applied delay is at most what the policy asked for.
+          clock.sleeps.forEach((applied, i) => {
+            expect(applied).toBeLessThanOrEqual(requested[i] ?? 0);
+          });
+          // Attempts are reported as a dense 1-based series on a monotonically
+          // shrinking budget.
+          expect(progress.map((p) => p.attempts)).toEqual(progress.map((_, i) => i + 1));
+          progress.forEach((p, i) => {
+            expect(p.runId).toBe(runId);
+            expect(p.remainingMs).toBeLessThanOrEqual(budgetMs);
+            if (i > 0) {
+              expect(p.remainingMs).toBeLessThan(progress[i - 1].remainingMs);
+            }
+          });
+        },
+      ),
+      { numRuns: 20 },
     );
   });
 });
