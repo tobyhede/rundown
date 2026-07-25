@@ -63,6 +63,12 @@ export function makeFakeWaitClock(options: FakeWaitClockOptions = {}): FakeWaitC
       virtualNow += ms;
     },
     sleep: (ms, signal) => {
+      // An already-aborted signal returns before the real clock schedules a
+      // timer, so nothing is applied — not virtual time, and not a `sleeps`
+      // entry, which is documented as the APPLIED delay.
+      if (signal?.aborted === true) {
+        return Promise.resolve();
+      }
       sleeps.push(ms);
       if (sleeps.length > maxSleeps) {
         throw new Error(
@@ -72,11 +78,7 @@ export function makeFakeWaitClock(options: FakeWaitClockOptions = {}): FakeWaitC
             sleeps.join(', '),
         );
       }
-      // An already-aborted signal returns without waiting, so no virtual time
-      // passes — matching the real clock's abort fast path.
-      if (signal?.aborted !== true) {
-        virtualNow += ms;
-      }
+      virtualNow += ms;
       options.onSleep?.(sleeps.length);
       return Promise.resolve();
     },
