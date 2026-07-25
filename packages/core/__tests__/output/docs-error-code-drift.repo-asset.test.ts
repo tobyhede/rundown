@@ -15,7 +15,10 @@
  * documented (many codes are intentionally undocumented, which would need an
  * opt-out mechanism this guard does not provide).
  *
- * @module tests/output/docs-error-code-drift
+ * Named `*.repo-asset.test.ts` because it reads a repo-root doc that is absent
+ * from Stryker's package-scoped sandbox; see `jest.config.shared.js`.
+ *
+ * @module tests/output/docs-error-code-drift.repo-asset
  */
 
 import { describe, it, expect } from '@jest/globals';
