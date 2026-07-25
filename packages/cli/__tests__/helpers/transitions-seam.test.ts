@@ -498,11 +498,33 @@ describe('runSeamTransition — refusal render table', () => {
       kind: 'stale_claim',
       claimId: TEST_CLAIM_ID,
       message: 'claim gone',
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
     });
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
     expect(output.error).toHaveBeenCalledWith('claim gone', 'CLAIMED_RUNBOOK_UNAVAILABLE');
+    expect(result.exitError).toBe(true);
+  });
+
+  it('renders a superseded claim refusal as DELEGATION_SUPERSEDED', async () => {
+    // pass/fail is the seam a delegated child reports through, so this is where
+    // the no-retry code matters most: core assigns it, the seam must not
+    // overwrite it with the generic unavailable envelope.
+    const output = makeOutput();
+    mockRunTransition.mockResolvedValue({
+      kind: 'stale_claim',
+      claimId: TEST_CLAIM_ID,
+      message: 'parent moved past this delegation',
+      code: 'DELEGATION_SUPERSEDED',
+    });
+
+    const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
+
+    expect(output.error).toHaveBeenCalledWith(
+      'parent moved past this delegation',
+      'DELEGATION_SUPERSEDED',
+    );
     expect(result.exitError).toBe(true);
   });
 

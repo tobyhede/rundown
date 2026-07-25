@@ -100,14 +100,28 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'noActiveRunbook')).toBe(true);
   });
 
-  it('renders a stale_claim outcome as CLAIMED_RUNBOOK_UNAVAILABLE and exits non-zero', async () => {
+  it('renders a stale_claim outcome under the code core assigned it and exits non-zero', async () => {
     const { exitError, calls } = await render({
       kind: 'stale_claim',
       claimId: CLAIM_ID,
       message: 'gone',
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
     });
     expect(exitError).toBe(true);
     expect(codeOf(calls, 'error')).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
+  });
+
+  it('passes a superseded claim through as DELEGATION_SUPERSEDED, not the generic code', async () => {
+    // The seam must not flatten the refusal back to "unavailable": RD-825 is the
+    // no-retry signal, and complete/stop are reachable with a superseded bearer.
+    const { exitError, calls } = await render({
+      kind: 'stale_claim',
+      claimId: CLAIM_ID,
+      message: 'superseded',
+      code: 'DELEGATION_SUPERSEDED',
+    });
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('DELEGATION_SUPERSEDED');
   });
 
   it('renders actor_context_required as ACTOR_CONTEXT_REQUIRED and exits non-zero', async () => {

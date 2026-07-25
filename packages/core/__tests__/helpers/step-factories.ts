@@ -11,9 +11,6 @@ import type {
   Substep,
   Transitions,
 } from '@rundown-org/parser';
-import type { ContextSnapshot, StepDelegation } from '../../src/runbook/types.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
-import { brandEffectiveVarsForTest } from './effective-vars.js';
 
 /**
  * Assertion helper: narrows a `Step | undefined` to `StepHavingSubsteps`.
@@ -186,35 +183,12 @@ export function makeResolvedStepWithPromptedFor(
   };
 }
 
-/**
- * Build a `ContextSnapshot` with a branded empty `EffectiveVars`.
- *
- * @param partial - Overrides for snapshot fields.
- * @returns A valid `ContextSnapshot` with required fields filled.
- */
-export function makeContextSnapshot(partial: Partial<ContextSnapshot> = {}): ContextSnapshot {
-  return {
-    vars: brandEffectiveVarsForTest({}),
-    ancestors: [],
-    ...partial,
-  };
-}
-
-/**
- * Build a `StepDelegation` with a branded empty `contextSnapshot`.
- *
- * @param partial - Overrides for any StepDelegation field.
- * @returns A valid `StepDelegation` with required fields filled.
- */
-export function makeStepDelegation(partial: Partial<StepDelegation> = {}): StepDelegation {
-  return {
-    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-    childRunbookPath: 'child.md',
-    childRunbookRef: { source: 'project', path: 'child.md' },
-    contextSnapshot: makeContextSnapshot(),
-    childRunId: null,
-    createdAt: '2026-02-27T10:00:00.000Z',
-    cancelledAt: null,
-    ...partial,
-  };
-}
+// Re-exported, not redefined: these now live in `src/testing/delegation-fixtures`
+// so CLI tests can reach them too (a delegated-parent fixture needs the same
+// shapes, and hand-writing them there is what this promotion prevents). Core
+// tests keep importing them from here.
+export {
+  makeContextSnapshot,
+  makeDelegatedSubstepState,
+  makeStepDelegation,
+} from '../../src/testing/delegation-fixtures.js';

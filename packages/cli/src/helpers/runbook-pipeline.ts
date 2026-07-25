@@ -1182,7 +1182,11 @@ type ClaimChildResult =
         | 'delegation-superseded'
         | 'linkage-mismatch';
       readonly childRunId: RunId;
-    };
+    }
+  // The parent vanished between the 4a re-read and the claim transaction. Named
+  // by the parent, not the child: no child fact explains it, and the existing
+  // `parent-missing` envelope already says exactly this.
+  | { readonly ok: false; readonly reason: 'parent-missing'; readonly parentRunId: RunId };
 
 /**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
@@ -1229,6 +1233,10 @@ async function claimChildForPipeline(
       // this delegation between the pre-check and the claim transaction. Use the
       // pipeline's known child id (core omits it on the fresh-prelaunch path).
       return { ok: false, reason: 'delegation-superseded', childRunId };
+    case 'missing-parent':
+      // Core refuses an unreadable parent with a typed result rather than
+      // throwing; it maps onto the refusal 4a already emits for the same fact.
+      return { ok: false, reason: 'parent-missing', parentRunId: claim.parentRunId };
     default: {
       const _exhaustive: never = claim;
       throw new Error(
@@ -1236,6 +1244,21 @@ async function claimChildForPipeline(
       );
     }
   }
+}
+
+/**
+ * Name the run a claim failure is about, for post-mortem diagnostic text.
+ *
+ * Most failures name the child; `parent-missing` has no child to name, so it
+ * names the parent instead of interpolating `undefined` into the message.
+ *
+ * @param result - The claim failure being described.
+ * @returns A run id with enough context to identify what failed.
+ */
+function describeClaimFailureTarget(result: Extract<ClaimChildResult, { ok: false }>): string {
+  return result.reason === 'parent-missing'
+    ? `(parent ${result.parentRunId} missing)`
+    : result.childRunId;
 }
 
 /**
@@ -1252,6 +1275,11 @@ function claimResultToFailure(
   parentRunId: string,
   stepId: string,
 ): ClaimResult {
+  if (result.reason === 'parent-missing') {
+    // Carries no child or step: the parent is what is missing, and the envelope
+    // for that fact takes only the parent run id.
+    return { ok: false, reason: 'parent-missing', parentRunId: result.parentRunId };
+  }
   return {
     ok: false,
     reason: result.reason,
@@ -1722,7 +1750,7 @@ export async function claimAndLaunch(
           // post-mortem from CLI output reveals the cause.
           invariantViolation = claimResult;
           throw new Error(
-            `Claim invariant violated for fresh child ${claimResult.childRunId}: ${claimResult.reason}`,
+            `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
           );
         }
         await updateStepDelegationChildRunId(
@@ -1770,7 +1798,7 @@ export async function claimAndLaunch(
         reason: 'launch-failed',
         runbook: childDisplayPath,
         code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
-        cause: `Claim invariant violated for fresh child ${invariantViolation.childRunId}: ${invariantViolation.reason}`,
+        cause: `Claim invariant violated for fresh child ${describeClaimFailureTarget(invariantViolation)}: ${invariantViolation.reason}`,
         details: {
           runbookName: childDisplayPath,
           runbook: childDisplayPath,

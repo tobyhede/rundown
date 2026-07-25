@@ -452,7 +452,7 @@ function renderRefusal(
       output.noActiveRunbook(config.commandName);
       return false;
     case 'stale_claim':
-      return renderStaleClaimRefusal(output, outcome.message);
+      return renderStaleClaimRefusal(output, outcome.message, outcome.code);
     case 'terminal_claim_confirmed':
       return renderTerminalClaimConfirmed(
         output,

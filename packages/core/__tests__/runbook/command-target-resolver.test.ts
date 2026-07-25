@@ -211,6 +211,7 @@ describe('resolveCommandTarget', () => {
       kind: 'stale_claim',
       claimId,
       message: `Claim id ${claimKeyFromBearer(claimId)} does not exist.`,
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
     });
   });
 
@@ -227,6 +228,7 @@ describe('resolveCommandTarget', () => {
       kind: 'stale_claim',
       claimId,
       message: `Claim id ${claimKeyFromBearer(claimId)} is not valid for this session.`,
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
     });
   });
 
@@ -301,6 +303,19 @@ describe('resolveCommandTarget claim-id message redaction', () => {
     {
       name: 'stale/missing-state',
       resolution: { status: 'stale', claimId, reason: 'missing-state' },
+    },
+    {
+      name: 'superseded/parent-ended',
+      resolution: {
+        status: 'superseded',
+        claimId,
+        reason: 'parent-ended',
+        delegation: { parentRunId: parent.id, parentStepId: '1.1' },
+      },
+    },
+    {
+      name: 'superseded/claim-rotated',
+      resolution: { status: 'superseded', claimId, reason: 'claim-rotated' },
     },
   ];
 
@@ -650,6 +665,69 @@ describe('resolveTransitionTarget', () => {
       kind: 'stale_claim',
       claimId,
       message: caseDef.expectedMessage,
+      // Every non-supersession cause renders the generic unavailable code; the
+      // superseded case below is the only one that carries RD-825.
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+    });
+  });
+
+  it.each([
+    { reason: 'parent-ended' as const },
+    { reason: 'cursor-advanced' as const },
+    { reason: 'resolved' as const },
+    { reason: 'token-reissued' as const },
+  ])('reports a $reason supersession as DELEGATION_SUPERSEDED with no-retry guidance', async ({
+    reason,
+  }) => {
+    const result = await resolveTransitionTarget(
+      fakeReader({
+        claimResolution: { status: 'superseded', claimId, reason },
+        expectedIncludeStashed: false,
+      }),
+      { command: 'pass', claimId },
+    );
+
+    // RD-825 and not the generic unavailable code: this is the fact the bearer
+    // holder acts on. Reporting a real supersession as "does not exist" reads
+    // as a mistyped id and invites the retry the code exists to prevent.
+    expect(result).toEqual({
+      kind: 'stale_claim',
+      claimId,
+      message: `Claim id ${claimKeyFromBearer(claimId)} is superseded: the parent has moved past this delegation (${reason}). Do not retry the token; report the superseded delegation to the orchestrator.`,
+      code: 'DELEGATION_SUPERSEDED',
+    });
+  });
+
+  it.each([
+    {
+      label: 'claim-rotated',
+      reason: 'claim-rotated' as const,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} was released or replaced and is no longer authority. Claim the parent's current delegation instead of reusing this id.`,
+    },
+    {
+      label: 'parent-unreadable',
+      reason: 'parent-unreadable' as const,
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is superseded and its parent run no longer exists. Recover with \`rundown prune\` and restart from source.`,
+    },
+  ])('does not borrow the superseded code for a $label claim', async ({
+    reason,
+    expectedMessage,
+  }) => {
+    // Neither is "the parent moved past this delegation", so neither carries
+    // RD-825's no-retry instruction — the token was never the problem.
+    const result = await resolveTransitionTarget(
+      fakeReader({
+        claimResolution: { status: 'superseded', claimId, reason },
+        expectedIncludeStashed: false,
+      }),
+      { command: 'pass', claimId },
+    );
+
+    expect(result).toEqual({
+      kind: 'stale_claim',
+      claimId,
+      message: expectedMessage,
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
     });
   });
 

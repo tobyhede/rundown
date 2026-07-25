@@ -55,6 +55,12 @@ import {
 /** Machine lifecycle values persisted in the `runs.lifecycle` column. */
 const LIFECYCLES: readonly Lifecycle[] = ['running', 'completed', 'stopped'];
 
+/** Claim statuses persisted in the `claims.status` column. */
+const CLAIM_STATUSES = ['active', 'superseded'] as const;
+
+/** Persisted claim status: authority, or a retained tombstone. */
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
+
 /** Execution phases persisted in `execution_attempts.phase`. */
 export type ExecutionPhase = 'claimed' | 'effect_started' | 'recovery_pending' | 'committed';
 
@@ -485,12 +491,30 @@ export function resolveControllingClaim(
   return assertClaimLookupKey(rows[0].key);
 }
 
+/**
+ * A claim row read by key regardless of status.
+ *
+ * `readSession` surfaces only active claims, because only those are targeting
+ * authority. A caller that must tell "this bearer was superseded" apart from
+ * "this bearer never existed" needs the tombstone too — that distinction is the
+ * difference between a no-retry signal and a message the holder reads as a
+ * mistyped id.
+ */
+export interface PresentedClaim {
+  /** Persisted status: `active`, or `superseded` for a tombstone. */
+  readonly status: ClaimStatus;
+  /** The claim record itself, deserialized exactly as an active row would be. */
+  readonly record: ClaimRecord;
+}
+
 /** Sync typed operations available inside a store READ transaction. */
 export interface RunbookStoreReadTxn {
   /** Underlying read transaction, for advanced/composite queries within the store. */
   readonly tx: SqlReadTransaction;
   /** Read the joined commit row for a run + claim. */
   commitRow(runId: RunId, claimKey: ClaimLookupKey): CommitRow;
+  /** Read a claim by key including tombstones, or null when the key is unknown. */
+  claim(key: ClaimLookupKey): PresentedClaim | null;
   /** Read the current default stack. */
   stack(): readonly RunId[];
   /** Read the current stash slot. */
@@ -700,6 +724,21 @@ export class RunbookStore {
    */
   loadSession(): Promise<SessionData> {
     return this.driver.read((tx) => this.readSession(tx));
+  }
+
+  /**
+   * Load a single claim by key, tombstones included.
+   *
+   * The deliberate counterpart to {@link loadSession}, which surfaces only active
+   * claims: a caller resolving a presented bearer needs the superseded row too,
+   * so a claim that lost authority is refused as superseded rather than reported
+   * as one that never existed.
+   *
+   * @param key - Claim lookup key derived from the presented bearer.
+   * @returns The claim and its status, or null when no row carries that key.
+   */
+  loadClaim(key: ClaimLookupKey): Promise<PresentedClaim | null> {
+    return this.driver.read((tx) => this.readClaim(tx, key));
   }
 
   /**
@@ -1136,6 +1175,11 @@ export class RunbookStore {
    * keyed on the exact interrupted epoch. If the interrupted attempt was
    * superseded meanwhile, the commit changes zero rows and refuses.
    *
+   * Unlike the three authoritative commit sites, this does not call
+   * {@link afterAuthoritativeStateWrite}: restoring an attempt's own snapshot
+   * under an unchanged lifecycle closes no delegation and resolves no
+   * completion. See that method's remarks.
+   *
    * @param input - Recovery commit inputs.
    * @param input.epoch - The interrupted attempt's epoch.
    * @param input.reason - The recovery cause to record.
@@ -1193,6 +1237,9 @@ export class RunbookStore {
       tx,
       commitRow(runId, claimKey) {
         return selectCommitRow(tx, runId, claimKey);
+      },
+      claim(key) {
+        return store.readClaim(tx, key);
       },
       stack() {
         return store.readStack(tx);
@@ -1360,13 +1407,23 @@ export class RunbookStore {
   }
 
   /**
-   * Run the common bookkeeping every authoritative run-state write owes.
+   * Run the common bookkeeping an authoritative run-state write owes.
    *
-   * Invoked exactly once by each successful state-write site — after a run
-   * UPDATE changes exactly one row, never on a zero-row/stale/owned outcome —
-   * so the resolved-completion projection and the delegated-claim supersession
-   * latch stay in lockstep with the committed state. This is the single home
-   * for the parent half of R2's two-sided durable latch.
+   * Invoked exactly once by each of the three authoritative commit sites — the
+   * owned-lease commit in {@link commitOwnedState}, the CAS write behind
+   * {@link mutateState}, and the captured-authority write behind
+   * {@link saveState} — after a run UPDATE changes exactly one row, never on a
+   * zero-row/stale/owned outcome, so the resolved-completion projection and the
+   * delegated-claim supersession latch stay in lockstep with the committed
+   * state. This is the single home for the parent half of R2's two-sided
+   * durable latch.
+   *
+   * {@link commitRecovery} is deliberately NOT one of those sites: it restores
+   * the interrupted attempt's own snapshot under the same lifecycle rather than
+   * moving a cursor or ending a run, so it can close no delegation. Any cursor
+   * movement that follows recovery commits through one of the three sites above
+   * and invalidates there. Do not read the phrase "every state write" literally
+   * — `state_json` is written on four paths, and this hook covers three.
    *
    * @param tx - Open write transaction.
    * @param next - The run state just committed.
@@ -1633,7 +1690,9 @@ export class RunbookStore {
   private readSession(tx: SqlReadTransaction): SessionData {
     const claims: Record<string, ClaimRecord> = {};
     // Only active claims are usable targeting authority; superseded tombstones are
-    // retained for commit-validity/generation accounting but never surfaced here.
+    // retained for commit-validity/generation accounting and for the by-key read
+    // in `readClaim` (which tells a superseded bearer apart from an unknown one),
+    // but never surfaced here.
     for (const row of tx.prepare("SELECT * FROM claims WHERE status = 'active'").all<ClaimRow>()) {
       claims[row.key] = deserializeClaim(row);
     }
@@ -1643,6 +1702,23 @@ export class RunbookStore {
       claims,
       ...(stash !== null ? { stashedRunbookId: stash } : {}),
     };
+  }
+
+  /**
+   * Read one claim by key, whatever its status.
+   *
+   * @param tx - Open transaction.
+   * @param key - Claim lookup key.
+   * @returns The claim and its validated status, or null when the key is unknown.
+   * @throws {Error} When the row carries a status outside the persisted union, or
+   *   malformed grants/delegation JSON (invalid state, validated at this edge).
+   */
+  private readClaim(tx: SqlReadTransaction, key: ClaimLookupKey): PresentedClaim | null {
+    const row = tx.prepare('SELECT * FROM claims WHERE key = :key').get<ClaimRow>({ key });
+    if (row === undefined) {
+      return null;
+    }
+    return { status: assertClaimStatus(row.status), record: deserializeClaim(row) };
   }
 
   /**
@@ -1709,6 +1785,20 @@ function assertLifecycle(value: string): Lifecycle {
     throw new Error(`Invalid persisted lifecycle: ${JSON.stringify(value)}`);
   }
   return value as Lifecycle;
+}
+
+/**
+ * Validate a claim status string read from the column.
+ *
+ * @param value - Raw status string.
+ * @returns The validated status.
+ * @throws {Error} When the value is not a known claim status.
+ */
+function assertClaimStatus(value: string): ClaimStatus {
+  if (!CLAIM_STATUSES.includes(value as ClaimStatus)) {
+    throw new Error(`Invalid persisted claim status: ${JSON.stringify(value)}`);
+  }
+  return value as ClaimStatus;
 }
 
 /** Zod schema for the grants JSON blob, kept permissive at this edge. */

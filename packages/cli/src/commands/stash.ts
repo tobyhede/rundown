@@ -43,6 +43,10 @@ export function registerStashCommand(program: Command): void {
               output.flush();
               return;
             case 'stale_claim':
+              output.error(active.message, active.code);
+              output.flush();
+              process.exitCode = 1;
+              return;
             case 'terminal_claim':
               output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
               output.flush();

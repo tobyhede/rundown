@@ -2,6 +2,7 @@ import type { CallerEvidence } from './actor-context.js';
 import type { ClaimId } from './claim-id.js';
 import {
   type CommandTargetReader,
+  type StaleClaimRefusal,
   type UnknownRunRefusal,
   resolveClaimTarget,
   unknownRunRefusal,
@@ -20,7 +21,7 @@ import type { RunbookState } from './types.js';
 export type IssuanceAnchorResolution =
   | { readonly kind: 'ok'; readonly state: RunbookState }
   | UnknownRunRefusal
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   | {
       readonly kind: 'terminal_claim';
       readonly claimId: ClaimId;
@@ -102,7 +103,12 @@ export async function resolveIssuanceAnchor(
       // claim key) instead of discarding it and refusing against an unrelated
       // active default.
       case 'stale_claim':
-        return { kind: 'stale_claim', claimId: target.claimId, message: target.message };
+        return {
+          kind: 'stale_claim',
+          claimId: target.claimId,
+          message: target.message,
+          code: target.code,
+        };
       case 'terminal_claim':
         return {
           kind: 'terminal_claim',

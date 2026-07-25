@@ -123,7 +123,7 @@ Rewrite the test to assert the refusal, and assert `details.parentRunId` names t
 
 ## Delta 8 — defects found by review, not by the replay
 
-All five are in code the owned commits introduce. None were caught by the test suites; the first was found by CodeRabbit and confirmed by an executable probe before being fixed.
+All four are in code the owned commits introduce. None were caught by the test suites; the first was found by CodeRabbit and confirmed by an executable probe before being fixed.
 
 **1. An executing child aborted its parent's unrelated commit (critical).** `invalidateClosedDelegatedClaims` supersedes a claim with an `UPDATE claims SET status`, and `status` sits inside `claims_guard_update`'s column list. That trigger raises `execution_in_progress` when the *controlled run* holds an `exec_token`. So a parent that terminalized or advanced past a delegation while its child was still executing had its own commit rolled back — a write with nothing to do with the child.
 
@@ -134,6 +134,88 @@ Confirmed by probe (parent `saveState` → `execution_in_progress`) before any f
 **3. Two unvalidated raw-row reads.** `runbook-store.ts` opens with *"Every raw row is validated at this edge … so no unvalidated row escapes the store"*, and the file carries `assertLifecycle` and `deserializeDelegation` for exactly that. The new code read `runs.lifecycle` as a bare `string` compared against literals, and cast `JSON.parse(row.delegation_json) as DelegationClaimLinkage`. Both now go through the validators, so corrupt persisted state aborts rather than being read as non-terminal (silently superseding a claim that should be retained) or reaching the classifier as a shape-checked lie.
 
 **4. The two-controller guard was unfalsifiable.** `resolveControllingClaim`'s `rows.length > 1` throw — the guard `2d0656b24` adds so a corrupt database is not silently resolved to an arbitrary controller — was killed by no test anywhere: both full suites pass with it removed. The uniqueness *property* test cannot reach it, and says so, skipping its `mint` op because a second active claim is unreachable through the store API. Closed with `throws rather than choosing arbitrarily when two active controllers exist`, which drops the partial index to stage the corrupt state. Verified by hand-mutation: neutered → fails, restored → passes.
+
+## Delta 9 — second-review findings, and the taxonomy hole they exposed
+
+A review of the PR as a whole (not of the replayed commits individually) found one substantive defect plus five smaller ones. The substantive one is the mirror image of Delta 8 item 2: that item fixed a legitimate supersession being reported as `CLAIM_INVARIANT_VIOLATED` on the **claim** path; this one fixes a legitimate supersession being reported as *"Claim id … does not exist"* on the **report** path.
+
+**1. A superseded bearer resolved as `missing` (the headline).** `readSession` surfaces only active claims, so once the parent-side latch tombstones a claim, `getActiveForClaimId` finds no key and returns `{ status: 'missing' }` — rendered as *"Claim id rdclk_… does not exist."* The child did everything right and is told its claim id is fabricated, which reads as a typo and invites the retry RD-825 exists to prevent. The PR encoded that outcome in three places: five scenario expectations changed from `parent-ended` to `error: does not exist`, and two session-service tests were rewritten to assert `missing` / `missing-claim`.
+
+Note what the store already does *not* do here: `captureAuthority` distinguishes a tombstone (`claim_superseded`), but resolution short-circuits before authority capture is ever reached, so that distinction cannot help this path. The fix has to be at the session-read layer.
+
+Resolved by making resolution tombstone-aware and typing the outcome:
+
+- `RunbookStore.loadClaim(key)` (plus `claim(key)` on the read facade, so in-transaction callers share it) reads one claim by key regardless of status, validating `claims.status` at that edge like every other raw row. It is the deliberate counterpart to `loadSession`.
+- `ClaimIdResolution` and `UnstashForClaimIdResult` gain a `superseded` variant carrying a `ClaimSupersededReason`. The secret is verified against the tombstone before the reason is disclosed, so the refusal reveals nothing `invalid-secret` did not already reveal about key existence.
+- `StaleClaimRefusal` is now one named type carrying a **required** `code`, so every construction site names the envelope it means and no front end re-derives it. Every CLI seam renders `refusal.code`.
+- **RD-825 is scoped, not broadened.** Only the four reasons where the parent moved past the delegation (`parent-ended`, `cursor-advanced`, `resolved`, `token-reissued`) carry `DELEGATION_SUPERSEDED` and its no-retry instruction. A claim retired on the claim side (`claim-rotated` — released, rotated, pruned) and one whose parent row is gone (`parent-unreadable`) say what they are under `CLAIMED_RUNBOOK_UNAVAILABLE`; telling a holder "do not retry the token" when the token was never the problem would be the same silent mapping in the other direction. `describeSupersededClaim` is the single source of that wording, shared with `rd pop` (which does not route through target resolution).
+
+**2. The same change closes Delta 8 item 1's residual.** Deferring supersession while the child holds an execution lease was correct — the alternative was aborting the parent's commit — but its comment claimed it "costs no enforcement" because `claimRunbook` refuses a closed delegation. True for `rundown claim`; **not** true for `rd pass --claim-id`, which never calls `claimRunbook`. Resolution checked only the parent's *lifecycle*, so a deferred tombstone left `parent-ended` covered and `cursor-advanced` wide open: the bearer could report a result into a delegation the parent had already left, and if the parent never wrote again it stayed that way. `getActiveForClaimId` and `unstashForClaimId` now classify liveness instead of reading lifecycle, which makes the store tombstone an optimization and liveness the enforcement. Pinned by `reports a cursor-advanced delegation as superseded while the tombstone is deferred`, which stages a held lease and asserts the row is still active before asserting the refusal.
+
+Consequence: `unlinked`'s `parent-ended` reason is gone (a parent that ended closed the delegation — one fact, one refusal), and the near-dead arm it had become is no longer reachable.
+
+**3. `claimRunbook`'s parent-unreadable throw became a typed refusal.** The function returned `missing-child` for an unreadable child and *threw* for an unreadable parent — one FK-impossible corruption class, two policies, in the same function, both freshly commented as deliberate. `getActiveForClaimId` already reported that condition softly (`unlinked` / `parent-missing`). Now returns `missing-parent`, which the pipeline maps onto the `parent-missing` envelope 4a already emits for the same fact.
+
+**4. Restored coverage the superseded rewrite dropped.** Rewriting `claimRunbook refuses to refresh an existing child claim with different linkage` into the superseded assertion removed the only test reaching the `findClaimByChildRunId` + divergent-existing-linkage branch. Re-pinned with a fixture where the incoming delegation is live *and* matches the child's persisted linkage while the existing claim carries a different delegation — the only way all three facts hold at once.
+
+**5. `SCHEMA_VERSION` is not bumped for the new index, deliberately — recorded at the constant.** `claims_one_active_per_run` changes the DDL while `user_version` stays `1`, so `ensureSchema` accepts a database created before this PR and runs with the uniqueness invariant unenforced (and `resolveControllingClaim`'s "unreachable" throw becomes reachable). That is acceptable **only** because the store is unreleased and no persisted database exists outside a development tree: delete `.rundown/rundown.db`. The comment at `SCHEMA_VERSION` states that, and states that from the first release any DDL edit must move the constant or RD-305 can never fire.
+
+**6. `afterAuthoritativeStateWrite`'s contract was overstated.** Its TSDoc claimed invocation by "each successful state-write site"; `commitRecovery` writes `state_json`, changes exactly one row, and calls neither it nor `writeResolvedCompletions`. Narrowed to the three authoritative commit sites, with recovery's exclusion explained at both ends (restoring an attempt's own snapshot under an unchanged lifecycle closes no delegation).
+
+### Refusal precedence — supersession outranks the stash gate, and nothing else
+
+`getActiveForClaimId` refuses in a fixed order, and a stashed child whose delegation had closed hit the stash gate first: *"currently stashed. Run `rundown pop` … to resume."* Both refusals are true, but that one names a recovery that cannot succeed — `pop` refuses the same claim — so the caller spends a command to reach a message contradicting the advice it just followed. For an agent under `running-runbooks`, "run pop" reads as the next step, which is the wasted retry RD-825 exists to prevent.
+
+The rule applied: **when two refusals are simultaneously true, surface the one that changes what the caller does next, preferring the one that ends the caller's work over the one that invites more of it.** Stashed is recoverable and caller-owned; superseded is terminal and not.
+
+That rule promotes supersession over the stash gate **only**. It is deliberately confined to a branch inside the gate (`supersededStashedClaim`) rather than hoisting the liveness check up the chain, because two lower refusals must keep winning:
+
+- **Terminal child.** `rd pass --claim-id` on a completed child is the idempotent confirm-or-conflict path, and a terminal child's delegation reads `resolved` — i.e. closed. Hoisting supersession above it would collapse exactly what Delta 4's terminal-retention fix protects. Pinned by `reports a parked terminal child as terminal, not as a closed delegation`.
+- **Corruption signals** (`stale`, `child-linkage-mismatch`) point at a different remedy (`prune`, restart) and follow the house rule of not adapting to invalid state.
+
+Pinned in both directions: `prefers the supersession over the stash gate for a parked, superseded claim` and `still reports a parked claim as stashed while its delegation is live`.
+
+Two further tests pin claims the new code's comments make, neither of which had coverage: `reports a retired run-control claim as claim-rotated, with no delegation origin` (a non-delegated tombstone must not borrow a parent-side reason) and `refuses a tombstoned claim with a wrong secret as invalid-secret, disclosing no reason` (the secret is verified before the supersession is named, so the refusal widens no existence oracle).
+
+### `Ran 0.00 tests per mutant` — a false-negative mode worth adding to the runbook
+
+The scoped run reported `runbook-store.ts` as **8 survived / 0 killed**, including a whole-body removal of the new `readClaim`, with `coveredBy` naming the exact superseded test. Two hand-mutations contradicted it: replacing the body with `return null` fails **7 tests**, and reproducing the mutant literally (`{}` body, so the method returns `undefined`) fails the superseded test with `TypeError: Cannot read properties of undefined (reading 'record')`.
+
+The cause is not scope resolution — the run printed `Instrumented 3 source file(s) with 153 mutant(s)`, so the `--mutate` ranges resolved. Isolating the file made it obvious:
+
+```
+Instrumented 1 source file(s) with 8 mutant(s)
+Ran 0.00 tests per mutant on average.
+… 8 survived, 0 no coverage
+```
+
+**Zero tests ran, and Stryker recorded the result as `survived` rather than `no coverage`.** A mutant no test executes cannot fail, so it is reported as survived — indistinguishable in the table from a genuine gap. The tests that kill these mutants live in `session-service.test.ts`, and Stryker's jest runner does not select it when mutating `runbook-store.ts` (the dry-run `coveredBy` attribution and the per-mutant test selection disagree).
+
+So `Ran N tests per mutant` belongs next to `Instrumented N source file(s)` on the pre-trust checklist: **`N = 0.00` invalidates every "survived" in the run.** A non-zero value is what makes the numbers mean anything — the same run reported 4.72 for the two files whose killing tests sit in their own suites, and those results were real (adding five tests moved `session-service.ts` from 64 to 91 killed).
+
+Closed properly rather than annotated: `loadClaim` now has direct tests in `runbook-store.test.ts` — the suite Stryker *does* select for that file — covering the active row, the tombstone-visible row (the read's entire reason to exist), and the unknown key. Re-run scoped to those lines: `Ran 2.63 tests per mutant`, **8/8 killed, 100%**. An out-of-union `status` is deliberately not staged: the column's CHECK constraint forbids the value, so no SQL the store can issue produces that row, and `assertClaimStatus` stands as edge validation against external corruption only.
+
+### Fixture promotion — the triage that made it necessary
+
+`stash-pop.test.ts › restores a claimed stash using captured claim provenance` began failing when resolution started classifying liveness: a pop that used to succeed now refusing is the shape of a real regression, so it was triaged as one before being touched. It was not. The test hand-seeds a parent with `step: '1'` and **no `substepStates`**, which is indistinguishable from a parent whose cursor advanced past the delegation — exactly what the classifier exists to catch. Production always writes that row; the sibling test in the same file drives the real `run → claim → stash → pop` flow and reads its token out of `state.substepStates[0].delegation.token`, and it classified as `parent-ended` correctly.
+
+Seeding the substep did not fix it either: the hand-written `delegation` omitted required `StepDelegation` fields and invented a `contextSnapshot` shape. `seedRawRunState` takes `Record<string, unknown>` and writes it **unvalidated**, so the malformed state persisted silently and `manager.load` rejected it on read — same exit code, unrelated cause.
+
+Two helpers now prevent the repeat, and they are the CLI-side answer to the same gap `seedLiveDelegation` answered in core (Delta 6):
+
+- `src/testing/delegation-fixtures.ts` (shipped as `@rundown-org/core/testing/delegation-fixtures`) holds `makeContextSnapshot`, `makeStepDelegation`, and `makeDelegatedSubstepState`. The first two moved out of `__tests__/helpers/step-factories.ts`, which now re-exports them so there is one definition: they were unreachable from CLI tests, which is why ten CLI test files hand-write these shapes today. Migrating those files is available follow-up, not done here.
+- `seedRunState(cwd, state: RunbookState)` is a typed, schema-validated seeder. `seedRawRunState` stays unvalidated on purpose — it exists for legacy-shape and RD-305 corruption fixtures — so the fix is a safe default plus a documented split at both functions, not validation bolted onto the raw one.
+
+### Delta 9 gates
+
+| Gate | Result |
+| --- | --- |
+| `corepack pnpm run verify` | exit 0 |
+| Full `@rundown-org/core` | 4621 passed, 1 skipped, 201 suites |
+| Full `@rundown-org/cli` | 3112 passed, 143 suites |
+| Scoped Stryker, changed lines | `command-target-resolver.ts` 25 killed / 0 survived (100% of covered); `session-service.ts` 91 killed (64 before the five new tests); `readClaim` 8/8 killed once tested in its own suite |
+
+`verify` earned its place twice in this delta: it caught a `tsconfig.test.json` type error — an un-narrowed `ParentLinkage` union read in a new test — that every scoped `jest` run passed, and two `cspell` misses. Neither is reachable from a targeted suite, which is exactly the gap the parent plan's "MUST run before every push" rule exists to close.
 
 ## Procedural note — rebuild before running CLI tests
 

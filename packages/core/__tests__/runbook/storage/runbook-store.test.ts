@@ -394,7 +394,12 @@ describe('guarded state writes', () => {
     const state = await newState();
     await store.createRun(state);
     await mintClaim(state.id, 'a'.repeat(32));
-    await expect(mintClaim(state.id, 'b'.repeat(32))).rejects.toThrow(/UNIQUE/);
+    // Pin the column the uniqueness is on, not a bare /UNIQUE/: node:sqlite
+    // reports the offending column rather than the index name, and asserting the
+    // column keeps the test from passing on some unrelated UNIQUE violation.
+    await expect(mintClaim(state.id, 'b'.repeat(32))).rejects.toThrow(
+      /UNIQUE constraint failed: claims\.controlled_run/,
+    );
   });
 
   it('refuses execution_in_progress when the run is owned', async () => {
@@ -530,6 +535,60 @@ describe('tombstone preservation (#519 lastSeenAt survives)', () => {
           .get<{ readonly last_seen_at: string }>({ k: key2 })?.last_seen_at,
     );
     expect(seen).toBe(now);
+  });
+
+  // `loadClaim` is the read that tells a superseded bearer apart from an unknown
+  // one, so the tombstone-visible case is its whole reason to exist. Tested here,
+  // in the store's own suite, and not only through `SessionService`: a scoped
+  // mutation run over this file selects no test outside it — it reported "Ran 0.00
+  // tests per mutant" and then marked every mutant in `readClaim` as *survived*,
+  // which is a false negative no session-level test can correct.
+  describe('loadClaim (by key, tombstones included)', () => {
+    it('returns an active claim with its status', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      const key = await mintClaim(state.id, 'b1'.repeat(16));
+
+      const presented = await store.loadClaim(assertClaimLookupKey(key));
+
+      expect(presented?.status).toBe('active');
+      expect(presented?.record.claimKey).toBe(key);
+      expect(presented?.record.controlledRunId).toBe(state.id);
+    });
+
+    it('returns a superseded tombstone rather than reporting it absent', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      const key = await mintClaim(state.id, 'b2'.repeat(16));
+      await store.transaction((txn) => {
+        txn.tombstoneClaim(assertClaimLookupKey(key));
+      });
+
+      const presented = await store.loadClaim(assertClaimLookupKey(key));
+
+      // `loadSession` deliberately omits this row; `loadClaim` deliberately does
+      // not. Losing the distinction is what makes a superseded bearer read as a
+      // claim id that never existed.
+      expect((await store.loadSession()).claims[key]).toBeUndefined();
+      expect(presented?.status).toBe('superseded');
+      expect(presented?.record.claimKey).toBe(key);
+    });
+
+    it('returns null for a key no row carries', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      await mintClaim(state.id, 'b3'.repeat(16));
+
+      const absent = await store.loadClaim(assertClaimLookupKey(`rdclk_${'b4'.repeat(16)}`));
+
+      expect(absent).toBeNull();
+    });
+
+    // No test stages an out-of-union `status`: the column's CHECK constraint
+    // forbids the value, so no SQL the store can issue produces that row.
+    // `assertClaimStatus` remains as the edge validation this file requires of
+    // every raw row — defence against an externally-corrupted database, which is
+    // not reachable from here.
   });
 
   it('records claim activity without bumping claim_generation', async () => {

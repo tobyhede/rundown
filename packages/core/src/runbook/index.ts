@@ -102,6 +102,7 @@ export {
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {
+  describeSupersededClaim,
   resolveClaimTarget,
   resolveCommandTarget,
   resolveMutationAuthority,
@@ -109,6 +110,8 @@ export {
   resolveTransitionTarget,
   type ClaimTargetResolution,
   type CommandTargetResolution,
+  type StaleClaimRefusal,
+  type StaleClaimRefusalCode,
   type UnknownRunRefusal,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,

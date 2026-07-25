@@ -78,6 +78,32 @@ async function makeState(
 describe('SessionService', () => {
   let testDir: string;
   let manager: RunbookStateManager;
+  /**
+   * Stage a held execution lease on a run, the way a child mid-command holds
+   * one. Raw SQL because the fixture needs the ownership columns without an
+   * execution attempt driving them; the `runs` CHECK makes execution identity
+   * all-or-nothing, so pid/token/epoch are written together and the attempt row
+   * the deferred FK names is inserted alongside.
+   *
+   * @param runId - Run to mark as owned.
+   */
+  function holdExecutionLease(runId: RunId): void {
+    const tokenHash = `sha256:${'e'.repeat(64)}`;
+    const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+    raw
+      .prepare(
+        `INSERT INTO execution_attempts (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+         VALUES (:runId, 1, :token, 'effect_started', :pid, '2026-01-01T00:00:00.000Z')`,
+      )
+      .run({ runId, token: tokenHash, pid: process.pid });
+    raw
+      .prepare(
+        'UPDATE runs SET exec_token = :token, exec_epoch = 1, exec_pid = :pid WHERE id = :runId',
+      )
+      .run({ runId, token: tokenHash, pid: process.pid });
+    raw.close();
+  }
+
   let sessionService: SessionService;
   const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
   const mockRunbook: Runbook = {
@@ -508,6 +534,126 @@ describe('SessionService', () => {
       });
     });
 
+    it('reports a retired run-control claim as claim-rotated, with no delegation origin', async () => {
+      // A non-delegated tombstone has no parent to classify against, so it must
+      // not borrow a parent-side reason. `claim-rotated` is also what the CLI maps
+      // to the generic unavailable code rather than RD-825's no-retry advice —
+      // this claim was released, not outrun by a parent.
+      const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+        runbookPath: 'solo.md',
+      });
+      await sessionService.pushRunbook(run.id);
+      const { claimId } = await sessionService.issueRunControlClaim(run.id);
+
+      await sessionService.releaseRunbook(run.id);
+
+      const resolved = await sessionService.getActiveForClaimId(claimId);
+      expect(resolved).toEqual({ status: 'superseded', claimId, reason: 'claim-rotated' });
+    });
+
+    it('refuses a tombstoned claim with a wrong secret as invalid-secret, disclosing no reason', async () => {
+      // The secret is verified before the supersession is named, so a caller who
+      // cannot prove the bearer learns exactly what `invalid-secret` already
+      // reveals about an active claim — no more.
+      const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+        runbookPath: 'solo.md',
+      });
+      await sessionService.pushRunbook(run.id);
+      const { claimId } = await sessionService.issueRunControlClaim(run.id);
+      await sessionService.releaseRunbook(run.id);
+
+      // Same lookup key (so the tombstone is found), different secret segment —
+      // reusing the known-valid secret shape from the unknown-claim fixture above.
+      const [prefix, key] = claimId.split('_');
+      const forged = assertClaimId(`${prefix}_${key}_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_`);
+      expect(forged).not.toBe(claimId);
+
+      const resolved = await sessionService.getActiveForClaimId(forged);
+      expect(resolved).toEqual({ status: 'invalid-secret', claimId: forged });
+    });
+
+    it('prefers the supersession over the stash gate for a parked, superseded claim', async () => {
+      // Both refusals are true. "Currently stashed — run `rundown pop`" names a
+      // recovery that cannot succeed (pop refuses the same claim), so the caller
+      // spends a command to reach a contradictory message. The refusal that ends
+      // the caller's work wins.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'b');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      await sessionService.stashRunbook(child.id);
+      // Hold a lease so the parent-side latch defers the tombstone: the claim row
+      // stays active, so this exercises the resolution-time classification rather
+      // than the tombstone lookup.
+      holdExecutionLease(child.id);
+      await manager.update(parent.id, { step: '2' });
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(resolved.status).toBe('superseded');
+      if (resolved.status === 'superseded') {
+        expect(resolved.reason).toBe('cursor-advanced');
+      }
+    });
+
+    it('still reports a parked claim as stashed while its delegation is live', async () => {
+      // The gate's own job is intact: a live delegation is genuinely just parked,
+      // and `rundown pop` will resume it.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'e');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      await sessionService.stashRunbook(child.id);
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(resolved.status).toBe('unlinked');
+      if (resolved.status === 'unlinked') {
+        expect(resolved.reason).toBe('stashed');
+      }
+    });
+
+    it('reports a parked terminal child as terminal, not as a closed delegation', async () => {
+      // Completing the child closes the parent-side delegation, but terminal
+      // evidence outranks supersession: this is the confirm-or-conflict contract
+      // `rd pass/fail --claim-id` resolves against, and a resolved delegation must
+      // not displace it.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'd');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      await sessionService.stashRunbook(child.id);
+      await manager.update(child.id, { lifecycle: 'completed' });
+      // The parent advances past the delegation. No lease needed: the parent-side
+      // latch already retains a claim whose controlled child is terminal, so the
+      // row stays active and resolution decides which refusal wins.
+      await manager.update(parent.id, { step: '2' });
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId, {
+        includeStashed: true,
+      });
+      expect(resolved.status).toBe('terminal');
+    });
+
     it('deletes a claim together with the run it controls', async () => {
       // Runs and their claims live in one database and are removed in a single
       // transaction, so a delete can never half-apply the way two JSON files
@@ -618,10 +764,57 @@ describe('SessionService', () => {
       await manager.update(parent.id, { lifecycle: 'completed' });
 
       // R2: an authoritative parent state commit tombstones the linked delegated
-      // claim (parent terminalization). The bearer therefore no longer resolves
-      // as an active claim — the tombstone is not surfaced in loadSession.
+      // claim (parent terminalization), and loadSession surfaces only active
+      // claims. But "no longer an active claim" is not "never existed": the
+      // refusal must name the supersession, or the holder is told its claim id
+      // does not exist and reads that as a mistyped id worth re-deriving —
+      // exactly the retry the no-retry signal exists to stop.
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
-      expect(resolved.status).toBe('missing');
+      expect(resolved.status).toBe('superseded');
+      if (resolved.status === 'superseded') {
+        expect(resolved.reason).toBe('parent-ended');
+        expect(resolved.delegation).toEqual({
+          parentRunId: parent.id,
+          parentStepId: linkage.parentStepId,
+        });
+      }
+    });
+
+    it('reports a cursor-advanced delegation as superseded while the tombstone is deferred', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'c');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+
+      // The child is mid-execution, so the parent-side latch must skip its claim
+      // (tombstoning `status` while the controlled run is owned would abort the
+      // parent's own commit). The parent then advances its top-level cursor past
+      // the delegation, writing no `done` substep row.
+      holdExecutionLease(child.id);
+      await manager.update(parent.id, { step: '2' });
+
+      // The deferral really happened: the row is still active, so nothing on the
+      // claim record itself refuses this bearer.
+      const session = await manager.loadSession();
+      expect(session.claims[claimed.claim.claimKey]).toBeDefined();
+
+      // Resolution must still refuse. The store tombstone is the optimization;
+      // liveness against the committed parent is the enforcement. Without this,
+      // a deferred tombstone leaves the bearer able to report a result into a
+      // delegation the parent has already left — and if the parent never writes
+      // again, it stays that way.
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(resolved.status).toBe('superseded');
+      if (resolved.status === 'superseded') {
+        expect(resolved.reason).toBe('cursor-advanced');
+      }
     });
 
     it('returns unlinked when the parent state is missing', async () => {
@@ -672,6 +865,74 @@ describe('SessionService', () => {
       expect(resolved.status).toBe('stale');
       if (resolved.status === 'stale') {
         expect(resolved.reason).toBe('missing-state');
+      }
+    });
+
+    it('claimRunbook refuses with a typed missing-parent when the parent cannot be read', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '7');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      await seedLiveDelegation(manager, linkage);
+      await manager.delete(parent.id);
+
+      // A claim naming an unreadable parent is the same FK-impossible corruption
+      // class as an unreadable child, and `getActiveForClaimId` already reports
+      // it softly (`unlinked/parent-missing`). Refusing with a typed result here
+      // keeps one policy for one class instead of throwing on the parent side
+      // and returning a value on the child side of the same function.
+      const result = await sessionService.claimRunbook(child.id, linkage);
+      expect(result.status).toBe('missing-parent');
+      if (result.status === 'missing-parent') {
+        expect(result.parentRunId).toBe(parent.id);
+        expect(result.parentStepId).toBe(linkage.parentStepId);
+      }
+    });
+
+    it('claimRunbook refuses to refresh an existing child claim carrying a different delegation', async () => {
+      // Pins the `findClaimByChildRunId` + divergent-existing-linkage branch:
+      // the incoming delegation is live in the parent (so the R2 latch passes)
+      // and matches the child's persisted linkage, but the claim already on that
+      // child was issued for a different delegation. Reached only when those
+      // three facts hold together, so neither the childState mismatch test nor
+      // the superseded test covers it.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const issued = linkageFor(parent.id, '5', '1.2');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: issued,
+      });
+      const first = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, issued),
+      );
+      expect(first.claim.delegation?.tokenHash).toBe(issued.tokenHash);
+
+      // A sibling delegation on its own live substep, adopted by the child's
+      // persisted linkage so only the claim record diverges.
+      const sibling = linkageFor(parent.id, '9', '1.3');
+      await manager.update(child.id, { parentLinkage: sibling });
+      await seedLiveDelegation(manager, sibling);
+
+      const result = await sessionService.claimRunbook(child.id, sibling);
+
+      expect(result.status).toBe('linkage-mismatch');
+      if (result.status === 'linkage-mismatch') {
+        expect(result.childRunId).toBe(child.id);
+        expect(result.incoming).toBe(sibling);
+        // The persisted side is the CLAIM's delegation, not the child's linkage —
+        // asserting against `issued` rather than reconstructing it from the claim
+        // under test, which would pass tautologically if the record lost it.
+        expect(result.persisted?.kind).toBe('delegation');
+        if (result.persisted?.kind === 'delegation') {
+          expect(result.persisted.tokenHash).toBe(issued.tokenHash);
+          expect(result.persisted.parentStepId).toBe(issued.parentStepId);
+        }
       }
     });
 
@@ -775,7 +1036,14 @@ describe('SessionService', () => {
 
       await sessionService.releaseRunbook(child.id);
 
-      expect((await sessionService.getActiveForClaimId(claimed.claimId)).status).toBe('missing');
+      // A released claim is a tombstone, not an absent row, so it resolves as
+      // `superseded` / `claim-rotated` — released or replaced, no parent-side
+      // supersession claimed. `missing` stays for a key with no row at all.
+      const released = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(released.status).toBe('superseded');
+      if (released.status === 'superseded') {
+        expect(released.reason).toBe('claim-rotated');
+      }
     });
 
     /**
@@ -829,7 +1097,10 @@ describe('SessionService', () => {
       await sessionService.releaseRunbook(childRunId);
 
       const resolution = await sessionService.getActiveForClaimId(claimId);
-      expect(resolution.status).toBe('missing');
+      expect(resolution.status).toBe('superseded');
+      if (resolution.status === 'superseded') {
+        expect(resolution.reason).toBe('claim-rotated');
+      }
     });
 
     it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps a stopped child as a terminal tombstone', async () => {
@@ -858,14 +1129,19 @@ describe('SessionService', () => {
       const removed = await sessionService.pruneClaimsForChildren([childRunId]);
 
       expect(removed).toEqual([claimKey]);
+      // Pruned means tombstoned, so the refusal names the retirement rather than
+      // denying the id ever existed.
       const resolution = await sessionService.getActiveForClaimId(claimId);
-      expect(resolution.status).toBe('missing');
+      expect(resolution.status).toBe('superseded');
+      if (resolution.status === 'superseded') {
+        expect(resolution.reason).toBe('claim-rotated');
+      }
     });
 
     it('pruneClaimsForChildren removes claims for multiple child run ids', async () => {
       // Two distinct claimed children (one completed, one stopped) each retain a
       // terminal tombstone. A single prune call covering both child ids must
-      // remove both claim records and resolve each to `missing` afterward.
+      // remove both claim records and resolve each as retired afterward.
       const a = await setupClaimedChild('8', 'completed');
       const b = await setupClaimedChild('9', 'stopped');
       await sessionService.releaseRunbook(a.childRunId, { retainClaimsAsTerminal: true });
@@ -875,8 +1151,8 @@ describe('SessionService', () => {
 
       expect(removed).toHaveLength(2);
       expect(new Set(removed)).toEqual(new Set([a.claimKey, b.claimKey]));
-      expect((await sessionService.getActiveForClaimId(a.claimId)).status).toBe('missing');
-      expect((await sessionService.getActiveForClaimId(b.claimId)).status).toBe('missing');
+      expect((await sessionService.getActiveForClaimId(a.claimId)).status).toBe('superseded');
+      expect((await sessionService.getActiveForClaimId(b.claimId)).status).toBe('superseded');
     });
 
     it('pruneClaimsForChildren is a no-op when no claim matches the given child run ids', async () => {
@@ -1000,11 +1276,15 @@ describe('SessionService', () => {
       await sessionService.releaseRunbook(terminalChild.id);
       await sessionService.stashRunbook(child.id);
 
-      // R2: ending the parent superseded the delegated claim, so its bearer no
-      // longer resolves as a live claim — it reports as a missing claim rather
-      // than a live ended-parent outcome.
+      // R2: ending the parent superseded the delegated claim. `rd pop` must say
+      // so — a superseded bearer reported as `missing-claim` renders "does not
+      // exist", which sends the holder looking for a copy/paste error instead of
+      // back to the orchestrator.
       const parentEnded = await sessionService.unstashForClaimId(endedClaimed.claimId);
-      expect(parentEnded.status).toBe('missing-claim');
+      expect(parentEnded.status).toBe('superseded');
+      if (parentEnded.status === 'superseded') {
+        expect(parentEnded.reason).toBe('parent-ended');
+      }
     });
 
     it('exposes a stashed claimed child read-only via includeStashed', async () => {
@@ -1069,9 +1349,9 @@ describe('SessionService', () => {
       expect(session.defaultStack).not.toContain(child.id);
       expect(session.claims[claimed.claim.claimKey]).toBeUndefined();
 
-      // The claim id is now `missing` rather than `unlinked`.
+      // The claim id is now a retired tombstone rather than `unlinked`.
       const after = await sessionService.getActiveForClaimId(claimed.claimId);
-      expect(after.status).toBe('missing');
+      expect(after.status).toBe('superseded');
     });
 
     it('lists open claimed children for a parent runbook', async () => {
