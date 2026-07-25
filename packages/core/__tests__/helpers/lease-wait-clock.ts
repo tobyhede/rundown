@@ -153,11 +153,14 @@ export function recordDriverCalls(driver: SqlDriver): DriverCallRecorder {
 
   patched.read = async <T>(work: (tx: SqlReadTransaction) => SyncWork<T>): Promise<T> => {
     calls.push('read');
-    reads += 1;
+    // Pin this call's ordinal before awaiting: `reads` is shared, so a read
+    // that starts while this one is in flight would otherwise redirect both
+    // continuations to the later ordinal.
+    const ordinal = ++reads;
     const result = await realRead(work);
-    const hook = readHooks.get(reads);
+    const hook = readHooks.get(ordinal);
     if (hook !== undefined) {
-      readHooks.delete(reads);
+      readHooks.delete(ordinal);
       await hook();
     }
     return result;

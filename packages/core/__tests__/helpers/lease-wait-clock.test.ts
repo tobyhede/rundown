@@ -1,5 +1,22 @@
 import { describe, expect, it } from '@jest/globals';
-import { makeFakeWaitClock } from './lease-wait-clock.js';
+import type { SqlDriver } from '../../src/runbook/storage/sql-driver.js';
+import { makeFakeWaitClock, recordDriverCalls } from './lease-wait-clock.js';
+
+/**
+ * A driver whose reads resolve only when the test releases them, so two reads
+ * can be held in flight at once.
+ */
+function makeGatedDriver(): { driver: SqlDriver; release: (() => void)[] } {
+  const release: (() => void)[] = [];
+  const driver = {
+    read: () =>
+      new Promise<void>((resolve) => {
+        release.push(resolve);
+      }),
+    immediate: () => Promise.resolve(),
+  } as unknown as SqlDriver;
+  return { driver, release };
+}
 
 describe('makeFakeWaitClock', () => {
   it('records no applied sleep when the signal is already aborted', async () => {
@@ -33,5 +50,32 @@ describe('makeFakeWaitClock', () => {
         }
       })(),
     ).rejects.toThrow(/runaway wait loop/);
+  });
+});
+
+describe('recordDriverCalls', () => {
+  it('runs each read hook for its own call ordinal when reads overlap', async () => {
+    const { driver, release } = makeGatedDriver();
+    const recorder = recordDriverCalls(driver);
+    const fired: number[] = [];
+    recorder.afterRead(1, () => {
+      fired.push(1);
+    });
+    recorder.afterRead(2, () => {
+      fired.push(2);
+    });
+
+    // Second read starts before the first resolves. Reading the shared counter
+    // after the await makes both continuations see the later ordinal, so the
+    // first read's hook is skipped and the second's is consumed early.
+    const first = driver.read(() => undefined);
+    const second = driver.read(() => undefined);
+    release[0]?.();
+    release[1]?.();
+    await first;
+    await second;
+
+    expect(fired).toEqual([1, 2]);
+    recorder.restore();
   });
 });
