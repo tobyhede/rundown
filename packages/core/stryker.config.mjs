@@ -127,14 +127,25 @@ const config = {
   maxTestRunnerReuse,
   ignoreStatic,
   // Core hosts the heaviest actors (XState machine, file locks with jittered
-  // backoff bounded to 5s, fromPromise actors that touch the filesystem). The
-  // previous 30000ms / 2.5x budget produced ~17 spurious Timeout results that
-  // mutation-testing-metrics counts as undetected mutants, depressing the score
-  // below its true value. A Timeout-as-survivor is a false negative that makes
-  // the gate fire on flake rather than on a real coverage regression, so the
-  // budget is widened to the CLI's 60000ms baseline with a 3x factor (vs 2.5x)
-  // to absorb the slowest-but-legitimate actor runs under CI contention. See
-  // issue #483.
+  // backoff bounded to 5s, fromPromise actors that touch the filesystem), so this
+  // budget is 12x Stryker's 5000ms default. It is load-bearing, and the direction
+  // of the risk is the OPPOSITE of what this comment used to claim.
+  //
+  // Timeout is a DETECTED state, not an undetected one: the score is
+  // `detected / valid` where detected = `killed + timeout` (see the official
+  // mutant-states doc, and `DETECTED` in scripts/mutation-merge-reports.mjs and
+  // the formula in scripts/assert-mutation-score.mjs). So a spurious timeout does
+  // not depress the score — it INFLATES it, by crediting a kill that no test
+  // performed. Tightening this budget to buy runtime silently manufactures those
+  // false kills.
+  //
+  // Measured, mutating src/paths.ts against its own unit test: at 60000ms the
+  // report is 11 Killed / 15 Timeout / 2 Survived = 78.79% in 399s. At 8000ms the
+  // same scope yields 0 Killed / 31 Timeout / 0 Survived = 86.11% in 85s — every
+  // mutant run simply exceeded the budget, both genuine survivors vanished, and
+  // the "4.7x speedup" is a report that measured nothing. Do not tune this for
+  // speed; reduce the mutant count instead (changed-line ranges) or the tests per
+  // mutant (`testFiles`). See issue #483.
   timeoutMS: 60000,
   timeoutFactor: 3,
 };

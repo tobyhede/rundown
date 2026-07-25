@@ -162,13 +162,26 @@ function expectedShardCounts() {
 }
 
 const byModule = collectShardReports(downloadDir);
+const expected = expectedShardCounts();
+
+// Zero reports is only a legitimate no-op when the plan expected no shards. If
+// the plan DID expect shards and none produced a report, every shard crashed —
+// the loudest possible failure, and previously the quietest: this returned 0, so
+// a run whose entire mutation campaign died reported success. That inverted the
+// partial-loss check below, which correctly fails when 1 of 2 shards is missing.
 if (byModule.size === 0) {
-  process.stderr.write(`no shard reports found under ${downloadDir}; nothing to merge.\n`);
-  process.exit(0);
+  const wanted = [...expected.values()].reduce((sum, n) => sum + n, 0);
+  if (wanted === 0) {
+    process.stderr.write(`no shard reports found under ${downloadDir}; nothing to merge.\n`);
+    process.exit(0);
+  }
+  process.stderr.write(
+    `no shard reports found under ${downloadDir}, but the plan expected ${wanted} ` +
+      `(${[...expected].map(([m, n]) => `${m}:${n}`).join(', ')}); every shard crashed.\n`,
+  );
+  process.exit(1);
 }
 if (upload && !apiKey) throw new Error('UPLOAD=true but DASHBOARD_API_KEY is empty');
-
-const expected = expectedShardCounts();
 
 mkdirSync(outDir, { recursive: true });
 const failures = [];

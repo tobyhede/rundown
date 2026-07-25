@@ -415,6 +415,49 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   warning-severity findings — so a `warn` rule such as
   `noUnusedPrivateClassMembers` is reported by `verify` and still passes it.
   ESLint (`check:lint:typed`) is the linter whose findings block.
+- **`pnpm run test:mutate:changed`** — the default way to mutation-test your own
+  work, and what an agent should reach for first. It derives the diff base
+  (merge-base with `main`) and runs **one Stryker invocation per changed source
+  file**, each scoped to that file's changed `file:start-end` ranges (whole-file
+  only when the file is new or under 300 lines) and to that file's dedicated
+  unit test, then scores each file through `assert-mutation-score.mjs`. It
+  encodes every foot-gun below by construction, adds `--force` (mandatory, see
+  below), and fails loudly when Stryker instrumented 0 files — the silent no-op
+  that a hand-written `--mutate` reports as success.
+
+  ```bash
+  pnpm run test:mutate:changed                    # every changed package
+  pnpm run test:mutate:changed --package core     # one package
+  pnpm run test:mutate:changed --print            # show the plan + commands, run nothing
+  pnpm run test:mutate:changed --related-tests    # drop --testFiles, use findRelatedTests
+  ```
+
+  **Read a survivor correctly.** Scoping to one dedicated test disables the jest
+  runner's `--findRelatedTests`, so a mutant killed only by an integration test
+  reports as a **survivor**. That is the intended reading — "this module's own
+  unit tests do not kill this mutant independently", which is what Stryker
+  documents `testFiles` for — not "nothing in the suite covers this". Pass
+  `--related-tests` to check the broader question, at roughly 13x the cost per
+  mutant on a widely-imported module.
+
+  **`--force` is not optional.** Every package config sets `incremental: true`,
+  so without `--force` Stryker may serve cached results from the `main` baseline
+  for the very lines you changed, and the score you read is main's. The Stryker
+  docs call `--force` "especially beneficial when combined with a custom
+  `--mutate` pattern" for exactly this reason. It is scope-limited, so the
+  full-report benefit of incremental mode is preserved.
+
+  **Never tune `timeoutMS` down for speed.** Timeout is a _detected_ state
+  (score is `detected / valid`, detected = `killed + timeout`), so a spurious
+  timeout inflates the score by crediting a kill no test performed. Measured on
+  `src/paths.ts`: 60000ms gives 11 Killed / 15 Timeout / 2 Survived = 78.79%;
+  8000ms gives 0 Killed / 31 Timeout / 0 Survived = 86.11% — both real survivors
+  erased. Reduce mutant count (ranges) or tests per mutant (`testFiles`)
+  instead.
+
+  Reach for the manual form below only when you need a scope the diff does not
+  describe (a single function, a file you did not touch).
+
 - **Scoped Stryker run** (any package) — use `exec`, and pass
   **package-relative** paths:
 
@@ -460,14 +503,16 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     `pnpm --filter … exec` runs with cwd = the package dir, so Stryker reports
     `Instrumented 0 source file(s) with 0 mutant(s)` and **exits 0** — a gate
     that cannot fail. Each `stryker.config.mjs`'s own `mutate` array is
-    package-relative (`'src/**/*.ts'`) for the same reason, as is
-    `.github/workflows/mutation-pr.yml:96` (`sed "s#^${PKG_DIR}/##"`).
+    package-relative (`'src/**/*.ts'`) for the same reason, and so are the
+    scopes `scripts/lib/mutation-scope.mjs` emits for both the local runner and
+    CI.
 
   Note `incremental: true`: a stale `reports/stryker-incremental.json` can print
-  a plausible aggregate over a zero-mutant run. Also note **core is excluded
-  from the per-PR mutation matrix** (`mutation-pr.yml:34-42`) and that workflow
-  is `continue-on-error`, so a scoped run you do by hand is the only mutation
-  signal a core PR gets.
+  a plausible aggregate over a zero-mutant run — pass `--force` (as
+  `test:mutate:changed` does) so a hand-run scope is actually executed rather
+  than replayed. **Core is included in the per-PR matrix**, as one shard per
+  changed file; that workflow is advisory (`continue-on-error` throughout, no
+  required check), so it reports but never blocks.
 
 - `pnpm run plugin:dev -- --no-build` (skip rebuild) /
   `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).

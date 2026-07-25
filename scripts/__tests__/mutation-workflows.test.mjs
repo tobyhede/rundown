@@ -11,7 +11,7 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   assert.match(yml, /STRYKER_IGNORE_STATIC:\s*'true'/, 'PR run must opt into ignoreStatic');
   assert.match(
     yml,
-    /- name: Run mutation tests[\s\S]*?continue-on-error:\s*true/,
+    /- name: Run mutation shard[\s\S]*?continue-on-error:\s*true/,
     'Stryker advisory run must be non-fatal',
   );
   assert.match(
@@ -96,8 +96,21 @@ test('mutation-pr.yml distinguishes a failed summary download from a genuine no-
     /Could not download advisory summaries \(download step: \$\{DOWNLOAD_OUTCOME\}\)/,
     'failure branch must emit the advisory download-warning message',
   );
-  // The advisory no-op message stays for the genuine zero-summary case.
-  assert.match(yml, /No mutated changed files in this PR\./);
+  // The advisory no-op message stays for the genuine zero-summary case, and it
+  // must be gated on the PLANNER having found nothing — not merely on there
+  // being no summaries. Planned-but-no-summaries is a failure, and reporting it
+  // as "nothing changed" is exactly the masking this test exists to prevent.
+  assert.match(yml, /No mutated source changes in this PR\./);
+  assert.match(
+    yml,
+    /elif \[ "\$\{PLAN_EMPTY\}" = "true" \]; then/,
+    'the no-op message must be gated on the planner finding no scope',
+  );
+  assert.match(
+    yml,
+    /- name: Assemble comment body\n\s*env:\n(?:\s*\w+:.*\n)*?\s*PLAN_EMPTY:\s*\$\{\{\s*needs\.plan\.outputs\.empty\s*\}\}/,
+    'assemble step must read the planner outcome via env (no run: interpolation)',
+  );
 });
 
 test('mutation.yml is the full-fidelity producer (no ignoreStatic, shards score static)', async () => {

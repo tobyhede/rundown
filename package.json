@@ -30,6 +30,7 @@
     "test:mutate:cli": "pnpm --filter @rundown-org/cli exec stryker run",
     "test:mutate:cli:dry": "pnpm --filter @rundown-org/cli exec stryker run --dryRunOnly",
     "test:mutate:plugin": "pnpm --filter @rundown-org/claude-code-plugin exec stryker run",
+    "test:mutate:changed": "node scripts/mutate-changed.mjs",
     "test:pw": "pnpm --filter site test",
     "test:coverage": "run-p test:coverage:*",
     "test:coverage:parser": "pnpm --filter @rundown-org/parser test:coverage",

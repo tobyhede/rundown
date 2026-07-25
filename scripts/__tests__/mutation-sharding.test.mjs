@@ -61,6 +61,49 @@ test('plan: a dispatch for core emits only balanced, disjoint core shards', () =
   assert.equal(new Set(all).size, all.length, 'shards must mutate disjoint files');
 });
 
+// The pull_request planner is a different shape from the producer's: one shard
+// per changed FILE, scoped to that file's changed line ranges and its own
+// dedicated unit test. That per-file isolation is what makes core affordable on a
+// PR (`testFiles` is a whole-run setting, so a shared shard cannot give each file
+// a tight test scope).
+test('plan: a pull_request emits one shard per changed file with its own test scope', () => {
+  // HEAD~1 is a real commit in this repo, so the planner has a reachable base
+  // without depending on which branch the suite runs on.
+  const { include } = plan({ EVENT_NAME: 'pull_request', BASE_REF: 'HEAD~1' });
+  for (const entry of include) {
+    assert.equal(typeof entry.mutate, 'string');
+    assert.ok(entry.mutate.length > 0, 'every PR shard must carry a --mutate scope');
+    assert.doesNotMatch(entry.mutate, /[{}]/, 'PR scope must use the comma form, never braces');
+    // `files` is newline-separated so the workflow can read it with
+    // `while IFS= read -r` and stay correct for paths containing spaces.
+    assert.equal(typeof entry.files, 'string');
+    assert.equal(
+      entry.files.split('\n').filter(Boolean).length,
+      entry.label.split(' ').filter(Boolean).length,
+      'files and label must describe the same file set',
+    );
+    for (const file of entry.files.split('\n').filter(Boolean)) {
+      assert.match(file, /^src\//, 'PR shards mutate package-relative src paths');
+    }
+  }
+});
+
+test('plan: a pull_request fails closed on an unreachable base ref', () => {
+  assert.throws(
+    () => plan({ EVENT_NAME: 'pull_request', BASE_REF: 'origin/definitely-not-a-ref' }),
+    'an unreachable base must raise, not plan an empty always-green matrix',
+  );
+});
+
+test('plan: a pull_request honours MAX_PR_SHARDS by batching', () => {
+  const { include } = plan({
+    EVENT_NAME: 'pull_request',
+    BASE_REF: 'HEAD~1',
+    MAX_PR_SHARDS: '1',
+  });
+  assert.ok(include.length <= 1, 'MAX_PR_SHARDS must cap the fan-out');
+});
+
 test('plan: respects the config mutate exclusions (no output/cli/index)', () => {
   const { include } = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'core' });
   const files = include.flatMap((e) => e.mutate.split(','));
@@ -182,6 +225,40 @@ test('merge: fails when a shard is missing (crash) even with continue-on-error',
       ],
     });
     assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The inverse of the test above, and the hole it left: when EVERY shard crashes
+// there are zero reports, which the merge used to treat as "nothing planned" and
+// exit 0. A run whose entire campaign died then reported success — a louder
+// failure reported more quietly than a partial one.
+test('merge: fails when every shard crashed, not just when one did', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-none-'));
+  try {
+    // No reports written at all → every shard crashed.
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1 },
+        { module: 'core', shard: 2 },
+      ],
+    });
+    assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The legitimate no-op must stay a no-op: a plan that expected no shards (no
+// package changed) has nothing to merge and must not fail the job.
+test('merge: still exits 0 when the plan expected no shards', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-empty-'));
+  try {
+    assert.equal(
+      runMerge(dir, { MATRIX: JSON.stringify({ include: [] }), APPLY_BREAK: 'false' }),
+      0,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
