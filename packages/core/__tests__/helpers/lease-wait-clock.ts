@@ -32,7 +32,13 @@ export interface FakeWaitClockOptions {
    * sleeping", which is what the loop's post-sleep check must observe.
    */
   readonly onSleep?: (sleepCount: number) => void;
-  /** Runaway guard; throws once this many sleeps are recorded. */
+  /**
+   * Runaway guard; throws once `sleep` has been called this many times.
+   *
+   * Counts calls rather than {@link FakeWaitClock.sleeps} entries, so an
+   * aborted sleep — which applies no delay and so records nothing — cannot
+   * spin past the guard.
+   */
   readonly maxSleeps?: number;
 }
 
@@ -54,6 +60,7 @@ export function makeFakeWaitClock(options: FakeWaitClockOptions = {}): FakeWaitC
   const maxSleeps = options.maxSleeps ?? 64;
   const sleeps: number[] = [];
   let virtualNow = 0;
+  let sleepCalls = 0;
 
   return {
     sleeps,
@@ -63,6 +70,18 @@ export function makeFakeWaitClock(options: FakeWaitClockOptions = {}): FakeWaitC
       virtualNow += ms;
     },
     sleep: (ms, signal) => {
+      // The cap counts every call, including the aborted ones the fast path
+      // below skips: an aborted sleep advances no virtual time either, so it
+      // is just as able to spin forever against a frozen clock.
+      sleepCalls += 1;
+      if (sleepCalls > maxSleeps) {
+        throw new Error(
+          `FakeWaitClock: runaway wait loop — ${String(sleepCalls)} sleeps exceeds the ` +
+            `${String(maxSleeps)} cap. Virtual time only advances on sleep, so a zero-length ` +
+            'backoff or a missing loop exit never reaches its deadline. Applied delays: ' +
+            sleeps.join(', '),
+        );
+      }
       // An already-aborted signal returns before the real clock schedules a
       // timer, so nothing is applied — not virtual time, and not a `sleeps`
       // entry, which is documented as the APPLIED delay.
@@ -70,14 +89,6 @@ export function makeFakeWaitClock(options: FakeWaitClockOptions = {}): FakeWaitC
         return Promise.resolve();
       }
       sleeps.push(ms);
-      if (sleeps.length > maxSleeps) {
-        throw new Error(
-          `FakeWaitClock: runaway wait loop — ${String(sleeps.length)} sleeps exceeds the ` +
-            `${String(maxSleeps)} cap. Virtual time only advances on sleep, so a zero-length ` +
-            'backoff or a missing loop exit never reaches its deadline. Applied delays: ' +
-            sleeps.join(', '),
-        );
-      }
       virtualNow += ms;
       options.onSleep?.(sleeps.length);
       return Promise.resolve();

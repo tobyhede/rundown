@@ -17,4 +17,21 @@ describe('makeFakeWaitClock', () => {
     expect(clock.elapsed()).toBe(0);
     expect(applied).toEqual([]);
   });
+
+  it('still trips the runaway guard when every sleep is already aborted', async () => {
+    const clock = makeFakeWaitClock({ maxSleeps: 3 });
+    const controller = new AbortController();
+    controller.abort();
+
+    // Aborted sleeps apply no delay, so virtual time can never reach a
+    // deadline. The cap is the only thing standing between a loop that fails
+    // to exit and a hung suite, so it must count calls the fast path skips.
+    await expect(
+      (async () => {
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          await clock.sleep(10, controller.signal);
+        }
+      })(),
+    ).rejects.toThrow(/runaway wait loop/);
+  });
 });
