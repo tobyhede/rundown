@@ -57,12 +57,20 @@
       "added": "2026-07-23",
       "reviewBy": "2026-10-01"
     },
-    "brace-expansion@5": {
-      "override": "^5.0.7",
+    "postcss": {
+      "override": "^8.5.18",
       "category": "B",
-      "ghsa": ["GHSA-3jxr-9vmj-r5cp"],
-      "reason": "brace-expansion 5.x exponential-time expansion DoS. Version-scoped to the 5.x line only so the 1.x/2.x copies (already patched) are untouched. Dev tooling (minimatch via eslint/stryker).",
-      "added": "2026-07-23",
+      "ghsa": ["GHSA-r28c-9q8g-f849"],
+      "reason": "postcss sourceMappingURL path-traversal / arbitrary .map file disclosure (vulnerable < 8.5.18). Transitive under vite (site) via @astrojs/react / @vitejs/plugin-react; vite declares postcss ^8, so the fix is in-range but pnpm will not bump the deep transitive without the pin. Dev/build tooling (site).",
+      "added": "2026-07-25",
+      "reviewBy": "2026-10-01"
+    },
+    "brace-expansion": {
+      "override": "^5.0.8",
+      "category": "A",
+      "ghsa": ["GHSA-mh99-v99m-4gvg", "GHSA-3jxr-9vmj-r5cp"],
+      "reason": "brace-expansion unbounded-expansion OOM DoS (GHSA-mh99-v99m-4gvg) affects ALL versions < 5.0.8; the only fix is on the 5.x line. Supersedes the earlier 5.x-scoped pin (GHSA-3jxr-9vmj-r5cp) — the new advisory's affected range now also covers the 1.x (minimatch@3) and 2.x (minimatch@9/10) copies, so the blanket force past those ^1/^2 parents is required. API-safe: v5 keeps the same default expand() export minimatch consumes. Dev tooling (minimatch via eslint/jest/stryker).",
+      "added": "2026-07-25",
       "reviewBy": "2026-10-01"
     },
     "npm-run-all2>shell-quote": {

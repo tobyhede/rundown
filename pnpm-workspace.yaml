@@ -46,23 +46,33 @@ allowBuilds:
 #     safeLoad/safeDump for load/dump (patchedDependencies below).
 #   yaml: parser DoS (GHSA-48c2-rrv3-qjmp, patched 2.8.3) via yaml-language-server,
 #     which hard-pins yaml 2.7.1.
+#   brace-expansion: unbounded-expansion OOM DoS (GHSA-mh99-v99m-4gvg), affecting
+#     ALL versions < 5.0.8 — the only fixed release is on the 5.x line, so the 1.x
+#     (minimatch@3) and 2.x (minimatch@9/10) copies must be forced past their
+#     parents' ^1/^2 declarations. This supersedes the earlier 5.x-scoped pin: the
+#     new advisory's affected range now covers the 1.x/2.x copies too. Dev tooling
+#     (minimatch via eslint/jest/stryker); the blanket force is API-safe — v5 keeps
+#     the same default `expand()` export minimatch consumes.
 # Category B — fix is in-range but pnpm resolves a vulnerable version without the pin:
 #   qs (GHSA-q8mj-m7cp-5q26 → 6.15.2), hono (GHSA-w62v/hvrm/xgm2 → 4.12.27),
-#   body-parser (GHSA-v422-hmwv-36x6 → 2.3.0), brace-expansion 5.x
-#   (GHSA-3jxr-9vmj-r5cp → 5.0.7), npm-run-all2>shell-quote (GHSA-395f-4hp3-45gv →
-#   1.9.0; scoped so cli/core keep their declared shell-quote ^1.10.0),
-#   fast-uri (GHSA-4c8g / GHSA-v2hh → 3.1.4).
+#   body-parser (GHSA-v422-hmwv-36x6 → 2.3.0), postcss (GHSA-r28c-9q8g-f849 →
+#   8.5.18; sourceMappingURL path traversal, transitive under vite in site),
+#   npm-run-all2>shell-quote (GHSA-395f-4hp3-45gv → 1.9.0; scoped so cli/core keep
+#   their declared shell-quote ^1.10.0), fast-uri (GHSA-4c8g / GHSA-v2hh → 3.1.4).
+# js-yaml 5.2.1 flow-collection DoS (GHSA-pm4m-ph32-ghv5) is fixed at the root by
+# bumping the direct dep to ^5.2.2 in cli/core/plugin — no override needed.
 overrides:
   # Category A
   "yaml-language-server>yaml": "^2.8.3"
   "gray-matter>js-yaml": "^4.2.0"
   "read-yaml-file>js-yaml": "^4.2.0"
   "@istanbuljs/load-nyc-config>js-yaml": "^4.2.0"
+  "brace-expansion": "^5.0.8"
   # Category B
   qs: "^6.15.2"
   hono: "^4.12.27"
   "express>body-parser": "^2.3.0"
-  "brace-expansion@5": "^5.0.7"
+  postcss: "^8.5.18"
   "npm-run-all2>shell-quote": "^1.9.0"
   fast-uri: "^3.1.4"
 
