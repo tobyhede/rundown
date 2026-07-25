@@ -254,15 +254,29 @@ export function changedFiles(base, pathspec, filter = 'd') {
  * @param {string[]} params.patterns - the package's Stryker mutate patterns.
  * @returns {{entries: Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>, excluded: string[], skipped: Array<{file: string, why: string}>}}
  */
-export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns }) {
-  const changedSrc = changedFiles(base, `${pkg.dir}/src`);
-  const changedTests = changedFiles(base, `${pkg.dir}/__tests__`);
-  if (changedSrc.length === 0 && changedTests.length === 0) {
+export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns, diffs }) {
+  // `diffs` is a seam for tests; production callers omit it and the diff is read
+  // from git here.
+  const {
+    changedSrc,
+    addedSrc,
+    changedTests,
+    // Deletions need their OWN filter: the default `d` filter EXCLUDES deleted
+    // paths, so a PR that only deletes a dedicated test looked like no change at
+    // all — the single test change most worth catching.
+    deletedTests,
+  } = diffs ?? {
+    changedSrc: changedFiles(base, `${pkg.dir}/src`),
+    addedSrc: changedFiles(base, `${pkg.dir}/src`, 'A'),
+    changedTests: changedFiles(base, `${pkg.dir}/__tests__`),
+    deletedTests: changedFiles(base, `${pkg.dir}/__tests__`, 'D'),
+  };
+  if (changedSrc.length === 0 && changedTests.length === 0 && deletedTests.length === 0) {
     return { entries: [], excluded: [], skipped: [] };
   }
 
   const eligible = eligibleFiles(repoRoot, pkg.dir, patterns);
-  const added = new Set(changedFiles(base, `${pkg.dir}/src`, 'A'));
+  const added = new Set(addedSrc);
   const prefix = `${pkg.dir}/`;
 
   /** @type {Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>} */
@@ -301,9 +315,13 @@ export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns })
   }
 
   // A PR that only weakens or deletes tests changes no source line, yet it is
-  // exactly the regression mutation testing exists to catch. Pair each changed
-  // dedicated test back to its source file so it is still scored.
-  for (const repoRel of changedTests) {
+  // exactly the regression mutation testing exists to catch. Pair each changed or
+  // DELETED dedicated test back to its source file so it is still scored.
+  const testChanges = [
+    ...changedTests.map((repoRel) => ({ repoRel, deleted: false })),
+    ...deletedTests.map((repoRel) => ({ repoRel, deleted: true })),
+  ];
+  for (const { repoRel, deleted } of testChanges) {
     const testRel = repoRel.slice(prefix.length);
     const srcRel = sourceForTestPath(testRel);
     if (!srcRel || seen.has(srcRel)) continue;
@@ -323,12 +341,32 @@ export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns })
       lines,
       ranges: [],
       whole: true,
-      testFile: testRel,
-      reason: 'its dedicated test changed',
+      // A deleted test cannot be handed to --testFiles; leaving it null makes the
+      // jest runner fall back to --findRelatedTests, which is the only way left to
+      // reach the code.
+      testFile: deleted ? null : testRel,
+      reason: deleted ? 'its dedicated test was deleted' : 'its dedicated test changed',
     });
   }
 
   return { entries, excluded, skipped };
+}
+
+/**
+ * One entry's individual Stryker scopes: a bare path for a whole file, or one
+ * `file:start-end` mutation range per changed hunk.
+ *
+ * Kept separate from {@link mutateArg} because the same scopes have to reach the
+ * SCORER as well as Stryker — `assert-mutation-score.mjs --changed-range` needs
+ * them one per argument, and an incremental report mixes fresh in-scope mutants
+ * with retained baseline ones that must not be scored.
+ *
+ * @param {{file: string, whole: boolean, ranges: Array<{start: number, end: number}>}} entry - a scope entry.
+ * @returns {string[]} the entry's scopes.
+ */
+export function scopeParts(entry) {
+  if (entry.whole) return [entry.file];
+  return entry.ranges.map((r) => `${entry.file}:${r.start}-${r.end}`);
 }
 
 /**
@@ -340,8 +378,57 @@ export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns })
  * @returns {string} the `--mutate` value for this entry.
  */
 export function mutateArg(entry) {
-  if (entry.whole) return entry.file;
-  return entry.ranges.map((r) => `${entry.file}:${r.start}-${r.end}`).join(',');
+  return scopeParts(entry).join(',');
+}
+
+/**
+ * Balance per-file scope entries into shards, one entry per shard where the cap
+ * allows and batched largest-first onto the lightest shard above it.
+ *
+ * Partitioning happens WITHIN each package, never across: a shard inherits its
+ * `dir`/`module`/`package` from its first entry and Stryker runs with cwd = that
+ * package directory, so a foreign entry's package-relative path would match
+ * nothing there — or a similarly named file that is not the one under review.
+ *
+ * A batched shard runs the union of its files' tests for every mutant, so cost
+ * multiplies with batch size. Callers report that rather than hiding it.
+ *
+ * @param {Array<{pkg: {package: string}, entry: object}>} items - per-file entries.
+ * @param {number} maxShards - cap on the number of shards.
+ * @returns {Array<Array<{pkg: {package: string}, entry: object}>>} shard groupings.
+ */
+export function partitionPrEntries(items, maxShards) {
+  /** @type {Map<string, Array<{pkg: {package: string}, entry: object}>>} */
+  const byPackage = new Map();
+  for (const item of items) {
+    const key = item.pkg.package;
+    if (!byPackage.has(key)) byPackage.set(key, []);
+    byPackage.get(key).push(item);
+  }
+
+  // Share the cap across packages proportionally, but never starve a package of
+  // its single shard — a package with changes must always be scored.
+  const groups = [];
+  for (const packageItems of byPackage.values()) {
+    const share = Math.max(1, Math.round((maxShards * packageItems.length) / items.length));
+    if (packageItems.length <= share) {
+      groups.push(...packageItems.map((item) => [item]));
+      continue;
+    }
+    const shards = Array.from({ length: share }, () => ({ weight: 0, items: [] }));
+    for (const item of [...packageItems].sort(
+      (a, b) => mutatedLines(b.entry) - mutatedLines(a.entry),
+    )) {
+      let lightest = shards[0];
+      for (let i = 1; i < shards.length; i++) {
+        if (shards[i].weight < lightest.weight) lightest = shards[i];
+      }
+      lightest.weight += mutatedLines(item.entry);
+      lightest.items.push(item);
+    }
+    groups.push(...shards.map((s) => s.items).filter((s) => s.length > 0));
+  }
+  return groups;
 }
 
 /**

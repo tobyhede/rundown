@@ -6,6 +6,8 @@ import {
   formatPlan,
   parseArgs,
   parseInstrumented,
+  runOutcome,
+  scorerArgs,
   strykerArgs,
 } from '../mutate-changed.mjs';
 
@@ -173,4 +175,82 @@ test('mutate-changed re-exports the shared package list', () => {
     PACKAGES.map((p) => p.package),
     ['parser', 'core', 'cli', 'plugin'],
   );
+});
+
+// REGRESSION (P2): a stale report must never be scored. Stryker's exit code is
+// deliberately not the verdict (a below-threshold run exits non-zero having
+// written a perfectly good report), so the discriminator between "threshold exit"
+// and "crashed" is whether a FRESH report appeared. Previously the report was
+// only checked with existsSync, so a leftover report from an earlier file's run
+// satisfied the check and got scored — and because it lacked the current file the
+// scorer merely marked it skipped, letting the command exit 0.
+test('runOutcome: fails when Stryker wrote no report, whatever its exit code', () => {
+  const outcome = runOutcome({
+    instrumented: { files: 1, mutants: 12 },
+    reportWritten: false,
+    exitStatus: 1,
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'no-report');
+});
+
+test('runOutcome: a non-zero exit WITH a fresh report is a threshold exit, not a failure', () => {
+  // thresholds.break gates the project aggregate, which over a few changed lines
+  // is meaningless; the per-file gate is the verdict.
+  const outcome = runOutcome({
+    instrumented: { files: 1, mutants: 12 },
+    reportWritten: true,
+    exitStatus: 1,
+  });
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.score, true, 'a fresh report must still be scored');
+});
+
+test('runOutcome: fails when the scope matched nothing', () => {
+  for (const instrumented of [null, { files: 0, mutants: 0 }]) {
+    const outcome = runOutcome({ instrumented, reportWritten: true, exitStatus: 0 });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.reason, 'no-scope');
+  }
+});
+
+// A range covering only type declarations legitimately yields zero mutants. That
+// is nothing to score, not a failure, and must not depend on a report existing.
+test('runOutcome: a zero-mutant scope is a pass with nothing to score', () => {
+  const outcome = runOutcome({
+    instrumented: { files: 1, mutants: 0 },
+    reportWritten: false,
+    exitStatus: 0,
+  });
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.score, false, 'there are no mutants, so scoring must be skipped');
+});
+
+test('scorerArgs: passes each range as --changed-range so baseline mutants are excluded', () => {
+  const args = scorerArgs(
+    {
+      file: 'src/big.ts',
+      whole: false,
+      ranges: [
+        { start: 10, end: 20 },
+        { start: 44, end: 44 },
+      ],
+      testFile: null,
+    },
+    'packages/core',
+  );
+  assert.deepEqual(args, [
+    '--changed-range',
+    'packages/core/src/big.ts:10-20',
+    '--changed-range',
+    'packages/core/src/big.ts:44-44',
+  ]);
+});
+
+test('scorerArgs: a whole-file entry is scored as a changed file, without ranges', () => {
+  const args = scorerArgs(
+    { file: 'src/a.ts', whole: true, ranges: [], testFile: null },
+    'packages/core',
+  );
+  assert.deepEqual(args, ['--changed-file', 'packages/core/src/a.ts']);
 });

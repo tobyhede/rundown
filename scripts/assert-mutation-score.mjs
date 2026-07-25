@@ -29,6 +29,14 @@
  * already have the diff). Changed-file paths are repo-relative POSIX paths, the
  * same form `git diff --name-only` produces.
  *
+ * `--changed-range <path>:<startLine>-<endLine>` (repeatable) narrows scoring to
+ * the given lines of a file, using Stryker's own mutation-range notation. This is
+ * REQUIRED whenever the run was itself range-scoped: with `--incremental`, Stryker
+ * retains baseline results for mutants outside `--mutate`, so scoring the whole
+ * file would let a survivor introduced in the changed lines be diluted by
+ * hundreds of untouched baseline kills and still clear the floor. A ranged path is
+ * implicitly a changed file, so it need not also be passed as `--changed-file`.
+ *
  * @see issue #483
  */
 import { execFileSync } from 'node:child_process';
@@ -68,6 +76,53 @@ export function fileMutationScore(statuses) {
   const valid = detected + survived + noCoverage;
   if (valid === 0) return null;
   return (detected / valid) * 100;
+}
+
+/**
+ * Parse a `<path>:<startLine>-<endLine>` scope, mirroring Stryker's own
+ * mutation-range syntax so the gate is scoped with the same notation the run was.
+ *
+ * @param {string} raw - the `--changed-range` value.
+ * @returns {{file: string, start: number, end: number}} the parsed range.
+ * @throws {Error} when the value is not a well-formed, non-inverted line range.
+ */
+export function parseChangedRange(raw) {
+  const match = /^(.+):(\d+)-(\d+)$/.exec(raw);
+  if (!match) {
+    throw new Error(`malformed --changed-range '${raw}'; expected <path>:<startLine>-<endLine>`);
+  }
+  const start = Number.parseInt(match[2], 10);
+  const end = Number.parseInt(match[3], 10);
+  if (start < 1 || end < start) {
+    throw new Error(`malformed --changed-range '${raw}'; start must be >= 1 and <= end`);
+  }
+  return { file: match[1], start, end };
+}
+
+/**
+ * Whether a mutant's span touches any of a file's in-scope line ranges.
+ *
+ * Overlap, not containment: Stryker tests a mutant whose span merely reaches into
+ * the `--mutate` range, so the gate must judge it rather than discard it.
+ *
+ * @param {{location?: {start?: {line?: number}, end?: {line?: number}}}} mutant - a report mutant.
+ * @param {Array<{start: number, end: number}>} ranges - in-scope line ranges.
+ * @param {string} reportKey - the report key, for diagnostics.
+ * @returns {boolean} true when the mutant overlaps a range.
+ * @throws {Error} when the mutant carries no usable location.
+ */
+export function mutantInRanges(mutant, ranges, reportKey) {
+  const startLine = mutant?.location?.start?.line;
+  const endLine = mutant?.location?.end?.line ?? startLine;
+  if (typeof startLine !== 'number' || typeof endLine !== 'number') {
+    // A mutant with no location cannot be assigned to a range. Dropping it would
+    // understate the changed-line scope and could turn a survivor into a silent
+    // pass, so fail loudly instead of shimming a default.
+    throw new Error(
+      `mutation report entry for ${reportKey} has a mutant without a usable \`location\`; cannot scope it to the changed ranges`,
+    );
+  }
+  return ranges.some((r) => startLine <= r.end && endLine >= r.start);
 }
 
 /**
@@ -158,7 +213,13 @@ function assertValidReport(report) {
  *   per-file entry present in the report lacks a `mutants` array (malformed
  *   report).
  */
-export function assertMutationScore({ report, changedFiles, packageDir, floor = DEFAULT_FLOOR }) {
+export function assertMutationScore({
+  report,
+  changedFiles,
+  packageDir,
+  floor = DEFAULT_FLOOR,
+  ranges,
+}) {
   assertValidReport(report);
   const reportKeys = normalizeReportFileKeys(report);
   const pkgPrefix = `${toPosix(packageDir).replace(/\/+$/, '')}/`;
@@ -182,10 +243,21 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
         `mutation report entry for ${reportKey} has no \`mutants\` array (malformed report)`,
       );
     }
-    const statuses = entry.mutants.map((m) => m.status);
+    // Range scoping is what keeps an incremental run honest: Stryker retains
+    // baseline results for mutants outside `--mutate`, so scoring the whole file
+    // would let a survivor in the changed lines be diluted by hundreds of
+    // untouched baseline kills and still clear the floor.
+    const fileRanges = ranges?.get(changed);
+    const inScope = fileRanges
+      ? entry.mutants.filter((m) => mutantInRanges(m, fileRanges, reportKey))
+      : entry.mutants;
+    const statuses = inScope.map((m) => m.status);
     const score = fileMutationScore(statuses);
     if (score === null) {
-      skipped.push({ file: relative, reason: 'no valid mutants' });
+      skipped.push({
+        file: relative,
+        reason: fileRanges ? 'no valid mutants in the changed ranges' : 'no valid mutants',
+      });
       continue;
     }
     if (score < floor) {
@@ -281,7 +353,7 @@ export function changedFilesFromGit(base) {
  * @throws {Error} when a required option is missing or a flag lacks a value.
  */
 export function parseArgs(argv) {
-  const opts = { changedFiles: [], floor: DEFAULT_FLOOR };
+  const opts = { changedFiles: [], changedRanges: [], floor: DEFAULT_FLOOR };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = () => {
@@ -295,7 +367,13 @@ export function parseArgs(argv) {
     else if (arg === '--package-dir') opts.packageDir = next();
     else if (arg === '--base') opts.base = next();
     else if (arg === '--changed-file') opts.changedFiles.push(next());
-    else if (arg === '--floor') opts.floor = Number.parseInt(next(), 10);
+    else if (arg === '--changed-range') {
+      const range = parseChangedRange(next());
+      opts.changedRanges.push(range);
+      // A ranged file is implicitly a changed file, so a caller that scopes to
+      // ranges need not also repeat --changed-file for the same path.
+      if (!opts.changedFiles.includes(range.file)) opts.changedFiles.push(range.file);
+    } else if (arg === '--floor') opts.floor = Number.parseInt(next(), 10);
     else if (arg === '--markdown') opts.markdown = next();
     else if (arg === '--package-name') opts.packageName = next();
     else throw new Error(`unknown argument: ${arg}`);
@@ -348,11 +426,18 @@ export function main(argv) {
 
   let result;
   try {
+    // Group the flat --changed-range list into per-file range arrays.
+    const ranges = opts.changedRanges.length > 0 ? new Map() : undefined;
+    for (const { file, start, end } of opts.changedRanges) {
+      if (!ranges.has(file)) ranges.set(file, []);
+      ranges.get(file).push({ start, end });
+    }
     result = assertMutationScore({
       report,
       changedFiles,
       packageDir: opts.packageDir,
       floor: opts.floor,
+      ranges,
     });
   } catch (err) {
     console.error(`error: ${err.message}`);

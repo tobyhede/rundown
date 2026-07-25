@@ -74,16 +74,29 @@ test('plan: a pull_request emits one shard per changed file with its own test sc
     assert.equal(typeof entry.mutate, 'string');
     assert.ok(entry.mutate.length > 0, 'every PR shard must carry a --mutate scope');
     assert.doesNotMatch(entry.mutate, /[{}]/, 'PR scope must use the comma form, never braces');
-    // `files` is newline-separated so the workflow can read it with
-    // `while IFS= read -r` and stay correct for paths containing spaces.
-    assert.equal(typeof entry.files, 'string');
-    assert.equal(
-      entry.files.split('\n').filter(Boolean).length,
-      entry.label.split(' ').filter(Boolean).length,
-      'files and label must describe the same file set',
+    // `scopes` is newline-separated so the workflow can read it with
+    // `while IFS= read -r` and stay correct for paths containing spaces. It holds
+    // one entry per RANGE, so there are at least as many scopes as files.
+    assert.equal(typeof entry.scopes, 'string');
+    const scopes = entry.scopes.split('\n').filter(Boolean);
+    const files = entry.label.split(' ').filter(Boolean);
+    assert.ok(scopes.length >= files.length, 'every file needs at least one scope');
+    for (const scope of scopes) {
+      assert.match(scope, /^src\//, 'PR shards mutate package-relative src paths');
+    }
+    // The scorer is driven from `scopes`, so they must describe the same thing
+    // Stryker was given — otherwise the gate scores mutants the run never touched.
+    assert.deepEqual(
+      [...scopes].sort(),
+      [...entry.mutate.split(',')].sort(),
+      'scopes must match the --mutate scope exactly',
     );
-    for (const file of entry.files.split('\n').filter(Boolean)) {
-      assert.match(file, /^src\//, 'PR shards mutate package-relative src paths');
+    // Every scope belongs to a file this shard actually claims.
+    for (const scope of scopes) {
+      assert.ok(
+        files.includes(scope.split(':')[0]),
+        `scope ${scope} is not one of this shard's files`,
+      );
     }
   }
 });

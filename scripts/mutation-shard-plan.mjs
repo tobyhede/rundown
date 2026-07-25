@@ -40,7 +40,8 @@ import {
   buildScope,
   git,
   mutateArg,
-  mutatedLines,
+  scopeParts,
+  partitionPrEntries,
   mutatePatterns,
   reachable,
 } from './lib/mutation-scope.mjs';
@@ -153,32 +154,6 @@ function resolvePrBase() {
 }
 
 /**
- * Balance per-file scope entries into at most `maxPrShards` shards.
- *
- * One entry per shard is the ideal: each file keeps its own dedicated
- * `testFiles` scope. Above the cap, entries are batched (largest-first onto the
- * lightest shard) and a batched shard runs the UNION of its files' tests for
- * every mutant — so the cost multiplies with batch size. That trade is reported,
- * never silent.
- *
- * @param {Array<{pkg: object, entry: object}>} items - per-file scope entries.
- * @returns {Array<Array<{pkg: object, entry: object}>>} shard groupings.
- */
-function partitionPrEntries(items) {
-  if (items.length <= maxPrShards) return items.map((item) => [item]);
-  const shards = Array.from({ length: maxPrShards }, () => ({ weight: 0, items: [] }));
-  for (const item of [...items].sort((a, b) => mutatedLines(b.entry) - mutatedLines(a.entry))) {
-    let lightest = shards[0];
-    for (let i = 1; i < shards.length; i++) {
-      if (shards[i].weight < lightest.weight) lightest = shards[i];
-    }
-    lightest.weight += mutatedLines(item.entry);
-    lightest.items.push(item);
-  }
-  return shards.map((s) => s.items).filter((s) => s.length > 0);
-}
-
-/**
  * Plan the pull_request matrix: one shard per changed source file.
  *
  * @returns {Promise<Array<object>>} matrix include entries.
@@ -205,7 +180,7 @@ async function planPullRequest() {
         `Batched shards run the union of their files' tests per mutant, so they cost more.\n`,
     );
   }
-  const grouped = partitionPrEntries(items);
+  const grouped = partitionPrEntries(items, maxPrShards);
   // Number shards per package so artifact names stay unique and readable.
   const perPackage = new Map();
   return grouped.map((group) => {
@@ -229,7 +204,12 @@ async function planPullRequest() {
       // Newline-separated so the workflow can read it with `while IFS= read -r`
       // and stay correct for paths containing spaces; `label` is space-joined and
       // is for display only.
-      files: group.map(({ entry }) => entry.file).join('\n'),
+      //
+      // `scopes` carries the SAME `file` / `file:start-end` scopes that went to
+      // `--mutate`, because the scorer needs them too: an incremental report
+      // retains baseline mutants outside the range, and scoring the whole file
+      // would dilute a changed-line survivor below the floor.
+      scopes: group.flatMap(({ entry }) => scopeParts(entry)).join('\n'),
       label: group.map(({ entry }) => entry.file).join(' '),
     };
   });

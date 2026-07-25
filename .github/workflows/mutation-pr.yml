@@ -166,16 +166,24 @@ jobs:
           PKG_DIR: ${{ matrix.dir }}
           PKG: ${{ matrix.package }}
           SHARD: ${{ matrix.shard }}
-          FILES: ${{ matrix.files }}
+          SCOPES: ${{ matrix.scopes }}
         run: |
           set -uo pipefail
-          # FILES is newline-separated, read with IFS= so a path containing spaces
-          # stays one argument (word-splitting a space-joined list would not).
+          # Score exactly what was mutated. `--incremental` retains baseline
+          # results for mutants OUTSIDE the range, so scoring a range-scoped file
+          # as a whole file would let a survivor in the changed lines be diluted
+          # by hundreds of untouched baseline kills and still clear the floor.
+          #
+          # SCOPES is newline-separated, read with IFS= so a path containing
+          # spaces stays one argument (word-splitting would not).
           args=()
-          while IFS= read -r f; do
-            [ -n "${f}" ] || continue
-            args+=(--changed-file "${PKG_DIR}/${f}")
-          done <<< "${FILES}"
+          while IFS= read -r scope; do
+            [ -n "${scope}" ] || continue
+            case "${scope}" in
+              *:*-*) args+=(--changed-range "${PKG_DIR}/${scope}") ;;
+              *)     args+=(--changed-file  "${PKG_DIR}/${scope}") ;;
+            esac
+          done <<< "${SCOPES}"
           pnpm run assert:mutation-score -- \
             --report "${PKG_DIR}/reports/mutation/mutation-report.json" \
             --package-dir "${PKG_DIR}" \

@@ -527,3 +527,135 @@ test('changedFilesFromGit: fails closed (throws) on an unresolvable base ref', (
     /failed to diff rundown-no-such-base-ref-zzz\.\.\.HEAD/,
   );
 });
+
+/**
+ * Build a report whose mutants carry `location`, so range filtering can place
+ * them. Each entry is `[status, startLine, endLine]`.
+ *
+ * @param {Record<string, Array<[string, number, number]>>} fileMutants - file key -> mutants.
+ * @param {string} [projectRoot] - absolute project root recorded in the report.
+ * @returns {object} a report object consumable by the assertion functions.
+ */
+function makeLocatedReport(fileMutants, projectRoot = '/repo/packages/core') {
+  const files = {};
+  let id = 0;
+  for (const [key, mutants] of Object.entries(fileMutants)) {
+    files[key] = {
+      language: 'typescript',
+      source: '',
+      mutants: mutants.map(([status, startLine, endLine]) => ({
+        id: String(id++),
+        status,
+        location: { start: { line: startLine, column: 1 }, end: { line: endLine, column: 9 } },
+      })),
+    };
+  }
+  return { schemaVersion: '1.0', projectRoot, files };
+}
+
+// REGRESSION (P1): with --incremental, Stryker retains baseline results for
+// mutants OUTSIDE the --mutate range, and the report therefore mixes this PR's
+// freshly-run mutants with hundreds of untouched baseline ones. Scoring the whole
+// file lets survivors introduced in the changed lines be diluted below
+// visibility: here 2 fresh survivors against 100 baseline kills score 98% and sail
+// past the floor, when the changed lines alone score 0%.
+test('assertMutationScore: ranges score only mutants inside the changed lines', () => {
+  const baseline = Array.from({ length: 100 }, (_, i) => ['Killed', 500 + i, 500 + i]);
+  const report = makeLocatedReport({
+    'src/big.ts': [['Survived', 10, 10], ['Survived', 11, 11], ...baseline],
+  });
+  const args = {
+    report,
+    changedFiles: ['packages/core/src/big.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+  };
+
+  // Without ranges the baseline mutants dominate and the gate passes.
+  const unscoped = assertMutationScore(args);
+  assert.equal(unscoped.ok, true, 'whole-file scoring is diluted by baseline mutants');
+
+  // Scoped to the changed lines, only the two survivors count.
+  const scoped = assertMutationScore({
+    ...args,
+    ranges: new Map([['packages/core/src/big.ts', [{ start: 10, end: 11 }]]]),
+  });
+  assert.equal(scoped.ok, false, 'range-scoped gate must see the changed-line survivors');
+  assert.deepEqual(scoped.failures, [{ file: 'src/big.ts', score: 0 }]);
+});
+
+test('assertMutationScore: a mutant overlapping a range boundary is in scope', () => {
+  // Stryker tests a mutant whose span reaches into the range, so scoring must
+  // count it rather than discarding it as out of scope.
+  const report = makeLocatedReport({ 'src/a.ts': [['Survived', 8, 12]] });
+  const result = assertMutationScore({
+    report,
+    changedFiles: ['packages/core/src/a.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+    ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
+  });
+  assert.equal(result.ok, false);
+});
+
+test('assertMutationScore: ranges with no in-scope mutants are skipped, not passed', () => {
+  // All the file's mutants are baseline ones outside the changed lines. There is
+  // nothing to judge, which must read as "skipped" — never as a silent pass on
+  // someone else's kills.
+  const report = makeLocatedReport({ 'src/a.ts': [['Killed', 900, 900]] });
+  const result = assertMutationScore({
+    report,
+    changedFiles: ['packages/core/src/a.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+    ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.checked, []);
+  assert.equal(result.skipped.length, 1);
+  assert.match(result.skipped[0].reason, /range/);
+});
+
+test('assertMutationScore: throws when a range is requested but a mutant has no location', () => {
+  // Silently dropping an mutant that cannot be placed would understate the changed-line
+  // scope; per the no-shim rule the gate fails loudly on a malformed report.
+  const report = makeReport({ 'src/a.ts': ['Survived'] }); // no `location`
+  assert.throws(
+    () =>
+      assertMutationScore({
+        report,
+        changedFiles: ['packages/core/src/a.ts'],
+        packageDir: 'packages/core',
+        floor: 70,
+        ranges: new Map([['packages/core/src/a.ts', [{ start: 1, end: 5 }]]]),
+      }),
+    /location/,
+  );
+});
+
+test('parseArgs: --changed-range collects file ranges', () => {
+  const opts = parseArgs([
+    '--report',
+    'r.json',
+    '--package-dir',
+    'packages/core',
+    '--changed-range',
+    'packages/core/src/a.ts:10-20',
+    '--changed-range',
+    'packages/core/src/a.ts:30-30',
+  ]);
+  assert.deepEqual(opts.changedRanges, [
+    { file: 'packages/core/src/a.ts', start: 10, end: 20 },
+    { file: 'packages/core/src/a.ts', start: 30, end: 30 },
+  ]);
+  // A ranged file is implicitly a changed file; the caller must not have to pass
+  // both.
+  assert.ok(opts.changedFiles.includes('packages/core/src/a.ts'));
+});
+
+test('parseArgs: rejects a malformed --changed-range', () => {
+  const base = ['--report', 'r.json', '--package-dir', 'packages/core'];
+  assert.throws(() => parseArgs([...base, '--changed-range', 'packages/core/src/a.ts']), /range/);
+  assert.throws(() => parseArgs([...base, '--changed-range', 'a.ts:x-y']), /range/);
+  assert.throws(() => parseArgs([...base, '--changed-range', 'a.ts:20-10']), /range/);
+});

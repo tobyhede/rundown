@@ -54,7 +54,7 @@
  * @module scripts/mutate-changed
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -151,6 +151,54 @@ export function parseInstrumented(output) {
 }
 
 /**
+ * Decide what a finished Stryker invocation means.
+ *
+ * Stryker's exit code cannot be the verdict: `thresholds.break` gates the project
+ * aggregate, which over a few changed lines is meaningless, and there is no CLI
+ * override for it — so a perfectly good run routinely exits non-zero. The
+ * discriminator between "threshold exit" and "crashed" is therefore whether a
+ * FRESH report appeared (the caller deletes any previous one before spawning).
+ *
+ * @param {object} params - the finished run.
+ * @param {{files: number, mutants: number} | null} params.instrumented - parsed instrumentation counts.
+ * @param {boolean} params.reportWritten - whether a fresh report exists.
+ * @param {number | null} params.exitStatus - Stryker's exit status.
+ * @returns {{ok: boolean, score: boolean, reason?: string, exitStatus?: number | null}}
+ *   `score` is true when there is a report worth handing to the per-file gate.
+ */
+export function runOutcome({ instrumented, reportWritten, exitStatus }) {
+  if (!instrumented || instrumented.files === 0) {
+    return { ok: false, score: false, reason: 'no-scope' };
+  }
+  // A range covering only type declarations legitimately produces no mutants.
+  // There is nothing to score, and no report is required to prove it.
+  if (instrumented.mutants === 0) return { ok: true, score: false };
+  if (!reportWritten) return { ok: false, score: false, reason: 'no-report', exitStatus };
+  return { ok: true, score: true };
+}
+
+/**
+ * Build the `assert-mutation-score.mjs` arguments that scope the gate to exactly
+ * what this run mutated.
+ *
+ * A ranged entry must be scored by range, not by file: with `incremental` on,
+ * Stryker retains baseline results for mutants outside `--mutate`, and scoring the
+ * whole file would let a survivor in the changed lines be diluted by untouched
+ * baseline kills.
+ *
+ * @param {{file: string, whole: boolean, ranges: Array<{start: number, end: number}>}} entry - a scope entry.
+ * @param {string} pkgDir - repo-relative package directory.
+ * @returns {string[]} scorer arguments.
+ */
+export function scorerArgs(entry, pkgDir) {
+  if (entry.whole) return ['--changed-file', `${pkgDir}/${entry.file}`];
+  return entry.ranges.flatMap((r) => [
+    '--changed-range',
+    `${pkgDir}/${entry.file}:${r.start}-${r.end}`,
+  ]);
+}
+
+/**
  * Build the Stryker argument list for one scope entry.
  *
  * @param {{file: string, whole: boolean, ranges: Array<{start: number, end: number}>, testFile: string | null}} entry - the entry to run.
@@ -240,6 +288,11 @@ async function main() {
   for (const { pkg, scope } of planned) {
     for (const entry of scope.entries) {
       process.stderr.write(`\n=== mutating ${pkg.package}/${entry.file} ===\n`);
+      // Remove any previous report BEFORE spawning. Runs share one report path,
+      // so a leftover from an earlier file would otherwise satisfy the existence
+      // check below and be scored as if it belonged to this run.
+      const report = join(repoRoot, pkg.dir, 'reports/mutation/mutation-report.json');
+      rmSync(report, { force: true });
       const result = spawnSync(
         'pnpm',
         [
@@ -256,24 +309,25 @@ async function main() {
       process.stdout.write(output);
 
       const instrumented = parseInstrumented(output);
-      if (!instrumented || instrumented.files === 0) {
-        process.stderr.write(
-          `\n${pkg.package}/${entry.file}: FAILED — Stryker instrumented 0 source files, so the ` +
-            `--mutate scope matched nothing and this run proves nothing.\n`,
-        );
+      const outcome = runOutcome({
+        instrumented,
+        reportWritten: existsSync(report),
+        exitStatus: result.status,
+      });
+      if (!outcome.ok) {
+        const why =
+          outcome.reason === 'no-scope'
+            ? 'Stryker instrumented 0 source files, so the --mutate scope matched nothing and this run proves nothing'
+            : `Stryker exited ${String(outcome.exitStatus)} without writing a report, so it failed to execute rather than merely missing a threshold`;
+        process.stderr.write(`\n${pkg.package}/${entry.file}: FAILED — ${why}.\n`);
         failed = true;
         continue;
       }
       process.stderr.write(
         `\n${pkg.package}/${entry.file}: ${instrumented.mutants} mutant(s) instrumented\n`,
       );
+      if (!outcome.score) continue; // nothing mutated in scope; nothing to judge.
 
-      const report = join(repoRoot, pkg.dir, 'reports/mutation/mutation-report.json');
-      if (!existsSync(report)) {
-        process.stderr.write(`${pkg.package}/${entry.file}: FAILED — no report at ${report}\n`);
-        failed = true;
-        continue;
-      }
       const score = spawnSync(
         process.execPath,
         [
@@ -286,8 +340,7 @@ async function main() {
           pkg.package,
           '--floor',
           String(opts.floor),
-          '--changed-file',
-          `${pkg.dir}/${entry.file}`,
+          ...scorerArgs(entry, pkg.dir),
         ],
         { cwd: repoRoot, encoding: 'utf8', stdio: 'inherit' },
       );
