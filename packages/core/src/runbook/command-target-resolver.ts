@@ -319,6 +319,12 @@ export async function resolveClaimTarget(
             ? `Claim id ${claimKey} is currently stashed. Run \`rundown pop\` with its claim id to resume.`
             : `Claim id ${claimKey} is no longer linked to an active delegation (${claimed.reason}).`,
       };
+    case 'stale':
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message: `Claim id ${claimKey} no longer has readable runbook state (${claimed.reason}). Recover with \`rundown prune\` and restart from source.`,
+      };
     default: {
       const _exhaustive: never = claimed;
       return _exhaustive;

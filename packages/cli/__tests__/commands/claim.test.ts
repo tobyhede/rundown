@@ -392,7 +392,9 @@ describe('claim command', () => {
       expect(session.defaultStack).toEqual([parentId]);
       // The auto-completed child's claim is retained as a terminal tombstone
       // (not deleted) so `rd pass/fail --claim-id` can confirm-or-conflict and
-      // `rd prune` can later GC it. The parent must still not be popped.
+      // `rd prune` can later GC it. The R2 latch supersedes a claim whose parent
+      // delegation closed, but never one whose controlled child is itself
+      // terminal. The parent must still not be popped.
       expect(Object.values(session.claims)).toContainEqual(
         expect.objectContaining({ controlledRunId: childRunId }),
       );
@@ -937,6 +939,47 @@ rd echo --result fail
         expect.objectContaining({
           kind: 'error',
           code: 'CHILD_RUN_MISSING',
+        }),
+      );
+    }, 15_000);
+
+    it('refuses a replay claim with CHILD_LINKAGE_MISMATCH when the child linkage diverges', async () => {
+      // Regression pin for the CHILD_LINKAGE_MISMATCH refusal, previously covered
+      // only by the deleted `delegate-claim-corruption` scenario's `node -e` edit
+      // of `parentLinkage.tokenHash` in `.rundown/runs/*.json`. Those files no
+      // longer exist and scenarios must never reach the database, so the
+      // corruption is injected here via patchPersistedRunState.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = await getAutoIssuedToken();
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const childRunId = String(findActionOutput(result.stdout)?.run_id);
+      expect(childRunId).toMatch(/^rd_[a-f0-9]{32}$/);
+
+      // Corrupt the child's persisted parent linkage so its tokenHash no longer
+      // matches the delegation the claim carries. The replay then finds the
+      // existing claim but a divergent child linkage.
+      const child = await readRunbookState(workspace, childRunId);
+      const corruptedLinkage = { ...child!.parentLinkage!, tokenHash: `sha256:${'0'.repeat(64)}` };
+      await patchPersistedRunState(workspace.cwd, childRunId, { parentLinkage: corruptedLinkage });
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(1);
+      const envelope = parseConcatenatedJson(result.stdout).find(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          (entry as { kind?: string }).kind === 'error',
+      );
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CHILD_LINKAGE_MISMATCH',
         }),
       );
     }, 15_000);

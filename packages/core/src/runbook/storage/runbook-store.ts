@@ -32,7 +32,7 @@ import {
   assertClaimSecretHash,
 } from '../claim-id.js';
 import { assertDelegationTokenHash } from '../delegation-token.js';
-import { assertFrameKey } from '../targeting.js';
+import { assertFrameKey, classifyDelegationLiveness } from '../targeting.js';
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
@@ -437,11 +437,15 @@ export function captureAuthority(
 /**
  * Resolve the active claim controlling a run, if any.
  *
- * A run has at most one active controlling claim: `rundown run` mints a
+ * A run has at most one active controlling claim, enforced by the partial
+ * unique index `claims_one_active_per_run` (`schema.ts`): `rundown run` mints a
  * run-control claim as part of the same session mutation that pushes the run
  * (`pushRunbookWithRunControlClaim`), and a delegated child is claimed by
  * exactly one bearer. Tombstoned claims are excluded, so a superseded holder is
- * never resurrected as authority.
+ * never resurrected as authority. A second active row is impossible under the
+ * index; reading two here is hard corruption and throws rather than selecting an
+ * arbitrary controller (which `null` — "no controller" to `captureRunAuthority`
+ * — would misreport as a routine refusal).
  *
  * This exists for the *bare* caller — `rundown pass` with no `--claim-id` on a
  * run that authorization has already cleared it to mutate. Such a caller
@@ -453,20 +457,32 @@ export function captureAuthority(
  * @param tx - Open read transaction.
  * @param runId - Target run.
  * @returns The controlling claim's lookup key, or `null` when the run has none.
+ * @throws {Error} When two active claims control the run — a corruption the
+ *   partial unique index makes unreachable — rather than selecting an arbitrary one.
  */
 export function resolveControllingClaim(
   tx: SqlReadTransaction,
   runId: RunId,
 ): ClaimLookupKey | null {
-  const row = tx
+  const rows = tx
     .prepare(
       `SELECT key FROM claims
        WHERE controlled_run = :runId AND status = 'active'
        ORDER BY key
-       LIMIT 1`,
+       LIMIT 2`,
     )
-    .get<{ readonly key: string }>({ runId });
-  return row ? assertClaimLookupKey(row.key) : null;
+    .all<{ readonly key: string }>({ runId });
+  if (rows.length > 1) {
+    throw new Error(
+      `Run ${runId} has two active controlling claims; the partial unique index ` +
+        `claims_one_active_per_run should make this unreachable. The runbook database ` +
+        `is inconsistent. Finish or prune active runbooks and restart.`,
+    );
+  }
+  if (rows.length === 0) {
+    return null;
+  }
+  return assertClaimLookupKey(rows[0].key);
 }
 
 /** Sync typed operations available inside a store READ transaction. */
@@ -509,6 +525,11 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
   insertClaim(record: ClaimRecord, issuedGeneration: ClaimGeneration): void;
   /** Mark a claim superseded (tombstone). Idempotent. */
   tombstoneClaim(key: ClaimLookupKey): void;
+  /**
+   * Supersede every active delegated claim no longer live in the given parent
+   * state (the parent half of R2's durable latch). Returns the keys tombstoned.
+   */
+  invalidateClosedDelegatedClaims(parent: RunbookState): readonly ClaimLookupKey[];
   /** Refresh a claim's #519 activity timestamp. */
   recordClaimSeen(key: ClaimLookupKey, now: string): void;
   /**
@@ -765,7 +786,7 @@ export class RunbookStore {
           epoch: execution.epoch,
         }).changes;
       assertExactlyOneRow(changes, captured.runId);
-      this.writeResolvedCompletions(txn.tx, captured.runId, next.resolvedCompletions);
+      this.afterAuthoritativeStateWrite(txn.tx, next);
       txn.tx
         .prepare(
           `UPDATE execution_attempts
@@ -944,11 +965,25 @@ export class RunbookStore {
     const stale = new Set(
       [...persisted].filter(([, status]) => status === 'active').map(([key]) => key),
     );
+    const inserts: ClaimRecord[] = [];
     for (const [key, record] of Object.entries(session.claims)) {
       if (persisted.has(key)) {
         stale.delete(key);
         continue;
       }
+      inserts.push(record);
+    }
+    // Tombstone removed claims BEFORE inserting new ones. A rotated claim (new
+    // key, same controlled_run — e.g. re-issuing a run-control claim) would
+    // otherwise collide with its still-active predecessor under
+    // claims_one_active_per_run, which requires at most one active claim per run.
+    for (const key of stale) {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    }
+    for (const record of inserts) {
+      // Read after the tombstones above: each one bumps the controlled run's
+      // claim_generation, so reading before them would record an issuance
+      // generation this same transaction has already superseded.
       const generation = txn.tx
         .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
         .get<{ readonly g: number }>({ id: record.controlledRunId })?.g;
@@ -959,15 +994,12 @@ export class RunbookStore {
         // unrecorded claim resurfaces much later as an unexplained
         // ACTOR_CONTEXT_REQUIRED with nothing pointing back to here.
         void logger.warn('session claim skipped: controlled run no longer exists', {
-          claimKey: key,
+          claimKey: record.claimKey,
           runId: record.controlledRunId,
         });
         continue;
       }
       txn.insertClaim(record, assertClaimGeneration(generation));
-    }
-    for (const key of stale) {
-      txn.tombstoneClaim(assertClaimLookupKey(key));
     }
   }
 
@@ -1060,7 +1092,7 @@ export class RunbookStore {
         stateVersion,
       }).changes;
     if (changes === 1) {
-      this.writeResolvedCompletions(tx, runId, next.resolvedCompletions);
+      this.afterAuthoritativeStateWrite(tx, next);
       return 'committed';
     }
     const row = tx
@@ -1207,6 +1239,9 @@ export class RunbookStore {
       tombstoneClaim(key) {
         tx.prepare("UPDATE claims SET status = 'superseded' WHERE key = :key").run({ key });
       },
+      invalidateClosedDelegatedClaims(parent) {
+        return store.invalidateClosedDelegatedClaims(tx, parent);
+      },
       recordClaimSeen(key, now) {
         tx.prepare('UPDATE claims SET last_seen_at = :now WHERE key = :key').run({ key, now });
       },
@@ -1289,7 +1324,7 @@ export class RunbookStore {
         claimGeneration: captured.claimGeneration,
       });
     if (result.changes === 1) {
-      this.writeResolvedCompletions(tx, captured.runId, next.resolvedCompletions);
+      this.afterAuthoritativeStateWrite(tx, next);
     }
     return result.changes;
   }
@@ -1322,6 +1357,103 @@ export class RunbookStore {
         createdAt: completion.completedAt,
       });
     }
+  }
+
+  /**
+   * Run the common bookkeeping every authoritative run-state write owes.
+   *
+   * Invoked exactly once by each successful state-write site — after a run
+   * UPDATE changes exactly one row, never on a zero-row/stale/owned outcome —
+   * so the resolved-completion projection and the delegated-claim supersession
+   * latch stay in lockstep with the committed state. This is the single home
+   * for the parent half of R2's two-sided durable latch.
+   *
+   * @param tx - Open write transaction.
+   * @param next - The run state just committed.
+   * @throws {Error} When a delegated claim for this run carries malformed
+   *   persisted linkage (invalid state), aborting the transaction.
+   */
+  private afterAuthoritativeStateWrite(tx: SqlTransaction, next: RunbookState): void {
+    this.writeResolvedCompletions(tx, next.id, next.resolvedCompletions);
+    this.invalidateClosedDelegatedClaims(tx, next);
+  }
+
+  /**
+   * Tombstone every active delegated claim that is no longer live in `parent`.
+   *
+   * The parent half of the two-sided durable latch (R2). Selects active claims
+   * whose `parent_run_id` names this run, classifies each against the committed
+   * parent state via {@link classifyDelegationLiveness}, and supersedes those
+   * that are closed. Each status UPDATE fires `claims_bump_gen_update` once,
+   * bumping the controlled child's `claim_generation`; no caller bumps it
+   * directly. Idempotent: a claim already superseded matches no `status =
+   * 'active'` row.
+   *
+   * A claim whose *controlled child* has reached `completed` or `stopped` is
+   * retained even when the parent side reads closed. Such a claim is no longer
+   * mutation authority, but it is the terminal evidence `rd pass`/`rd fail`
+   * resolve to report `already-resolved` or `DELEGATION_RESULT_CONFLICT`, and
+   * that `rd prune` collects. Superseding it makes the claim unresolvable, and
+   * an unresolvable claim reports `CLAIMED_RUNBOOK_UNAVAILABLE` — collapsing
+   * `terminal-child` into a refusal that names the wrong cause.
+   *
+   * A row with no persisted delegation linkage is invalid state — a delegated
+   * claim must carry one — and aborts the transaction rather than being skipped.
+   *
+   * @param tx - Open write transaction.
+   * @param parent - The parent run state just committed.
+   * @returns The keys of the claims superseded by this call.
+   * @throws {Error} When an active delegated claim carries no persisted
+   *   delegation linkage (invalid state), aborting the transaction.
+   */
+  private invalidateClosedDelegatedClaims(
+    tx: SqlTransaction,
+    parent: RunbookState,
+  ): ClaimLookupKey[] {
+    const rows = tx
+      .prepare(
+        `SELECT claims.key AS key,
+                claims.delegation_json AS delegation_json,
+                runs.lifecycle AS controlled_lifecycle
+           FROM claims
+           JOIN runs ON runs.id = claims.controlled_run
+          WHERE claims.parent_run_id = :parentId AND claims.status = 'active'`,
+      )
+      .all<{
+        readonly key: string;
+        readonly delegation_json: string | null;
+        readonly controlled_lifecycle: string;
+      }>({
+        parentId: parent.id,
+      });
+    const update = tx.prepare(
+      "UPDATE claims SET status = 'superseded' WHERE key = :key AND status = 'active'",
+    );
+    const superseded: ClaimLookupKey[] = [];
+    for (const row of rows) {
+      const key = assertClaimLookupKey(row.key);
+      if (row.delegation_json === null) {
+        throw new Error(
+          `Delegated claim ${key} for parent ${parent.id} carries no persisted delegation linkage; the runbook database is inconsistent.`,
+        );
+      }
+      // Terminal evidence outlives the parent-side delegation. Checked before
+      // classification, not after: every terminal child also reads closed on the
+      // parent side (its substep is `done`), so the order is what decides.
+      // Validated at this edge like every other raw row — an unknown lifecycle
+      // must abort, not read as non-terminal and silently supersede the claim.
+      const controlledLifecycle = assertLifecycle(row.controlled_lifecycle);
+      if (controlledLifecycle === 'completed' || controlledLifecycle === 'stopped') {
+        continue;
+      }
+      const linkage = JSON.parse(row.delegation_json) as DelegationClaimLinkage;
+      const liveness = classifyDelegationLiveness(parent, linkage);
+      if (liveness.kind === 'closed') {
+        update.run({ key });
+        superseded.push(key);
+      }
+    }
+    return superseded;
   }
 
   /**

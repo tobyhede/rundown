@@ -379,10 +379,22 @@ describe('guarded state writes', () => {
     const key = await mintClaim(state.id, '2'.repeat(32));
     const cap = await store.captureAuthority(state.id, assertClaimLookupKey(key));
     if (cap.kind !== 'captured') throw new Error('capture failed');
-    // Minting another claim bumps the run's claim_generation.
+    // Rotate the claim — supersede the first, then mint its replacement. This is
+    // the production rotate path and the only way to have a second active claim
+    // under claims_one_active_per_run; both writes bump the run's claim_generation.
+    await store.transaction((txn) => {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    });
     await mintClaim(state.id, '3'.repeat(32));
     const result = await store.saveState(cap.authority, { ...state, stepName: 'x' });
     expect(result.kind).toBe('claim_superseded');
+  });
+
+  it('rejects a second active claim on the same controlled run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await mintClaim(state.id, 'a'.repeat(32));
+    await expect(mintClaim(state.id, 'b'.repeat(32))).rejects.toThrow(/UNIQUE/);
   });
 
   it('refuses execution_in_progress when the run is owned', async () => {
@@ -742,17 +754,27 @@ describe('session persistence and run listing', () => {
   });
 
   it('inserts a genuinely new session claim at its controlled run current generation', async () => {
-    const state = await newState();
-    await store.createRun(state);
-    // An existing claim so the run's generation is already non-zero.
-    const existing = await mintClaim(state.id, 'f1'.repeat(16));
+    // Two runs, because claims_one_active_per_run permits only one active claim
+    // per run: the persisted claim holds `held`, the fresh one targets `target`.
+    const held = await newState();
+    const target = await newState();
+    await store.createRun(held);
+    await store.createRun(target);
+    const existing = await mintClaim(held.id, 'f1'.repeat(16));
     const existingRecord = makeClaimRecord({
       claimKey: assertClaimLookupKey(existing),
-      controlledRunId: state.id,
+      controlledRunId: held.id,
+    });
+    // Churn `target`'s generation so it is already non-zero at insert time: the
+    // insert bumps it once, the tombstone once more.
+    const retired = await mintClaim(target.id, 'f4'.repeat(16));
+    await store.transaction((txn) => {
+      txn.tombstoneClaim(assertClaimLookupKey(retired));
     });
     const fresh = assertClaimLookupKey(`rdclk_${'f2'.repeat(16)}`);
-    const freshRecord = makeClaimRecord({ claimKey: fresh, controlledRunId: state.id });
-    const before = (await counters(state.id)).claimGeneration;
+    const freshRecord = makeClaimRecord({ claimKey: fresh, controlledRunId: target.id });
+    const before = (await counters(target.id)).claimGeneration;
+    expect(before).toBeGreaterThan(0);
 
     await store.saveSession({
       defaultStack: [],
@@ -764,7 +786,7 @@ describe('session persistence and run listing', () => {
     expect(session.claims[fresh]).toBeDefined();
     // Only the new claim was written: one insert, one generation bump, and the
     // issuance metadata records the generation observed at insert time.
-    expect((await counters(state.id)).claimGeneration).toBe(before + 1);
+    expect((await counters(target.id)).claimGeneration).toBe(before + 1);
     const issued = await store.read(
       (txn) =>
         txn.tx
@@ -1644,12 +1666,15 @@ describe('session reconstruction', () => {
     const deadKey = assertClaimLookupKey(`rdclk_${'e2'.repeat(16)}`);
     const record = makeClaimRecord({ claimKey: activeKey, controlledRunId: state.id });
     await store.transaction((txn) => {
-      txn.insertClaim(record, assertClaimGeneration(0));
+      // The dead claim is tombstoned BEFORE the active one is inserted: both
+      // control the same run, and claims_one_active_per_run permits only one
+      // active row per run (tombstones are unconstrained).
       txn.insertClaim(
         makeClaimRecord({ claimKey: deadKey, controlledRunId: state.id }),
         assertClaimGeneration(0),
       );
       txn.tombstoneClaim(deadKey);
+      txn.insertClaim(record, assertClaimGeneration(0));
     });
 
     const session = await store.loadSession();

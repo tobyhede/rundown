@@ -36,7 +36,7 @@ import {
 import { verifiedClaimContext } from '../../src/runbook/actor-context.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
-import { assertClaimed, linkageFor } from './claim-test-helpers.js';
+import { assertClaimed, linkageFor, claimLiveDelegation } from './claim-test-helpers.js';
 
 const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
 const child = { id: 'child', lifecycle: 'running' } as RunbookState;
@@ -297,6 +297,10 @@ describe('resolveCommandTarget claim-id message redaction', () => {
     {
       name: 'unlinked/parent-missing',
       resolution: { status: 'unlinked', claim: verifiedClaim, reason: 'parent-missing' },
+    },
+    {
+      name: 'stale/missing-state',
+      resolution: { status: 'stale', claimId, reason: 'missing-state' },
     },
   ];
 
@@ -628,6 +632,11 @@ describe('resolveTransitionTarget', () => {
       },
       expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is no longer linked to an active delegation (child-linkage-mismatch).`,
     },
+    {
+      label: 'stale missing-state',
+      resolution: { status: 'stale' as const, claimId, reason: 'missing-state' as const },
+      expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} no longer has readable runbook state (missing-state). Recover with \`rundown prune\` and restart from source.`,
+    },
   ])('reports stale_claim for $label claim resolution', async (caseDef) => {
     await expect(
       resolveTransitionTarget(
@@ -918,7 +927,12 @@ describe('resolveTransitionTarget integration', () => {
       );
       await sessionService.pushRunbook(parentState.id);
       const claimed = assertClaimed(
-        await sessionService.claimRunbook(childState.id, linkageFor(parentState.id, 'a')),
+        await claimLiveDelegation(
+          sessionService,
+          manager,
+          childState.id,
+          linkageFor(parentState.id, 'a'),
+        ),
       );
 
       await expect(

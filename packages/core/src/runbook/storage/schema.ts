@@ -49,8 +49,9 @@ export class IncompatibleSchemaError extends Error {
   constructor(foundVersion: number, expectedVersion: number) {
     super(
       `Incompatible runbook database schema: found version ${String(foundVersion)}, ` +
-        `expected ${String(expectedVersion)}. Rundown never migrates persisted state; ` +
-        `finish, stop, or prune the active runs and restart from source.`,
+        `expected ${String(expectedVersion)}. Rundown never migrates persisted state. ` +
+        `Any in-flight runs in this database are unrecoverable — delete ` +
+        `\`.rundown/rundown.db\` and restart your runbooks from source.`,
     );
     this.name = 'IncompatibleSchemaError';
     this.foundVersion = foundVersion;
@@ -134,6 +135,14 @@ CREATE TABLE claims (
 
 CREATE INDEX claims_controlled_run ON claims(controlled_run);
 CREATE INDEX claims_parent_run     ON claims(parent_run_id);
+
+-- At most one active claim may control a run. resolveControllingClaim and
+-- captureRunAuthority select the run's controller without a disambiguator;
+-- without this constraint a second active row makes that selection arbitrary.
+-- Superseded tombstones are unconstrained.
+CREATE UNIQUE INDEX claims_one_active_per_run
+  ON claims(controlled_run)
+  WHERE status = 'active';
 
 -- The single project default stack. position 0 is the bottom of the stack.
 CREATE TABLE session_stack (

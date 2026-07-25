@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { DelegationStatusEntrySchema } from '@rundown-org/core';
 import {
   createTestWorkspace,
@@ -118,6 +119,60 @@ describe('status command', () => {
     const emitted = `${result.stdout}\n${result.stderr}`;
     expect(emitted).not.toMatch(/prune/i);
     expect(emitted).not.toMatch(/clear invalid state/i);
+  });
+
+  describe('incompatible database schema (RD-305)', () => {
+    // A schema version this build cannot read (neither 0/fresh nor the current
+    // SCHEMA_VERSION). Seed the store as the FIRST open in this process:
+    // `ensureSchema` runs in `openRunbookDriver` on that first open and rejects
+    // the version before any query, so both read-only and mutating commands
+    // surface RD-305. (Seeding via a prior `run` would cache the store and skip
+    // the re-check.)
+    const INCOMPATIBLE_VERSION = 99;
+
+    async function seedIncompatibleDatabase(): Promise<void> {
+      await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+      const db = new DatabaseSync(join(workspace.cwd, '.rundown', 'rundown.db'));
+      db.exec(`PRAGMA user_version = ${String(INCOMPATIBLE_VERSION)}`);
+      db.close();
+    }
+
+    type ErrorEnvelope = {
+      kind?: string;
+      code?: string;
+      error?: string;
+      details?: { category?: string; context?: Record<string, unknown> };
+    };
+
+    function parseError(result: { stdout: string; stderr: string }): ErrorEnvelope {
+      return JSON.parse(result.stderr.trim() || result.stdout.trim()) as ErrorEnvelope;
+    }
+
+    it('refuses a read-only command with a typed RD-305 envelope naming the database file', async () => {
+      await seedIncompatibleDatabase();
+
+      const result = await runCliInProcess('status', workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const error = parseError(result);
+      expect(error.kind).toBe('error');
+      expect(error.code).toBe('RD-305');
+      expect(error.code).not.toBe('RD-999');
+      expect(error.details?.category).toBe('STATE');
+      expect(error.details?.context).toMatchObject({ foundVersion: INCOMPATIBLE_VERSION });
+      expect(error.error).toMatch(/\.rundown\/rundown\.db/);
+    });
+
+    it('refuses a mutating command with the same RD-305 envelope', async () => {
+      await seedIncompatibleDatabase();
+
+      const result = await runCliInProcess('pass', workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const error = parseError(result);
+      expect(error.code).toBe('RD-305');
+      expect(error.details?.category).toBe('STATE');
+    });
   });
 
   it('outputs "No active runbook" when none', async () => {
@@ -652,6 +707,8 @@ Do work.
     expect(session.defaultStack).not.toContain(String(childRunId));
     // Item 4: the terminal claim is RETAINED as a tombstone (release with
     // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+    // Completing the child resolves its parent delegation, but the R2 latch
+    // does not supersede a claim whose controlled child is itself terminal.
     expect(Object.values(session.claims)).toContainEqual(
       expect.objectContaining({ controlledRunId: childRunId }),
     );

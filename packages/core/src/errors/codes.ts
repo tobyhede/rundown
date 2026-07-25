@@ -116,6 +116,14 @@ export const ErrorCodes = {
       'This runbook was stopped. Start a new run or use "rundown pop" to resume if stashed.',
     docSlug: 'runbook-stopped',
   },
+  INCOMPATIBLE_STATE_SCHEMA: {
+    code: 'RD-305',
+    category: ErrorCategory.STATE,
+    title: 'Incompatible runbook database schema',
+    description:
+      'The runbook database uses a schema version this build cannot read, and Rundown never migrates persisted state. Any in-flight runs are unrecoverable — delete `.rundown/rundown.db` and restart your runbooks from source.',
+    docSlug: 'incompatible-state-schema',
+  },
 
   // Validation Errors (4xx)
   GOTO_TARGET_NOT_FOUND: {
@@ -379,6 +387,14 @@ export const ErrorCodes = {
     description:
       'A claim record has a lastSeenAt that is not a parseable ISO timestamp. The claim activity signal cannot be derived, so it is reported as unreadable rather than guessed. Finish or prune active runbooks and restart.',
     docSlug: 'claim-seen-unreadable',
+  },
+  DELEGATION_SUPERSEDED: {
+    code: 'RD-825',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation superseded',
+    description:
+      'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator. The durable claim latch refuses a claim once the parent advances, ends, resets, or reissues the token.',
+    docSlug: 'delegation-superseded',
   },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,

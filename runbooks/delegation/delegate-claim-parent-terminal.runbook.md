@@ -19,7 +19,7 @@ scenarios:
       errors:
         - code: CLAIMED_RUNBOOK_UNAVAILABLE
           command: pass
-          error: parent-ended
+          error: does not exist
   fail-after-parent-complete:
     description: fail --claim-id fails after the parent has completed
     commands:
@@ -33,7 +33,7 @@ scenarios:
       errors:
         - code: CLAIMED_RUNBOOK_UNAVAILABLE
           command: fail
-          error: parent-ended
+          error: does not exist
   goto-after-parent-complete:
     description: goto --claim-id fails after the parent has completed
     commands:
@@ -47,7 +47,7 @@ scenarios:
       errors:
         - code: CLAIMED_RUNBOOK_UNAVAILABLE
           command: goto
-          error: parent-ended
+          error: does not exist
   stop-after-parent-complete:
     description: stop --claim-id fails after the parent has completed
     commands:
@@ -61,7 +61,7 @@ scenarios:
       errors:
         - code: CLAIMED_RUNBOOK_UNAVAILABLE
           command: stop
-          error: parent-ended
+          error: does not exist
   complete-after-parent-complete:
     description: complete --claim-id fails after the parent has completed
     commands:
@@ -75,7 +75,7 @@ scenarios:
       errors:
         - code: CLAIMED_RUNBOOK_UNAVAILABLE
           command: complete
-          error: parent-ended
+          error: does not exist
 ---
 
 # Claimed Child Writes Fail after Parent Completion

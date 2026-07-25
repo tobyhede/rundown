@@ -166,6 +166,19 @@ export type ClaimRunbookResult =
       readonly childRunId: RunId;
       readonly incoming: DelegationLinkage;
       readonly persisted: RunbookState['parentLinkage'];
+    }
+  | {
+      /**
+       * The parent has moved past this delegation (advanced, ended, reset, or
+       * reissued its token). The durable latch refuses the claim; the bearer
+       * must not be retried. `childRunId` is present only when an existing or
+       * orphaned child was identified — the fresh prelaunch path omits it
+       * because no child has been created.
+       */
+      readonly status: 'delegation-superseded';
+      readonly parentRunId: RunId;
+      readonly parentStepId: string;
+      readonly childRunId?: RunId;
     };
 
 /** Result of resolving a claim id to a usable child runbook. */
@@ -179,12 +192,13 @@ export type ClaimIdResolution =
     }
   | { readonly status: 'missing'; readonly claimId: ClaimId }
   | { readonly status: 'invalid-secret'; readonly claimId: ClaimId }
-  // NOTE: there is deliberately no `stale` status. It existed only to describe a
-  // half-applied delete under JSON persistence, where a run file and the session
-  // file could disagree. Runs and their claims now live in one database and are
-  // deleted together, so a claim referencing an absent run is an integrity
-  // violation, not an outcome — `getActiveForClaimId` throws rather than
-  // reporting it. Rundown never adapts to invalid persisted state.
+  // A claim whose controlled run state cannot be read. Under one-database
+  // persistence the FK cascade (`claims.controlled_run` ON DELETE CASCADE)
+  // deletes a claim with its run, so this is not reachable through a supported
+  // delete — but the caller-visible refusal taxonomy (superseded plan Task 6)
+  // keeps the typed outcome rather than throwing, so a corrupted or externally
+  // mutated database degrades to a graceful refusal.
+  | { readonly status: 'stale'; readonly claimId: ClaimId; readonly reason: 'missing-state' }
   | {
       readonly status: 'terminal';
       readonly claim: VerifiedClaim;

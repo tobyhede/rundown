@@ -19,8 +19,12 @@ import {
   inactiveFrame,
   parseCompletionKey,
   upsertSubstepState,
+  classifyDelegationLiveness,
+  type DelegationLivenessLinkage,
 } from '../../src/runbook/targeting.js';
 import type { ForContext, RunbookState, SubstepState } from '../../src/runbook/types.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { makeStepDelegation } from '../helpers/step-factories.js';
 
 describe('targeting helpers', () => {
   describe('deriveExecutionAt', () => {
@@ -584,6 +588,165 @@ describe('targeting helpers', () => {
     it('defaults to pending status for new entries', () => {
       const result = upsertSubstepState([], '1', fk1, { result: 'pass' });
       expect(result[0]).toEqual({ id: '1', frameKey: fk1, status: 'pending', result: 'pass' });
+    });
+  });
+
+  describe('classifyDelegationLiveness', () => {
+    const TOKEN = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+    const OTHER_TOKEN = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+    const FRAME = buildFrameKey('1');
+
+    const linkage: DelegationLivenessLinkage = {
+      parentStep: '1',
+      parentStepId: '1',
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      tokenHash: TOKEN,
+    };
+
+    /** Build a parent state exposing only the fields the classifier reads. */
+    function parent(over: Partial<RunbookState> = {}): RunbookState {
+      return {
+        step: '1',
+        lifecycle: 'running',
+        activeFrameKey: FRAME,
+        activeEntry: 1,
+        substepStates: [
+          {
+            id: '1',
+            frameKey: FRAME,
+            status: 'running',
+            delegation: makeStepDelegation({ tokenHash: TOKEN }),
+          },
+        ],
+        ...over,
+      } as unknown as RunbookState;
+    }
+
+    it('classifies a matching, unresolved delegation as live', () => {
+      const result = classifyDelegationLiveness(parent(), linkage);
+      expect(result.kind).toBe('live');
+    });
+
+    it('treats a missing parent as a hard integrity signal, not a routine close', () => {
+      expect(classifyDelegationLiveness(null, linkage)).toEqual({ kind: 'parent-unreadable' });
+    });
+
+    it.each([
+      'completed',
+      'stopped',
+    ] as const)('closes as parent-ended when the parent is %s', (lifecycle) => {
+      expect(classifyDelegationLiveness(parent({ lifecycle }), linkage)).toEqual({
+        kind: 'closed',
+        reason: 'parent-ended',
+      });
+    });
+
+    it('closes as cursor-advanced when the top-level cursor moved past the step with no done row', () => {
+      // #driveTopLevel advances the cursor without writing a `done` substep entry.
+      expect(
+        classifyDelegationLiveness(
+          parent({ step: '2', activeFrameKey: buildFrameKey('2') }),
+          linkage,
+        ),
+      ).toEqual({ kind: 'closed', reason: 'cursor-advanced' });
+    });
+
+    it('closes as cursor-advanced when the substep row is absent', () => {
+      expect(classifyDelegationLiveness(parent({ substepStates: [] }), linkage)).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('closes as resolved when the delegated substep is done', () => {
+      const state = parent({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: FRAME,
+            status: 'done',
+            result: 'pass',
+            delegation: makeStepDelegation({ tokenHash: TOKEN }),
+          },
+        ],
+      });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'resolved',
+      });
+    });
+
+    it('closes as token-reissued when the substep carries a different token (RETRY/GOTO reissue)', () => {
+      const state = parent({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: FRAME,
+            status: 'running',
+            delegation: makeStepDelegation({ tokenHash: OTHER_TOKEN }),
+          },
+        ],
+      });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'token-reissued',
+      });
+    });
+
+    it('closes as token-reissued when the substep no longer carries a delegation', () => {
+      const state = parent({
+        substepStates: [{ id: '1', frameKey: FRAME, status: 'running' }],
+      });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'token-reissued',
+      });
+    });
+
+    it('closes as resolved when the delegation was cancelled', () => {
+      const state = parent({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: FRAME,
+            status: 'running',
+            delegation: makeStepDelegation({
+              tokenHash: TOKEN,
+              cancelledAt: '2026-07-20T00:00:00.000Z',
+            }),
+          },
+        ],
+      });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'resolved',
+      });
+    });
+
+    it('closes as cursor-advanced when the frame was re-entered past the captured entry', () => {
+      // The active frame's entry advanced beyond the value captured on the claim.
+      expect(classifyDelegationLiveness(parent({ activeEntry: 2 }), linkage)).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('closes as cursor-advanced on an entry mismatch recorded in frameEntryCounts', () => {
+      const state = parent({
+        activeFrameKey: buildFrameKey('other'),
+        activeEntry: undefined,
+        frameEntryCounts: { [FRAME]: 3 },
+      });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('stays live when the frame carries no recorded entry to compare', () => {
+      const state = parent({ activeFrameKey: buildFrameKey('other'), activeEntry: undefined });
+      expect(classifyDelegationLiveness(state, linkage).kind).toBe('live');
     });
   });
 });

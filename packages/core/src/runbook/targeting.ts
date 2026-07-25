@@ -1,6 +1,7 @@
 import type { StepPosition } from '../cli/types.js';
 import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
 import type { VariableValue } from './effective-vars.js';
+import type { DelegationTokenHash } from './delegation-token.js';
 
 /**
  * Sentinel entry value for pre-recorded completions targeting non-active frames.
@@ -395,6 +396,106 @@ export function findSubstepState(
   frameKey: FrameKey,
 ): SubstepState | undefined {
   return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
+}
+
+/**
+ * The parent-side linkage fields a delegation-liveness decision depends on.
+ *
+ * Structurally a `Pick` of the persisted delegation-claim linkage, declared here
+ * rather than imported from `claim-id.ts` to keep `targeting.ts` free of a claim
+ * import cycle. Both transaction paths (the claim-side refusal and the
+ * parent-commit invalidation hook) pass exactly these fields.
+ */
+export interface DelegationLivenessLinkage {
+  /** Parent step name captured at delegation time (e.g. "1"). */
+  readonly parentStep: string;
+  /** Parent step/substep id where the delegation originated. */
+  readonly parentStepId: string;
+  /** Parent execution frame key at delegation time. */
+  readonly parentFrameKey: FrameKey;
+  /** Parent frame entry counter captured at delegation time. */
+  readonly parentEntry: number;
+  /** Hash of the delegation token that produced the child claim. */
+  readonly tokenHash: DelegationTokenHash;
+}
+
+/**
+ * Whether a delegated child claim is still live against its parent state.
+ *
+ * `parent-unreadable` is a hard database-integrity signal — a delegated claim
+ * naming a parent that cannot be read is invalid state, never a routine
+ * closed outcome. Callers must not treat it as live or fall through.
+ */
+export type DelegationLiveness =
+  | { readonly kind: 'live'; readonly substep: SubstepState }
+  | {
+      readonly kind: 'closed';
+      readonly reason: 'parent-ended' | 'cursor-advanced' | 'resolved' | 'token-reissued';
+    }
+  | { readonly kind: 'parent-unreadable' };
+
+/**
+ * Classify whether a delegated child claim is still live in the parent's
+ * committed state. The single source of truth shared by the claim-side refusal
+ * and the parent-commit invalidation hook.
+ *
+ * A delegation is live only when the parent exists and is non-terminal, its
+ * cursor still sits on the delegating step, the matching substep exists and is
+ * neither resolved nor cancelled, that substep still carries the same delegation
+ * token, and — where the persisted frame carries a current entry — that entry
+ * still matches the one captured at delegation time. Any divergence is a closed
+ * outcome; this deliberately does NOT reduce to `status !== 'done'`, which would
+ * miss the top-level cursor-advance path that writes no `done` substep row.
+ *
+ * @param parent - Parent run state read inside the deciding transaction, or null when absent.
+ * @param linkage - Parent-side linkage fields captured on the delegated claim.
+ * @returns The three-way liveness classification.
+ */
+export function classifyDelegationLiveness(
+  parent: RunbookState | null,
+  linkage: DelegationLivenessLinkage,
+): DelegationLiveness {
+  if (parent === null) {
+    return { kind: 'parent-unreadable' };
+  }
+  if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+    return { kind: 'closed', reason: 'parent-ended' };
+  }
+  if (parent.step !== linkage.parentStep) {
+    return { kind: 'closed', reason: 'cursor-advanced' };
+  }
+  const substep = findSubstepState(
+    parent.substepStates ?? [],
+    linkage.parentStepId,
+    linkage.parentFrameKey,
+  );
+  if (substep === undefined) {
+    return { kind: 'closed', reason: 'cursor-advanced' };
+  }
+  if (substep.status === 'done') {
+    return { kind: 'closed', reason: 'resolved' };
+  }
+  const delegation = substep.delegation;
+  if (delegation === undefined) {
+    return { kind: 'closed', reason: 'token-reissued' };
+  }
+  if (delegation.tokenHash !== linkage.tokenHash) {
+    return { kind: 'closed', reason: 'token-reissued' };
+  }
+  if (delegation.cancelledAt !== null) {
+    return { kind: 'closed', reason: 'resolved' };
+  }
+  // Entry identity: a frame revisited via GOTO/loop re-entry advances its entry
+  // counter past the value captured on the claim. Compare only when the frame
+  // carries a current entry; a frame with no recorded entry cannot mismatch.
+  const currentEntry =
+    parent.activeFrameKey === linkage.parentFrameKey && parent.activeEntry !== undefined
+      ? parent.activeEntry
+      : parent.frameEntryCounts?.[linkage.parentFrameKey];
+  if (currentEntry !== undefined && currentEntry !== linkage.parentEntry) {
+    return { kind: 'closed', reason: 'cursor-advanced' };
+  }
+  return { kind: 'live', substep };
 }
 
 /**

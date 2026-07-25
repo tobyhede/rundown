@@ -34,7 +34,7 @@ import {
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
-import { findSubstepState } from './targeting.js';
+import { classifyDelegationLiveness, findSubstepState } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -158,6 +158,7 @@ export type ClaimSeenRecordResult =
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
+  | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | { readonly status: 'not-stashed'; readonly claim: ClaimRecord }
   | {
       readonly status: 'terminal-child';
@@ -591,19 +592,41 @@ export class SessionService {
     return this.mutate((ctx): ClaimRunbookResult => {
       const { session } = ctx;
       const now = this.now();
+
+      // Claim-side half of the durable latch (R2). Validate the exact delegation
+      // is still live in the parent state read inside THIS transaction, before
+      // any existing-claim refresh or fresh insertion. If the parent commit that
+      // moved past this delegation already landed, refuse — the tombstoned bearer
+      // cannot be resurrected by a later reset. A parent that cannot be read is a
+      // hard integrity error, not a routine close (the nested missing-child throw
+      // below only covers the existing-claim path, never a fresh claim).
+      const parent = ctx.readState(linkage.parentRunId);
+      const liveness = classifyDelegationLiveness(parent, linkage);
+      if (liveness.kind === 'parent-unreadable') {
+        throw new Error(
+          `Parent run ${linkage.parentRunId} is missing while claiming delegation ${linkage.parentStepId}; the runbook database is inconsistent.`,
+        );
+      }
+      if (liveness.kind === 'closed') {
+        return {
+          status: 'delegation-superseded',
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          childRunId,
+        };
+      }
+
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
         const existingState = ctx.readState(existingForDelegation.controlledRunId);
         if (!existingState) {
-          // Unreachable through any supported operation: a claim row is deleted with
-          // the run it controls in one transaction (`claims.controlled_run` FK, ON
-          // DELETE CASCADE). Reaching it means the database was tampered with or its
-          // referential integrity was violated, which is invalid state — fail closed
-          // instead of degrading to a soft `missing-child` outcome.
-          throw new Error(
-            `Runbook state for run ${existingForDelegation.controlledRunId} is missing while claim ${existingForDelegation.claimKey} still references it. ` +
-              'The runbook database is inconsistent. Finish or prune active runbooks and restart.',
-          );
+          // The claim's controlled run state cannot be read. The FK cascade
+          // (`claims.controlled_run` ON DELETE CASCADE) deletes a claim with its
+          // run, so this is not reachable through a supported delete — but the
+          // caller-visible refusal taxonomy (superseded plan Task 6) returns a
+          // typed `missing-child` rather than throwing, so a corrupted database
+          // degrades gracefully.
+          return { status: 'missing-child', childRunId: existingForDelegation.controlledRunId };
         }
         if (existingState.lifecycle === 'completed' || existingState.lifecycle === 'stopped') {
           return {
@@ -718,14 +741,12 @@ export class SessionService {
 
     const state = await this.manager.load(record.controlledRunId);
     if (!state) {
-      // Unreachable through any supported operation: a claim row is deleted with
-      // the run it controls in one transaction. Reaching it means the database
-      // was tampered with or its referential integrity was violated, which is
-      // invalid state — fail closed instead of degrading to a soft outcome.
-      throw new Error(
-        `Runbook state for run ${record.controlledRunId} is missing while claim ${parsed.claimKey} still references it. ` +
-          'The runbook database is inconsistent. Finish or prune active runbooks and restart.',
-      );
+      // The claim's controlled run state cannot be read. The FK cascade deletes a
+      // claim with its run, so this is not reachable through a supported delete —
+      // but the caller-visible refusal taxonomy (superseded plan Task 6) returns
+      // a typed `stale` refusal rather than throwing, so a corrupted database
+      // degrades gracefully.
+      return { status: 'stale', claimId, reason: 'missing-state' };
     }
     if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
       return { status: 'terminal', claim, state, lifecycle: state.lifecycle };
@@ -1181,15 +1202,12 @@ export class SessionService {
 
       const state = ctx.readState(claim.controlledRunId);
       if (!state) {
-        // Unreachable through any supported operation: a claim row is deleted with
-        // the run it controls in one transaction (`claims.controlled_run` FK, ON
-        // DELETE CASCADE). Reaching it means the database was tampered with or its
-        // referential integrity was violated, which is invalid state — fail closed
-        // instead of degrading to a soft outcome.
-        throw new Error(
-          `Runbook state for run ${claim.controlledRunId} is missing while claim ${claim.claimKey} still references it. ` +
-            'The runbook database is inconsistent. Finish or prune active runbooks and restart.',
-        );
+        // The claim's controlled run state cannot be read. The FK cascade deletes
+        // a claim with its run, so this is not reachable through a supported
+        // delete — but the caller-visible refusal taxonomy (superseded plan
+        // Task 6) returns a typed `missing-child` rather than throwing, so a
+        // corrupted database degrades gracefully.
+        return { status: 'missing-child', childRunId: claim.controlledRunId };
       }
       if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
         return { status: 'terminal-child', claim, lifecycle: state.lifecycle };

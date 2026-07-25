@@ -103,11 +103,22 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
     case 'linkage-mismatch':
       return {
         code: 'CHILD_LINKAGE_MISMATCH',
-        message: `Persisted linkage for child run ${failure.childRunId} does not match the verified delegation. State may be corrupted; inspect .rundown/runs/${failure.childRunId}.json.`,
+        message: `Persisted linkage for child run ${failure.childRunId} does not match the verified delegation. State may be corrupted; recover with \`rundown prune\` and restart the parent from source.`,
         details: {
           parentRunId: failure.parentRunId,
           stepId: failure.stepId,
           childRunId: failure.childRunId,
+        },
+      };
+    case 'delegation-superseded':
+      return {
+        code: 'DELEGATION_SUPERSEDED',
+        message:
+          'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          ...(failure.childRunId !== undefined ? { childRunId: failure.childRunId } : {}),
         },
       };
     case 'lock-timeout':

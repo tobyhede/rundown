@@ -17,6 +17,17 @@ export {
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
+// Explicit re-export so consumers importing through the package barrel under
+// Jest's ESM VM (which does not resolve nested `export *` values) can reach the
+// delegation-liveness classifier, matching the DelegationScanService pattern.
+export {
+  classifyDelegationLiveness,
+  type DelegationLiveness,
+  type DelegationLivenessLinkage,
+} from './targeting.js';
+// Storage is otherwise internal; the incompatible-schema error is public so the
+// CLI can classify it by type and surface the RD-305 envelope.
+export { IncompatibleSchemaError } from './storage/schema.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
