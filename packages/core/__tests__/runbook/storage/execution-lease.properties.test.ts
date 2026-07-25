@@ -69,6 +69,11 @@ describe('exec_epoch monotonicity', () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 2, max: 8 }), async (cycles) => {
         const { runId, claimKey } = await newRun();
+        // One spawn per property run, not per cycle. An exited process's pid
+        // stays dead, so reusing it is equivalent — but calling this inside the
+        // loop cost a ~45ms Node spawn per cycle, and fast-check draws 41-77
+        // cycles per run, putting the test at ~2.5s against Jest's 5s default.
+        const reclaimedPid = deadPid();
         const epochs: number[] = [];
         for (let i = 0; i < cycles; i++) {
           const cap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
@@ -80,7 +85,7 @@ describe('exec_epoch monotonicity', () => {
           await store.transaction((txn) => {
             txn.tx
               .prepare('UPDATE runs SET exec_pid = :pid WHERE id = :id')
-              .run({ pid: deadPid(), id: runId });
+              .run({ pid: reclaimedPid, id: runId });
           });
           const recovered = await lease.recoverDeadOwner(runId);
           expect(recovered.kind).toBe('reclaimed_pre_effect');
@@ -119,7 +124,12 @@ describe('finite wait budget', () => {
           const recap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
           if (recap.kind !== 'captured') throw new Error('recapture failed');
 
-          const clock = makeFakeWaitClock();
+          // Every applied delay is `min(requested, remaining)` with requested
+          // >= 1, and the loop exits once the budget is spent, so a healthy run
+          // sleeps at most `budgetMs` times. The default cap of 64 is below the
+          // 500 this generator permits, which made the guard fire on correct
+          // behaviour; sizing it to the budget keeps it a runaway detector.
+          const clock = makeFakeWaitClock({ maxSleeps: budgetMs + 1 });
           const progress: LeaseWaitProgress[] = [];
           const requested: number[] = [];
           const waiting = new SqliteExecutionLeaseService(driver, (p) => progress.push(p), clock);
