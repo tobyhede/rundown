@@ -38,6 +38,21 @@ describe('runbook store registry', () => {
     expect(fsSync.existsSync(path.join(cwd, '.rundown', 'rundown.db'))).toBe(true);
   });
 
+  it('locks the database and its WAL/SHM sidecars to owner-only (0o600)', async () => {
+    const cwd = await newRoot();
+    await getRunbookStore(cwd, { runtime: 'native' });
+    // The store holds run state and hashed claim secrets, so it inherits the
+    // owner-only mode the per-run JSON state files carried before it. The native
+    // driver opens in WAL mode, so the -wal/-shm sidecars exist on disk beside
+    // the db while the shared connection is held open — all three must be 0o600,
+    // not just the main file.
+    const dbFile = path.join(cwd, '.rundown', 'rundown.db');
+    for (const file of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) {
+      const { mode } = await fs.stat(file);
+      expect(mode & 0o777).toBe(0o600);
+    }
+  });
+
   it('joins concurrent opens of the same project into one store', async () => {
     const cwd = await newRoot();
     // Both calls start before either resolves, so they must share the in-flight open.
