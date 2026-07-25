@@ -38,12 +38,12 @@ import {
 // The scoped run
 //   stryker run --mutate src/runbook/storage/execution-lease.ts \
 //     --testFiles __tests__/runbook/storage/execution-lease{,.properties}.test.ts
-// leaves 16 mutants alive. Every one is equivalent or unreachable — a test that
+// leaves 19 mutants alive. Every one is equivalent or unreachable — a test that
 // "killed" any of them would be asserting something the system cannot do. They
 // are recorded here so the next run reads the residue instead of re-deriving it:
 //
 //  - `recoverDeadOwner`'s three-way null guard
-//    (`execPid === null || execTokenHash === null || execEpoch === null`, 5
+//    (`execPid === null || execTokenHash === null || execEpoch === null`, 6
 //    mutants). Unrepresentable: schema.ts constrains the exec identity columns
 //    all-or-nothing, so a partially-null owner cannot exist. The guard is there to
 //    narrow the types for `assertExecutionEpoch` and the CAS parameters, and type
@@ -59,6 +59,8 @@ import {
 //    always returns exactly one row.
 //  - `AllOrNoneRefusal`'s message and name (2). Internal rollback signal, caught
 //    by type inside `acquireAllOnce`; neither string ever reaches a caller.
+//  - `abandonToRecovery`'s two outcome messages (2). Both arms are pinned by
+//    `kind`, which is what callers dispatch on; the prose is diagnostic only.
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
