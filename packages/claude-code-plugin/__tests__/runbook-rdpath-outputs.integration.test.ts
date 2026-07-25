@@ -67,7 +67,7 @@ describe('runbook end-to-end: rdpath + OUTPUTS contract', () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'rd-rdpath-outputs-'));
     // .rundown holds the SQLite run store (rundown.db); the store creates the
-    // db file, but the directory must exist for the workspace to be recognised.
+    // db file, but the directory must exist for the workspace to be recognized.
     await mkdir(join(tempDir, '.rundown'), { recursive: true });
     // .git marker prevents WorkPath discovery from walking above the workspace
     await writeFile(join(tempDir, '.git'), 'gitdir: /dev/null\n');
