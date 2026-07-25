@@ -1750,6 +1750,21 @@ export async function claimAndLaunch(
     });
 
     if (invariantViolation !== undefined) {
+      // The durable latch (R2) is not an invariant violation. `claimRunbook`
+      // re-reads the parent inside its own transaction, so a parent that
+      // advanced, terminalized, or reissued its token between the 4a′ precheck
+      // and this claim legitimately refuses here. Reporting that as
+      // CLAIM_INVARIANT_VIOLATED blames Rundown for a real supersession and
+      // drops the no-retry signal the bearer holder needs. The child created
+      // moments ago has already been rolled back by afterCreateRollback.
+      if (invariantViolation.reason === 'delegation-superseded') {
+        return {
+          ok: false,
+          reason: 'delegation-superseded',
+          parentRunId: freshParent.id,
+          stepId: substepId ?? stepId,
+        };
+      }
       return {
         ok: false,
         reason: 'launch-failed',

@@ -273,6 +273,35 @@ describe('active-controller uniqueness property', () => {
       { numRuns: 25 },
     );
   });
+
+  it('throws rather than choosing arbitrarily when two active controllers exist', async () => {
+    const state = await baseState();
+    await store.createRun(state);
+    const first = assertClaimLookupKey(nextClaimKey());
+    const second = assertClaimLookupKey(nextClaimKey());
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({ claimKey: first, controlledRunId: state.id }),
+        assertClaimGeneration(0),
+      );
+      // claims_one_active_per_run makes a second active row unreachable through
+      // the store API — the property above skips that op for exactly that
+      // reason. Dropping the index is the only way to stage the corrupt state
+      // this read-side guard exists to detect, and without staging it the guard
+      // is unfalsifiable: both full suites pass with the throw removed.
+      txn.tx.exec('DROP INDEX claims_one_active_per_run');
+      txn.insertClaim(
+        makeClaimRecord({ claimKey: second, controlledRunId: state.id }),
+        assertClaimGeneration(0),
+      );
+    });
+
+    // Not a null return: null means "no controller" to captureRunAuthority, so
+    // it would misreport hard corruption as a routine refusal.
+    await expect(store.read((txn) => resolveControllingClaim(txn.tx, state.id))).rejects.toThrow(
+      /two active controlling claims/,
+    );
+  });
 });
 
 describe('classifier totality and single-row invariant', () => {

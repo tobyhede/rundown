@@ -121,6 +121,20 @@ Rewrite the test to assert the refusal, and assert `details.parentRunId` names t
 
 **`packages/core/__tests__/runbook/storage/driver-contract.test.ts` is allowlisted but nets to zero.** `2d0656b24` changes its `user_version` assertion from 1 to 2 and `68bdbf62c` changes it back. Expect `comm -3` to report this one path as allowlisted-but-unchanged; that is correct, not a miss. `SCHEMA_VERSION` ends at 1.
 
+## Delta 8 — defects found by review, not by the replay
+
+All five are in code the owned commits introduce. None were caught by the test suites; the first was found by CodeRabbit and confirmed by an executable probe before being fixed.
+
+**1. An executing child aborted its parent's unrelated commit (critical).** `invalidateClosedDelegatedClaims` supersedes a claim with an `UPDATE claims SET status`, and `status` sits inside `claims_guard_update`'s column list. That trigger raises `execution_in_progress` when the *controlled run* holds an `exec_token`. So a parent that terminalized or advanced past a delegation while its child was still executing had its own commit rolled back — a write with nothing to do with the child.
+
+Confirmed by probe (parent `saveState` → `execution_in_progress`) before any fix. Resolution: select `runs.exec_token` alongside the lifecycle and skip an owned child. This costs no enforcement — `SessionService.claimRunbook` (`session-service.ts`, commented as *"Claim-side half of the durable latch (R2)"*) classifies liveness against the parent read in its own transaction and refuses a closed delegation without consulting the claim row's status. The tombstone lands on the next authoritative parent write after ownership releases. Pinned by `defers supersession while the controlled child is executing, instead of aborting the parent commit`.
+
+**2. `delegation-superseded` was reported as `CLAIM_INVARIANT_VIOLATED`.** On the fresh-launch path, `claimAndLaunch`'s `afterCreate` maps every `claimChildForPipeline` failure to `CLAIM_INVARIANT_VIOLATED`, its comment asserting it "should never trigger in practice". PR 6 makes it triggerable: `claimRunbook` re-reads the parent in its own transaction, so a parent that moved between the 4a′ precheck and the claim refuses legitimately. That is the latch working, not a Rundown bug, and the mapping discards the no-retry signal the bearer holder needs. This is the same "no silent mapping" rule the plan applies to `missing` vs `terminal-child`. Now returns a `delegation-superseded` failure; other reasons keep the invariant classification.
+
+**3. Two unvalidated raw-row reads.** `runbook-store.ts` opens with *"Every raw row is validated at this edge … so no unvalidated row escapes the store"*, and the file carries `assertLifecycle` and `deserializeDelegation` for exactly that. The new code read `runs.lifecycle` as a bare `string` compared against literals, and cast `JSON.parse(row.delegation_json) as DelegationClaimLinkage`. Both now go through the validators, so corrupt persisted state aborts rather than being read as non-terminal (silently superseding a claim that should be retained) or reaching the classifier as a shape-checked lie.
+
+**4. The two-controller guard was unfalsifiable.** `resolveControllingClaim`'s `rows.length > 1` throw — the guard `2d0656b24` adds so a corrupt database is not silently resolved to an arbitrary controller — was killed by no test anywhere: both full suites pass with it removed. The uniqueness *property* test cannot reach it, and says so, skipping its `mint` op because a second active claim is unreachable through the store API. Closed with `throws rather than choosing arbitrarily when two active controllers exist`, which drops the partial index to stage the corrupt state. Verified by hand-mutation: neutered → fails, restored → passes.
+
 ## Procedural note — rebuild before running CLI tests
 
 CLI suites resolve `@rundown-org/core` to its built `dist`, so `corepack pnpm run build` must run **after** the replay and before any CLI test command. Building only at branch time hides new core exports and produces a module-resolution error that looks like a missing export rather than a stale artifact. The plan's step list does not mention this; the revised list below does.
@@ -137,7 +151,7 @@ Replaces the six checkboxes in the amended plan. Everything else in that plan �
 - [ ] Run `corepack pnpm --filter @rundown-org/core exec tsc --noEmit -p tsconfig.json`. Expected: exit 0. Delta 2 is the only reason this fails.
 - [ ] Run `corepack pnpm run build`. Required before any CLI test command — see the procedural note.
 - [ ] Run the plan's two named test commands. Expected: core 217 / 3 suites, CLI 248 / 6 suites. The CLI count returning to its exact baseline is the Delta 4 signal.
-- [ ] Run both full suites. Expected: core 4599 passed / 1 skipped / 201 suites; CLI 3027 passed / 143 suites.
+- [ ] Run both full suites. Expected: core 4602 passed / 1 skipped / 202 suites; CLI 3110 passed / 143 suites. (Counts include the two tests Delta 8 adds; they move with any further test.)
 - [ ] Run `corepack pnpm --filter @rundown-org/core exec stryker run --mutate src/runbook/storage/runbook-store.ts,src/runbook/session-service.ts,src/runbook/command-target-resolver.ts --testFiles __tests__/runbook/storage/runbook-store.test.ts,__tests__/runbook/session-service.test.ts,__tests__/runbook/command-target-resolver.test.ts`. Delete `reports/stryker-incremental.json` first. Scope judgement to changed line ranges, not the whole-file aggregate. **Hand-verify Delta 4's retention branch**: the named `--testFiles` do not reach the CLI terminal-evidence tests that kill it, so Stryker will report it as a survivor or as no-coverage. Neuter the `continue` and confirm the CLI suites fail.
 - [ ] Run `corepack pnpm run verify`; commit `fix(core): enforce delegated claim liveness and one controller`; open and merge PR 6. Record all seven deltas in the PR description and on #648.
 
@@ -150,13 +164,27 @@ Measured on a throwaway worktree at `e2fcc5923` (#651 head) with all deltas appl
 | Merge conflicts | 5, across 3 files, all in `6e9ff79f3` and `2d0656b24` |
 | `tsc --noEmit` on `@rundown-org/core` | exit 0, no output |
 | `corepack pnpm run lint` | exit 0 (2 warnings, both pre-existing and outside the changed set) |
-| `check:format`, `check:md`, `check:spell` | all exit 0 (spell only after Delta 6's dictionary words) |
+| `corepack pnpm run verify` | **exit 0** |
 | Named core tests (3 suites) | 217 passed |
 | Named CLI tests (6 suites) | 248 passed — exactly the pre-replay baseline |
-| Full `@rundown-org/core` suite | 4599 passed, 1 skipped, 201 suites |
+| Full `@rundown-org/core` suite | 4602 passed, 1 skipped, 202 suites |
 | Full `@rundown-org/cli` suite | 3110 passed, 143 suites |
+| Scoped Stryker (changed line ranges) | `Instrumented 3 source file(s) with 65 mutant(s)` — 37 killed, 18 survived, 10 no-coverage, **0 errors, 0 timeouts** |
 | Changed paths | 35: 32 of the 33 allowlisted, plus the 3 Delta 6 expansions |
+
+**Mutation judgement.** The aggregate and its `break: 70` exit 1 are not the gate — that threshold is project-wide and meaningless under line-scoping, as `stryker.config.mjs` notes. Judgement is on the plan's four named classes, each settled by hand-mutation:
+
+| Class | Result |
+| --- | --- |
+| **Redaction** | `command-target-resolver.ts` 100% — 5 killed, 0 survived, 0 no-coverage. |
+| **Terminal retention** | Reads as a survivor only because the plan's `--testFiles` name core suites while the killing tests are in the CLI. Neutering the `continue` fails **10 tests across 8 suites**. Killed. |
+| **Supersession** | Same scoping artifact. Neutering `liveness.kind === 'closed'` fails **2 core + 5 CLI tests**. Killed. |
+| **Controller uniqueness** | A **genuine survivor** — see Delta 8 item 4. Both full suites passed with the throw removed. Closed with a new test; neutered → fails, restored → passes. The guard no longer survives; only its message-text mutants do. |
+
+Add `__tests__/runbook/storage/runbook-store.properties.test.ts` to the plan's `--testFiles`. It carries both the uniqueness property and the new guard test, and without it the run reports 68 mutants / 29 killed instead of 65 / 37.
+
+The 18 remaining survivors are the terminal-retention and supersession conditions (killed from the CLI, per the table above), the `delegation_json IS NULL` corruption throw, and error-message string literals. Both mandatory gates ran; nothing is deferred.
 
 **Known flake, not a regression.** `session-service.process.test.ts › converges with no duplicate or resurrected entries when releases and pops race` failed its `expectOverlap` barrier once under full-suite load, then passed 5/5 on three consecutive isolated runs and again on the next full run. That witness asserts at least two child processes' mutation windows were genuinely in flight together; it starves when the whole suite is competing for cores. Unrelated to PR 6 — re-run it in isolation before treating it as a finding.
 
-Not exercised in the trial: the scoped Stryker command and `corepack pnpm run verify`. Both remain mandatory gates on the real PR.
+

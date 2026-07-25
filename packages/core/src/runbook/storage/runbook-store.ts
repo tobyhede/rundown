@@ -1414,7 +1414,8 @@ export class RunbookStore {
       .prepare(
         `SELECT claims.key AS key,
                 claims.delegation_json AS delegation_json,
-                runs.lifecycle AS controlled_lifecycle
+                runs.lifecycle AS controlled_lifecycle,
+                runs.exec_token AS controlled_exec_token
            FROM claims
            JOIN runs ON runs.id = claims.controlled_run
           WHERE claims.parent_run_id = :parentId AND claims.status = 'active'`,
@@ -1423,6 +1424,7 @@ export class RunbookStore {
         readonly key: string;
         readonly delegation_json: string | null;
         readonly controlled_lifecycle: string;
+        readonly controlled_exec_token: string | null;
       }>({
         parentId: parent.id,
       });
@@ -1446,7 +1448,21 @@ export class RunbookStore {
       if (controlledLifecycle === 'completed' || controlledLifecycle === 'stopped') {
         continue;
       }
-      const linkage = JSON.parse(row.delegation_json) as DelegationClaimLinkage;
+      // An executing child cannot be superseded from here. `status` is inside
+      // claims_guard_update's column list, so the UPDATE below would RAISE
+      // 'execution_in_progress' and roll back THIS parent's commit — an
+      // unrelated write failing because a child happens to be mid-execution.
+      // Deferring costs no enforcement: the claim-side half of the same latch
+      // (`SessionService.claimRunbook`, which classifies liveness against the
+      // parent read in its own transaction) already refuses a closed delegation
+      // without consulting this row's status. The tombstone lands on the next
+      // authoritative parent write after the child releases ownership.
+      if (row.controlled_exec_token !== null) {
+        continue;
+      }
+      // Validated, not cast: a malformed linkage must abort like every other
+      // raw row at this edge, not reach the classifier as a shape-checked lie.
+      const linkage = deserializeDelegation(row.delegation_json);
       const liveness = classifyDelegationLiveness(parent, linkage);
       if (liveness.kind === 'closed') {
         update.run({ key });

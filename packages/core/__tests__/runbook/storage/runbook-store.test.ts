@@ -1683,6 +1683,57 @@ describe('session reconstruction', () => {
     expect(session.claims[activeKey]).not.toHaveProperty('delegation');
   });
 
+  it('defers supersession while the controlled child is executing, instead of aborting the parent commit', async () => {
+    const parent = await newState();
+    const child = await newState();
+    await store.createRun(parent);
+    await store.createRun(child);
+    const childClaim = assertClaimLookupKey(`rdclk_${'c7'.repeat(16)}`);
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({
+          claimKey: childClaim,
+          controlledRunId: child.id,
+          delegation: {
+            childRunId: child.id,
+            parentRunId: parent.id,
+            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            parentStepId: '2',
+            parentStep: '2',
+            parentFrameKey: buildFrameKey('2'),
+            parentEntry: 1,
+          },
+        }),
+        assertClaimGeneration(0),
+      );
+      takeOwnership(txn.tx, child.id);
+    });
+
+    const parentClaim = await mintClaim(parent.id, 'c8'.repeat(16));
+    const cap = await store.captureAuthority(parent.id, assertClaimLookupKey(parentClaim));
+    if (cap.kind !== 'captured') throw new Error('capture failed');
+
+    // The parent terminalizes, so this delegation reads `parent-ended` and the
+    // R2 latch wants to supersede the child's claim. `status` is inside
+    // claims_guard_update's column list, so attempting it while the child holds
+    // an execution token aborts with execution_in_progress — taking THIS
+    // parent's unrelated commit down with it. The parent write must succeed.
+    await expect(
+      store.saveState(cap.authority, { ...parent, lifecycle: 'completed' }),
+    ).resolves.not.toThrow();
+
+    // Deferred, not lost: the row stays active, and the claim-side half of the
+    // latch (SessionService.claimRunbook) refuses the closed delegation without
+    // consulting this status.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: childClaim })?.status,
+    );
+    expect(status).toBe('active');
+  });
+
   it('restores the delegation linkage of a delegated claim', async () => {
     const parent = await newState();
     const child = await newState();
