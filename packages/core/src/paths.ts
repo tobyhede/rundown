@@ -58,6 +58,9 @@ export const WORK_DIR = `${RUNDOWN_DIR}/work`;
 /** File path (relative to project root) for the user-managed variable config file. */
 export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
 
+/** Single authoritative runbook state database. */
+export const DB_FILE = `${RUNDOWN_DIR}/rundown.db`;
+
 /** Directory path (relative to project root) for context-scoped output stores. */
 export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
 
@@ -76,6 +79,14 @@ export const runsDir = (cwd: string): string => path.join(cwd, RUNS_DIR);
  * @returns Path to `.rundown/session.json`
  */
 export const sessionPath = (cwd: string): string => path.join(cwd, SESSION_FILE);
+
+/**
+ * Absolute path to a project's runbook state database.
+ *
+ * @param cwd - Project root.
+ * @returns Absolute path to `.rundown/rundown.db`.
+ */
+export const dbPath = (cwd: string): string => path.join(cwd, DB_FILE);
 
 /**
  * Absolute path to the delegation lock directory.

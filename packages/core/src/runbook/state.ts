@@ -50,8 +50,15 @@ import {
 } from './run-state-lock.js';
 import { heldLock } from './file-lock.js';
 
-/** Current persisted state schema version for the v1 release. */
-const CURRENT_SCHEMA_VERSION = 1;
+/**
+ * Current persisted state schema version for the v1 release.
+ *
+ * Every newly derived state is stamped with this version; {@link
+ * RunbookStateManager.load} rejects any persisted state carrying a different
+ * one. Exported so callers deriving state outside the manager — and the tests
+ * pinning that guarantee — name the version rather than hard-coding `1`.
+ */
+export const CURRENT_SCHEMA_VERSION = 1;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -222,6 +229,103 @@ export type RunbookStateUpdate = Partial<
   /** Replace per-frame entry counters. */
   readonly frameEntryCounts?: FrameEntryCountsOp;
 };
+
+/**
+ * Apply a {@link RunbookStateUpdate} patch to a state value, purely.
+ *
+ * The single application of tagged merge/replace ops, artifact/completion trust
+ * re-assertion, and the {@link CURRENT_SCHEMA_VERSION} stamp. Shared by
+ * {@link RunbookStateManager}'s locked write path and by the actor
+ * compute/commit seam, which derives the next state without persisting, so both
+ * apply identical patch semantics.
+ *
+ * Two things are deliberately NOT identical between the two paths:
+ * - `updatedAt` is stamped independently by each persistence layer, so the value
+ *   returned by `update` and the value written by `saveUnlocked` differ. Compare
+ *   states modulo `updatedAt`.
+ * - The resolved-completion consumption patch is read from disk on the manager
+ *   path and from the captured state on the fenced path — under a fence the
+ *   captured state is the authority, so a concurrent disk write must not change
+ *   what the fenced mutation consumes.
+ *
+ * @param existing - The state to patch.
+ * @param updates - The typed patch with tagged ops on record-shaped fields.
+ * @param now - The ISO timestamp to stamp as `updatedAt`.
+ * @returns The patched state (not persisted), stamped with the current schema version.
+ * @throws {InvalidRunbookStateError} When `existing` carries a schema version
+ *   other than {@link CURRENT_SCHEMA_VERSION}. Deriving from invalid state would
+ *   silently migrate it; the sanctioned recovery is prune/restart.
+ */
+export function applyRunbookStateUpdate(
+  existing: RunbookState,
+  updates: RunbookStateUpdate,
+  now: string,
+): RunbookState {
+  // Refuse invalid state; never migrate it. Deriving from a state whose version
+  // is not current would rewrite it to current on the next commit — precisely the
+  // silent migration the no-migration rule forbids, whose only sanctioned
+  // recovery is explicit user action. An ABSENT version is refused for the same
+  // reason and on the same terms as a wrong one: `load` rejects both, so
+  // exempting absent would make this derivation more permissive than the loader
+  // and launder a state `load` refuses into one it accepts. Absent is also the
+  // only shape the store can hand over unvalidated — its schema leaves the field
+  // optional so `load` can parse far enough to reach its own check — which makes
+  // it the shape most in need of refusing, not least.
+  if (existing.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+    throw new InvalidRunbookStateError(
+      `Invalid runbook state for "${existing.id}": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
+    );
+  }
+  // Pull tagged-op fields out of updates so the subsequent `...updates` spread
+  // does not leak the wrapper shapes into the strictly-typed RunbookState literal.
+  const {
+    variables: variablesOp,
+    templateVars: templateVarsOp,
+    resolvedCompletions: resolvedCompletionsOp,
+    frameEntryCounts: frameEntryCountsOp,
+    ...restUpdates
+  } = updates;
+  const shouldPatchSnapshotSubstepStates =
+    restUpdates.substepStates !== undefined && restUpdates.snapshot === undefined;
+  const patchedRestUpdates = shouldPatchSnapshotSubstepStates
+    ? {
+        ...restUpdates,
+        snapshot: patchSnapshotSubstepStates(existing.snapshot, restUpdates.substepStates),
+      }
+    : restUpdates;
+
+  return {
+    ...existing,
+    ...patchedRestUpdates,
+    ...(patchedRestUpdates.finalVars !== undefined
+      ? { finalVars: assertTrustedArtifactValues(patchedRestUpdates.finalVars) }
+      : {}),
+    variables:
+      variablesOp !== undefined
+        ? brandStoredOutputs(assertTrustedArtifactValues(applyOp(existing.variables, variablesOp)))
+        : existing.variables,
+    ...(templateVarsOp !== undefined
+      ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
+      : {}),
+    ...(resolvedCompletionsOp !== undefined
+      ? {
+          resolvedCompletions: assertTrustedResolvedCompletions(
+            applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
+          ),
+        }
+      : {}),
+    ...(frameEntryCountsOp !== undefined ? { frameEntryCounts: frameEntryCountsOp.value } : {}),
+    // Stamp the current model version on the newly derived state. Not a
+    // migration: the derived state IS the current model, and `existing` has
+    // already been validated (`load` rejects any other version). Without this
+    // the fenced compute half inherits `existing.schemaVersion` verbatim —
+    // including `undefined` from a store-loaded state, where the field is
+    // optional — and the fenced committer persists `nextState` as-is, leaving a
+    // run that `load` refuses with no recovery short of prune/restart.
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    updatedAt: now,
+  };
+}
 
 interface CreateOptions {
   readonly runbookPath: string;
@@ -628,51 +732,7 @@ export class RunbookStateManager {
     existing: RunbookState,
     updates: RunbookStateUpdate,
   ): Promise<RunbookState> {
-    // Pull tagged-op fields out of updates so the subsequent `...updates`
-    // spread does not leak the wrapper shapes into the strictly-typed
-    // RunbookState literal.
-    const {
-      variables: variablesOp,
-      templateVars: templateVarsOp,
-      resolvedCompletions: resolvedCompletionsOp,
-      frameEntryCounts: frameEntryCountsOp,
-      ...restUpdates
-    } = updates;
-    const shouldPatchSnapshotSubstepStates =
-      restUpdates.substepStates !== undefined && restUpdates.snapshot === undefined;
-    const patchedRestUpdates = shouldPatchSnapshotSubstepStates
-      ? {
-          ...restUpdates,
-          snapshot: patchSnapshotSubstepStates(existing.snapshot, restUpdates.substepStates),
-        }
-      : restUpdates;
-
-    const updated: RunbookState = {
-      ...existing,
-      ...patchedRestUpdates,
-      ...(patchedRestUpdates.finalVars !== undefined
-        ? { finalVars: assertTrustedArtifactValues(patchedRestUpdates.finalVars) }
-        : {}),
-      variables:
-        variablesOp !== undefined
-          ? brandStoredOutputs(
-              assertTrustedArtifactValues(applyOp(existing.variables, variablesOp)),
-            )
-          : existing.variables,
-      ...(templateVarsOp !== undefined
-        ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
-        : {}),
-      ...(resolvedCompletionsOp !== undefined
-        ? {
-            resolvedCompletions: assertTrustedResolvedCompletions(
-              applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
-            ),
-          }
-        : {}),
-      ...(frameEntryCountsOp !== undefined ? { frameEntryCounts: frameEntryCountsOp.value } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-
+    const updated = applyRunbookStateUpdate(existing, updates, new Date().toISOString());
     await this.saveUnlocked(updated, existing.lifecycle ?? null);
     return updated;
   }

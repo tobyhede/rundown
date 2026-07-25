@@ -32,7 +32,12 @@ import type {
 import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
-import type { RunbookStateManager } from './state.js';
+import type { PreparedActorMutation } from './effectful-mutation-executor.js';
+import {
+  applyRunbookStateUpdate,
+  type RunbookStateManager,
+  type RunbookStateUpdate,
+} from './state.js';
 import {
   compileRunbookToMachine,
   isCompoundLeafValue,
@@ -168,6 +173,42 @@ export function stateValueAsString(value: unknown): string | null {
     if (isCompoundLeafValue(substate)) return leafId;
   }
   return null;
+}
+
+/**
+ * Maximum length for step state-value regex inputs to prevent ReDoS.
+ *
+ * A legitimate state ID is `step::<name>[::<substep>]`, bounded by step-name
+ * length; 1000 is far beyond any real runbook. Mirrors the parser's
+ * `MAX_REGEX_INPUT_LENGTH` guard (`packages/parser/src/helpers.ts`).
+ */
+const MAX_STATE_VALUE_LENGTH = 1000;
+
+/** Matches the current XState step state ID format: `step::<name>[::<substep>]`. */
+const STEP_STATE_VALUE_RE = /^step::(.+?)(?:::(.+))?$/;
+
+/**
+ * Parse a persisted XState step state ID into its step name and optional substep.
+ *
+ * The pattern is ambiguous — the lazy `(.+?)` sweeps every `::` split point and
+ * the trailing `(.+)` backtracks against `$` — so a *rejecting* input takes time
+ * quadratic in its length. (Matching inputs are linear; rejection requires an
+ * embedded line terminator, which `.` cannot match.) The length guard bounds the
+ * worst case rather than rewriting the pattern, because its semantics are subtler
+ * than they look: `step::a::` parses as step `a::` with no substep, and
+ * `step::a:b` as step `a:b`. Over-length input returns `null`, which every caller
+ * already treats as invalid state.
+ *
+ * @param stateValue - The flattened persisted state ID to parse
+ * @returns The parsed step name and optional substep, or `null` when unparseable
+ */
+function parseStepStateValue(
+  stateValue: string,
+): { readonly stepName: string; readonly substep: string | undefined } | null {
+  if (stateValue.length > MAX_STATE_VALUE_LENGTH) return null;
+  const match = STEP_STATE_VALUE_RE.exec(stateValue);
+  if (!match) return null;
+  return { stepName: match[1], substep: match[2] };
 }
 
 function isPendingMachineEffectSnapshotValue(value: unknown): boolean {
@@ -437,6 +478,204 @@ function hydrateSnapshot(
 }
 
 /**
+ * Build the resolved-completion consumption patch from an in-memory state.
+ *
+ * Pure counterpart of {@link RunbookActorService.buildConsumedCompletionPatch}:
+ * removes the consumed key from the given state's completions without any
+ * manager read, so the compute seam can derive the next state offline.
+ *
+ * @param state - The state whose resolved completions to consume from.
+ * @param key - The resolved-completion key being consumed.
+ * @returns A patch replacing the completions with the key removed.
+ * @throws {Error} When the key is absent from the state's completions.
+ */
+function buildConsumedCompletionPatchFrom(
+  state: RunbookState,
+  key: string,
+): { readonly resolvedCompletions: ResolvedCompletionsOp } {
+  const current = state.resolvedCompletions ?? {};
+  if (!(key in current)) {
+    throw new Error(
+      `Resolved completion "${key}" for runbook "${state.id}" was missing during actor sync.`,
+    );
+  }
+  const next = { ...current };
+  delete next[key];
+  return { resolvedCompletions: replace(next) };
+}
+
+/**
+ * Derive the persistence patch for an actor snapshot, purely.
+ *
+ * The single source of the terminal and non-terminal patch shapes shared by
+ * {@link RunbookActorService.updateFromActor} (which persists it through the
+ * manager) and {@link RunbookActorService.prepareActorMutation} (which applies it
+ * offline for the fenced commit). Contains no persistence and no manager access.
+ *
+ * @param id - Runbook state ID (used in error messages).
+ * @param snapshot - The persisted actor snapshot to derive from.
+ * @param steps - Parsed runbook steps for step-name lookup.
+ * @param lastResultSync - Optional persisted-result update to fold in.
+ * @param consumePatch - Optional resolved-completion consumption patch.
+ * @param consumePatch.resolvedCompletions - The tagged op consuming the resolved
+ *   completion, or absent when nothing is consumed.
+ * @returns The typed state-update patch.
+ * @throws {Error} If the snapshot value shape is unsupported, references a
+ *   transient parent-entry state, is malformed, or references a missing step.
+ */
+function deriveActorStatePatch(
+  id: string,
+  snapshot: PersistedRunbookSnapshot,
+  steps: readonly ResolvedStep[],
+  lastResultSync: LastResultSync | undefined,
+  consumePatch: { readonly resolvedCompletions?: ResolvedCompletionsOp },
+): RunbookStateUpdate {
+  const rawValue: unknown = snapshot.value;
+  const stateValue = stateValueAsString(rawValue);
+  if (stateValue === null) {
+    throw new Error(
+      `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(rawValue)}`,
+    );
+  }
+
+  // If the runbook is in a final state, don't try to parse a step number.
+  // Just update the snapshot and variables, preserving the last step number.
+  if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
+    const variables = snapshot.context?.variables ?? {};
+    const rawFinalVars = snapshot.context?.finalVars ?? {};
+    // Empty finalVars on terminal: explicitly write `undefined` so the persisted
+    // state has no `finalVars` field. This matches the schema's optional contract
+    // and avoids storing a misleading empty object.
+    const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
+    const lifecycle =
+      snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
+    const lastAction = isPersistableLastAction(snapshot.context?.lastAction)
+      ? snapshot.context.lastAction
+      : undefined;
+    const ctxSubstepStatesTerm = snapshot.context?.substepStates;
+    const substepStatesTermPatch =
+      ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
+    // No activeFrameKey patch on terminal entry. The runbook is done — the
+    // CLI commands that scope by `state.activeFrameKey` (delegate, abort,
+    // collect) only apply to running runbooks, and `deriveActiveFrame`'s
+    // step-based fallback handles any post-terminal inspection. Omitting the
+    // patch lets the prior persisted value carry through untouched.
+    return {
+      variables: merge(variables),
+      finalVars,
+      lifecycle,
+      lastAction,
+      snapshot,
+      // Clear FOR loop state on completion
+      forStack: undefined,
+      iterationResults: undefined,
+      ...lastResultPatch(lastResultSync, { terminal: true }),
+      ...substepStatesTermPatch,
+      ...consumePatch,
+    };
+  }
+
+  if (!steps.length) {
+    throw new Error(
+      `Actor state derivation received an empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
+    );
+  }
+
+  // Defense-in-depth (Issue 6): reject any persisted stateValue that
+  // references the transient `__parent-entry::*` sibling. The machine is
+  // supposed to leave parent-entry before any transition settles, so this
+  // state must NEVER persist. Without the explicit guard the regex below
+  // would silently match `step::N::__parent-entry::M` and report substep
+  // `__parent-entry::M` — wrong substep and wrong recovery path.
+  if (stateValue.includes('::__parent-entry::')) {
+    throw new Error(
+      `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
+        'Prune invalid runbook state and restart execution.',
+    );
+  }
+
+  // Parse only the current XState state ID format. Older or malformed
+  // persisted snapshots are invalid state and must fail closed.
+  const parsed = parseStepStateValue(stateValue);
+  if (!parsed) {
+    throw new Error(
+      `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
+        'Prune invalid runbook state and restart execution.',
+    );
+  }
+  const stepName = parsed.stepName;
+
+  let substep = snapshot.context?.substep;
+  if (!substep && parsed.substep) {
+    substep = parsed.substep;
+  }
+
+  // Find step by name (unified lookup)
+  const step = steps.find((s) => s.name === stepName);
+  if (!step) {
+    throw new Error(
+      `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
+        'Prune invalid runbook state and restart execution.',
+    );
+  }
+
+  const retryCount = snapshot.context?.retryCount ?? 0;
+  const variables = snapshot.context?.variables ?? {};
+
+  // FOR loop context
+  const forStack = snapshot.context?.forStack as ForContext[] | undefined;
+  const iterationResults = snapshot.context?.iterationResults;
+  const lastAction = snapshot.context?.lastAction;
+
+  // Filter implicit ForContext entries — don't persist synthetic loop state
+  const realForStack = forStack?.filter((fc) => !fc.implicit);
+  const computedForStack = realForStack?.length ? realForStack : undefined;
+
+  // Only clear iterationResults when all stack entries were implicit.
+  // When forStack is empty after explicit FOR exit, iterationResults
+  // must be preserved for parent-step aggregation.
+  const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
+  const computedIterationResults = hasOnlyImplicit ? undefined : iterationResults;
+
+  // Write back mirrored substepStates from context. Only overwrite when the
+  // context field is defined so a pre-bootstrap `undefined` cannot wipe the
+  // authoritative persisted value. When undefined, omit the field entirely
+  // from the update so `manager.update`'s spread preserves the existing value.
+  const ctxSubstepStates = snapshot.context?.substepStates;
+  const substepStatesPatch =
+    ctxSubstepStates !== undefined ? { substepStates: ctxSubstepStates } : {};
+
+  // Derive the persisted `activeFrameKey` from the cursor (step name parsed
+  // from the XState value + topmost real FOR frame). Never mirror a cached
+  // context field — that would re-introduce the stale-bootstrap class of
+  // bug (see `compiler.ts: __issue-delegations` and `retry-hook.ts`). The
+  // cursor is updated by XState assigns on every step transition and
+  // FOR-iteration advance, so deriving here is always current. Without this
+  // mirror the top-level `activeFrameKey` would not reflect the current
+  // frame and the next CLI interaction or resume would target the wrong
+  // frame's substeps.
+  const activeFrame = realForStack?.[realForStack.length - 1];
+  const derivedFrameKey = buildFrameKey(stepName, activeFrame ? activeFrame.iteration : undefined);
+  const activeFrameKeyPatch = { activeFrameKey: derivedFrameKey };
+  return {
+    step: stepName, // string
+    substep,
+    stepName: step.description,
+    retryCount,
+    variables: merge(variables),
+    lifecycle: snapshot.context?.lifecycle ?? 'running',
+    snapshot,
+    forStack: computedForStack,
+    iterationResults: computedIterationResults,
+    lastAction,
+    ...lastResultPatch(lastResultSync, { terminal: false }),
+    ...substepStatesPatch,
+    ...activeFrameKeyPatch,
+    ...consumePatch,
+  };
+}
+
+/**
  * Manages XState actor lifecycle for runbooks.
  *
  * Encapsulates actor creation (with snapshot-based hydration), state synchronisation
@@ -489,14 +728,14 @@ export class RunbookActorService {
       );
     }
 
-    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-    if (!match) {
+    const parsed = parseStepStateValue(stateValue);
+    if (!parsed) {
       throw new Error(
         `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
           'Prune invalid runbook state and restart execution.',
       );
     }
-    const stepName = match[1];
+    const stepName = parsed.stepName;
     if (!steps.find((s) => s.name === stepName)) {
       throw new Error(
         `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
@@ -734,159 +973,79 @@ export class RunbookActorService {
     options: ActorUpdateOptions = {},
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
-    const rawValue: unknown = snapshot.value;
     const consumePatch =
       options.consumeResolvedCompletionKey !== undefined
         ? await this.buildConsumedCompletionPatch(id, options.consumeResolvedCompletionKey)
         : {};
-
-    const stateValue = stateValueAsString(rawValue);
-    if (stateValue === null) {
-      throw new Error(
-        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(rawValue)}`,
-      );
-    }
-
-    // If the runbook is in a final state, don't try to parse a step number.
-    // Just update the snapshot and variables, preserving the last step number.
-    if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
-      const variables = snapshot.context?.variables ?? {};
-      const rawFinalVars = snapshot.context?.finalVars ?? {};
-      // Empty finalVars on terminal: explicitly write `undefined` so the persisted
-      // state has no `finalVars` field. This matches the schema's optional contract
-      // and avoids storing a misleading empty object.
-      const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
-      const lifecycle =
-        snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
-      const lastAction = isPersistableLastAction(snapshot.context?.lastAction)
-        ? snapshot.context.lastAction
-        : undefined;
-      const ctxSubstepStatesTerm = snapshot.context?.substepStates;
-      const substepStatesTermPatch =
-        ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
-      // No activeFrameKey patch on terminal entry. The runbook is done — the
-      // CLI commands that scope by `state.activeFrameKey` (delegate, abort,
-      // collect) only apply to running runbooks, and `deriveActiveFrame`'s
-      // step-based fallback handles any post-terminal inspection. Omitting the
-      // patch lets the prior persisted value carry through untouched.
-      const state = await this.manager.update(id, {
-        variables: merge(variables),
-        finalVars,
-        lifecycle,
-        lastAction,
-        snapshot,
-        // Clear FOR loop state on completion
-        forStack: undefined,
-        iterationResults: undefined,
-        ...lastResultPatch(lastResultSync, { terminal: true }),
-        ...substepStatesTermPatch,
-        ...consumePatch,
-      });
-      return { state, snapshot };
-    }
-
-    if (!steps.length) {
-      throw new Error(
-        `updateFromActor called with empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
-      );
-    }
-
-    // Defense-in-depth (Issue 6): reject any persisted stateValue that
-    // references the transient `__parent-entry::*` sibling. The machine is
-    // supposed to leave parent-entry before any transition settles, so this
-    // state must NEVER persist. Without the explicit guard the regex below
-    // would silently match `step::N::__parent-entry::M` and report substep
-    // `__parent-entry::M` — wrong substep and wrong recovery path.
-    if (stateValue.includes('::__parent-entry::')) {
-      throw new Error(
-        `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
-          'Prune invalid runbook state and restart execution.',
-      );
-    }
-
-    // Parse only the current XState state ID format. Older or malformed
-    // persisted snapshots are invalid state and must fail closed.
-    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-    if (!match) {
-      throw new Error(
-        `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
-          'Prune invalid runbook state and restart execution.',
-      );
-    }
-    const stepName = match[1];
-
-    let substep = snapshot.context?.substep;
-    if (!substep && match[2]) {
-      substep = match[2];
-    }
-
-    // Find step by name (unified lookup)
-    const step = steps.find((s) => s.name === stepName);
-    if (!step) {
-      throw new Error(
-        `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
-          'Prune invalid runbook state and restart execution.',
-      );
-    }
-
-    const retryCount = snapshot.context?.retryCount ?? 0;
-    const variables = snapshot.context?.variables ?? {};
-
-    // FOR loop context
-    const forStack = snapshot.context?.forStack as ForContext[] | undefined;
-    const iterationResults = snapshot.context?.iterationResults;
-    const lastAction = snapshot.context?.lastAction;
-
-    // Filter implicit ForContext entries — don't persist synthetic loop state
-    const realForStack = forStack?.filter((fc) => !fc.implicit);
-    const computedForStack = realForStack?.length ? realForStack : undefined;
-
-    // Only clear iterationResults when all stack entries were implicit.
-    // When forStack is empty after explicit FOR exit, iterationResults
-    // must be preserved for parent-step aggregation.
-    const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
-    const computedIterationResults = hasOnlyImplicit ? undefined : iterationResults;
-
-    // Write back mirrored substepStates from context. Only overwrite when the
-    // context field is defined so a pre-bootstrap `undefined` cannot wipe the
-    // authoritative persisted value. When undefined, omit the field entirely
-    // from the update so `manager.update`'s spread preserves the existing value.
-    const ctxSubstepStates = snapshot.context?.substepStates;
-    const substepStatesPatch =
-      ctxSubstepStates !== undefined ? { substepStates: ctxSubstepStates } : {};
-
-    // Derive the persisted `activeFrameKey` from the cursor (step name parsed
-    // from the XState value + topmost real FOR frame). Never mirror a cached
-    // context field — that would re-introduce the stale-bootstrap class of
-    // bug (see `compiler.ts: __issue-delegations` and `retry-hook.ts`). The
-    // cursor is updated by XState assigns on every step transition and
-    // FOR-iteration advance, so deriving here is always current. Without this
-    // mirror the top-level `activeFrameKey` would not reflect the current
-    // frame and the next CLI interaction or resume would target the wrong
-    // frame's substeps.
-    const activeFrame = realForStack?.[realForStack.length - 1];
-    const derivedFrameKey = buildFrameKey(
-      stepName,
-      activeFrame ? activeFrame.iteration : undefined,
-    );
-    const activeFrameKeyPatch = { activeFrameKey: derivedFrameKey };
-    const state = await this.manager.update(id, {
-      step: stepName, // string
-      substep,
-      stepName: step.description,
-      retryCount,
-      variables: merge(variables),
-      lifecycle: snapshot.context?.lifecycle ?? 'running',
-      snapshot,
-      forStack: computedForStack,
-      iterationResults: computedIterationResults,
-      lastAction,
-      ...lastResultPatch(lastResultSync, { terminal: false }),
-      ...substepStatesPatch,
-      ...activeFrameKeyPatch,
-      ...consumePatch,
-    });
+    const patch = deriveActorStatePatch(id, snapshot, steps, lastResultSync, consumePatch);
+    const state = await this.manager.update(id, patch);
     return { state, snapshot };
+  }
+
+  /**
+   * Compute an actor transition without persisting it — the computation half of
+   * the fenced compute/commit seam.
+   *
+   * Creates an actor from `previousState`, sends the event, waits for machine and
+   * command effects, then derives the next state using the same pure patch
+   * derivation as {@link updateFromActor} and applies it via
+   * {@link applyRunbookStateUpdate}. No {@link RunbookStateManager} write happens:
+   * the returned {@link PreparedActorMutation} is handed to the executor's guarded
+   * commit, which persists it under the owning execution attempt's CAS.
+   *
+   * @param id - Runbook state ID (used for error messages and snapshot lookup).
+   * @param previousState - The state to hydrate the actor from (captured before the effect).
+   * @param steps - Parsed runbook steps for machine compilation.
+   * @param event - Runbook event to send (PASS, FAIL, GOTO, EXECUTE_COMMAND, …).
+   * @returns The computed, not-yet-persisted mutation.
+   * @throws {Error} If the resulting snapshot is an unsupported/invalid shape
+   *   (mirrors {@link updateFromActor}).
+   */
+  async prepareActorMutation(
+    id: string,
+    previousState: RunbookState,
+    steps: readonly ResolvedStep[],
+    event: RunbookEvent,
+  ): Promise<PreparedActorMutation> {
+    const collector = createExecutionEffectCollector();
+    const effects: ExecutionObservationEffect[] = [];
+    const commandPosition = deriveCurrentPositionFromState(previousState, steps);
+    if (event.type === 'EXECUTE_COMMAND') {
+      effects.push(
+        commandStartedEffect({
+          command: event.command,
+          displayCommand: event.displayCommand,
+          position: commandPosition,
+        }),
+      );
+    }
+    const actor = this.createActorForState(id, previousState, steps, collector);
+    try {
+      actor.send(event);
+      await this.waitForMachineEffects(actor);
+      const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
+      const consumePatch =
+        event.type === 'APPLY_CURRENT_RESOLVED_COMPLETION'
+          ? buildConsumedCompletionPatchFrom(previousState, event.completionKey)
+          : {};
+      const lastResultSync = lastResultSyncForEvent(event, {
+        commandOutput: collector.commandOutput,
+        commandFailureMessage: collector.commandFailureMessage,
+      });
+      const patch = deriveActorStatePatch(id, snapshot, steps, lastResultSync, consumePatch);
+      const nextState = applyRunbookStateUpdate(previousState, patch, new Date().toISOString());
+      if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'completed') {
+        effects.push(
+          commandCompletedEffect({ ...collector.commandOutput, position: commandPosition }),
+        );
+      }
+      if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'policy_denied') {
+        effects.push(policyDeniedEffect({ ...collector.commandOutput, position: commandPosition }));
+      }
+      return { previousState, nextState, snapshot, effects };
+    } finally {
+      this.stopActor(actor);
+    }
   }
 
   private async buildConsumedCompletionPatch(
@@ -897,15 +1056,7 @@ export class RunbookActorService {
     if (!existing) {
       throw new Error(`Runbook ${id} not found`);
     }
-    const current = existing.resolvedCompletions ?? {};
-    if (!(key in current)) {
-      throw new Error(
-        `Resolved completion "${key}" for runbook "${id}" was missing during actor sync.`,
-      );
-    }
-    const next = { ...current };
-    delete next[key];
-    return { resolvedCompletions: replace(next) };
+    return buildConsumedCompletionPatchFrom(existing, key);
   }
 
   /**
@@ -1150,8 +1301,7 @@ export class RunbookActorService {
         const preValue = stateValueAsString(preSnapshot.value) ?? JSON.stringify(preSnapshot.value);
         const preCtx = preSnapshot.context as Record<string, unknown> | undefined;
         const preSubstep = preCtx?.substep as string | undefined;
-        const stepMatch = /^step::(.+?)(?:::(.+))?$/.exec(preValue);
-        const currentStepName = stepMatch?.[1];
+        const currentStepName = parseStepStateValue(preValue)?.stepName;
         const currentStep = currentStepName
           ? steps.find((s) => s.name === currentStepName)
           : undefined;

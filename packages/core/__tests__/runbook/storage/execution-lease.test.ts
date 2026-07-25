@@ -10,6 +10,7 @@ import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import {
   SqliteExecutionLeaseService,
   createDefaultLeaseWaitClock,
+  type AbandonedAttemptOutcome,
   type ExecutionAttempt,
   type LeaseWaitProgress,
 } from '../../../src/runbook/storage/execution-lease.js';
@@ -702,5 +703,54 @@ describe('createDefaultLeaseWaitClock', () => {
     // The common case is the timer winning, not the abort. Leaving the listener
     // attached would accumulate one per retry on a wait loop's shared signal.
     expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+});
+
+describe('self-abandon to recovery after a mid-effect failure', () => {
+  it('moves this process own effect_started attempt to recovery_pending', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const started = await lease.markEffectStarted(acquired.value);
+    if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
+
+    // The declared return type admits exactly the two producible outcomes; a
+    // `committed` variant is unrepresentable, so no caller is forced to narrow a
+    // case this method cannot produce.
+    const result: AbandonedAttemptOutcome = await lease.abandonToRecovery(
+      started.value,
+      'effect_boundary_crossed',
+    );
+    expect(result.kind).toBe('recovery_required');
+
+    // The run stays owned (blocked) until recovery commits; only the phase moved.
+    const pending = await store.readPendingRecovery(state.id);
+    expect(pending?.epoch).toBe(started.value.epoch);
+    expect(pending?.reason).toBe('effect_boundary_crossed');
+    const row = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :id')
+        .get<{ exec_token: string | null }>({ id: state.id }),
+    );
+    expect(row?.exec_token).not.toBeNull();
+  });
+
+  it('refuses a second abandon of an attempt no longer effect_started', async () => {
+    const { captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const started = await lease.markEffectStarted(acquired.value);
+    if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
+
+    const first: AbandonedAttemptOutcome = await lease.abandonToRecovery(
+      started.value,
+      'owner_dead',
+    );
+    expect(first.kind).toBe('recovery_required');
+    const second: AbandonedAttemptOutcome = await lease.abandonToRecovery(
+      started.value,
+      'owner_dead',
+    );
+    expect(second.kind).toBe('execution_in_progress');
   });
 });
