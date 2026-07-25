@@ -8,6 +8,7 @@ import {
   changedFilesFromGit,
   fileMutationScore,
   main,
+  mutantInRanges,
   normalizeReportFileKeys,
   parseArgs,
   renderMarkdown,
@@ -584,10 +585,34 @@ test('assertMutationScore: ranges score only mutants inside the changed lines', 
   assert.deepEqual(scoped.failures, [{ file: 'src/big.ts', score: 0 }]);
 });
 
-test('assertMutationScore: a mutant overlapping a range boundary is in scope', () => {
-  // Stryker tests a mutant whose span reaches into the range, so scoring must
-  // count it rather than discarding it as out of scope.
-  const report = makeLocatedReport({ 'src/a.ts': [['Survived', 8, 12]] });
+// Mirror Stryker's own rule, not an approximation of it. `locationIncluded` in
+// its incremental differ is `needle.start >= haystack.start && haystack.end >=
+// needle.end` — full CONTAINMENT. A multi-line mutant that merely crosses the
+// range boundary is therefore NOT in the mutated scope, so Stryker never reran it
+// and its result is a stale baseline one. Scoring it would let a stale kill (or a
+// stale survivor) decide the changed-line score.
+test('assertMutationScore: a mutant crossing a range boundary is OUT of scope', () => {
+  const report = makeLocatedReport({
+    'src/a.ts': [
+      ['Survived', 8, 12], // straddles the range: not rerun, result is stale
+      ['Killed', 10, 11], // fully contained: genuinely rerun
+    ],
+  });
+  const result = assertMutationScore({
+    report,
+    changedFiles: ['packages/core/src/a.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+    ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
+  });
+  // Only the contained mutant counts, so the file is 100% and passes. Under an
+  // overlap rule the straddling survivor would drag it to 50% and fail.
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.checked, [{ file: 'src/a.ts', score: 100 }]);
+});
+
+test('assertMutationScore: a mutant fully inside a range is in scope', () => {
+  const report = makeLocatedReport({ 'src/a.ts': [['Survived', 10, 11]] });
   const result = assertMutationScore({
     report,
     changedFiles: ['packages/core/src/a.ts'],
@@ -596,6 +621,19 @@ test('assertMutationScore: a mutant overlapping a range boundary is in scope', (
     ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
   });
   assert.equal(result.ok, false);
+});
+
+test('mutantInRanges: matches Stryker containment at the exact boundaries', () => {
+  const ranges = [{ start: 10, end: 20 }];
+  const at = (startLine, endLine) => ({
+    location: { start: { line: startLine, column: 1 }, end: { line: endLine, column: 9 } },
+  });
+  // Flush against both edges is contained; one line past either edge is not.
+  assert.equal(mutantInRanges(at(10, 20), ranges, 'src/a.ts'), true);
+  assert.equal(mutantInRanges(at(9, 20), ranges, 'src/a.ts'), false);
+  assert.equal(mutantInRanges(at(10, 21), ranges, 'src/a.ts'), false);
+  // A mutant spanning the whole range from outside is not contained either.
+  assert.equal(mutantInRanges(at(1, 100), ranges, 'src/a.ts'), false);
 });
 
 test('assertMutationScore: ranges with no in-scope mutants are skipped, not passed', () => {

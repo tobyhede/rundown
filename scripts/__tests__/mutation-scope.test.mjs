@@ -291,3 +291,67 @@ test('buildScope does not duplicate a file whose source AND test both changed', 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// REGRESSION (P2): a batched shard emits ONE --testFiles value for the whole
+// group. If a group mixes files that have a dedicated test with files that do not,
+// that value is non-empty, so the workflow passes --testFiles and the jest runner
+// stops using --findRelatedTests — testing the dedicated-test-less file only
+// against another file's tests. That manufactures no-coverage and survivor
+// results out of nothing.
+test('partitionPrEntries never mixes files with and without a dedicated test', () => {
+  const items = [
+    { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: 'a' } },
+    { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: null } },
+    { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: 'c' } },
+    { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: null } },
+  ];
+  for (const cap of [1, 2, 3, 4, 16]) {
+    for (const group of partitionPrEntries(items, cap)) {
+      const kinds = new Set(group.map((i) => (i.entry.testFile ? 'unit' : 'related')));
+      assert.equal(kinds.size, 1, `cap ${cap} mixed dedicated-test and related-test entries`);
+    }
+  }
+});
+
+// REGRESSION (P3): rounding each package's share independently could overshoot the
+// advertised cap — entry counts [1, 1, 1, 17] at cap 16 allocated 1+1+1+14 = 17.
+test('partitionPrEntries never exceeds the shard cap', () => {
+  const counts = [1, 1, 1, 17];
+  const items = counts.flatMap((n, p) =>
+    Array.from({ length: n }, () => ({
+      pkg: { package: `p${p}` },
+      entry: { lines: 10, whole: true, ranges: [], testFile: 't' },
+    })),
+  );
+  assert.ok(partitionPrEntries(items, 16).length <= 16, 'allocation must respect the cap');
+  for (const cap of [2, 3, 5, 7, 11, 16, 32]) {
+    assert.ok(partitionPrEntries(items, cap).length <= Math.max(cap, counts.length));
+  }
+});
+
+test('partitionPrEntries gives every changed package at least one shard', () => {
+  const items = [
+    { pkg: { package: 'core' }, entry: { lines: 900, whole: true, ranges: [], testFile: 't' } },
+    ...Array.from({ length: 30 }, () => ({
+      pkg: { package: 'cli' },
+      entry: { lines: 10, whole: true, ranges: [], testFile: 't' },
+    })),
+  ];
+  const groups = partitionPrEntries(items, 4);
+  const packages = new Set(groups.map((g) => g[0].pkg.package));
+  assert.ok(packages.has('core'), 'a package with changes must never be starved of a shard');
+  assert.ok(packages.has('cli'));
+});
+
+test('partitionPrEntries never allocates more shards than a group has entries', () => {
+  const items = [
+    { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: 't' } },
+    ...Array.from({ length: 20 }, () => ({
+      pkg: { package: 'cli' },
+      entry: { lines: 10, whole: true, ranges: [], testFile: 't' },
+    })),
+  ];
+  for (const group of partitionPrEntries(items, 16)) {
+    assert.ok(group.length >= 1, 'an empty shard would be a wasted CI job');
+  }
+});

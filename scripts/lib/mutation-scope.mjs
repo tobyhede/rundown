@@ -398,25 +398,61 @@ export function mutateArg(entry) {
  * @returns {Array<Array<{pkg: {package: string}, entry: object}>>} shard groupings.
  */
 export function partitionPrEntries(items, maxShards) {
+  // Pool key is (package, test-scope kind). Package, because a shard inherits its
+  // directory from its first entry. Kind, because a shard emits ONE `--testFiles`
+  // value for the whole group: mixing a file that has a dedicated test with one
+  // that does not yields a non-empty value, which switches `--findRelatedTests`
+  // off for BOTH and tests the dedicated-test-less file only against another
+  // file's tests — manufacturing no-coverage and survivor results.
   /** @type {Map<string, Array<{pkg: {package: string}, entry: object}>>} */
-  const byPackage = new Map();
+  const pools = new Map();
   for (const item of items) {
-    const key = item.pkg.package;
-    if (!byPackage.has(key)) byPackage.set(key, []);
-    byPackage.get(key).push(item);
+    const kind = item.entry.testFile ? 'unit' : 'related';
+    const key = `${item.pkg.package} ${kind}`;
+    if (!pools.has(key)) pools.set(key, []);
+    pools.get(key).push(item);
   }
 
-  // Share the cap across packages proportionally, but never starve a package of
-  // its single shard — a package with changes must always be scored.
+  const keys = [...pools.keys()];
+  // Every pool gets one shard: a package with changes must never be starved of
+  // scoring. When there are more pools than the cap allows, that floor wins and
+  // the cap yields — the alternative is silently dropping a package's coverage.
+  /** @type {Map<string, number>} */
+  const allocation = new Map(keys.map((key) => [key, 1]));
+  let remaining = Math.max(0, maxShards - keys.length);
+  // Hand out the rest one shard at a time to whichever pool is currently carrying
+  // the most entries per shard, and never give a pool more shards than it has
+  // entries (an empty shard is a wasted CI job). Allocating incrementally is what
+  // keeps the total inside the cap — independently rounded per-pool shares can
+  // overshoot it (entry counts [1,1,1,17] at cap 16 rounded to 1+1+1+14 = 17).
+  while (remaining > 0) {
+    let best = null;
+    let bestRatio = 0;
+    for (const key of keys) {
+      const size = pools.get(key).length;
+      const shards = allocation.get(key);
+      if (shards >= size) continue; // already one shard per entry
+      const ratio = size / shards;
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        best = key;
+      }
+    }
+    if (best === null) break; // every pool is fully split
+    allocation.set(best, allocation.get(best) + 1);
+    remaining -= 1;
+  }
+
   const groups = [];
-  for (const packageItems of byPackage.values()) {
-    const share = Math.max(1, Math.round((maxShards * packageItems.length) / items.length));
-    if (packageItems.length <= share) {
-      groups.push(...packageItems.map((item) => [item]));
+  for (const key of keys) {
+    const poolItems = pools.get(key);
+    const shardCount = allocation.get(key);
+    if (poolItems.length <= shardCount) {
+      groups.push(...poolItems.map((item) => [item]));
       continue;
     }
-    const shards = Array.from({ length: share }, () => ({ weight: 0, items: [] }));
-    for (const item of [...packageItems].sort(
+    const shards = Array.from({ length: shardCount }, () => ({ weight: 0, items: [] }));
+    for (const item of [...poolItems].sort(
       (a, b) => mutatedLines(b.entry) - mutatedLines(a.entry),
     )) {
       let lightest = shards[0];

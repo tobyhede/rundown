@@ -100,15 +100,29 @@ export function parseChangedRange(raw) {
 }
 
 /**
- * Whether a mutant's span touches any of a file's in-scope line ranges.
+ * Whether a mutant lies inside any of a file's in-scope line ranges.
  *
- * Overlap, not containment: Stryker tests a mutant whose span merely reaches into
- * the `--mutate` range, so the gate must judge it rather than discard it.
+ * CONTAINMENT, not overlap, because that is exactly the rule Stryker itself
+ * applies when deciding whether a mutant is in the mutated scope and must be
+ * rerun. From its incremental differ:
+ *
+ *     locationIncluded(haystack, needle) =
+ *       gte(needle.start, haystack.start) && gte(haystack.end, needle.end)
+ *
+ * A multi-line mutant that merely straddles the range boundary is therefore NOT
+ * rerun — Stryker keeps its result from the baseline report. Counting it would let
+ * a stale kill, or a stale survivor, decide the changed-line score, which is the
+ * opposite of what range scoping is for.
+ *
+ * Comparing line numbers alone is exact here rather than an approximation: for a
+ * line-only range (`file:start-end`, the only form emitted) Stryker fills in
+ * `startColumn = 0` and `endColumn = Number.MAX_SAFE_INTEGER`, so the column half
+ * of its comparison is always satisfied.
  *
  * @param {{location?: {start?: {line?: number}, end?: {line?: number}}}} mutant - a report mutant.
  * @param {Array<{start: number, end: number}>} ranges - in-scope line ranges.
  * @param {string} reportKey - the report key, for diagnostics.
- * @returns {boolean} true when the mutant overlaps a range.
+ * @returns {boolean} true when the mutant is contained in a range.
  * @throws {Error} when the mutant carries no usable location.
  */
 export function mutantInRanges(mutant, ranges, reportKey) {
@@ -122,7 +136,7 @@ export function mutantInRanges(mutant, ranges, reportKey) {
       `mutation report entry for ${reportKey} has a mutant without a usable \`location\`; cannot scope it to the changed ranges`,
     );
   }
-  return ranges.some((r) => startLine <= r.end && endLine >= r.start);
+  return ranges.some((r) => startLine >= r.start && endLine <= r.end);
 }
 
 /**

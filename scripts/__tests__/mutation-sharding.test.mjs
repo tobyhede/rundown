@@ -322,3 +322,37 @@ test('merge: never uploads a module with a missing shard, and still fails', () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A shard may only name --testFiles when EVERY file in it has a dedicated test:
+// supplying the flag disables --findRelatedTests for the whole group, so a
+// dedicated-test-less file would be judged against another file's tests.
+test('plan: a pull_request shard names testFiles only if every file has one', () => {
+  for (const cap of ['1', '2', '16']) {
+    const { include } = plan({
+      EVENT_NAME: 'pull_request',
+      BASE_REF: 'HEAD~1',
+      MAX_PR_SHARDS: cap,
+    });
+    for (const entry of include) {
+      if (!entry.testFiles) continue;
+      assert.equal(
+        entry.testFiles.split(',').filter(Boolean).length,
+        entry.label.split(' ').filter(Boolean).length,
+        `cap ${cap}: a shard naming testFiles must name one per file`,
+      );
+    }
+  }
+});
+
+test('plan: a pull_request never plans more shards than MAX_PR_SHARDS', () => {
+  for (const cap of [1, 2, 3, 16]) {
+    const { include } = plan({
+      EVENT_NAME: 'pull_request',
+      BASE_REF: 'HEAD~1',
+      MAX_PR_SHARDS: String(cap),
+    });
+    // The one-shard-per-pool floor may exceed a very small cap; it can never
+    // exceed the number of pools, which is bounded by packages x test-scope kinds.
+    assert.ok(include.length <= Math.max(cap, 8), `cap ${cap} planned ${include.length} shards`);
+  }
+});

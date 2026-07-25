@@ -187,10 +187,18 @@ async function planPullRequest() {
     const pkg = group[0].pkg;
     const n = (perPackage.get(pkg.package) ?? 0) + 1;
     perPackage.set(pkg.package, n);
-    const testFiles = group
-      .map(({ entry }) => entry.testFile)
-      .filter(Boolean)
-      .join(',');
+    // `--testFiles` is all-or-nothing for a shard: supplying it switches the jest
+    // runner's `--findRelatedTests` off for EVERY mutant in the group. So a shard
+    // may only carry it when every file in the group has a dedicated test —
+    // otherwise the dedicated-test-less file would be judged against another
+    // file's tests, inventing no-coverage and survivor results.
+    //
+    // partitionPrEntries already pools by test-scope kind, so a mixed group should
+    // be unreachable; asserting the invariant here keeps it true regardless of how
+    // the grouping evolves.
+    const testFiles = group.every(({ entry }) => entry.testFile)
+      ? group.map(({ entry }) => entry.testFile).join(',')
+      : '';
     return {
       package: pkg.package,
       dir: pkg.dir,
