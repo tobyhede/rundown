@@ -22,7 +22,6 @@ import {
   RunbookCompletionService,
   RunbookLifecycleCommandService,
   RunbookStateManager,
-  SessionLock,
   SessionService,
   activeFrame,
   assertClaimId,
@@ -48,6 +47,7 @@ import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
+import { patchPersistedClaim } from '../../src/testing/session-fixtures.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
@@ -411,14 +411,12 @@ describe('RunbookLifecycleCommandService', () => {
       if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
       const claimKey = claimKeyFromBearer(evidence.claimId);
       const session = await mgr.loadSession();
-      session.claims[claimKey] = {
-        ...session.claims[claimKey],
+      await patchPersistedClaim(mgr.cwd, claimKey, {
         grants: session.claims[claimKey].grants.filter(
           (grant) => grant.action !== 'delegate-from-run',
         ),
         lastSeenAt: '2020-01-01T00:00:00.000Z',
-      };
-      await mgr.saveSession(session);
+      });
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
@@ -586,12 +584,9 @@ describe('RunbookLifecycleCommandService', () => {
       const evidence = runControlEvidence(runId);
       if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
       const claimKey = claimKeyFromBearer(evidence.claimId);
-      const session = await mgr.loadSession();
-      session.claims[claimKey] = {
-        ...session.claims[claimKey],
+      await patchPersistedClaim(mgr.cwd, claimKey, {
         lastSeenAt: '2020-01-01T00:00:00.000Z',
-      };
-      await mgr.saveSession(session);
+      });
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
@@ -3016,7 +3011,7 @@ describe('RunbookLifecycleCommandService', () => {
 
   describe('explicit-target completion lock span (#500)', () => {
     afterEach(() => {
-      // Prototype spies (CompletionLock / SessionLock) must not leak into other
+      // Prototype spies (CompletionLock) must not leak into other
       // tests in this file; instance spies die with the beforeEach services.
       jest.restoreAllMocks();
     });
@@ -3357,11 +3352,13 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('applies terminal side effects only after the completion-lock scope closes', async () => {
       // Plan-review error-level fix: the drain reaching terminal must NOT run
-      // #applyTerminalSideEffects → releaseRunbook → SessionLock inside the
-      // CompletionLock scope (the bare guarded path holds the opposite
-      // SessionLock → CompletionLock edge — an ABBA inversion). Pin the order
-      // with prototype spies: the span's CompletionLock release strictly
-      // precedes the terminal release's SessionLock acquire.
+      // #applyTerminalSideEffects → releaseRunbook → the session write inside the
+      // CompletionLock scope. Originally this pinned an ABBA inversion against
+      // SessionLock; the session side is now a short store transaction rather than
+      // a held file lock, so the deadlock edge is gone — but the ordering it
+      // enforced is still the property worth keeping: the completion span must not
+      // stay open across an unrelated session write. Pinned on the session
+      // mutation that now carries it.
       const terminalSteps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -3375,14 +3372,13 @@ describe('RunbookLifecycleCommandService', () => {
       const { seam: localSeam } = buildSpanSeam(terminalSteps);
       await activate(substepRunning());
 
-      // Pass-through prototype spies: jest records a global invocation order.
-      // The first SessionLock acquisition is the pre-dispatch liveness mark;
-      // the last is terminal release. Pin both sides of CompletionLock so the
-      // recorder cannot become reentrant and terminal release cannot restore
-      // the ABBA inversion.
+      // Pass-through spies: jest records a global invocation order. The first
+      // session mutation is the pre-dispatch liveness mark; the last is terminal
+      // release. Pin both sides of CompletionLock so the recorder cannot become
+      // reentrant and terminal release cannot move back inside the span.
       const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
-      const sessionAcquireSpy = jest.spyOn(SessionLock.prototype, 'acquire');
+      const sessionAcquireSpy = jest.spyOn(manager, 'mutateSession');
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
 
       const outcome = await explicitPass(localSeam, '1.1');
@@ -3391,8 +3387,8 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('done');
       expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
-      // Recording takes SessionLock before the completion span; terminal release
-      // takes it only after that span closes.
+      // Recording writes the session before the completion span; terminal release
+      // writes it only after that span closes.
       const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
       const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
       const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
@@ -3406,7 +3402,7 @@ describe('RunbookLifecycleCommandService', () => {
     });
 
     it('reaches terminal without a lock timeout while a bare guarded write contends', async () => {
-      // The ABBA partner: runGuardedParentAdvance holds the SessionLock while
+      // The ABBA partner: runGuardedParentAdvance used to hold the SessionLock while
       // its decisive write waits on the CompletionLock. Pre-fix (terminal side
       // effects inside the span) this interleaving deadlocked into 5s lock
       // timeouts; post-fix both operations complete.
@@ -3688,12 +3684,10 @@ describe('RunbookLifecycleCommandService', () => {
       const session = await manager.loadSession();
       const claimKey = claimKeyFromBearer(claimed.claimId);
       const claim = session.claims[claimKey];
-      session.claims[claimKey] = {
-        ...claim,
+      await patchPersistedClaim(manager.cwd, claimKey, {
         lastSeenAt: '2020-01-01T00:00:00.000Z',
         grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
-      };
-      await manager.saveSession(session);
+      });
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -3725,11 +3719,9 @@ describe('RunbookLifecycleCommandService', () => {
       const claimKey = claimKeyFromBearer(evidence.claimId);
       const session = await manager.loadSession();
       const claim = session.claims[claimKey];
-      session.claims[claimKey] = {
-        ...claim,
+      await patchPersistedClaim(manager.cwd, claimKey, {
         grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
-      };
-      await manager.saveSession(session);
+      });
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -3929,12 +3921,10 @@ describe('RunbookLifecycleCommandService', () => {
         const claim = session.claims[claimKey];
         // Drop the delegation linkage (run-control shape) and its now-forbidden
         // report grant to keep the persisted claim schema-valid.
-        session.claims[claimKey] = {
-          ...claim,
-          delegation: undefined,
+        await patchPersistedClaim(manager.cwd, claimKey, {
+          delegation: null,
           grants: claim.grants.filter((grant) => grant.action !== 'report-delegation-result'),
-        };
-        await manager.saveSession(session);
+        });
         loadStepsImpl = () => [
           {
             kind: 'base',
@@ -4004,11 +3994,9 @@ describe('RunbookLifecycleCommandService', () => {
         const session = await manager.loadSession();
         const claimKey = claimKeyFromBearer(claimId);
         const claim = session.claims[claimKey];
-        session.claims[claimKey] = {
-          ...claim,
+        await patchPersistedClaim(manager.cwd, claimKey, {
           grants: [...claim.grants, { action: 'collect-for-run', runId: claimChildRunId }],
-        };
-        await manager.saveSession(session);
+        });
         loadStepsImpl = () => [
           {
             kind: 'base',
@@ -4050,11 +4038,9 @@ describe('RunbookLifecycleCommandService', () => {
         const session = await manager.loadSession();
         const claimKey = claimKeyFromBearer(claimId);
         const claim = session.claims[claimKey];
-        session.claims[claimKey] = {
-          ...claim,
+        await patchPersistedClaim(manager.cwd, claimKey, {
           grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
-        };
-        await manager.saveSession(session);
+        });
         const sendSpy = jest.spyOn(actorService, 'sendAndSync');
 
         const out = await seam.runTerminal({
@@ -4131,12 +4117,9 @@ describe('RunbookLifecycleCommandService', () => {
         const evidence = runControlEvidence(ROOT);
         if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
         const claimKey = claimKeyFromBearer(evidence.claimId);
-        const session = await manager.loadSession();
-        session.claims[claimKey] = {
-          ...session.claims[claimKey],
+        await patchPersistedClaim(manager.cwd, claimKey, {
           lastSeenAt: '2020-01-01T00:00:00.000Z',
-        };
-        await manager.saveSession(session);
+        });
         const out = await seam.runTerminal({
           command: 'stop',
           callerEvidence: evidence,
@@ -4174,12 +4157,10 @@ describe('RunbookLifecycleCommandService', () => {
         const claimKey = claimKeyFromBearer(evidence.claimId);
         const session = await manager.loadSession();
         const claim = session.claims[claimKey];
-        session.claims[claimKey] = {
-          ...claim,
+        await patchPersistedClaim(manager.cwd, claimKey, {
           grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
           lastSeenAt: '2020-01-01T00:00:00.000Z',
-        };
-        await manager.saveSession(session);
+        });
         installResolvedPlan(root, [root]);
 
         const out = await seam.runTerminal({
@@ -4292,6 +4273,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('bare stop maps a non-running resolved root to already_terminal', async () => {
         const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
@@ -4312,6 +4294,7 @@ describe('RunbookLifecycleCommandService', () => {
         const root = baseState({ id: ROOT, lifecycle: 'completed' });
         await manager.save(root);
         await sessionService.pushRunbook(ROOT);
+        await manager.save(baseState({ id: CHILD }));
         await issueRunControlClaimFor(CHILD);
         installResolvedPlan(root, [root]);
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
@@ -4335,6 +4318,7 @@ describe('RunbookLifecycleCommandService', () => {
         // Pins the `lifecycle === 'stopped' ? 'stopped' : 'completed'` arm that the
         // completed-root test above never reaches.
         const root = baseState({ id: ROOT, lifecycle: 'stopped' });
+        await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
         const out = await seam.runTerminal({
@@ -4380,6 +4364,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('bare complete maps plan status none to outcome none', async () => {
+        await manager.save(baseState({ id: ROOT }));
         await issueRunControlClaimFor(ROOT);
         jest
           .spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan')
@@ -4393,6 +4378,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('bare complete maps missing-inline-parent to inline_plan_unavailable', async () => {
+        await manager.save(baseState({ id: ROOT }));
         await issueRunControlClaimFor(ROOT);
         jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
           status: 'missing-inline-parent',
@@ -4413,6 +4399,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('bare complete maps inline-cycle to inline_plan_unavailable', async () => {
+        await manager.save(baseState({ id: ROOT }));
         await issueRunControlClaimFor(ROOT);
         jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
           status: 'inline-cycle',

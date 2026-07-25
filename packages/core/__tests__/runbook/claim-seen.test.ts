@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { SessionLock } from '../../src/runbook/session-lock.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
@@ -16,8 +15,6 @@ import {
 } from '../../src/runbook/lifecycle-command-service.js';
 import { DelegationLock } from '../../src/runbook/delegation-lock.js';
 import { CompletionLock } from '../../src/runbook/completion-lock.js';
-import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
-import { sessionLockPath } from '../../src/paths.js';
 import { claimActivity, DEFAULT_IDLE_AFTER_MS } from '../../src/runbook/claim-activity.js';
 import {
   CLAIM_ID_PREFIX,
@@ -28,6 +25,7 @@ import {
 import type { Runbook, RunId, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { linkageFor, assertClaimed } from './claim-test-helpers.js';
+import { patchPersistedClaim } from '../../src/testing/session-fixtures.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = {
@@ -70,7 +68,7 @@ function serviceWithClock(
   instants: readonly string[],
 ): SessionService {
   let index = 0;
-  return new SessionService(manager, undefined, () => {
+  return new SessionService(manager, () => {
     const value = instants[Math.min(index, instants.length - 1)];
     index += 1;
     return value;
@@ -80,20 +78,15 @@ function serviceWithClock(
 describe('SessionService.recordClaimSeen (#519)', () => {
   let testDir: string;
   let manager: RunbookStateManager;
-  let sessionLock: SessionLock;
   let sessionService: SessionService;
   let runId: RunId;
 
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'claim-seen-test-'));
     manager = new RunbookStateManager(testDir);
-    // The lock is constructed here and injected so the acquisition-failure case can
-    // spy this exact instance — SessionService's constructor already takes it, so no
-    // prototype spy is needed. The clock is left at its wall-clock default: these
-    // cases are about WHAT is recorded, not WHEN, and the suite below owns the
-    // clock-dependent behaviour.
-    sessionLock = new SessionLock(testDir);
-    sessionService = new SessionService(manager, sessionLock);
+    // The clock is left at its wall-clock default: these cases are about WHAT is
+    // recorded, not WHEN, and the suite below owns the clock-dependent behaviour.
+    sessionService = new SessionService(manager);
     const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
       runbookPath: 'test.md',
     });
@@ -185,62 +178,29 @@ describe('SessionService.recordClaimSeen (#519)', () => {
 
   it('never throws when the session write fails — it returns record-failed (AC7)', async () => {
     const { claimId } = await sessionService.issueRunControlClaim(runId);
-    const saveSpy = jest.spyOn(manager, 'saveSession').mockRejectedValue(new Error('disk on fire'));
-
+    // The OUTER path: the `try` wraps the whole `mutateSession` call, not just its
+    // callback. Under the store, opening the transaction, reading the session, and
+    // committing all live outside the callback, so a failure at any of them lands
+    // here — the case the lock-era "cannot acquire the session lock" and "loading
+    // the session fails" tests used to split between them.
+    //
     // This best-effort recording precedes the subsequent mutation. A bookkeeping
     // hiccup must neither prevent that mutation nor mask its eventual outcome
     // (RD-102). The method is total by construction.
+    const mutateSpy = jest
+      .spyOn(manager, 'mutateSession')
+      .mockRejectedValue(new Error('disk on fire'));
+
     const result = await sessionService.recordClaimSeen(claimId);
 
     expect(result.kind).toBe('record-failed');
-    saveSpy.mockRestore();
+    mutateSpy.mockRestore();
   });
 
   it('never throws when the bearer is syntactically invalid', async () => {
     // parseClaimBearer throws on a malformed id; recordClaimSeen swallows it.
     const result = await sessionService.recordClaimSeen('not-a-claim-id' as ClaimId);
     expect(result.kind).toBe('record-failed');
-  });
-
-  it('never throws when the session LOCK cannot be acquired (AC7)', async () => {
-    // The `try` wraps `withLock`, not just its callback — this is the case that
-    // pins that choice, and it is the only one of the three that exercises the
-    // OUTER path. The other two throw from INSIDE the callback (saveSession
-    // rejects; parseClaimBearer throws), so narrowing the try to the body would
-    // keep both of them green while silently breaking the documented contract.
-    //
-    // Operationally the most likely of the three: SessionLock retries with
-    // jittered backoff bounded to 5s before failing, so a contended session is a
-    // real source of acquisition failure — and it must cost one under-reported
-    // observation mark, never prevent the subsequent `rundown pass` mutation or
-    // mask its eventual outcome.
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
-    const acquireSpy = jest
-      .spyOn(sessionLock, 'acquire')
-      .mockRejectedValue(new FileLockTimeoutError(sessionLockPath(testDir)));
-
-    const result = await sessionService.recordClaimSeen(claimId);
-
-    expect(result.kind).toBe('record-failed');
-    acquireSpy.mockRestore();
-  });
-
-  it('never throws when loading the session fails (AC7)', async () => {
-    // The fourth throw site, and the one most likely to fire in practice: THIS VERY
-    // PLAN makes `loadSession` throw on a class of sessions it previously accepted
-    // (the structural guard). A recorder that survives a save failure but dies on a
-    // load failure would prevent the subsequent `rundown pass` mutation or mask
-    // its eventual outcome — the exact RD-102 defect, arriving through the one
-    // door this plan just installed.
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
-    const loadSpy = jest
-      .spyOn(manager, 'loadSession')
-      .mockRejectedValue(new Error('Legacy claim record format detected.'));
-
-    const result = await sessionService.recordClaimSeen(claimId);
-
-    expect(result.kind).toBe('record-failed');
-    loadSpy.mockRestore();
   });
 
   it('writes a lastSeenAt that claimActivity can read back (seam round-trip)', async () => {
@@ -528,13 +488,12 @@ describe('claim-seen recording across mutating seams (#519)', () => {
 
   it('adoption self-heals: a fresh session mutating with the bearer clears idle (AC11)', async () => {
     const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
-    // Backdate the mark far past the threshold — the claim reads idle.
-    const session = await manager.loadSession();
-    session.claims[claim.claimKey] = {
-      ...session.claims[claim.claimKey],
+    // Backdate the mark far past the threshold — the claim reads idle. Written
+    // through the claim columns directly: `saveSession` leaves an existing
+    // claim untouched, so editing the session snapshot would not persist.
+    await patchPersistedClaim(testDir, claim.claimKey, {
       lastSeenAt: '2020-01-01T00:00:00.000Z',
-    };
-    await manager.saveSession(session);
+    });
     expect(
       claimActivity(
         (await manager.loadSession()).claims[claim.claimKey],
@@ -566,12 +525,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // Status names the claim as another agent's target; it cannot establish that
     // the claim's own holder is alive.
     const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
-    const session = await manager.loadSession();
-    session.claims[claim.claimKey] = {
-      ...session.claims[claim.claimKey],
+    await patchPersistedClaim(testDir, claim.claimKey, {
       lastSeenAt: '2020-01-01T00:00:00.000Z',
-    };
-    await manager.saveSession(session);
+    });
 
     await new SessionService(new RunbookStateManager(testDir)).verifyClaimId(claimId);
 

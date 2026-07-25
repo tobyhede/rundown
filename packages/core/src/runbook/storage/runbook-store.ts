@@ -434,6 +434,41 @@ export function captureAuthority(
   };
 }
 
+/**
+ * Resolve the active claim controlling a run, if any.
+ *
+ * A run has at most one active controlling claim: `rundown run` mints a
+ * run-control claim as part of the same session mutation that pushes the run
+ * (`pushRunbookWithRunControlClaim`), and a delegated child is claimed by
+ * exactly one bearer. Tombstoned claims are excluded, so a superseded holder is
+ * never resurrected as authority.
+ *
+ * This exists for the *bare* caller — `rundown pass` with no `--claim-id` on a
+ * run that authorization has already cleared it to mutate. Such a caller
+ * presents no claim, but the fence still needs the run's authority predicate to
+ * capture. Resolving the controlling claim here is not a #613 divergence: #613
+ * forbids silently resolving a *presented* claim onto a different target, and
+ * nothing is presented on this path.
+ *
+ * @param tx - Open read transaction.
+ * @param runId - Target run.
+ * @returns The controlling claim's lookup key, or `null` when the run has none.
+ */
+export function resolveControllingClaim(
+  tx: SqlReadTransaction,
+  runId: RunId,
+): ClaimLookupKey | null {
+  const row = tx
+    .prepare(
+      `SELECT key FROM claims
+       WHERE controlled_run = :runId AND status = 'active'
+       ORDER BY key
+       LIMIT 1`,
+    )
+    .get<{ readonly key: string }>({ runId });
+  return row ? assertClaimLookupKey(row.key) : null;
+}
+
 /** Sync typed operations available inside a store READ transaction. */
 export interface RunbookStoreReadTxn {
   /** Underlying read transaction, for advanced/composite queries within the store. */
@@ -476,10 +511,43 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
   tombstoneClaim(key: ClaimLookupKey): void;
   /** Refresh a claim's #519 activity timestamp. */
   recordClaimSeen(key: ClaimLookupKey, now: string): void;
+  /**
+   * Move a claim's `updated_at` ("this record was last written").
+   *
+   * Deliberately distinct from {@link recordClaimSeen}, which moves `last_seen_at`
+   * ("the holder presented its bearer as authority"). Merging them would let an
+   * unrelated claim write silently refresh the #519 idle clock. Like that method
+   * this writes pure metadata: `updated_at` is outside both `claims_guard_update`
+   * and `claims_bump_gen_update`, so it is neither refused under an execution
+   * owner nor bumps `claim_generation`.
+   */
+  touchClaimUpdatedAt(key: ClaimLookupKey, now: string): void;
   /** Replace the default stack with the given ordered run ids. */
   setStack(runIds: readonly RunId[]): void;
   /** Set (or clear, with null) the single stash slot. */
   setStash(runId: RunId | null): void;
+  /** Read the current default stack. */
+  stack(): readonly RunId[];
+  /** Read the current stash slot. */
+  stash(): RunId | null;
+  /**
+   * Read a run's persisted state inside this transaction.
+   *
+   * Session mutations that validate against run state (claim linkage checks,
+   * terminal-child refusals, stash gating) must read that state under the same
+   * transaction that writes the session; a read outside it could observe a run
+   * that another writer terminalizes before the session write lands.
+   */
+  readState(runId: RunId): RunbookState | null;
+}
+
+/** Typed operations available inside a {@link RunbookStore.mutateSession} cycle. */
+export interface SessionMutationTxn extends RunbookStoreTxn {
+  /**
+   * The session snapshot, read at transaction start. Mutate in place; the store
+   * reconciles it into the session tables when the callback returns.
+   */
+  readonly session: SessionData;
 }
 
 /**
@@ -571,6 +639,37 @@ export class RunbookStore {
    */
   captureAuthority(runId: RunId, claimKey: ClaimLookupKey): Promise<CaptureResult> {
     return this.driver.read((tx) => captureAuthority(tx, runId, claimKey));
+  }
+
+  /**
+   * Capture authority for a run whose caller presented no claim.
+   *
+   * Resolves the run's active controlling claim and captures against it in one
+   * read transaction, so the claim cannot be tombstoned between lookup and
+   * capture. A run with no active controlling claim cannot be fenced and is
+   * refused as `claim_superseded` — the same refusal a caller presenting a dead
+   * claim receives, since in both cases no live authority controls the run.
+   *
+   * @param runId - Target run.
+   * @returns The captured authority or a typed refusal.
+   */
+  captureRunAuthority(runId: RunId): Promise<CaptureResult> {
+    return this.driver.read((tx) => {
+      const claimKey = resolveControllingClaim(tx, runId);
+      if (claimKey === null) {
+        const present = tx
+          .prepare('SELECT 1 AS present FROM runs WHERE id = :runId')
+          .get<{ readonly present: number }>({ runId });
+        return present
+          ? {
+              kind: 'claim_superseded' as const,
+              runId,
+              message: `Run ${runId} has no active controlling claim.`,
+            }
+          : { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
+      }
+      return captureAuthority(tx, runId, claimKey);
+    });
   }
 
   /**
@@ -791,45 +890,85 @@ export class RunbookStore {
    */
   saveSession(session: SessionData): Promise<void> {
     return this.transaction((txn) => {
-      txn.setStack(session.defaultStack);
-      txn.setStash(session.stashedRunbookId ?? null);
-      const persisted = new Map(
-        txn.tx
-          .prepare('SELECT key, status FROM claims')
-          .all<{ readonly key: string; readonly status: string }>()
-          .map((row) => [row.key, row.status] as const),
-      );
-      // Only active claims are droppable; re-marking an existing tombstone would
-      // fire the resolution-affecting claim triggers for no change.
-      const stale = new Set(
-        [...persisted].filter(([, status]) => status === 'active').map(([key]) => key),
-      );
-      for (const [key, record] of Object.entries(session.claims)) {
-        if (persisted.has(key)) {
-          stale.delete(key);
-          continue;
-        }
-        const generation = txn.tx
-          .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
-          .get<{ readonly g: number }>({ id: record.controlledRunId })?.g;
-        if (generation === undefined) {
-          // Converging on the deletion is right for a bulk reconciler losing a
-          // race it is expected to lose, but the drop must not be silent: the
-          // mint path returns a claim_id to its caller once this resolves, so an
-          // unrecorded claim resurfaces much later as an unexplained
-          // ACTOR_CONTEXT_REQUIRED with nothing pointing back to here.
-          void logger.warn('session claim skipped: controlled run no longer exists', {
-            claimKey: key,
-            runId: record.controlledRunId,
-          });
-          continue;
-        }
-        txn.insertClaim(record, assertClaimGeneration(generation));
-      }
-      for (const key of stale) {
-        txn.tombstoneClaim(assertClaimLookupKey(key));
-      }
+      this.applySession(txn, session);
     });
+  }
+
+  /**
+   * Read the session, hand it to `work` for in-place mutation, and reconcile the
+   * result — all inside one transaction.
+   *
+   * This is the transactional replacement for the load-modify-save cycle that
+   * previously ran under the workspace session file lock. Atomicity now comes
+   * from the transaction itself, so an interleaved writer cannot lose an update:
+   * `BEGIN IMMEDIATE` serializes the read against every other writer, and the
+   * whole cycle either commits or rolls back.
+   *
+   * `work` is synchronous by construction, and {@link SyncWork} makes that a
+   * compile-time contract rather than a convention. A transaction must not be
+   * held across an `await` — that is what makes the sqljs single-connection
+   * driver safe — so every dependency a session mutation needs is available on
+   * the passed operations (notably {@link RunbookStoreTxn.readState} for
+   * run-state reads) rather than fetched by the caller mid-cycle.
+   *
+   * @template T - Value the mutation returns to its caller.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The work's return value, once committed.
+   */
+  mutateSession<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
+    return this.transaction((txn): SyncWork<T> => {
+      const session = this.readSession(txn.tx);
+      const result = work({ ...txn, session });
+      this.applySession(txn, session);
+      return result;
+    });
+  }
+
+  /**
+   * Reconcile a session snapshot into the session tables.
+   *
+   * @param txn - Open store transaction.
+   * @param session - Session data to persist.
+   */
+  private applySession(txn: RunbookStoreTxn, session: SessionData): void {
+    txn.setStack(session.defaultStack);
+    txn.setStash(session.stashedRunbookId ?? null);
+    const persisted = new Map(
+      txn.tx
+        .prepare('SELECT key, status FROM claims')
+        .all<{ readonly key: string; readonly status: string }>()
+        .map((row) => [row.key, row.status] as const),
+    );
+    // Only active claims are droppable; re-marking an existing tombstone would
+    // fire the resolution-affecting claim triggers for no change.
+    const stale = new Set(
+      [...persisted].filter(([, status]) => status === 'active').map(([key]) => key),
+    );
+    for (const [key, record] of Object.entries(session.claims)) {
+      if (persisted.has(key)) {
+        stale.delete(key);
+        continue;
+      }
+      const generation = txn.tx
+        .prepare('SELECT claim_generation AS g FROM runs WHERE id = :id')
+        .get<{ readonly g: number }>({ id: record.controlledRunId })?.g;
+      if (generation === undefined) {
+        // Converging on the deletion is right for a bulk reconciler losing a
+        // race it is expected to lose, but the drop must not be silent: the
+        // mint path returns a claim_id to its caller once this resolves, so an
+        // unrecorded claim resurfaces much later as an unexplained
+        // ACTOR_CONTEXT_REQUIRED with nothing pointing back to here.
+        void logger.warn('session claim skipped: controlled run no longer exists', {
+          claimKey: key,
+          runId: record.controlledRunId,
+        });
+        continue;
+      }
+      txn.insertClaim(record, assertClaimGeneration(generation));
+    }
+    for (const key of stale) {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    }
   }
 
   /**
@@ -1071,11 +1210,23 @@ export class RunbookStore {
       recordClaimSeen(key, now) {
         tx.prepare('UPDATE claims SET last_seen_at = :now WHERE key = :key').run({ key, now });
       },
+      touchClaimUpdatedAt(key, now) {
+        tx.prepare('UPDATE claims SET updated_at = :now WHERE key = :key').run({ key, now });
+      },
       setStack(runIds) {
         store.setStack(tx, runIds);
       },
       setStash(runId) {
         store.setStash(tx, runId);
+      },
+      stack() {
+        return store.readStack(tx);
+      },
+      stash() {
+        return store.readStash(tx);
+      },
+      readState(runId) {
+        return store.readRun(tx, runId);
       },
     };
   }
@@ -1260,6 +1411,32 @@ export class RunbookStore {
    * @returns The validated run state, or null.
    */
   private readRun(tx: SqlReadTransaction, runId: RunId): RunbookState | null {
+    const raw = this.readRunRaw(tx, runId);
+    return raw === null ? null : (this.stateSchema.parse(raw) as RunbookState);
+  }
+
+  /**
+   * Reassemble a run's persisted JSON without validating it.
+   *
+   * Exposed for the state manager, which owns the caller-facing error taxonomy
+   * (legacy-snapshot and schema-version rejection) and must therefore inspect the
+   * raw object before validation rather than receive a parsed value or a ZodError.
+   *
+   * @param runId - Run to read.
+   * @returns The assembled state object, or null when absent.
+   */
+  readRunJson(runId: RunId): Promise<Record<string, unknown> | null> {
+    return this.driver.read((tx) => this.readRunRaw(tx, runId));
+  }
+
+  /**
+   * Reassemble a run row into its full state object, unvalidated.
+   *
+   * @param tx - Open transaction.
+   * @param runId - Run to read.
+   * @returns The assembled object, or null when absent.
+   */
+  private readRunRaw(tx: SqlReadTransaction, runId: RunId): Record<string, unknown> | null {
     const row = tx
       .prepare('SELECT lifecycle, state_json FROM runs WHERE id = :id')
       .get<{ readonly lifecycle: string; readonly state_json: string }>({ id: runId });
@@ -1271,7 +1448,7 @@ export class RunbookStore {
     // resolvedCompletions live only in their own table; a run always carries the
     // field (empty when it has no completions), so canonicalize to `{}`.
     raw.resolvedCompletions = this.readResolvedCompletions(tx, runId);
-    return this.stateSchema.parse(raw) as RunbookState;
+    return raw;
   }
 
   /**

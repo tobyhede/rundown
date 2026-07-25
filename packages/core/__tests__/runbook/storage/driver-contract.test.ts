@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as os from 'node:os';
@@ -32,8 +33,18 @@ import {
   SqljsUnsupportedHostError,
   STORAGE_RUNTIME_ENV,
 } from '../../../src/runbook/storage/driver-factory.js';
+import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
+import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
+import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
+import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import { makeBaseStep } from '../../helpers/step-factories.js';
+import type { Runbook, Step } from '../../../src/runbook/types.js';
 
 const CREATE_KV = 'CREATE TABLE kv (k TEXT PRIMARY KEY, v INTEGER)';
+
+const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
+const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
 
 let dir: string;
 
@@ -526,6 +537,82 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
         ensureSchema(tx);
       }),
     ).rejects.toBeInstanceOf(IncompatibleSchemaError);
+  });
+
+  it('cascades claim rows when their controlled run is deleted', async () => {
+    await using driver = await adapter.open();
+    const now = '2026-07-20T00:00:00.000Z';
+
+    await driver.immediate((tx) => {
+      ensureSchema(tx);
+      tx.prepare(
+        `INSERT INTO runs (id, state_version, claim_generation, lifecycle,
+           state_json, created_at, updated_at)
+         VALUES (:id, 1, 1, 'running', '{}', :now, :now)`,
+      ).run({ id: 'rd_cascade', now });
+      tx.prepare(
+        `INSERT INTO claims (key, controlled_run, secret_hash, issued_generation,
+           status, grants_json, issued_at, updated_at, last_seen_at)
+         VALUES (:key, :run, 'hash', 1, 'active', '{}', :now, :now, :now)`,
+      ).run({ key: 'rdclk_cascade', run: 'rd_cascade', now });
+    });
+
+    await driver.immediate((tx) => {
+      tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: 'rd_cascade' });
+    });
+
+    const remaining = await driver.read((tx) =>
+      tx.prepare('SELECT COUNT(*) AS n FROM claims').get<{ readonly n: number }>(),
+    );
+    expect(remaining?.n).toBe(0);
+  });
+
+  it('reports foreign_keys as enabled', async () => {
+    await using driver = await adapter.open();
+    const pragma = await driver.read((tx) =>
+      tx.prepare('PRAGMA foreign_keys').get<{ readonly foreign_keys: number }>(),
+    );
+    expect(pragma?.foreign_keys).toBe(1);
+  });
+
+  it('cascades claim cleanup through the production RunbookStore.deleteRun path', async () => {
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      ensureSchema(tx);
+    });
+    const store = new RunbookStore(driver, dir);
+
+    // Mint a schema-valid run state via a throwaway manager on a separate dir,
+    // so its own storage cannot collide with the adapter driver under test.
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-scratch-'));
+    try {
+      const manager = new RunbookStateManager(scratch);
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      await store.createRun(state);
+      await store.transaction((txn) => {
+        txn.insertClaim(
+          makeClaimRecord({
+            claimKey: assertClaimLookupKey(`rdclk_${'c'.repeat(32)}`),
+            controlledRunId: state.id,
+          }),
+          assertClaimGeneration(0),
+        );
+      });
+
+      await store.deleteRun(state.id);
+
+      const remaining = await driver.read((tx) =>
+        tx.prepare('SELECT COUNT(*) AS n FROM claims').get<{ readonly n: number }>(),
+      );
+      expect(remaining?.n).toBe(0);
+    } finally {
+      await fs.rm(scratch, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1037,7 +1124,9 @@ describe('sql.js durability and crash boundaries', () => {
     await seed(dbPath);
     // A directory named like an orphan temp cannot be unlinked. Only a missing
     // file is an expected sweep outcome; any other filesystem fault is real.
-    await fs.mkdir(path.join(dir, 'stuck.db.wedged.tmp'));
+    // The name must carry the full minted shape (`.export-<uuid>.tmp`), since
+    // that — not a bare prefix/suffix pair — is what reclamation now matches.
+    await fs.mkdir(path.join(dir, `stuck.db.export-${crypto.randomUUID()}.tmp`));
     await using driver = await openSqljsDriver(dbPath);
 
     const err = await failureOf(() => driver.read(() => undefined));
@@ -1078,6 +1167,79 @@ describe('sql.js durability and crash boundaries', () => {
 
     fsSync.unlinkSync(lockFile);
     expect(await driver.read((tx) => tx.prepare('SELECT 1 AS one').get())).toEqual({ one: 1 });
+  });
+
+  it('leaves a concurrent writer’s lock staging file intact while reclaiming its own orphan', async () => {
+    // file-lock.ts stages its atomic populated-create as
+    // `<lockFile>.<pid>.<uuid>.tmp` and then link()s it into place. The driver's
+    // adapter lock is `<dbPath>.lock`, so that staging file lands in this very
+    // directory as `<dbname>.lock.<pid>.<uuid>.tmp` — which an orphan sweep
+    // keyed on `<dbname>.` + `.tmp` matches. Unlinking it makes the owning
+    // writer's fs.link() throw an unhandled ENOENT and kill the process.
+    const dbPath = path.join(dir, 'neighbour.db');
+    await seed(dbPath);
+
+    const lockStaging = `${dbPath}.lock.${String(process.pid)}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(lockStaging, '{"pid":1,"created_at":"now"}', 'utf8');
+    // A genuine crash remnant from this driver, to prove the narrowed filter
+    // still reclaims what it owns rather than being disabled outright.
+    const ownOrphan = path.join(dir, `neighbour.db.export-${crypto.randomUUID()}.tmp`);
+    await fs.writeFile(ownOrphan, 'partial image', 'utf8');
+
+    {
+      await using driver = await openSqljsDriver(dbPath);
+      await driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 7, k: 'seed' });
+      });
+    }
+
+    await expect(fs.readFile(lockStaging, 'utf8')).resolves.toBe('{"pid":1,"created_at":"now"}');
+    await expect(fs.access(ownOrphan)).rejects.toThrow();
+    expect(await readSeed(dbPath)).toBe(7);
+  });
+
+  it('reclaims only a full UUID-shaped export body, not any .export-*.tmp neighbour', async () => {
+    // The prefix/suffix pair is not the safety boundary — the minted SHAPE is.
+    // A neighbour is free to stage `<dbname>.export-<anything>.tmp`, so matching
+    // on `.export-` plus `.tmp` alone would resume deleting foreign in-flight
+    // files, which is the very bug the infix was introduced to close. Each name
+    // below shares the prefix and suffix and differs only in the body, so the
+    // UUID pattern is the sole thing that can distinguish them.
+    const dbPath = path.join(dir, 'shape.db');
+    await seed(dbPath);
+
+    const foreign = [
+      'shape.db.export-.tmp', // empty body
+      'shape.db.export-not-a-uuid.tmp', // wrong alphabet and length
+      'shape.db.export-0189bd0f-6d3f-7c1a-9b2e-4f8a1c7d2e5.tmp', // final group one short
+      'shape.db.export-0189BD0F-6D3F-7C1A-9B2E-4F8A1C7D2E5B.tmp', // uppercase hex
+      `shape.db.export-x${crypto.randomUUID()}.tmp`, // UUID with a leading extra char
+      // Correct prefix AND a real UUID body, but not a `.tmp`. Both halves of
+      // the prefix/suffix guard must hold: if the suffix check degrades to
+      // "prefix or suffix" the trailing four characters are trimmed anyway, this
+      // name's body reads as a clean UUID, and a neighbour's file is deleted.
+      `shape.db.export-${crypto.randomUUID()}.txt`,
+    ];
+    for (const name of foreign) {
+      await fs.writeFile(path.join(dir, name), 'keep', 'utf8');
+    }
+    // A genuine remnant, so the assertion cannot pass by disabling reclamation.
+    const ownOrphan = path.join(dir, `shape.db.export-${crypto.randomUUID()}.tmp`);
+    await fs.writeFile(ownOrphan, 'partial image', 'utf8');
+
+    {
+      await using driver = await openSqljsDriver(dbPath);
+      await driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 11, k: 'seed' });
+      });
+    }
+
+    const remaining = await fs.readdir(dir);
+    for (const name of foreign) {
+      expect(remaining).toContain(name);
+    }
+    await expect(fs.access(ownOrphan)).rejects.toThrow();
+    expect(await readSeed(dbPath)).toBe(11);
   });
 
   it('makes the last durable rename win across sequential writes', async () => {

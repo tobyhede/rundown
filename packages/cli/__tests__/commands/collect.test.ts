@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
@@ -34,6 +34,11 @@ import {
   writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import {
+  listPersistedRunIds,
+  patchPersistedRunState,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import type { RunbookState } from '@rundown-org/core';
 import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
 
@@ -110,47 +115,46 @@ async function markSubstepsResolved(
   runbookId: string,
   results: ('pass' | 'fail')[],
 ): Promise<void> {
-  const statePath = join(workspace.statePath(), `${runbookId}.json`);
-  const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+  await patchPersistedRunState(workspace.cwd, runbookId, (current) => {
+    const raw = current as MutableRunbookState;
 
-  const frameKey = (raw.activeFrameKey ?? buildFrameKey(raw.step)) as FrameKey;
-  const entry = raw.activeEntry ?? 1;
+    const frameKey = (raw.activeFrameKey ?? buildFrameKey(raw.step)) as FrameKey;
+    const entry = raw.activeEntry ?? 1;
 
-  // Preserve the delegation records that `run --prompted` auto-issued onto the
-  // DELEGATE substeps. A real resolved DELEGATE substep retains its delegation;
-  // dropping it here would produce state a real run never has and would mask the
-  // signal `rd collect` uses to distinguish idempotent re-collect from misuse.
-  const priorSubsteps = raw.substepStates ?? [];
-  const substepStates: SubstepState[] = results.map((result, i) => {
-    const id = String(i + 1);
-    const prior = priorSubsteps.find((ss) => ss.id === id);
-    return {
-      id,
-      frameKey,
-      status: 'done',
-      result,
-      ...(prior?.delegation !== undefined ? { delegation: prior.delegation } : {}),
-    };
+    // Preserve the delegation records that `run --prompted` auto-issued onto the
+    // DELEGATE substeps. A real resolved DELEGATE substep retains its delegation;
+    // dropping it here would produce state a real run never has and would mask the
+    // signal `rd collect` uses to distinguish idempotent re-collect from misuse.
+    const priorSubsteps = raw.substepStates ?? [];
+    const substepStates: SubstepState[] = results.map((result, i) => {
+      const id = String(i + 1);
+      const prior = priorSubsteps.find((ss) => ss.id === id);
+      return {
+        id,
+        frameKey,
+        status: 'done',
+        result,
+        ...(prior?.delegation !== undefined ? { delegation: prior.delegation } : {}),
+      };
+    });
+
+    const resolvedCompletions: Record<string, ResolvedCompletion> = {};
+    for (let i = 0; i < results.length; i++) {
+      const substepId = String(i + 1);
+      const key = buildCompletionKey(activeFrame(frameKey, entry), substepId);
+      resolvedCompletions[key] = {
+        agentId: 'manual',
+        result: results[i],
+        targetStep: raw.step,
+        targetSubstep: substepId,
+        targetFrameKey: frameKey,
+        targetEntry: entry,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    return { ...raw, substepStates, resolvedCompletions };
   });
-
-  const resolvedCompletions: Record<string, ResolvedCompletion> = {};
-  for (let i = 0; i < results.length; i++) {
-    const substepId = String(i + 1);
-    const key = buildCompletionKey(activeFrame(frameKey, entry), substepId);
-    resolvedCompletions[key] = {
-      agentId: 'manual',
-      result: results[i],
-      targetStep: raw.step,
-      targetSubstep: substepId,
-      targetFrameKey: frameKey,
-      targetEntry: entry,
-      completedAt: new Date().toISOString(),
-    };
-  }
-
-  raw.substepStates = substepStates;
-  raw.resolvedCompletions = resolvedCompletions;
-  await writeFile(statePath, JSON.stringify(raw, null, 2));
 }
 
 describe('collect command wiring', () => {
@@ -432,16 +436,12 @@ describe('collect command', () => {
       expect(result.exitCode).not.toBe(0);
 
       // State should be marked as stopped.
-      const statePath = join(workspace.statePath());
-      const { readdir } = await import('node:fs/promises');
-      const files = await readdir(statePath);
-      const stateFile = files.find((f) => f.endsWith('.json'));
-      expect(stateFile).toBeDefined();
-      const stateJson = JSON.parse(await readFile(join(statePath, stateFile!), 'utf-8')) as Record<
-        string,
-        unknown
-      >;
-      expect(stateJson.lifecycle).toBe('stopped');
+      const ids = await listPersistedRunIds(workspace.cwd);
+      const stateId = ids[0];
+      expect(stateId).toBeDefined();
+      const stateJson = await readPersistedRunState(workspace.cwd, stateId);
+      expect(stateJson).not.toBeNull();
+      expect(stateJson!.lifecycle).toBe('stopped');
     });
 
     /**
@@ -633,10 +633,7 @@ describe('collect command', () => {
       // Clear resolvedCompletions so drain has nothing to apply. Leave
       // substepStates[].status='done' so the resolved-substep precondition
       // still passes.
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      raw.resolvedCompletions = {};
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, { resolvedCompletions: {} });
 
       const result = await runCliInProcess(
         await withRunTarget(['collect', '--text'], workspace),
@@ -653,10 +650,7 @@ describe('collect command', () => {
     it('emits already-aggregated JSON when no completions are pending', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      raw.resolvedCompletions = {};
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, { resolvedCompletions: {} });
 
       const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
@@ -759,10 +753,8 @@ describe('collect command', () => {
     it('bare rd collect fails fast when state.step is missing from the runbook (not already-aggregated)', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      raw.step = '99'; // not present in the parent runbook (steps are '1' / '2')
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      // '99' is not present in the parent runbook (steps are '1' / '2').
+      await patchPersistedRunState(workspace.cwd, runbookId, { step: '99' });
 
       const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
@@ -774,10 +766,7 @@ describe('collect command', () => {
     it('bare rd collect --text reports the missing step instead of "already aggregated"', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      raw.step = '99';
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, { step: '99' });
 
       const result = await runCliInProcess(
         await withRunTarget(['collect', '--text'], workspace),
@@ -818,13 +807,15 @@ describe('collect command', () => {
       // cursor stays on the active step-1 frame. `--step 1.1 --index 99` then
       // resolves to scope.frameKey `1|99` which differs from the cursor's
       // active frame — drain returns `not_active`.
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
       const overrideFrame = buildFrameKey('1', 99);
-      if (raw.substepStates) {
-        raw.substepStates = raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame }));
-      }
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, (current) => {
+        const raw = current as MutableRunbookState;
+        if (!raw.substepStates) return raw;
+        return {
+          ...raw,
+          substepStates: raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame })),
+        };
+      });
 
       const result = await runCliInProcess(
         await withRunTarget(['collect', '--step', '1.1', '--index', '99'], workspace),
@@ -853,13 +844,15 @@ describe('collect command', () => {
     it('reports a frame-not-active message in --text mode', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
       const overrideFrame = buildFrameKey('1', 99);
-      if (raw.substepStates) {
-        raw.substepStates = raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame }));
-      }
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, (current) => {
+        const raw = current as MutableRunbookState;
+        if (!raw.substepStates) return raw;
+        return {
+          ...raw,
+          substepStates: raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame })),
+        };
+      });
 
       const result = await runCliInProcess(
         await withRunTarget(['collect', '--step', '1.1', '--index', '99', '--text'], workspace),
@@ -970,10 +963,9 @@ describe('collect command', () => {
 
       // Plan 5 (report-only): both outcomes are reported but uncollected, so the
       // parent is STILL on the DELEGATE step — collection pending.
-      const afterParent = JSON.parse(
-        await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
-      ) as Record<string, unknown>;
-      expect(afterParent.step).toBe('1');
+      const afterParent = await readPersistedRunState(workspace.cwd, parentRunId);
+      expect(afterParent).not.toBeNull();
+      expect(afterParent!.step).toBe('1');
 
       // `rd collect` is the only apply path: it drains the reported outcomes and
       // advances the parent past the DELEGATE step (PASS ALL → CONTINUE → step 2).
@@ -983,10 +975,9 @@ describe('collect command', () => {
       );
       expect(collectResult.exitCode).toBe(0);
 
-      const collectedParent = JSON.parse(
-        await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
-      ) as Record<string, unknown>;
-      expect(collectedParent.step).toBe('2');
+      const collectedParent = await readPersistedRunState(workspace.cwd, parentRunId);
+      expect(collectedParent).not.toBeNull();
+      expect(collectedParent!.step).toBe('2');
     }, 20_000);
 
     async function setupCollectAdvancesIntoCommand(): Promise<{ claimId: string }> {
@@ -1149,14 +1140,17 @@ describe('collect command', () => {
       const runbookId = state!.id;
 
       // Mark only substep 1 done — leave substep 2 pending.
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
-      raw.substepStates = [
-        { id: '1', frameKey, status: 'done', result: 'pass' },
-        { id: '2', frameKey, status: 'pending' },
-      ];
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, (current) => {
+        const raw = current as MutableRunbookState;
+        const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
+        return {
+          ...raw,
+          substepStates: [
+            { id: '1', frameKey, status: 'done', result: 'pass' },
+            { id: '2', frameKey, status: 'pending' },
+          ],
+        };
+      });
 
       const result = await runCliInProcess(
         await withRunTarget(['collect', '--text'], workspace),
@@ -1189,14 +1183,17 @@ describe('collect command', () => {
       expect(startResult.exitCode).toBe(0);
 
       const runbookId = (await getActiveState(workspace))!.id;
-      const statePath = join(workspace.statePath(), `${runbookId}.json`);
-      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
-      raw.substepStates = [
-        { id: '1', frameKey, status: 'done', result: 'pass' },
-        { id: '2', frameKey, status: 'pending' },
-      ];
-      await writeFile(statePath, JSON.stringify(raw, null, 2));
+      await patchPersistedRunState(workspace.cwd, runbookId, (current) => {
+        const raw = current as MutableRunbookState;
+        const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
+        return {
+          ...raw,
+          substepStates: [
+            { id: '1', frameKey, status: 'done', result: 'pass' },
+            { id: '2', frameKey, status: 'pending' },
+          ],
+        };
+      });
 
       const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 

@@ -15,8 +15,12 @@
  * mutation of tracked files.
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import {
+  listPersistedRunIds,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,8 +66,9 @@ describe('runbook end-to-end: rdpath + OUTPUTS contract', () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'rd-rdpath-outputs-'));
-    // .rundown/runs is required for state persistence
-    await mkdir(join(tempDir, '.rundown', 'runs'), { recursive: true });
+    // .rundown holds the SQLite run store (rundown.db); the store creates the
+    // db file, but the directory must exist for the workspace to be recognized.
+    await mkdir(join(tempDir, '.rundown'), { recursive: true });
     // .git marker prevents WorkPath discovery from walking above the workspace
     await writeFile(join(tempDir, '.git'), 'gitdir: /dev/null\n');
 
@@ -123,22 +128,24 @@ describe('runbook end-to-end: rdpath + OUTPUTS contract', () => {
   }
 
   /**
-   * Read the (single) runbook state JSON written under .rundown/runs/.
-   * Throws if zero or more than one state file is found.
+   * Read the (single) runbook state persisted in the SQLite run store.
+   * Throws if zero or more than one run is found.
    */
   async function readSingleRunbookState(): Promise<{
     variables?: Record<string, unknown>;
     [k: string]: unknown;
   }> {
-    const runsDir = join(tempDir, '.rundown', 'runs');
-    const files = (await readdir(runsDir)).filter((f) => f.endsWith('.json'));
-    if (files.length !== 1) {
+    const ids = await listPersistedRunIds(tempDir);
+    if (ids.length !== 1) {
       throw new Error(
-        `Expected exactly 1 runbook state file, found ${String(files.length)}: ${files.join(', ')}`,
+        `Expected exactly 1 persisted runbook state, found ${String(ids.length)}: ${ids.join(', ')}`,
       );
     }
-    const raw = await readFile(join(runsDir, files[0]), 'utf-8');
-    return JSON.parse(raw) as Record<string, unknown>;
+    const state = await readPersistedRunState(tempDir, ids[0]);
+    if (state === null) {
+      throw new Error(`Persisted run ${ids[0]} could not be read`);
+    }
+    return state;
   }
 
   it('regression guard: rdpath find without "*-" prefix glob fails to match dated file', async () => {

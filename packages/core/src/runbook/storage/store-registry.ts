@@ -181,6 +181,15 @@ export function openRunbookStore(
     const target = dbPath(cwd);
     await fs.mkdir(path.dirname(target), { recursive: true });
     const driver = await openRunbookDriver(target, options);
+    // The database holds run state and hashed claim secrets, so it inherits the
+    // owner-only mode the per-run JSON state files carried before it. Applied
+    // after open because the file does not exist until the driver creates it.
+    // Best-effort: a filesystem without POSIX modes must not fail the open.
+    await Promise.all(
+      [target, `${target}-wal`, `${target}-shm`].map((file) =>
+        fs.chmod(file, 0o600).catch(() => undefined),
+      ),
+    );
     return { driver, store: new RunbookStore(driver, cwd) };
   })();
   const entry: StoreEntry = { opening, cwd };

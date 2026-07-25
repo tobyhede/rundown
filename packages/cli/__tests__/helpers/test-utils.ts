@@ -1,15 +1,5 @@
 import { expect } from '@jest/globals';
-import {
-  mkdir,
-  mkdtemp,
-  rm,
-  cp,
-  readFile,
-  writeFile,
-  readdir,
-  symlink,
-  chmod,
-} from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, cp, writeFile, symlink, chmod } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -37,7 +27,14 @@ import type {
   FrameKey,
   RunId,
   RunbookState,
+  SessionData,
 } from '@rundown-org/core';
+import {
+  listPersistedRunIds,
+  patchPersistedClaim,
+  patchPersistedRunState,
+  readPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -240,25 +237,16 @@ export async function readSession(workspace: TestWorkspace): Promise<{
   claims: Record<string, ClaimRecord>;
 }> {
   try {
-    const content = await readFile(workspace.sessionPath(), 'utf-8');
-    const session = JSON.parse(content) as Record<string, unknown>;
-
-    const stacks = (session.stacks as Record<string, string[]> | undefined) ?? {};
-    const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
-    const claims =
-      session.claims && typeof session.claims === 'object'
-        ? (session.claims as Record<string, ClaimRecord>)
-        : {};
-
-    // Active runbook is the top of the default stack
-    const active = defaultStack.length > 0 ? (defaultStack[defaultStack.length - 1] ?? null) : null;
-
+    const session = await new RunbookStateManager(workspace.cwd).loadSession();
+    const defaultStack = [...session.defaultStack];
     return {
-      active,
-      stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
-      stacks,
+      // Active runbook is the top of the default stack.
+      active: defaultStack.length > 0 ? (defaultStack[defaultStack.length - 1] ?? null) : null,
+      stashed: session.stashedRunbookId ?? null,
+      // Per-agent stacks are a legacy shape the store no longer persists.
+      stacks: {},
       defaultStack,
-      claims,
+      claims: { ...session.claims },
     };
   } catch {
     return {
@@ -292,29 +280,27 @@ export async function writeSession(
     claims?: Record<string, ClaimRecord>;
   },
 ): Promise<void> {
-  const sessionData: Record<string, unknown> = {};
+  const manager = new RunbookStateManager(workspace.cwd);
+  const current = await manager.loadSession();
 
-  // Stack-based format
-  if (session.stacks !== undefined) {
-    sessionData.stacks = session.stacks;
-  }
-  if (session.defaultStack !== undefined) {
-    sessionData.defaultStack = session.defaultStack;
-  }
+  const defaultStack =
+    session.defaultStack !== undefined
+      ? [...session.defaultStack]
+      : session.active !== undefined
+        ? session.active
+          ? [session.active]
+          : []
+        : [...current.defaultStack];
 
-  // If active is provided but defaultStack isn't, write to defaultStack
-  if (session.active !== undefined && session.defaultStack === undefined) {
-    sessionData.defaultStack = session.active ? [session.active] : [];
-  }
-
-  if (session.stashed !== undefined) {
-    sessionData.stashedRunbookId = session.stashed;
-  }
-  if (session.claims !== undefined) {
-    sessionData.claims = session.claims;
-  }
-
-  await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));
+  await manager.saveSession({
+    ...current,
+    defaultStack: defaultStack as SessionData['defaultStack'],
+    stashedRunbookId:
+      session.stashed !== undefined
+        ? ((session.stashed ?? undefined) as SessionData['stashedRunbookId'])
+        : current.stashedRunbookId,
+    claims: session.claims !== undefined ? { ...session.claims } : { ...current.claims },
+  });
 }
 
 /**
@@ -322,8 +308,8 @@ export async function writeSession(
  */
 export async function listRunbookStates(workspace: TestWorkspace): Promise<string[]> {
   try {
-    const files = await readdir(workspace.statePath());
-    return files.filter((f) => f.endsWith('.json'));
+    const ids = await listPersistedRunIds(workspace.cwd);
+    return ids.map((id) => `${id}.json`);
   } catch {
     return [];
   }
@@ -369,8 +355,7 @@ export async function readRunbookState(
   id: string,
 ): Promise<RunbookState | null> {
   try {
-    const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
-    const parsed = JSON.parse(content) as unknown;
+    const parsed = (await readPersistedRunState(workspace.cwd, id)) as unknown;
     if (!isRunbookState(parsed)) return null;
     if (parsed.id !== id) return null;
     return parsed;
@@ -464,10 +449,9 @@ export async function backdateClaimSeen(
   claimKey: ClaimLookupKey,
   iso: string,
 ): Promise<void> {
-  const raw = JSON.parse(await readFile(workspace.sessionPath(), 'utf-8')) as {
-    claims?: Record<string, { lastSeenAt: string }>;
-  };
-  const claim = raw.claims?.[claimKey];
+  const manager = new RunbookStateManager(workspace.cwd);
+  const raw = await manager.loadSession();
+  const claim = raw.claims[claimKey] as { lastSeenAt: string } | undefined;
   // THROW, never no-op. A helper that silently does nothing when it cannot find
   // the key would make EVERY idle assertion in Tasks 5, 6 and 7 vacuously green —
   // the single highest-leverage way this feature's test suite could lie to us.
@@ -478,8 +462,11 @@ export async function backdateClaimSeen(
         `Convert with claimKeyFromBearer().`,
     );
   }
-  claim.lastSeenAt = iso;
-  await writeFile(workspace.sessionPath(), JSON.stringify(raw, null, 2), 'utf-8');
+  // Written to the claim column directly. `saveSession` reconciles rather than
+  // rewrites — an already-persisted claim is left untouched so a bulk save can
+  // never churn `claim_generation` or clobber this very mark — so editing the
+  // loaded snapshot and saving it back would silently no-op.
+  await patchPersistedClaim(workspace.cwd, claimKey, { lastSeenAt: iso });
 }
 
 /** Frontier entry emitted inside a STEP_ENTERED event for a DELEGATE step. */
@@ -592,7 +579,14 @@ export async function setupParentWithChildren(
   });
   const failChild = createRunbook({
     title: 'Child Fail',
-    steps: [{ title: 'Do work', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result fail' }],
+    steps: [
+      {
+        title: 'Do work',
+        pass: 'COMPLETE',
+        fail: 'STOP',
+        command: 'rd echo --result fail',
+      },
+    ],
   });
 
   // Both child names need to resolve; write both to every discovery location.
@@ -650,24 +644,7 @@ export async function getAgentActiveState(
  * Alias for getAllRunbookStates — prefer getAllRunbookStates in new tests.
  */
 export async function getAllStates(workspace: TestWorkspace): Promise<RunbookState[]> {
-  try {
-    const files = await readdir(workspace.statePath());
-    const states: RunbookState[] = [];
-
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        const id = file.replace('.json', '');
-        const state = await readRunbookState(workspace, id);
-        if (state) {
-          states.push(state);
-        }
-      }
-    }
-
-    return states;
-  } catch {
-    return [];
-  }
+  return getAllRunbookStates(workspace);
 }
 
 /**
@@ -678,16 +655,13 @@ export async function getAllStates(workspace: TestWorkspace): Promise<RunbookSta
  */
 export async function getAllRunbookStates(workspace: TestWorkspace): Promise<RunbookState[]> {
   try {
-    const files = await readdir(workspace.statePath());
+    const ids = await listPersistedRunIds(workspace.cwd);
     const states: RunbookState[] = [];
 
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        const id = file.replace('.json', '');
-        const state = await readRunbookState(workspace, id);
-        if (state) {
-          states.push(state);
-        }
+    for (const id of ids) {
+      const state = await readRunbookState(workspace, id);
+      if (state) {
+        states.push(state);
       }
     }
 
@@ -1148,8 +1122,16 @@ export function buildBaseStep(overrides: Partial<ResolvedStep> = {}): ResolvedSt
     name: '1',
     description: 'Test step',
     transitions: {
-      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      pass: {
+        kind: 'pass' as const,
+        retry: 0,
+        action: { type: 'CONTINUE' as const },
+      },
+      fail: {
+        kind: 'fail' as const,
+        retry: 0,
+        action: { type: 'STOP' as const },
+      },
     },
     ...overrides,
   } as ResolvedStep;
@@ -1173,8 +1155,16 @@ export function buildStepWithSubsteps(
     description: 'Test parent',
     substeps,
     transitions: {
-      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      pass: {
+        kind: 'pass' as const,
+        retry: 0,
+        action: { type: 'CONTINUE' as const },
+      },
+      fail: {
+        kind: 'fail' as const,
+        retry: 0,
+        action: { type: 'STOP' as const },
+      },
     },
     ...overrides,
   } as ResolvedStep;
@@ -1192,8 +1182,16 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
     id: '1',
     description: 'Test substep',
     transitions: {
-      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      pass: {
+        kind: 'pass' as const,
+        retry: 0,
+        action: { type: 'CONTINUE' as const },
+      },
+      fail: {
+        kind: 'fail' as const,
+        retry: 0,
+        action: { type: 'STOP' as const },
+      },
     },
     ...overrides,
   };
@@ -1427,32 +1425,25 @@ export async function injectDelegationOutcomeForActiveRun(
         ],
       }
     : {};
-  await writeFile(
-    join(workspace.statePath(), `${state.id}.json`),
-    JSON.stringify(
-      {
-        ...state,
-        substep: state.substep ?? '1',
-        activeFrameKey: frameKey,
-        activeEntry: entry,
-        frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
-        ...substepStatesPatch,
-        resolvedCompletions: {
-          ...(state.resolvedCompletions ?? {}),
-          [completionKey]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'pass',
-            targetStep: state.step,
-            targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, entry),
-            completedAt: '2026-01-01T00:00:00.000Z',
-          }),
-        },
-      },
-      null,
-      2,
-    ),
-  );
+  await patchPersistedRunState(workspace.cwd, state.id, {
+    ...state,
+    substep: state.substep ?? '1',
+    activeFrameKey: frameKey,
+    activeEntry: entry,
+    frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
+    ...substepStatesPatch,
+    resolvedCompletions: {
+      ...(state.resolvedCompletions ?? {}),
+      [completionKey]: buildResolvedCompletion({
+        agentId: 'delegation',
+        result: 'pass',
+        targetStep: state.step,
+        targetSubstep: '1',
+        targetFrame: activeFrame(frameKey, entry),
+        completedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    },
+  });
   return completionKey;
 }
 
@@ -1494,38 +1485,31 @@ export async function injectDelegationOutcomeForFrame(
   const frameKey = buildFrameKey(opts.step, opts.iteration);
   const entry = opts.entry ?? opts.iteration;
   const completionKey = buildCompletionKey(exactFrame(frameKey, entry), '1');
-  await writeFile(
-    join(workspace.statePath(), `${state.id}.json`),
-    JSON.stringify(
-      {
-        ...state,
-        step: opts.step,
-        substep: '1',
-        forStack: opts.forStack,
-        activeFrameKey: opts.activeFrameKey,
-        activeEntry: opts.activeEntry ?? entry,
-        // Monotonic counter retains the frame key regardless of openness, and
-        // never regresses below an already-stored value for the same frame.
-        frameEntryCounts: {
-          ...(state.frameEntryCounts ?? {}),
-          [frameKey]: Math.max(state.frameEntryCounts?.[frameKey] ?? 0, entry),
-        },
-        resolvedCompletions: {
-          ...(state.resolvedCompletions ?? {}),
-          [completionKey]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'pass',
-            targetStep: opts.step,
-            targetSubstep: '1',
-            targetIteration: opts.iteration,
-            targetFrame: exactFrame(frameKey, entry),
-            completedAt: '2026-01-01T00:00:00.000Z',
-          }),
-        },
-      },
-      null,
-      2,
-    ),
-  );
+  await patchPersistedRunState(workspace.cwd, state.id, {
+    ...state,
+    step: opts.step,
+    substep: '1',
+    forStack: opts.forStack,
+    activeFrameKey: opts.activeFrameKey,
+    activeEntry: opts.activeEntry ?? entry,
+    // Monotonic counter retains the frame key regardless of openness, and
+    // never regresses below an already-stored value for the same frame.
+    frameEntryCounts: {
+      ...(state.frameEntryCounts ?? {}),
+      [frameKey]: Math.max(state.frameEntryCounts?.[frameKey] ?? 0, entry),
+    },
+    resolvedCompletions: {
+      ...(state.resolvedCompletions ?? {}),
+      [completionKey]: buildResolvedCompletion({
+        agentId: 'delegation',
+        result: 'pass',
+        targetStep: opts.step,
+        targetSubstep: '1',
+        targetIteration: opts.iteration,
+        targetFrame: exactFrame(frameKey, entry),
+        completedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    },
+  });
   return completionKey;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, jest } from '@jest/globals';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -23,6 +23,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
+import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 
 /**
  * Compute/commit equivalence for the fenced actor seam.
@@ -111,19 +112,20 @@ npm test
 `;
 
 /**
- * Write a state JSON verbatim to its run file, bypassing the manager's `saveUnlocked`
- * floor. Models the fenced committer, which persists the computed `nextState` as-is
- * with no repair.
+ * Persist a state verbatim, bypassing the manager's `saveUnlocked` floor. Models
+ * the fenced committer, which persists the computed `nextState` as-is with no
+ * repair.
  *
- * @param dir - Project root holding `.rundown/runs`.
- * @param state - The state to serialise verbatim.
+ * Run state now lives in `.rundown/rundown.db`, so this writes the row through
+ * the raw store fixture rather than hand-writing `.rundown/runs/<id>.json`.
+ * `seedRawRunState` writes `state_json` without validating it, which preserves
+ * exactly the "verbatim, no repair" property this helper exists for.
+ *
+ * @param dir - Project root whose store receives the run.
+ * @param state - The state to persist verbatim.
  */
 async function writeStateFileVerbatim(dir: string, state: RunbookState): Promise<void> {
-  await writeFile(
-    join(dir, '.rundown', 'runs', `${state.id}.json`),
-    JSON.stringify(state, null, 2),
-    'utf-8',
-  );
+  await seedRawRunState(dir, state as unknown as Record<string, unknown>);
 }
 
 interface Harness {

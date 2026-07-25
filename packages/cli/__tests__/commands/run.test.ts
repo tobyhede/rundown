@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { listPersistedRunIds } from '@rundown-org/core/testing/session-fixtures';
 import { join } from 'node:path';
 import {
   appendArtifactManifestRecordSync,
@@ -475,10 +476,8 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
 
   /** Locate the inline child state by scanning runs for a parentLinkage row. */
   async function findChildState(parentRunId: string): Promise<RunbookState | null> {
-    const files = await readdir(workspace.statePath());
-    for (const f of files) {
-      if (!f.endsWith('.json') || f === 'session.json') continue;
-      const id = f.slice(0, -'.json'.length);
+    const ids = await listPersistedRunIds(workspace.cwd);
+    for (const id of ids) {
       if (id === parentRunId) continue;
       // Validated read: a schema rename now fails at compile time on the
       // typed field accesses below, not silently at runtime (CodeRabbit #529).
