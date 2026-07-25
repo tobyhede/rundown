@@ -644,21 +644,7 @@ export async function getAgentActiveState(
  * Alias for getAllRunbookStates — prefer getAllRunbookStates in new tests.
  */
 export async function getAllStates(workspace: TestWorkspace): Promise<RunbookState[]> {
-  try {
-    const ids = await listPersistedRunIds(workspace.cwd);
-    const states: RunbookState[] = [];
-
-    for (const id of ids) {
-      const state = await readRunbookState(workspace, id);
-      if (state) {
-        states.push(state);
-      }
-    }
-
-    return states;
-  } catch {
-    return [];
-  }
+  return getAllRunbookStates(workspace);
 }
 
 /**

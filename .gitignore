@@ -9,6 +9,10 @@ coverage/
 .rundown/session.json
 .rundown/locks/
 .rundown/plans/
+# SQLite run/session store plus the WAL/SHM sidecars SQLite writes beside it.
+.rundown/rundown.db
+.rundown/rundown.db-wal
+.rundown/rundown.db-shm
 # Nested rundown/claude runtime state (e.g. inside test fixtures).
 # The patterns above are anchored to the repo root because they contain
 # slashes; the patterns below match at any depth via the leading `**/`.
@@ -16,6 +20,9 @@ coverage/
 **/.rundown/runs/
 **/.rundown/session.json
 **/.rundown/locks/
+**/.rundown/rundown.db
+**/.rundown/rundown.db-wal
+**/.rundown/rundown.db-shm
 .work/
 .worktree/
 .worktrees/

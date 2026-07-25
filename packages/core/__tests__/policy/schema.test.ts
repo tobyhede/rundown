@@ -238,6 +238,17 @@ describe('Policy Schema', () => {
       expect(allowedWrites).not.toContain('{repo}/.rundown/runbooks/**');
     });
 
+    it('grants write to the state database and its WAL/SHM sidecars', () => {
+      // A nested `rundown pass`/`fail` spawned from a runbook step runs under this
+      // policy and mutates run state via SQLite, which creates -wal/-shm sidecars
+      // beside the db file. Each is a narrow single-file grant (no broad glob) to
+      // keep the sandbox write surface minimal.
+      const allowedWrites = DEFAULT_POLICY.default.write.allow;
+      expect(allowedWrites).toContain('{repo}/.rundown/rundown.db');
+      expect(allowedWrites).toContain('{repo}/.rundown/rundown.db-wal');
+      expect(allowedWrites).toContain('{repo}/.rundown/rundown.db-shm');
+    });
+
     it('does not grant write to build-output directories by default', () => {
       // Build dirs are unused by Rundown-managed runbooks and, on Linux (allow-
       // list only), would be unguarded blast radius. Build-writing runbooks must

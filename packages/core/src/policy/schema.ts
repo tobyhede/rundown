@@ -251,7 +251,9 @@ export const DEFAULT_POLICY: PolicyConfig = {
         // The state database, plus the WAL/shm sidecars SQLite creates beside it.
         // A nested `rundown pass`/`fail` spawned from inside a runbook step runs
         // under this policy and mutates run state, so losing write access here
-        // breaks in-runbook state transitions under a sandbox.
+        // breaks in-runbook state transitions under a sandbox. Each is a narrow
+        // single-file grant rather than a `.rundown/*.db*` glob so the sandbox
+        // write surface stays minimal and no unrelated file can match.
         `{repo}/${DB_FILE}`,
         `{repo}/${DB_FILE}-wal`,
         `{repo}/${DB_FILE}-shm`,
