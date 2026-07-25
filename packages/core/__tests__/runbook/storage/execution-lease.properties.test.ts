@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import fc from 'fast-check';
-import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -44,9 +43,16 @@ afterEach(async () => {
 
 let seq = 0;
 
-function deadPid(): number {
-  return spawnSync(process.execPath, ['-e', '0']).pid;
-}
+/**
+ * A pid that can never be alive: above every platform's pid_max (Linux
+ * 4194304, macOS 99998), so `kill(pid, 0)` is always ESRCH.
+ *
+ * A spawned-and-reaped pid is only dead until the OS recycles it, and this
+ * property holds one pid across every cycle of a run — matching the constant
+ * already used by the file-lock and delegation-lock suites removes that window
+ * entirely, and the spawn with it.
+ */
+const DEAD_PID = 999999999;
 
 async function newRun(): Promise<{ runId: RunId; claimKey: string }> {
   const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
@@ -69,11 +75,6 @@ describe('exec_epoch monotonicity', () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 2, max: 8 }), async (cycles) => {
         const { runId, claimKey } = await newRun();
-        // One spawn per property run, not per cycle. An exited process's pid
-        // stays dead, so reusing it is equivalent — but calling this inside the
-        // loop cost a ~45ms Node spawn per cycle, and fast-check draws 41-77
-        // cycles per run, putting the test at ~2.5s against Jest's 5s default.
-        const reclaimedPid = deadPid();
         const epochs: number[] = [];
         for (let i = 0; i < cycles; i++) {
           const cap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
@@ -85,7 +86,7 @@ describe('exec_epoch monotonicity', () => {
           await store.transaction((txn) => {
             txn.tx
               .prepare('UPDATE runs SET exec_pid = :pid WHERE id = :id')
-              .run({ pid: reclaimedPid, id: runId });
+              .run({ pid: DEAD_PID, id: runId });
           });
           const recovered = await lease.recoverDeadOwner(runId);
           expect(recovered.kind).toBe('reclaimed_pre_effect');
