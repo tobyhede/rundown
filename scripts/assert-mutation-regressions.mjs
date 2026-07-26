@@ -19,6 +19,47 @@ function normalizeFile(report, file) {
   return root && posix.startsWith(`${root}/`) ? posix.slice(root.length + 1) : posix;
 }
 
+/**
+ * Reduce a mutant to the string that identifies it ACROSS reports.
+ *
+ * This mirrors `mutantToIdentifyingKey` in Stryker's own `IncrementalDiffer`
+ * byte for byte, and it is deliberately not the mutant's `id`. Stryker states
+ * plainly that "the ids of tests and mutants can differ across reports (they are
+ * only unique within 1 report)": the instrumenter assigns the id as a run-global
+ * counter in instrumentation order (`new Mutant(this._mutants.length.toString(),
+ * …)`), so the producer's per-shard baseline and a whole-package PR run number
+ * the same mutant differently — and mutants restored from an incremental
+ * baseline carry the content key instead, so a single report mixes both forms.
+ *
+ * @param {object} mutant - a report mutant.
+ * @param {string} file - the mutant's package-relative file.
+ * @returns {string} the cross-report identity key.
+ * @throws {Error} when the mutant lacks a usable `location`, `mutatorName` or
+ *   `replacement` — any of which would make the key silently ambiguous.
+ */
+export function mutantIdentity(mutant, file) {
+  const start = mutant?.location?.start;
+  const end = mutant?.location?.end;
+  if (typeof start?.line !== 'number' || typeof end?.line !== 'number') {
+    throw new Error(
+      `mutation report entry ${file} has a mutant without a usable \`location\`; ` +
+        'it cannot be correlated across reports',
+    );
+  }
+  // The schema marks `replacement` optional. An absent attribute would fold into
+  // the key as the string "undefined", which either pairs two unrelated mutants
+  // or splits one into a missing/extra pair — both silently. Refuse instead.
+  for (const attribute of ['mutatorName', 'replacement']) {
+    if (typeof mutant[attribute] !== 'string') {
+      throw new Error(
+        `mutation report entry ${file} has a mutant with no \`${attribute}\`; ` +
+          'it cannot be correlated across reports',
+      );
+    }
+  }
+  return `${file}@${start.line}:${start.column}-${end.line}:${end.column}\n${mutant.mutatorName}: ${mutant.replacement}`;
+}
+
 function indexReport(report, label) {
   if (!report || typeof report !== 'object' || !report.files || typeof report.files !== 'object') {
     throw new Error(`${label} mutation report is malformed: missing files object`);
@@ -30,23 +71,37 @@ function indexReport(report, label) {
     }
     const file = normalizeFile(report, rawFile);
     for (const mutant of entry.mutants) {
-      if (typeof mutant?.id !== 'string') {
-        throw new Error(`${label} mutation report entry ${file} has a mutant without a string id`);
+      const key = mutantIdentity(mutant, file);
+      if (index.has(key)) {
+        throw new Error(`${label} report has duplicate mutant identity ${key.replace(/\n/, ' ')}`);
       }
-      const key = `${file}\0${mutant.id}`;
-      if (index.has(key))
-        throw new Error(`${label} report has duplicate mutant id ${file}#${mutant.id}`);
-      index.set(key, { ...mutant, file });
+      index.set(key, { ...mutant, file, identity: key });
     }
   }
   return index;
 }
 
 /**
- * Compare native incremental reports by file plus Stryker mutant id.
+ * Describe a mutant for a human, using only cross-report-stable attributes. The
+ * report-local `id` is deliberately omitted: it names nothing the reader can
+ * look up in the other report.
+ *
+ * @param {{file: string, location?: object, mutatorName?: string, replacement?: string}} mutant - an indexed mutant.
+ * @returns {string} a stable, readable description.
+ */
+function describeMutant(mutant) {
+  const line = mutant.location?.start?.line;
+  const where = typeof line === 'number' ? `${mutant.file} line ${line}` : mutant.file;
+  return `${where} (${mutant.mutatorName} → ${mutant.replacement})`;
+}
+
+/**
+ * Compare native incremental reports by cross-report mutant identity.
  *
  * @param {{baseline: unknown, current: unknown}} reports - reports to compare.
  * @returns {{ok: boolean, regressions: object[], incompatible: string[]}} comparison result.
+ * @throws {Error} when either report lacks `testFiles`, is structurally
+ *   malformed, contains a mutant that cannot be located, or repeats one identity.
  */
 export function compareMutationRegressions({ baseline, current }) {
   for (const [label, report] of [
@@ -73,7 +128,7 @@ export function compareMutationRegressions({ baseline, current }) {
   for (const [key, oldMutant] of before) {
     const newMutant = after.get(key);
     if (!newMutant) {
-      incompatible.push(`current report is missing mutant ${oldMutant.file}#${oldMutant.id}`);
+      incompatible.push(`current report is missing mutant ${describeMutant(oldMutant)}`);
       continue;
     }
     if (detected.has(oldMutant.status) && undetected.has(newMutant.status)) {
@@ -90,7 +145,7 @@ export function compareMutationRegressions({ baseline, current }) {
   }
   for (const [key, mutant] of after) {
     if (!before.has(key))
-      incompatible.push(`current report has extra mutant ${mutant.file}#${mutant.id}`);
+      incompatible.push(`current report has extra mutant ${describeMutant(mutant)}`);
   }
 
   return {
@@ -125,9 +180,8 @@ export function renderMarkdown(result, packageName) {
     return lines.join('\n');
   }
   for (const regression of result.regressions) {
-    const line = regression.location?.start?.line;
     lines.push(
-      `- ❌ ${code(`${regression.file}#${regression.id}`)}${typeof line === 'number' ? ` line ${line}` : ''}: ${htmlEscape(regression.from)} → ${htmlEscape(regression.to)}`,
+      `- ❌ ${code(describeMutant(regression))}: ${htmlEscape(regression.from)} → ${htmlEscape(regression.to)}`,
     );
   }
   for (const reason of result.incompatible) lines.push(`- ⚠️ ${htmlEscape(reason)}`);

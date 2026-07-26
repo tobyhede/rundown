@@ -3,6 +3,26 @@ import { test } from 'node:test';
 
 import { compareMutationRegressions, renderMarkdown } from '../assert-mutation-regressions.mjs';
 
+/**
+ * A fully-identified mutant. Every field except `id` participates in Stryker's
+ * cross-report identity, so varying `id` alone must not change correlation.
+ *
+ * @param {string} id - the report-local mutant id.
+ * @param {string} status - the mutant result status.
+ * @param {object} [overrides] - identity fields to vary.
+ * @returns {object} a report mutant.
+ */
+function mutant(id, status, overrides = {}) {
+  return {
+    id,
+    status,
+    mutatorName: 'ConditionalExpression',
+    replacement: 'false',
+    location: { start: { line: 12, column: 4 }, end: { line: 12, column: 18 } },
+    ...overrides,
+  };
+}
+
 function report(mutants) {
   return {
     schemaVersion: '1.0',
@@ -23,71 +43,60 @@ function report(mutants) {
   };
 }
 
+/** A second mutant, distinct from {@link mutant} in every identity attribute. */
+const other = (id, status) =>
+  mutant(id, status, {
+    mutatorName: 'BooleanLiteral',
+    replacement: 'true',
+    location: { start: { line: 40, column: 2 }, end: { line: 40, column: 7 } },
+  });
+
 test('stable detected mutants remain green', () => {
-  const baseline = report([
-    { id: '1', status: 'Killed' },
-    { id: '2', status: 'Timeout' },
-  ]);
-  const current = report([
-    { id: '1', status: 'Killed' },
-    { id: '2', status: 'Killed' },
-  ]);
-  const result = compareMutationRegressions({ baseline, current });
+  const result = compareMutationRegressions({
+    baseline: report([mutant('1', 'Killed'), other('2', 'Timeout')]),
+    current: report([mutant('1', 'Killed'), other('2', 'Killed')]),
+  });
   assert.equal(result.ok, true);
   assert.deepEqual(result.regressions, []);
   assert.deepEqual(result.incompatible, []);
 });
 
 test('a baseline-detected mutant becoming undetected is a regression', () => {
-  const baseline = report([{ id: '1', status: 'Killed', mutatorName: 'BooleanLiteral' }]);
-  const current = report([
-    {
-      id: '1',
-      status: 'Survived',
-      mutatorName: 'BooleanLiteral',
-      replacement: 'false',
-      location: { start: { line: 1, column: 17 }, end: { line: 1, column: 21 } },
-    },
-  ]);
-  const result = compareMutationRegressions({ baseline, current });
+  const result = compareMutationRegressions({
+    baseline: report([other('1', 'Killed')]),
+    current: report([other('9', 'Survived')]),
+  });
   assert.equal(result.ok, false);
   assert.equal(result.regressions.length, 1);
-  assert.equal(result.regressions[0].id, '1');
+  assert.equal(result.regressions[0].file, 'src/a.ts');
   assert.equal(result.regressions[0].from, 'Killed');
   assert.equal(result.regressions[0].to, 'Survived');
 });
 
-test('missing, extra, and duplicate stable IDs make the comparison incompatible', () => {
+test('a mutant present in only one report makes the comparison incompatible', () => {
   const missing = compareMutationRegressions({
-    baseline: report([
-      { id: '1', status: 'Killed' },
-      { id: '2', status: 'Killed' },
-    ]),
-    current: report([{ id: '1', status: 'Killed' }]),
+    baseline: report([mutant('1', 'Killed'), other('2', 'Killed')]),
+    current: report([mutant('1', 'Killed')]),
   });
   assert.equal(missing.ok, false);
-  assert.match(missing.incompatible.join('\n'), /missing.*2/i);
+  assert.match(missing.incompatible.join('\n'), /missing.*BooleanLiteral/s);
 
   const extra = compareMutationRegressions({
-    baseline: report([{ id: '1', status: 'Killed' }]),
-    current: report([
-      { id: '1', status: 'Killed' },
-      { id: '2', status: 'Killed' },
-    ]),
+    baseline: report([mutant('1', 'Killed')]),
+    current: report([mutant('1', 'Killed'), other('2', 'Killed')]),
   });
-  assert.match(extra.incompatible.join('\n'), /extra.*2/i);
+  assert.equal(extra.ok, false);
+  assert.match(extra.incompatible.join('\n'), /extra.*BooleanLiteral/s);
+});
 
-  assert.throws(
-    () =>
-      compareMutationRegressions({
-        baseline: report([
-          { id: '1', status: 'Killed' },
-          { id: '1', status: 'Killed' },
-        ]),
-        current: report([{ id: '1', status: 'Killed' }]),
-      }),
-    /duplicate mutant id/i,
-  );
+// The report-local id names nothing the reader can find in the other report, so
+// it must never appear in a diagnostic that spans both.
+test('incompatibility diagnostics never cite the report-local id', () => {
+  const result = compareMutationRegressions({
+    baseline: report([mutant('80085', 'Killed')]),
+    current: report([other('80085', 'Killed')]),
+  });
+  assert.doesNotMatch(result.incompatible.join('\n'), /80085/);
 });
 
 test('comparison rejects baselines without test metadata', () => {
@@ -100,12 +109,115 @@ test('comparison rejects baselines without test metadata', () => {
   );
 });
 
+// REGRESSION (P1): Stryker's mutant `id` is unique only WITHIN one report — its
+// IncrementalDiffer says so in as many words ("the ids of tests and mutants can
+// differ across reports"), and the instrumenter assigns it as a run-global
+// counter in instrumentation order (`new Mutant(this._mutants.length.toString(),
+// …)`). The producer's baseline is stitched from per-shard runs, while a PR
+// test-only run instruments the whole package, so the SAME mutant is numbered
+// differently in each. Correlating by id therefore reported every mutant as
+// missing AND extra, found no real regression, and emitted a markdown fragment
+// on the order of twice the package's mutant count.
+test('correlates mutants by content identity, not by report-local id', () => {
+  const result = compareMutationRegressions({
+    baseline: report([mutant('3', 'Killed')]),
+    current: report([mutant('1487', 'Survived')]),
+  });
+  assert.deepEqual(result.incompatible, [], 'a renumbered mutant is still the same mutant');
+  assert.equal(result.regressions.length, 1);
+  assert.equal(result.regressions[0].from, 'Killed');
+  assert.equal(result.regressions[0].to, 'Survived');
+});
+
+// A single report legitimately mixes both id forms: mutants Stryker reran keep
+// their numeric instrumenter id, while mutants restored from the incremental
+// baseline carry the content-derived key it writes as `id: mutantKey`. Both must
+// resolve to the same identity.
+test('correlates a restored content-key id against a numeric id', () => {
+  const contentKey = 'src/a.ts@12:4-12:18\nConditionalExpression: false';
+  const result = compareMutationRegressions({
+    baseline: report([mutant(contentKey, 'Killed')]),
+    current: report([mutant('1487', 'Killed')]),
+  });
+  assert.deepEqual(result.incompatible, []);
+  assert.deepEqual(result.regressions, []);
+  assert.equal(result.ok, true);
+});
+
+test('a genuinely different mutant is still reported as missing and extra', () => {
+  const result = compareMutationRegressions({
+    baseline: report([mutant('1', 'Killed', { mutatorName: 'BooleanLiteral' })]),
+    current: report([mutant('1', 'Killed', { mutatorName: 'ArithmeticOperator' })]),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.incompatible.join('\n'), /missing.*BooleanLiteral/s);
+  assert.match(result.incompatible.join('\n'), /extra.*ArithmeticOperator/s);
+});
+
+// Two mutants at the same location with the same mutator and replacement are
+// indistinguishable across reports. Per the repo's no-shim rule the comparison
+// fails loudly rather than correlating them arbitrarily.
+test('rejects a report whose mutants share one content identity', () => {
+  assert.throws(
+    () =>
+      compareMutationRegressions({
+        baseline: report([mutant('1', 'Killed'), mutant('2', 'Killed')]),
+        current: report([mutant('1', 'Killed')]),
+      }),
+    /duplicate mutant/i,
+  );
+});
+
+// A mutant with no location cannot be placed in the identity space. Correlating
+// it by anything else would silently pair unrelated mutants.
+test('rejects a mutant that carries no location', () => {
+  assert.throws(
+    () =>
+      compareMutationRegressions({
+        baseline: report([{ id: '1', status: 'Killed' }]),
+        current: report([mutant('1', 'Killed')]),
+      }),
+    /location/,
+  );
+});
+
+// `mutatorName` and `replacement` are the other half of the identity. The report
+// schema marks `replacement` optional, and an absent one would silently fold
+// into the key as "undefined" — pairing two unrelated mutants, or splitting one
+// across reports into a missing/extra pair. Fail loudly instead, exactly as an
+// absent location does.
+test('rejects a mutant missing an identity attribute', () => {
+  for (const missing of ['mutatorName', 'replacement']) {
+    const incomplete = mutant('1', 'Killed');
+    delete incomplete[missing];
+    assert.throws(
+      () =>
+        compareMutationRegressions({
+          baseline: report([incomplete]),
+          current: report([mutant('1', 'Killed')]),
+        }),
+      new RegExp(missing),
+      `a mutant with no ${missing} must not be correlated`,
+    );
+  }
+});
+
 test('markdown names each regression and incompatibility', () => {
   const markdown = renderMarkdown(
     {
       ok: false,
-      regressions: [{ file: 'src/a.ts', id: '1', from: 'Killed', to: 'NoCoverage' }],
-      incompatible: ['current report has extra mutant src/a.ts#2'],
+      regressions: [
+        {
+          file: 'src/a.ts',
+          id: '1',
+          from: 'Killed',
+          to: 'NoCoverage',
+          mutatorName: 'EqualityOperator',
+          replacement: '<=',
+          location: { start: { line: 12, column: 4 }, end: { line: 12, column: 18 } },
+        },
+      ],
+      incompatible: ['current report has extra mutant src/a.ts line 40 (BooleanLiteral → true)'],
     },
     'core',
   );
@@ -113,4 +225,8 @@ test('markdown names each regression and incompatibility', () => {
   assert.match(markdown, /src\/a\.ts/);
   assert.match(markdown, /Killed.*NoCoverage/);
   assert.match(markdown, /extra mutant/);
+  // The mutator identifies the mutant in BOTH reports; the id identifies it in
+  // neither, so the reader is given the former.
+  assert.match(markdown, /EqualityOperator/);
+  assert.doesNotMatch(markdown, /#1\b/);
 });
