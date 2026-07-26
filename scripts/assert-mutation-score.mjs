@@ -38,6 +38,14 @@
  * hundreds of untouched baseline kills and still clear the floor. A ranged path is
  * implicitly a changed file, so it need not also be passed as `--changed-file`.
  *
+ * `--floor <percent>` does NOT decide the verdict. Every undetected in-scope
+ * mutant fails this gate on its own, because over a handful of changed lines a
+ * percentage is not a meaningful threshold — two survivors out of two is 0% and
+ * two out of four hundred is 99.5%, and both are the same defect. The floor is
+ * carried through to the rendered output purely as context for reading the
+ * score, and only the full producer run applies a percentage as a break
+ * threshold (`thresholds.break` in each package's stryker.config.mjs).
+ *
  * @see issue #483
  */
 import { execFileSync } from 'node:child_process';
@@ -50,6 +58,13 @@ import { pathToFileURL } from 'node:url';
  * only the full producer applies this value as an aggregate break threshold.
  */
 export const DEFAULT_FLOOR = 70;
+
+/**
+ * Most individual mutants one summary will name before it starts counting the
+ * remainder instead. Bounds the sticky PR comment, which concatenates every
+ * shard's summary and is rejected by GitHub above 65536 characters.
+ */
+export const MAX_LISTED_MUTANTS = 25;
 
 /**
  * Compute the mutation score for a list of mutant status strings.
@@ -336,8 +351,21 @@ export function renderMarkdown(result, packageName) {
   }
   for (const c of checked) lines.push(`| ${codeCell(c.file)} | ${c.score.toFixed(2)}% | ✅ |`);
   for (const s of skipped) lines.push(`| ${codeCell(s.file)} | — | ⏭️ ${htmlEscape(s.reason)} |`);
+  // Every shard's summary is concatenated into ONE sticky PR comment, and GitHub
+  // rejects a comment over 65536 characters. A newly added file is mutated whole,
+  // so a single shard can legitimately carry hundreds of escapes — uncapped, the
+  // most interesting result is precisely the one that fails to post. The table
+  // rows above still carry the true per-file counts, and the full list is in the
+  // uploaded mutation report.
+  let budget = MAX_LISTED_MUTANTS;
+  let withheld = 0;
   for (const failure of failures) {
     for (const mutant of failure.undetected ?? []) {
+      if (budget === 0) {
+        withheld += 1;
+        continue;
+      }
+      budget -= 1;
       const line = mutant.location?.start?.line;
       const where = typeof line === 'number' ? `line ${line}` : 'unknown location';
       const mutation = [mutant.mutatorName, mutant.replacement]
@@ -347,6 +375,11 @@ export function renderMarkdown(result, packageName) {
         `- ${codeCell(failure.file)} ${htmlEscape(where)}: ${codeCell(mutant.id ?? 'unknown-id')} ${htmlEscape(mutant.status)}${mutation ? ` — ${codeCell(mutation)}` : ''}`,
       );
     }
+  }
+  if (withheld > 0) {
+    lines.push(
+      `- _…and ${withheld} more undetected mutant${withheld === 1 ? '' : 's'} not listed here; see the uploaded mutation report artifact._`,
+    );
   }
   return lines.join('\n');
 }
@@ -389,7 +422,8 @@ export function changedFilesFromGit(base) {
  * Parse argv into options for the CLI entrypoint.
  *
  * @param {string[]} argv - process arguments (excluding node + script).
- * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], floor: number }}
+ * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], changedRanges: Array<{file: string, start: number, end: number}>, floor: number, markdown?: string, packageName?: string }}
+ *   parsed options; `floor` is reported as context and never decides the verdict.
  * @throws {Error} when a required option is missing or a flag lacks a value.
  */
 export function parseArgs(argv) {

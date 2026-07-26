@@ -331,6 +331,59 @@ test('renderMarkdown renders scores plus individual undetected mutants', () => {
   assert.match(md, /line 12/);
 });
 
+// A newly added file is mutated WHOLE, so one shard can legitimately carry
+// hundreds of undetected mutants — and every shard's summary is concatenated
+// into one sticky PR comment. GitHub rejects a comment over 65536 characters, so
+// an uncapped listing turns a large finding into a failed comment job: the most
+// interesting result is the one that cannot be posted.
+test('renderMarkdown caps the mutant listing and says how many it withheld', () => {
+  const undetected = Array.from({ length: 400 }, (_, i) => ({
+    id: `m-${i}`,
+    status: 'Survived',
+    mutatorName: 'ConditionalExpression',
+    replacement: 'false',
+    location: { start: { line: i + 1, column: 2 }, end: { line: i + 1, column: 8 } },
+  }));
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/new.ts', score: 0, undetected }],
+      checked: [],
+      skipped: [],
+      floor: 70,
+    },
+    'core',
+  );
+
+  const listed = [...md.matchAll(/^- <code>src\/new\.ts/gm)].length;
+  assert.ok(listed > 0, 'some mutants must still be named');
+  assert.ok(listed < undetected.length, 'the listing must be capped');
+  assert.ok(md.length < 65536, 'a single summary must fit inside a GitHub comment');
+  // The count still has to be honest about what was dropped.
+  assert.match(md, new RegExp(`${undetected.length - listed} more`));
+  // And the table row keeps the true total, which is the number that matters.
+  assert.match(md, /400 mutants/);
+});
+
+test('renderMarkdown lists every mutant when the count is under the cap', () => {
+  const undetected = [
+    { id: 'm-1', status: 'Survived', location: { start: { line: 3, column: 1 } } },
+    { id: 'm-2', status: 'NoCoverage', location: { start: { line: 9, column: 1 } } },
+  ];
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/a.ts', score: 0, undetected }],
+      checked: [],
+      skipped: [],
+      floor: 70,
+    },
+    'core',
+  );
+  assert.equal([...md.matchAll(/^- <code>src\/a\.ts/gm)].length, 2);
+  assert.doesNotMatch(md, /more undetected/);
+});
+
 test('renderMarkdown HTML-escapes backticks, pipes, angle brackets, and newlines', () => {
   const md = renderMarkdown(
     {
