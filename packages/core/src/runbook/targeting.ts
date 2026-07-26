@@ -429,9 +429,10 @@ export interface DelegationLivenessLinkage {
  * `activeFrameKy` compiled, and the classifier then read `undefined` and the
  * test passed for the wrong reason. Under this type that is a `TS2561`.
  *
- * It does not make the fields mandatory — every one is optional on
- * `RunbookState` and stays optional here — so this buys name and type checking,
- * not presence. Callers holding a full `RunbookState` pass it unchanged.
+ * `Pick` preserves each selected field's source optionality: the five optional
+ * fields remain optional, while `step` remains required. This buys name and
+ * type checking without strengthening the source contract. Callers holding a
+ * full `RunbookState` pass it unchanged.
  */
 export type DelegationLivenessParent = Pick<
   RunbookState,
