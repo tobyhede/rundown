@@ -599,6 +599,101 @@ describe('SessionService', () => {
       expect(resolved.status).toBe('superseded');
       if (resolved.status === 'superseded') {
         expect(resolved.reason).toBe('cursor-advanced');
+        // The origin travels on this path too, not just on the tombstone path: the
+        // envelope names the parent so the holder can report which delegation died.
+        expect(resolved.delegation).toEqual({
+          parentRunId: parent.id,
+          parentStepId: linkage.parentStepId,
+        });
+      }
+    });
+
+    it.each([
+      'completed',
+      'stopped',
+    ] as const)('leaves a parked %s child reporting stashed rather than converting it to superseded', async (childLifecycle) => {
+      // The guard inside the stash gate. `reports a parked terminal child as
+      // terminal` below covers the read-only path (`includeStashed: true`), which
+      // skips the gate entirely and therefore never reaches this branch —
+      // mutation testing caught that, with every mutant in the guard surviving.
+      //
+      // A stashed child that is ALSO terminal keeps the outcome it had before
+      // supersession was allowed to outrank the gate: `stashed`. Terminal evidence
+      // is not a closed delegation, and promoting a resolved delegation over it here
+      // would reorder the terminal precedence this change deliberately left alone.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'a');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      await sessionService.stashRunbook(child.id);
+      await manager.update(child.id, { lifecycle: childLifecycle });
+      // Parent moves on: the delegation now reads closed, and the latch retains the
+      // claim because its controlled child is terminal, so the row stays active.
+      await manager.update(parent.id, { step: '2' });
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(resolved.status).toBe('unlinked');
+      if (resolved.status === 'unlinked') {
+        expect(resolved.reason).toBe('stashed');
+      }
+    });
+
+    it('reports a stashed run-control claim as stashed, with no delegation to classify', async () => {
+      // The stash gate's non-delegated early return: `rundown run` mints a
+      // run-control claim, `rundown stash` parks its run, and a bare mutating
+      // command then presents that claim. There is no delegation to classify, so
+      // the gate must answer `stashed` — without the guard the classifier is
+      // handed an undefined linkage.
+      const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+        runbookPath: 'solo.md',
+      });
+      await sessionService.pushRunbook(run.id);
+      const { claimId } = await sessionService.issueRunControlClaim(run.id);
+      await sessionService.stashRunbook(run.id);
+
+      const resolved = await sessionService.getActiveForClaimId(claimId);
+
+      expect(resolved.status).toBe('unlinked');
+      if (resolved.status === 'unlinked') {
+        expect(resolved.reason).toBe('stashed');
+      }
+    });
+
+    it('reports a tombstone whose parent was deleted as parent-unreadable', async () => {
+      // A delegated tombstone outlives its parent: parent deletion does not cascade
+      // to claims. The reason must say the parent is gone — that refusal carries a
+      // `prune` remedy and the generic code, not RD-825's no-retry advice, because
+      // nothing outran the token.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'b');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      // Tombstone it via the parent-side latch, then remove the parent.
+      await manager.update(parent.id, { lifecycle: 'completed' });
+      await manager.delete(parent.id);
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+      expect(resolved.status).toBe('superseded');
+      if (resolved.status === 'superseded') {
+        expect(resolved.reason).toBe('parent-unreadable');
+        expect(resolved.delegation).toEqual({
+          parentRunId: parent.id,
+          parentStepId: linkage.parentStepId,
+        });
       }
     });
 
@@ -814,6 +909,13 @@ describe('SessionService', () => {
       expect(resolved.status).toBe('superseded');
       if (resolved.status === 'superseded') {
         expect(resolved.reason).toBe('cursor-advanced');
+        // The active-row path builds its own origin (it does not route through
+        // `describeSupersession`), so it needs its own assertion — the identical
+        // one on the stash-gate test above covers a different construction site.
+        expect(resolved.delegation).toEqual({
+          parentRunId: parent.id,
+          parentStepId: linkage.parentStepId,
+        });
       }
     });
 
@@ -1229,6 +1331,28 @@ describe('SessionService', () => {
       expect(notStashed.status).toBe('not-stashed');
       if (notStashed.status === 'not-stashed') {
         expect(notStashed.claim.controlledRunId).toBe(child.id);
+      }
+    });
+
+    it('unstashForClaimId reports a retired non-delegated claim as claim-rotated', async () => {
+      // The pop path's tombstone branch, for a claim with no delegation to classify
+      // against: a run-control claim that was released while its run sat in the
+      // stash. Mutation testing found this branch unreached — its optional-chain and
+      // parent-read ternary both survived, because every other pop test presents a
+      // delegated claim.
+      const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+        runbookPath: 'solo.md',
+      });
+      await sessionService.pushRunbook(run.id);
+      const { claimId } = await sessionService.issueRunControlClaim(run.id);
+      await sessionService.stashRunbook(run.id);
+      await sessionService.releaseRunbook(run.id);
+
+      const result = await sessionService.unstashForClaimId(claimId);
+
+      expect(result.status).toBe('superseded');
+      if (result.status === 'superseded') {
+        expect(result.reason).toBe('claim-rotated');
       }
     });
 

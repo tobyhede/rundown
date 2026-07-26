@@ -195,6 +195,30 @@ So `Ran N tests per mutant` belongs next to `Instrumented N source file(s)` on t
 
 Closed properly rather than annotated: `loadClaim` now has direct tests in `runbook-store.test.ts` — the suite Stryker *does* select for that file — covering the active row, the tombstone-visible row (the read's entire reason to exist), and the unknown key. Re-run scoped to those lines: `Ran 2.63 tests per mutant`, **8/8 killed, 100%**. An out-of-union `status` is deliberately not staged: the column's CHECK constraint forbids the value, so no SQL the store can issue produces that row, and `assertClaimStatus` stands as edge validation against external corruption only.
 
+### What the survivors were, once the run was trustworthy
+
+Enumerating `session-service.ts` at `Ran 6.22 tests per mutant` (93 killed / 16 survived / 9 no-coverage) found four real gaps, not sixteen equivalent mutants. Each is now closed:
+
+**The terminal-child guard inside `supersededStashedClaim` had no coverage at all** — nine mutants survived there, including deleting the condition. `reports a parked terminal child as terminal, not as a closed delegation` was written for that guard but passes `includeStashed: true`, which skips the stash gate entirely and so never enters the function. It tests the read-path ordering, not the guard. The guard's real contract — a stashed child that is also terminal keeps reporting `stashed`, exactly as it did before supersession was allowed to outrank the gate — is now pinned by `leaves a parked terminal child reporting stashed rather than converting it to superseded`. This is the one finding in this delta that mutation testing caught and review did not: a test that verified something adjacent to what its name claimed.
+
+**A tombstone whose parent was deleted** (`parent-unreadable`) was unreached, though it renders its own message and remedy. Parent deletion does not cascade to claims, so the state is ordinary. Pinned.
+
+**The delegation origin on the active-row path.** The deferred-tombstone test asserted `reason` but not `delegation`, so emptying that object literal survived. The first attempt to close it missed: two tests end with byte-identical assertion blocks, the anchored edit landed on the stash-gate test, and the next run still showed the mutant alive — which is the check earning its keep a second time. The active-row path builds its own origin rather than routing through `describeSupersession`, so it needs its own assertion; both now have one.
+
+**A non-delegated tombstone through `rd pop`.** Every other pop test presents a delegated claim, leaving the optional-chain and parent-read ternary in that branch unexercised. Pinned by a released run-control claim.
+
+**A non-delegated claim whose run is stashed** — the stash gate's early return, surfaced only once the scope narrowed enough for the run to reach it. It is the plain `rundown run` → `rundown stash` → `pass --claim-id` sequence, and without the guard the classifier is handed an undefined linkage. Pinned.
+
+Each round of narrowing exposed a gap the previous, broader run had hidden behind another survivor — which is the argument for scoping a mutation run to changed lines and then reading it survivor by survivor rather than by its score.
+
+The guard test is parameterised over `completed` and `stopped`: written against `completed` only, the `|| child?.lifecycle === 'stopped'` half stayed unexercised and its mutants survived.
+
+Three survivor classes are left deliberately, all unkillable rather than untested:
+
+- The `default:` arm behind the TypeScript `never` exhaustiveness guard.
+- `presented.status === 'active'` on both resolution paths — a row active in the table but absent from the snapshot the same resolution read, which needs a genuine race between two reads and has no seam to stage it.
+- `child?.lifecycle` → `child.lifecycle` in the stash-gate guard. The optional chain only matters when the claim is active while its controlled run is gone, and the FK cascade deletes claims with their runs, so the state is unreachable — the `?.` is defence against corruption, and the mutant is equivalent for every state the store can produce.
+
 ### Fixture promotion — the triage that made it necessary
 
 `stash-pop.test.ts › restores a claimed stash using captured claim provenance` began failing when resolution started classifying liveness: a pop that used to succeed now refusing is the shape of a real regression, so it was triaged as one before being touched. It was not. The test hand-seeds a parent with `step: '1'` and **no `substepStates`**, which is indistinguishable from a parent whose cursor advanced past the delegation — exactly what the classifier exists to catch. Production always writes that row; the sibling test in the same file drives the real `run → claim → stash → pop` flow and reads its token out of `state.substepStates[0].delegation.token`, and it classified as `parent-ended` correctly.
