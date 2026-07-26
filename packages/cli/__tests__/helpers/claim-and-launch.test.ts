@@ -848,10 +848,10 @@ describe('claimAndLaunch', () => {
     // Mock manager.load returning fresh state with cancelled delegation
     // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
-    jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
-      kind: 'closed',
-      reason: 'token-reissued',
-    });
+    // Liveness stays at the `beforeEach` default of `live`: 4a′ early-returns
+    // only on `cursor-advanced`, so a cancelled-but-otherwise-live delegation
+    // reaches 4b either way, and `token-reissued` is unreachable here anyway —
+    // `freshSubstep` was matched on this exact token.
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
