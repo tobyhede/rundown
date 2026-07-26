@@ -8,6 +8,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+import { htmlEscape } from './lib/pr-comment.mjs';
+
 const detected = new Set(['Killed', 'Timeout']);
 const undetected = new Set(['Survived', 'NoCoverage']);
 
@@ -163,13 +165,6 @@ export function compareMutationRegressions({ baseline, current }) {
  * @returns {string} markdown fragment.
  */
 export function renderMarkdown(result, packageName) {
-  const htmlEscape = (value) =>
-    String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/`/g, '&#96;')
-      .replace(/\r?\n/g, ' ');
   const code = (value) => `<code>${htmlEscape(value)}</code>`;
   const lines = [
     `#### ${result.ok ? '✅' : '⚠️'} ${code(packageName)} — test-only incremental comparison`,

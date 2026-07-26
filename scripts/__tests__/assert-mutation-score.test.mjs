@@ -757,14 +757,23 @@ test('parseArgs: --changed-range collects file ranges', () => {
     'packages/core/src/a.ts:10-20',
     '--changed-range',
     'packages/core/src/a.ts:30-30',
+    // A Windows-style path must normalize here, at the source. `assertMutationScore`
+    // looks the ranges Map up with a POSIX-normalized key, so a `\`-separated range
+    // that reached the Map verbatim would never match — silently degrading the file
+    // to whole-file scoring, which surfaces out-of-range baseline survivors as
+    // findings and reports a percentage for lines the PR never touched.
+    '--changed-range',
+    'packages\\core\\src\\b.ts:5-6',
   ]);
   assert.deepEqual(opts.changedRanges, [
     { file: 'packages/core/src/a.ts', start: 10, end: 20 },
     { file: 'packages/core/src/a.ts', start: 30, end: 30 },
+    { file: 'packages/core/src/b.ts', start: 5, end: 6 },
   ]);
   // A ranged file is implicitly a changed file; the caller must not have to pass
-  // both.
+  // both. The implicit push must carry the normalized path too.
   assert.ok(opts.changedFiles.includes('packages/core/src/a.ts'));
+  assert.ok(opts.changedFiles.includes('packages/core/src/b.ts'));
 });
 
 test('parseArgs: rejects a malformed --changed-range', () => {

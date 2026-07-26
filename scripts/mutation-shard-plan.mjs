@@ -45,6 +45,7 @@ import {
   mutatePatterns,
   reachable,
 } from './lib/mutation-scope.mjs';
+import { htmlEscape } from './lib/pr-comment.mjs';
 
 const repoRoot = process.cwd();
 const eventName = process.env.EVENT_NAME ?? 'workflow_dispatch';
@@ -197,11 +198,16 @@ async function planPullRequest() {
   }
   const sourceShardCap = Math.max(0, maxPrShards - testOnly.length);
   if (items.length > sourceShardCap) {
-    process.stderr.write(
-      `${items.length} changed file(s) exceeds the ${sourceShardCap} source shard slot(s) ` +
-        `remaining under MAX_PR_SHARDS=${maxPrShards}; batching. ` +
-        `Batched shards run the union of their files' tests per mutant, so they cost more.\n`,
-    );
+    const detail =
+      `the ${sourceShardCap} source shard slot(s) remaining under ` +
+      `MAX_PR_SHARDS=${maxPrShards}; batching. Batched shards run the union of ` +
+      "their files' tests per mutant, so they cost more.";
+    // Every other planner condition reports to BOTH channels. This one is the notice
+    // a PR author most needs — it explains the increased test-union cost — so it must
+    // not stay stderr-only, where nothing outside the workflow log ever sees it. Only
+    // the tense differs, matching the present-for-stderr / past-for-comment split above.
+    process.stderr.write(`${items.length} changed file(s) exceeds ${detail}\n`);
+    notices.push(`${items.length} changed file(s) exceeded ${detail}`);
   }
   const grouped = partitionPrEntries(items, maxPrShards, testOnly.length);
   // Number shards per package so artifact names stay unique and readable.
@@ -288,13 +294,6 @@ if (out) {
   appendFileSync(out, `empty=${empty}\n`);
 }
 if (eventName === 'pull_request' && summaryPath) {
-  const htmlEscape = (value) =>
-    String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/`/g, '&#96;')
-      .replace(/\r?\n/g, ' ');
   const lines = ['#### ℹ️ Mutation scope plan', ''];
   if (include.length === 0 && notices.length === 0) {
     lines.push('_No eligible source or test changes in this PR._');

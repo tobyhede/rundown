@@ -168,18 +168,27 @@ function expectedShardCounts() {
 const byModule = collectShardReports(downloadDir);
 const expected = expectedShardCounts();
 
+// Unknown expectations fail closed regardless of how many reports arrived. Scoped
+// to the zero-report case this guard missed the more damaging half: with reports
+// PRESENT the completeness loop below iterates nothing, so `incomplete` stays
+// empty and a partial merge is uploaded straight over the module's dashboard
+// baseline — the corruption this script exists to prevent.
+if (!expected.known) {
+  process.stderr.write(
+    `plan expectations are unknown: ${expected.reason}. ` +
+      `Refusing to merge ${byModule.size} module report(s): without the plan matrix a ` +
+      'crashed shard is indistinguishable from a complete run, and a partial merge ' +
+      'would overwrite the dashboard baseline.\n',
+  );
+  process.exit(1);
+}
+
 // Zero reports is only a legitimate no-op when the plan expected no shards. If
 // the plan DID expect shards and none produced a report, every shard crashed —
 // the loudest possible failure, and previously the quietest: this returned 0, so
 // a run whose entire mutation campaign died reported success. That inverted the
 // partial-loss check below, which correctly fails when 1 of 2 shards is missing.
 if (byModule.size === 0) {
-  if (!expected.known) {
-    process.stderr.write(
-      `no shard reports found under ${downloadDir}, and plan expectations are unknown: ${expected.reason}.\n`,
-    );
-    process.exit(1);
-  }
   const wanted = [...expected.counts.values()].reduce((sum, n) => sum + n, 0);
   if (wanted === 0) {
     process.stderr.write(`no shard reports found under ${downloadDir}; nothing to merge.\n`);
@@ -201,8 +210,10 @@ const summary = [];
 // merge never masquerades as a complete baseline. An incomplete module must
 // also be barred from the dashboard upload below: seeding the baseline with a
 // partial report is exactly the corruption this check exists to prevent.
+// `expected.known` is true here by construction: the guard above exits when it is
+// not, so this loop can never be silently skipped into an empty `incomplete` set.
 const incomplete = new Set();
-for (const [module, want] of expected.known ? expected.counts : []) {
+for (const [module, want] of expected.counts) {
   const got = byModule.get(module)?.length ?? 0;
   if (got < want) {
     incomplete.add(module);

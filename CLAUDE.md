@@ -425,8 +425,9 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   test-only change it uses Stryker's native incremental analysis and compares
   stable mutant IDs with an existing baseline, refusing an unbounded cold run
   when no baseline exists. It encodes every foot-gun below by construction, adds
-  `--force` (mandatory, see below), and fails loudly when Stryker instrumented 0
-  files — the silent no-op that a hand-written `--mutate` reports as success.
+  `--force` to every source-change scope (mandatory there, see below), and fails
+  loudly when Stryker instrumented 0 files — the silent no-op that a
+  hand-written `--mutate` reports as success.
 
   ```bash
   pnpm run test:mutate:changed                    # every changed package
@@ -448,12 +449,16 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   tests are the default fast tier; add the `mutation:related` PR label (or
   choose `related` in a manual dispatch) to retain Jest's related-test fallback.
 
-  **`--force` is not optional.** Every package config sets `incremental: true`,
-  so without `--force` Stryker may serve cached results from the `main` baseline
-  for the very lines you changed, and the score you read is main's. The Stryker
-  docs call `--force` "especially beneficial when combined with a custom
-  `--mutate` pattern" for exactly this reason. It is scope-limited, so the
-  full-report benefit of incremental mode is preserved.
+  **`--force` is not optional on a source-change scope.** Every package config
+  sets `incremental: true`, so without `--force` Stryker may serve cached
+  results from the `main` baseline for the very lines you changed, and the score
+  you read is main's. The Stryker docs call `--force` "especially beneficial
+  when combined with a custom `--mutate` pattern" for exactly this reason. It is
+  scope-limited, so the full-report benefit of incremental mode is preserved.
+  The **test-only tier is the deliberate exception**: it passes bare
+  `--incremental` and no `--force`, because that tier's entire method is diffing
+  stable mutant IDs against the retained baseline — a forced cold rerun would
+  discard the very results it compares against.
 
   **Never tune `timeoutMS` down for speed.** Timeout is a _detected_ state
   (score is `detected / valid`, detected = `killed + timeout`), so a spurious

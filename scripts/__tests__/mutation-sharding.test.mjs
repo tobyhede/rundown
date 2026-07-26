@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { partitionPrEntries } from '../lib/mutation-scope.mjs';
+import { dirname, join } from 'node:path';
+import { PACKAGES, partitionPrEntries } from '../lib/mutation-scope.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
 const planScript = 'scripts/mutation-shard-plan.mjs';
+const planScriptAbs = join(repoRoot, planScript);
 const mergeScript = 'scripts/mutation-merge-reports.mjs';
 
 /**
@@ -108,6 +109,149 @@ test('plan: a dispatch for a single package excludes the others', () => {
   const { include } = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'parser' });
   assert.ok(include.length >= 1);
   assert.ok(include.every((e) => e.module === 'parser'));
+});
+
+// The PR planner's *notices* — the half of its output that reaches the sticky PR
+// comment — cannot be driven from this repository: their text is built from real
+// changed file names and a `TEST_SCOPE` that is validated to one of two literals,
+// and a real diff needs history the `scenarios` job's `fetch-depth: 1` checkout
+// does not have. A throwaway git repo shaped like the workspace gives the planner
+// a controlled diff with none of that coupling.
+
+/** Identity for fixture commits, so the tests do not depend on git user config. */
+const fixtureGitEnv = {
+  GIT_AUTHOR_NAME: 'Fixture',
+  GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+  GIT_COMMITTER_NAME: 'Fixture',
+  GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+};
+
+/**
+ * Run git inside a fixture repo, with signing and hooks disabled so a developer's
+ * global git config cannot break the fixture.
+ *
+ * @param {string} root - the fixture repo root.
+ * @param {string[]} args - git arguments.
+ * @returns {string} trimmed stdout.
+ */
+function fixtureGit(root, args) {
+  return execFileSync('git', ['-c', 'commit.gpgSign=false', ...args], {
+    cwd: root,
+    env: { ...process.env, ...fixtureGitEnv },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+/**
+ * Write a file inside a fixture repo, creating parent directories.
+ *
+ * @param {string} root - the fixture repo root.
+ * @param {string} relative - repo-relative path.
+ * @param {string} contents - file contents.
+ */
+function fixtureWrite(root, relative, contents) {
+  const target = join(root, relative);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, contents);
+}
+
+/**
+ * Build a throwaway git repository shaped like this workspace: every mutation
+ * package present with a `stryker.config.mjs` whose `mutate` array excludes
+ * `src/excluded/**`, one committed baseline, then the caller's HEAD-side edits in
+ * a second commit.
+ *
+ * @param {(root: string) => void} applyHeadChanges - makes the HEAD-side edits.
+ * @returns {{root: string, base: string}} the fixture root and its base commit.
+ */
+function fixtureRepo(applyHeadChanges) {
+  const root = mkdtempSync(join(tmpdir(), 'plan-fixture-'));
+  fixtureGit(root, ['init', '-q']);
+  for (const pkg of PACKAGES) {
+    fixtureWrite(
+      root,
+      `${pkg.dir}/stryker.config.mjs`,
+      "export default { mutate: ['src/**/*.ts', '!src/excluded/**'] };\n",
+    );
+    fixtureWrite(root, `${pkg.dir}/src/keep.ts`, 'export const keep = 1;\n');
+  }
+  fixtureGit(root, ['add', '-A']);
+  fixtureGit(root, ['commit', '-q', '--no-verify', '-m', 'base']);
+  const base = fixtureGit(root, ['rev-parse', 'HEAD']);
+  applyHeadChanges(root);
+  fixtureGit(root, ['add', '-A']);
+  fixtureGit(root, ['commit', '-q', '--no-verify', '-m', 'head']);
+  return { root, base };
+}
+
+/**
+ * Run the PR planner against a fixture repo and return its summary fragment.
+ *
+ * @param {string} root - the fixture repo root.
+ * @param {string} base - the diff base commit.
+ * @param {Record<string,string>} [env] - extra environment for the planner.
+ * @returns {{summary: string, matrix: {include: Array<object>}}} the written PR
+ *   comment fragment and the emitted matrix.
+ */
+function planFixture(root, base, env) {
+  const summaryPath = join(root, 'summary.md');
+  const out = execFileSync('node', [planScriptAbs], {
+    cwd: root,
+    env: hermeticEnv({
+      EVENT_NAME: 'pull_request',
+      BASE_REF: base,
+      SUMMARY_PATH: summaryPath,
+      ...env,
+    }),
+    encoding: 'utf8',
+  });
+  return { summary: readFileSync(summaryPath, 'utf8'), matrix: JSON.parse(out) };
+}
+
+test('plan: the PR summary HTML-escapes markdown-hostile characters in a notice', () => {
+  // A config-excluded file's notice interpolates its path verbatim. Every renderer
+  // that feeds the sticky PR comment shares one escaper, and the pipe is the
+  // character this one used to leak — it would be read as a table separator.
+  const hostile = 'src/excluded/we`ird|x<y>&z.ts';
+  const { root, base } = fixtureRepo((r) => {
+    fixtureWrite(r, `packages/core/${hostile}`, 'export const hostile = 1;\n');
+  });
+  try {
+    const { summary, matrix } = planFixture(root, base);
+    assert.deepEqual(matrix.include, [], 'an excluded-only diff plans no shards');
+    assert.match(
+      summary,
+      /core\/src\/excluded\/we&#96;ird&#124;x&lt;y&gt;&amp;z\.ts: excluded by the package mutation configuration/,
+    );
+    assert.doesNotMatch(summary, /`/, 'no raw backtick may reach the comment');
+    for (const line of summary.split('\n')) {
+      // `|` only ever appears as a table separator in this comment; the fragment
+      // has no table, so a surviving pipe is an unescaped value.
+      assert.doesNotMatch(line, /\|/, `unescaped pipe in: ${line}`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('plan: the batching warning reaches the PR comment, not just the workflow log', () => {
+  // Batched shards run the union of their files' tests per mutant, so this is the
+  // notice a PR author most needs — and it was stderr-only, invisible outside the
+  // workflow log.
+  const { root, base } = fixtureRepo((r) => {
+    fixtureWrite(r, 'packages/core/src/a.ts', 'export const a = 1;\nexport const a2 = 2;\n');
+    fixtureWrite(r, 'packages/core/src/b.ts', 'export const b = 1;\nexport const b2 = 2;\n');
+  });
+  try {
+    const { summary, matrix } = planFixture(root, base, { MAX_PR_SHARDS: '1' });
+    assert.equal(matrix.include.length, 1, 'two files must be batched into the single slot');
+    assert.match(summary, /2 changed file\(s\) exceed(s|ed) the 1 source shard slot\(s\)/);
+    assert.match(summary, /MAX_PR_SHARDS=1/);
+    assert.match(summary, /cost more/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('PR partitioning globally caps a fixture-driven multi-package plan', () => {
@@ -295,6 +439,33 @@ test('merge: fails closed when no reports exist and MATRIX is malformed', () => 
     });
     assert.equal(status, 1);
     assert.match(stderr, /plan expectations are unknown.*MATRIX is not valid JSON/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The fail-closed guard for an unknown MATRIX used to sit INSIDE the
+// `byModule.size === 0` branch, so it only covered the zero-report path. With
+// reports PRESENT and expectations unknown the completeness loop iterated nothing,
+// `incomplete` stayed empty, and the merger uploaded a partial, scoped report over
+// the module's dashboard baseline — precisely the corruption this script exists to
+// prevent. Unknown expectations must fail closed whether or not reports arrived.
+test('merge: fails closed when reports exist but MATRIX is absent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-unknown-with-reports-'));
+  try {
+    writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+    // DASHBOARD_BASE points at a closed local port: an attempted upload is
+    // recorded as an `upload core:` failure rather than touching the real dashboard.
+    const { status, stderr } = runMergeCapture(dir, {
+      APPLY_BREAK: 'false',
+      UPLOAD: 'true',
+      DASHBOARD_API_KEY: 'dummy-key',
+      DASHBOARD_BASE: 'http://127.0.0.1:1/api/reports',
+    });
+    assert.equal(status, 1, 'an unverifiable merge must fail');
+    assert.match(stderr, /plan expectations are unknown.*MATRIX is absent/i);
+    assert.doesNotMatch(stderr, /uploaded /, 'must not report a successful upload');
+    assert.doesNotMatch(stderr, /upload core:/, 'must not attempt an unverifiable upload');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

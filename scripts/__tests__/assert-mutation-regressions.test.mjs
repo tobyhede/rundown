@@ -230,3 +230,42 @@ test('markdown names each regression and incompatibility', () => {
   assert.match(markdown, /EqualityOperator/);
   assert.doesNotMatch(markdown, /#1\b/);
 });
+
+// GitHub renders this fragment as HTML and concatenates it with every other
+// shard's into one sticky comment, so every interpolated value has to be inert.
+// The pipe is the one this renderer got wrong: a `LogicalOperator` mutant's
+// `replacement` is literally `||`, and it reaches the comment through
+// `describeMutant`. All three PR-comment renderers now share ONE escaper, so this
+// asserts the same superset contract as
+// `assert-mutation-score.test.mjs`'s escaping test.
+test('markdown HTML-escapes pipes, backticks, angle brackets, ampersands and newlines', () => {
+  const markdown = renderMarkdown(
+    {
+      ok: false,
+      regressions: [
+        {
+          file: 'src/a`b.ts',
+          id: '1',
+          from: 'Killed',
+          to: 'Survived',
+          mutatorName: 'LogicalOperator',
+          replacement: '||',
+          location: { start: { line: 7, column: 1 }, end: { line: 7, column: 9 } },
+        },
+      ],
+      incompatible: ['current report has extra mutant a<b> && c\nsecond line'],
+    },
+    'co`re|x',
+  );
+  // The `||` replacement must not reach the comment as two raw table separators.
+  assert.match(markdown, /LogicalOperator → &#124;&#124;/);
+  assert.match(markdown, /src\/a&#96;b\.ts/);
+  assert.match(markdown, /<code>co&#96;re&#124;x<\/code>/);
+  // `&` is escaped first, so `&&` becomes `&amp;&amp;` rather than double-encoding.
+  assert.match(markdown, /a&lt;b&gt; &amp;&amp; c second line/);
+  // Nothing raw survives: no backtick, no pipe, and no embedded newline inside a
+  // rendered value (each fragment line is one list item or heading).
+  assert.doesNotMatch(markdown, /`/);
+  assert.doesNotMatch(markdown, /\|/);
+  assert.equal(markdown.split('\n').length, 4);
+});

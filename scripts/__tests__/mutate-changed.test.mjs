@@ -109,9 +109,11 @@ test('parseInstrumented returns null when Stryker never instrumented', () => {
   assert.equal(parseInstrumented('ERROR Stryker Something went wrong'), null);
 });
 
-// --force is mandatory, not optional: `incremental: true` is set in every package
-// config, so without it Stryker can serve cached `main` results for the very
-// lines being judged and the gate reports main's score for the change.
+// --force is mandatory, not optional, FOR A SOURCE-CHANGE SCOPE: `incremental:
+// true` is set in every package config, so without it Stryker can serve cached
+// `main` results for the very lines being judged and the gate reports main's score
+// for the change. The test-only tier is the deliberate exception — see
+// `testOnlyStrykerArgs` below.
 test('strykerArgs always passes --force and never suppresses an empty-scope error', () => {
   const args = strykerArgs({ file: 'src/a.ts', whole: true, ranges: [], testFile: null }, false);
   assert.ok(args.includes('--force'), '--force must always be passed');
@@ -158,6 +160,9 @@ test('strykerArgs passes ranges as a single comma-joined --mutate value', () => 
   assert.equal(args[1], 'src/a.ts:3-4,src/a.ts:8-8');
 });
 
+// The ONE tier that must not pass --force. Its method is diffing stable mutant IDs
+// against the retained baseline, and --force would discard the results being
+// compared against — so the exact arg list, `--force` absent, is the contract.
 test('testOnlyStrykerArgs uses native incremental mode without a custom scope', () => {
   assert.deepEqual(testOnlyStrykerArgs(), ['--incremental']);
 });

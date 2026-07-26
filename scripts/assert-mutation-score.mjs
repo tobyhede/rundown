@@ -52,6 +52,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+import { htmlEscape } from './lib/pr-comment.mjs';
+
 /**
  * Reference mutation-score floor (percent), displayed as context alongside the
  * individual mutant verdict. The scoped gate fails on any undetected mutant;
@@ -99,7 +101,10 @@ export function fileMutationScore(statuses) {
  * mutation-range syntax so the gate is scoped with the same notation the run was.
  *
  * @param {string} raw - the `--changed-range` value.
- * @returns {{file: string, start: number, end: number}} the parsed range.
+ * @returns {{file: string, start: number, end: number}} the parsed range; `file`
+ *   is POSIX-normalized, because {@link assertMutationScore} looks the ranges up
+ *   under a normalized key and a `\`-separated path would silently miss it —
+ *   degrading the file to whole-file scoring.
  * @throws {Error} when the value is not a well-formed, non-inverted line range.
  */
 export function parseChangedRange(raw) {
@@ -112,7 +117,9 @@ export function parseChangedRange(raw) {
   if (start < 1 || end < start) {
     throw new Error(`malformed --changed-range '${raw}'; start must be >= 1 and <= end`);
   }
-  return { file: match[1], start, end };
+  // Normalize at the source: this one call fixes both the `ranges` Map key built
+  // in `main` and the implicit `changedFiles` push in `parseArgs`.
+  return { file: toPosix(match[1]), start, end };
 }
 
 /**
@@ -319,20 +326,9 @@ export function assertMutationScore({
 export function renderMarkdown(result, packageName) {
   const { checked, failures, skipped, floor, ok } = result;
   const status = ok ? '✅' : '⚠️';
-  // Render interpolated values as HTML-escaped text wrapped in <code>. GitHub
-  // renders the comment markdown to HTML, and backslash escapes do NOT work
-  // inside a markdown code span, so a backtick in a file path would still break
-  // a `...` span. Encoding `, |, <, >, & as HTML entities leaves nothing for the
-  // markdown/table parser to misinterpret. Newlines are collapsed to spaces so a
-  // value can't break the table row.
-  const htmlEscape = (value) =>
-    String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/`/g, '&#96;')
-      .replace(/\|/g, '&#124;')
-      .replace(/\r?\n/g, ' ');
+  // Render interpolated values as HTML-escaped text wrapped in <code>. See
+  // `scripts/lib/pr-comment.mjs` for why entity encoding — not backslash escaping
+  // — is the only thing that survives GitHub's markdown renderer.
   const codeCell = (value) => `<code>${htmlEscape(value)}</code>`;
   const lines = [
     `#### ${status} ${codeCell(packageName)} — changed-scope mutants (floor ${floor}% shown as score context)`,

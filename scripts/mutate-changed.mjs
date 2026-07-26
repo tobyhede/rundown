@@ -18,11 +18,14 @@
  *
  * Flags this passes that a hand-rolled invocation usually forgets:
  *
- * - `--force`, because `incremental: true` is on in every package config. Without
- *   it Stryker may serve cached results from the `main` baseline for the very
- *   files being judged, and the gate would report main's score for your change.
- *   The Stryker docs call `--force` "especially beneficial when combined with a
- *   custom `--mutate` pattern" for exactly this reason.
+ * - `--force` on every source-change scope, because `incremental: true` is on in
+ *   every package config. Without it Stryker may serve cached results from the
+ *   `main` baseline for the very files being judged, and the gate would report
+ *   main's score for your change. The Stryker docs call `--force` "especially
+ *   beneficial when combined with a custom `--mutate` pattern" for exactly this
+ *   reason. The test-only tier ({@link testOnlyStrykerArgs}) omits it on purpose:
+ *   that path diffs stable mutant IDs against the retained baseline, which a
+ *   forced cold rerun would discard.
  * And the foot-guns it removes by construction: comma form only (Stryker splits
  * `--mutate` on commas before brace expansion); package-relative paths (`pnpm
  * --filter … exec` runs with cwd = the package dir); no `--` separator (pnpm
