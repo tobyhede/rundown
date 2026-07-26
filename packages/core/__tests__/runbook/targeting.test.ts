@@ -21,6 +21,7 @@ import {
   upsertSubstepState,
   classifyDelegationLiveness,
   type DelegationLivenessLinkage,
+  type DelegationLivenessParent,
 } from '../../src/runbook/targeting.js';
 import type { ForContext, RunbookState, SubstepState } from '../../src/runbook/types.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
@@ -604,8 +605,14 @@ describe('targeting helpers', () => {
       tokenHash: TOKEN,
     };
 
-    /** Build a parent state exposing only the fields the classifier reads. */
-    function parent(over: Partial<RunbookState> = {}): RunbookState {
+    /**
+     * Build a parent state exposing only the fields the classifier reads.
+     *
+     * Deliberately not cast: `DelegationLivenessParent` is exactly that read
+     * surface, so a misspelled field is a compile error here rather than a
+     * silently absent one the classifier reads as `undefined`.
+     */
+    function parent(over: Partial<DelegationLivenessParent> = {}): DelegationLivenessParent {
       return {
         step: '1',
         lifecycle: 'running',
@@ -620,7 +627,7 @@ describe('targeting helpers', () => {
           },
         ],
         ...over,
-      } as unknown as RunbookState;
+      };
     }
 
     it('classifies a matching, unresolved delegation as live', () => {

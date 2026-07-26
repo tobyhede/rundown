@@ -420,6 +420,25 @@ export interface DelegationLivenessLinkage {
 }
 
 /**
+ * The parent-state fields {@link classifyDelegationLiveness} actually reads.
+ *
+ * Narrower than {@link RunbookState} on purpose, so a fixture supplying just
+ * these fields satisfies the parameter outright instead of needing an
+ * `as unknown as RunbookState` cast to suppress the ~30 required fields it does
+ * not set. That cast suppressed checking of these six as well: a misspelled
+ * `activeFrameKy` compiled, and the classifier then read `undefined` and the
+ * test passed for the wrong reason. Under this type that is a `TS2561`.
+ *
+ * It does not make the fields mandatory — every one is optional on
+ * `RunbookState` and stays optional here — so this buys name and type checking,
+ * not presence. Callers holding a full `RunbookState` pass it unchanged.
+ */
+export type DelegationLivenessParent = Pick<
+  RunbookState,
+  'lifecycle' | 'step' | 'substepStates' | 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'
+>;
+
+/**
  * Whether a delegated child claim is still live against its parent state.
  *
  * `parent-unreadable` is a hard database-integrity signal — a delegated claim
@@ -452,7 +471,7 @@ export type DelegationLiveness =
  * @returns The three-way liveness classification.
  */
 export function classifyDelegationLiveness(
-  parent: RunbookState | null,
+  parent: DelegationLivenessParent | null,
   linkage: DelegationLivenessLinkage,
 ): DelegationLiveness {
   if (parent === null) {

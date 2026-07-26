@@ -1901,6 +1901,127 @@ describe('claimAndLaunch', () => {
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
+  it('keeps parent-missing typed when the parent is deleted after fresh launch, rather than RD-820', async () => {
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+
+    const { release: mockRelease } = mockHappyDelegationLock();
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/tmp/test/child.md',
+      source: 'project',
+      sourceRoot: '/tmp/test',
+    });
+    // Cast through unknown: minimal parser fixture (see frameKey linkage test).
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+    // The parent is deleted between the 4a re-read and the claim transaction.
+    // That is a race, not a Rundown invariant break, and `parent-missing` is the
+    // refusal the same pipeline already emits for it earlier in 4a.
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
+      status: 'missing-parent',
+      parentRunId: RUN_ID,
+      parentStepId: '1',
+    });
+
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockFn<
+          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
+      },
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockClaimRunbook,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+      lifecycleService: {
+        ensureActiveEntry: mockFn<
+          () => Promise<{
+            state: { activeEntry: number; activeFrameKey: string };
+            frameKey: string;
+            entry: number;
+          }>
+        >().mockResolvedValue({
+          state: { activeEntry: 1, activeFrameKey: '1|0' },
+          frameKey: '1|0',
+          entry: 1,
+        }),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'parent-missing');
+      expect(result.parentRunId).toBe(RUN_ID);
+    }
+    expect(runExecutionLoop).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
+  });
+
   it('rolls back claim and parent childRunId when fresh delegated launch fails after claim', async () => {
     const parentState = {
       id: RUN_ID,

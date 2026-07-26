@@ -1793,6 +1793,14 @@ export async function claimAndLaunch(
           stepId: substepId ?? stepId,
         };
       }
+      // Same reasoning for a parent deleted between the 4a re-read and the
+      // claim transaction: a race, not a broken invariant. `claimResultToFailure`
+      // already owns the mapping, and 4a emits this very refusal earlier for the
+      // same fact — so the outcome must not change just because the race lost
+      // later.
+      if (invariantViolation.reason === 'parent-missing') {
+        return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
+      }
       return {
         ok: false,
         reason: 'launch-failed',

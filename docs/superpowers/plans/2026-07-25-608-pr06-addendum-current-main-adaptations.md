@@ -241,6 +241,18 @@ Two helpers now prevent the repeat, and they are the CLI-side answer to the same
 
 `verify` earned its place twice in this delta: it caught a `tsconfig.test.json` type error — an un-narrowed `ParentLinkage` union read in a new test — that every scoped `jest` run passed, and two `cspell` misses. Neither is reachable from a targeted suite, which is exactly the gap the parent plan's "MUST run before every push" rule exists to close.
 
+## Delta 10 — third-review findings
+
+**1. `parent-missing` was flattened to `CLAIM_INVARIANT_VIOLATED`.** Delta 9 added a typed `missing-parent` result to `claimChildForPipeline`, but `claimAndLaunch`'s post-`afterCreate` branch special-cased only `delegation-superseded`. A parent deleted between the 4a re-read and the claim transaction therefore emitted RD-820, discarding a refusal the *same pipeline already emits for the same fact* a few steps earlier in 4a.
+
+This is the third instance of one pattern in this PR — Delta 8 item 2 on the claim path, Delta 9 item 1 on the report path, this on the fresh-launch path — each a legitimate refusal reported as something that blames Rundown. Written test-first; RED was `Expected: "parent-missing" / Received: "launch-failed"`. Routed through `claimResultToFailure`, which already owns the mapping. The other four failure reasons keep the invariant classification, correctly: the child was created moments earlier with this exact linkage, so `child-missing` or `linkage-mismatch` really would indicate a bug.
+
+**2. `classifyDelegationLiveness` narrowed to its read surface.** The classifier took a full `RunbookState`, so `targeting.test.ts`'s fixture — which by its own docblock supplies "only the fields the classifier reads" — needed `as unknown as RunbookState` to satisfy the ~30 fields it does not set. That cast suppressed checking of the six that matter too: a misspelled `activeFrameKy` compiled, the classifier read `undefined`, and the test passed for the wrong reason. `DelegationLivenessParent` names the six, the cast is gone, and the typo is now a `TS2561`.
+
+It buys name and type checking, not presence — every one of the six is optional on `RunbookState` and stays optional here, so a fixture may still omit any of them. Verified both ways: dropping `activeEntry` and dropping `lifecycle` each still compile; misspelling a field does not.
+
+**Not changed: `SCHEMA_VERSION` stays at 1.** Review proposed bumping it for `claims_one_active_per_run`. Declined — the store is unreleased, there is nothing to migrate, and `68bdbf62c` is an owned commit that made exactly this call.
+
 ## Procedural note — rebuild before running CLI tests
 
 CLI suites resolve `@rundown-org/core` to its built `dist`, so `corepack pnpm run build` must run **after** the replay and before any CLI test command. Building only at branch time hides new core exports and produces a module-resolution error that looks like a missing export rather than a stale artifact. The plan's step list does not mention this; the revised list below does.
@@ -253,13 +265,14 @@ Replaces the six checkboxes in the amended plan. Everything else in that plan �
 - [ ] Derive the allowlist: `for c in 6e9ff79f3 2d0656b24 eec5246d3 6cf18277c 68bdbf62c; do git diff-tree --no-commit-id --name-only -r "$c"; done | sort -u > /tmp/rd608-pr6-allowed`. Expect 33 paths.
 - [ ] Cherry-pick `--no-commit`, one commit at a time so conflicts stay attributable, in order: `6e9ff79f3` (3 conflicts → Delta 1), `2d0656b24` (2 conflicts → Deltas 2 and 3), `eec5246d3`, `6cf18277c`, `68bdbf62c` (clean).
 - [ ] Apply Delta 4 (terminal retention plus the three restored assertions), Delta 5 (two index collisions), and Delta 6 (three allowlist expansions).
+- [ ] Apply Delta 8 (four defects review found in the replayed code) and Delta 9 (the superseded-resolution taxonomy and the liveness-not-lifecycle correction). Neither is optional: Delta 9 item 2 closes a hole Delta 8 item 1 leaves open, so applying the first without the second leaves `cursor-advanced` unguarded on the report path.
 - [ ] Confirm `git diff --name-only --diff-filter=U` prints nothing and `git diff --check` exits 0. `comm -3` against the allowlist must report exactly four paths: `driver-contract.test.ts` untouched per Delta 7, and the three Delta 6 expansions. Any fifth is a stop-and-review event.
 - [ ] Run `corepack pnpm --filter @rundown-org/core exec tsc --noEmit -p tsconfig.json`. Expected: exit 0. Delta 2 is the only reason this fails.
 - [ ] Run `corepack pnpm run build`. Required before any CLI test command — see the procedural note.
 - [ ] Run the plan's two named test commands. Expected: core 217 / 3 suites, CLI 248 / 6 suites. The CLI count returning to its exact baseline is the Delta 4 signal.
 - [ ] Run both full suites. Expected: core 4602 passed / 1 skipped / 202 suites; CLI 3110 passed / 143 suites. (Counts include the two tests Delta 8 adds; they move with any further test.)
-- [ ] Run `corepack pnpm --filter @rundown-org/core exec stryker run --mutate src/runbook/storage/runbook-store.ts,src/runbook/session-service.ts,src/runbook/command-target-resolver.ts --testFiles __tests__/runbook/storage/runbook-store.test.ts,__tests__/runbook/session-service.test.ts,__tests__/runbook/command-target-resolver.test.ts`. Delete `reports/stryker-incremental.json` first. Scope judgement to changed line ranges, not the whole-file aggregate. **Hand-verify Delta 4's retention branch**: the named `--testFiles` do not reach the CLI terminal-evidence tests that kill it, so Stryker will report it as a survivor or as no-coverage. Neuter the `continue` and confirm the CLI suites fail.
-- [ ] Run `corepack pnpm run verify`; commit `fix(core): enforce delegated claim liveness and one controller`; open and merge PR 6. Record all seven deltas in the PR description and on #648.
+- [ ] Run `corepack pnpm --filter @rundown-org/core exec stryker run --mutate src/runbook/storage/runbook-store.ts,src/runbook/session-service.ts,src/runbook/command-target-resolver.ts --testFiles __tests__/runbook/storage/runbook-store.test.ts,__tests__/runbook/storage/runbook-store.properties.test.ts,__tests__/runbook/session-service.test.ts,__tests__/runbook/command-target-resolver.test.ts`. The properties suite is **not** in the plan's list and must be added: it carries the uniqueness property and Delta 8's two-controller guard test, and without it the same run reports 29 killed instead of 37. Delete `reports/stryker-incremental.json` first. Scope judgement to changed line ranges, not the whole-file aggregate. **Hand-verify Delta 4's retention branch**: the named `--testFiles` do not reach the CLI terminal-evidence tests that kill it, so Stryker will report it as a survivor or as no-coverage. Neuter the `continue` and confirm the CLI suites fail.
+- [ ] Run `corepack pnpm run verify`; commit `fix(core): enforce delegated claim liveness and one controller`; open and merge PR 6. Record all ten deltas in the PR description and on #648.
 
 ## Trial-replay evidence
 
