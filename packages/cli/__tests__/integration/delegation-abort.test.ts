@@ -214,6 +214,9 @@ describe('Delegation abort integration', () => {
       entered?.delegateFrontier as ReadonlyArray<{ readonly token?: unknown }> | undefined
     )?.[0]?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') {
+      throw new Error('Expected delegation token');
+    }
     const parentClaimId = String(started!.claim_id);
 
     const claimed = await runCliInProcess(`claim ${token}`, workspace);

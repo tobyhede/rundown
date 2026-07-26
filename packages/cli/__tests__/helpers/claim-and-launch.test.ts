@@ -786,7 +786,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
       kind: 'closed',
       reason: 'cursor-advanced',
-    } as ReturnType<typeof core.classifyDelegationLiveness>);
+    });
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
