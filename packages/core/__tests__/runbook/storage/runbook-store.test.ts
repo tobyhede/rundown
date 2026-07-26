@@ -936,6 +936,39 @@ describe('session persistence and run listing', () => {
     expect((await counters(stashed.id)).claimGeneration).toBe(before);
   });
 
+  it('refuses the whole session save when a dropped claim controls an executing run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'a7'.repeat(16));
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+
+    // `applySession` tombstones dropped claims unconditionally, and `status` is
+    // inside claims_guard_update's column list, so the trigger aborts the save
+    // while the controlled run holds a lease. Fail-closed is correct here, and
+    // deliberately the opposite reaction to `invalidateClosedDelegatedClaims`,
+    // which skips an executing child: that deferral is safe only because the
+    // claim-side latch enforces independently and `afterAuthoritativeStateWrite`
+    // re-drives the tombstone. `applySession` has neither, and `readSession`
+    // selects `WHERE status = 'active'` — so a skipped claim would resurrect into
+    // the next snapshot and never drop, leaking authority the caller revoked.
+    await expect(store.saveSession({ defaultStack: [], claims: {} })).rejects.toThrow(
+      /execution_in_progress/,
+    );
+
+    // The abort rolls the whole transaction back: the claim is untouched, so the
+    // drop is refused rather than half-applied.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: key })?.status,
+    );
+    expect(status).toBe('active');
+    expect((await store.loadSession()).claims[key]).toBeDefined();
+  });
+
   it('bumps claim_generation on every real stash transition and on no no-op save', async () => {
     const a = await newState();
     const b = await newState();
@@ -992,6 +1025,48 @@ describe('session persistence and run listing', () => {
       takeOwnership(txn.tx, state.id);
     });
     await expect(store.deleteRun(state.id)).rejects.toThrow(/execution_in_progress/);
+  });
+
+  it('refuses to delete an unowned parent run while its delegated child is executing', async () => {
+    const parent = await newState();
+    const child = await newState();
+    await store.createRun(parent);
+    await store.createRun(child);
+    const claimKey = assertClaimLookupKey(`rdclk_${'a8'.repeat(16)}`);
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({
+          claimKey,
+          controlledRunId: child.id,
+          delegation: {
+            childRunId: child.id,
+            parentRunId: parent.id,
+            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            parentStepId: '2',
+            parentStep: '2',
+            parentFrameKey: buildFrameKey('2'),
+            parentEntry: 1,
+          },
+        }),
+        assertClaimGeneration(0),
+      );
+      takeOwnership(txn.tx, child.id);
+    });
+
+    // `rd prune` shape: a terminal parent deleted while its delegated child is
+    // mid-command. The parent is unowned, so `deleteRun`'s own `exec_token IS
+    // NULL` predicate passes — but `claims.parent_run_id` is ON DELETE SET NULL
+    // and sits inside claims_guard_update's column list, so the FK cascade issues
+    // a guarded UPDATE on the CHILD's claim and aborts. That predicate guards the
+    // deleted run's own lease and cannot see a delegated child's. The refusal is
+    // therefore the RAW abort, not `deleteRun`'s typed throw — anchored so a later
+    // move to the typed variant shows up here rather than passing silently.
+    await expect(store.deleteRun(parent.id)).rejects.toThrow(/^execution_in_progress$/);
+
+    // The abort rolls back the whole delete: neither run nor the claim is lost.
+    expect(await store.loadRun(parent.id)).not.toBeNull();
+    expect(await store.loadRun(child.id)).not.toBeNull();
+    expect((await store.loadSession()).claims[claimKey].delegation?.parentRunId).toBe(parent.id);
   });
 });
 
@@ -1777,9 +1852,8 @@ describe('session reconstruction', () => {
     // claims_guard_update's column list, so attempting it while the child holds
     // an execution token aborts with execution_in_progress — taking THIS
     // parent's unrelated commit down with it. The parent write must succeed.
-    await expect(
-      store.saveState(cap.authority, { ...parent, lifecycle: 'completed' }),
-    ).resolves.not.toThrow();
+    const saved = await store.saveState(cap.authority, { ...parent, lifecycle: 'completed' });
+    expect(saved.kind).toBe('committed');
 
     // Deferred, not lost: the row stays active, and the claim-side half of the
     // latch (SessionService.claimRunbook) refuses the closed delegation without

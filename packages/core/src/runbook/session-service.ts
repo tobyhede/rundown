@@ -302,10 +302,12 @@ export class SessionService {
   /**
    * Describe why a superseded claim stopped being authority.
    *
-   * The single decision for both paths that can surface a tombstone — the async
-   * `getActiveForClaimId` read and the in-transaction `unstashForClaimId` — which
-   * differ only in how they read the parent. Two copies of this mapping would be
-   * two places for the taxonomy to drift.
+   * The single decision for every path that reports a supersession — the async
+   * `getActiveForClaimId` read (on both its tombstone and its active-row arms)
+   * and the in-transaction `unstashForClaimId` — which differ only in how they
+   * read the parent. Two copies of this mapping would be two places for the
+   * taxonomy to drift. Callers narrow to `closed` first where they must
+   * distinguish an active row's own refusals; this only maps the reason.
    *
    * A non-delegated claim has no parent to classify against, and a tombstone
    * whose delegation still reads live was retired on the claim side (released,
@@ -738,16 +740,20 @@ export class SessionService {
           parentStepId: linkage.parentStepId,
         };
       }
-      if (liveness.kind === 'closed') {
-        return {
-          status: 'delegation-superseded',
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          childRunId,
-        };
-      }
-
+      // Terminal evidence outlives the parent-side delegation. Checked before
+      // classification, not after: every terminal child also reads closed on the
+      // parent side (its substep is `done`), so the order is what decides. The
+      // matching terminal-skip in `RunbookStore.invalidateClosedDelegatedClaims`
+      // (`storage/runbook-store.ts`) is what keeps such a claim active for this
+      // read, so the two orderings must stay tied together — checking liveness
+      // first reports `delegation-superseded` for a claim whose real refusal is
+      // the terminal child it can still name. Both are non-retryable; the loss is
+      // diagnostic precision, not safety. `parent-unreadable` stays ahead of
+      // this: it is a corruption signal about the state this read depends on.
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
+      let existingLiveClaim:
+        | { readonly claim: ClaimRecord; readonly state: RunbookState }
+        | undefined;
       if (existingForDelegation !== undefined) {
         const existingState = ctx.readState(existingForDelegation.controlledRunId);
         if (!existingState) {
@@ -766,18 +772,31 @@ export class SessionService {
             lifecycle: existingState.lifecycle,
           };
         }
-        if (!linkageMatchesLinkage(existingState.parentLinkage, linkage)) {
+        existingLiveClaim = { claim: existingForDelegation, state: existingState };
+      }
+
+      if (liveness.kind === 'closed') {
+        return {
+          status: 'delegation-superseded',
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          childRunId,
+        };
+      }
+
+      if (existingLiveClaim !== undefined) {
+        if (!linkageMatchesLinkage(existingLiveClaim.state.parentLinkage, linkage)) {
           return {
             status: 'linkage-mismatch',
-            childRunId: existingForDelegation.controlledRunId,
+            childRunId: existingLiveClaim.claim.controlledRunId,
             incoming: linkage,
-            persisted: existingState.parentLinkage,
+            persisted: existingLiveClaim.state.parentLinkage,
           };
         }
         return {
           status: 'already-claimed',
-          childRunId: existingForDelegation.controlledRunId,
-          claim: existingForDelegation,
+          childRunId: existingLiveClaim.claim.controlledRunId,
+          claim: existingLiveClaim.claim,
         };
       }
 
@@ -918,15 +937,7 @@ export class SessionService {
         return { status: 'unlinked', claim, reason: 'parent-missing' };
       }
       if (liveness.kind === 'closed') {
-        return {
-          status: 'superseded',
-          claimId,
-          reason: liveness.reason,
-          delegation: {
-            parentRunId: record.delegation.parentRunId,
-            parentStepId: record.delegation.parentStepId,
-          },
-        };
+        return { status: 'superseded', claimId, ...this.describeSupersession(record, parent) };
       }
     }
 
