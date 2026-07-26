@@ -10,18 +10,32 @@
 // Each renderer returns whether the refusal requests a non-zero exit code, so
 // callers can `return render…(…)` directly from their switch arm.
 
-import { redactClaimId, type ClaimId, type RunId } from '@rundown-org/core';
+import {
+  redactClaimId,
+  type ClaimId,
+  type RunId,
+  type StaleClaimRefusalCode,
+} from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
- * Render a stale-claim refusal (`CLAIMED_RUNBOOK_UNAVAILABLE`).
+ * Render a stale-claim refusal under the code core assigned to it.
+ *
+ * The code travels with the refusal rather than being hard-coded here: a claim
+ * the parent superseded renders `DELEGATION_SUPERSEDED` (RD-825, the no-retry
+ * signal), and every other cause renders `CLAIMED_RUNBOOK_UNAVAILABLE`.
  *
  * @param output - Output emitter for CLI output.
  * @param message - Human-readable explanation of why the claim is stale.
+ * @param code - Symbolic error code from the core refusal.
  * @returns `true` — a stale claim always requests a non-zero exit code.
  */
-export function renderStaleClaimRefusal(output: OutputEmitter, message: string): boolean {
-  output.error(message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+export function renderStaleClaimRefusal(
+  output: OutputEmitter,
+  message: string,
+  code: StaleClaimRefusalCode,
+): boolean {
+  output.error(message, code);
   return true;
 }
 

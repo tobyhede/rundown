@@ -25,6 +25,7 @@ import {
   type ParentLinkage,
   type ClaimId,
   RUNS_DIR,
+  classifyDelegationLiveness,
   DelegationScanService,
   DelegationLock,
   DelegationLockTimeoutError,
@@ -238,6 +239,19 @@ export type ClaimFailure =
       readonly parentRunId: string;
       readonly stepId: string;
       readonly childRunId: string;
+    }
+  | {
+      /**
+       * The parent moved past this delegation (advanced, ended, reset, or
+       * reissued its token) before the claim committed. The durable latch
+       * refuses it; the token must not be retried. `childRunId` is present only
+       * when an existing/orphaned child was identified — the fresh prelaunch
+       * diagnostic omits it. Rendered as `DELEGATION_SUPERSEDED`.
+       */
+      readonly reason: 'delegation-superseded';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId?: string;
     }
   | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
@@ -1165,9 +1179,14 @@ type ClaimChildResult =
         | 'child-missing'
         | 'delegation-resolved'
         | 'delegation-already-claimed'
+        | 'delegation-superseded'
         | 'linkage-mismatch';
       readonly childRunId: RunId;
-    };
+    }
+  // The parent vanished between the 4a re-read and the claim transaction. Named
+  // by the parent, not the child: no child fact explains it, and the existing
+  // `parent-missing` envelope already says exactly this.
+  | { readonly ok: false; readonly reason: 'parent-missing'; readonly parentRunId: RunId };
 
 /**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
@@ -1209,6 +1228,15 @@ async function claimChildForPipeline(
       return { ok: false, reason: 'delegation-resolved', childRunId: claim.childRunId };
     case 'linkage-mismatch':
       return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
+    case 'delegation-superseded':
+      // Core is authoritative for the post-launch race: the parent moved past
+      // this delegation between the pre-check and the claim transaction. Use the
+      // pipeline's known child id (core omits it on the fresh-prelaunch path).
+      return { ok: false, reason: 'delegation-superseded', childRunId };
+    case 'missing-parent':
+      // Core refuses an unreadable parent with a typed result rather than
+      // throwing; it maps onto the refusal 4a already emits for the same fact.
+      return { ok: false, reason: 'parent-missing', parentRunId: claim.parentRunId };
     default: {
       const _exhaustive: never = claim;
       throw new Error(
@@ -1216,6 +1244,21 @@ async function claimChildForPipeline(
       );
     }
   }
+}
+
+/**
+ * Name the run a claim failure is about, for post-mortem diagnostic text.
+ *
+ * Most failures name the child; `parent-missing` has no child to name, so it
+ * names the parent instead of interpolating `undefined` into the message.
+ *
+ * @param result - The claim failure being described.
+ * @returns A run id with enough context to identify what failed.
+ */
+function describeClaimFailureTarget(result: Extract<ClaimChildResult, { ok: false }>): string {
+  return result.reason === 'parent-missing'
+    ? `(parent ${result.parentRunId} missing)`
+    : result.childRunId;
 }
 
 /**
@@ -1232,6 +1275,11 @@ function claimResultToFailure(
   parentRunId: string,
   stepId: string,
 ): ClaimResult {
+  if (result.reason === 'parent-missing') {
+    // Carries no child or step: the parent is what is missing, and the envelope
+    // for that fact takes only the parent run id.
+    return { ok: false, reason: 'parent-missing', parentRunId: result.parentRunId };
+  }
   return {
     ok: false,
     reason: result.reason,
@@ -1441,7 +1489,44 @@ export async function claimAndLaunch(
       };
     }
 
-    // 4b. Refuse replay if already claimed
+    // 4a′. Diagnostic pre-check for the durable latch. Classify the delegation
+    // against the freshly re-read parent using the delegation's ORIGINAL step
+    // name (`stepId`) — not `freshParent.step` — so a top-level cursor advance
+    // (parent moved on without a `done` substep row) surfaces here as
+    // `delegation-superseded`. Scoped to `cursor-advanced` only: parent
+    // termination (handled above), cancellation (4b), and replay/resolution
+    // (4c) keep their more specific diagnostics, and `token-reissued` cannot
+    // occur since `freshSubstep` was matched on this exact token. `childRunId`
+    // is omitted — no child is guaranteed on the fresh path and none may be
+    // synthesized. Core's claim transaction stays authoritative for the rest.
+    const precheckLiveness = classifyDelegationLiveness(freshParent, {
+      parentStep: stepId,
+      parentStepId: substepId ?? stepId,
+      parentFrameKey: freshSubstep.frameKey,
+      parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
+      tokenHash,
+    });
+    if (precheckLiveness.kind === 'closed' && precheckLiveness.reason === 'cursor-advanced') {
+      return {
+        ok: false,
+        reason: 'delegation-superseded',
+        parentRunId: freshParent.id,
+        stepId: substepId ?? stepId,
+      };
+    }
+
+    // 4b. Check for cancellation before replaying a linked child.
+    if (freshDelegation.cancelledAt) {
+      return {
+        ok: false,
+        reason: 'delegation-cancelled',
+        parentRunId: freshParent.id,
+        stepId: substepId ?? stepId,
+        cancelledAt: freshDelegation.cancelledAt,
+      };
+    }
+
+    // 4c. Refuse replay if already claimed
     if (freshDelegation.childRunId) {
       const delegationFrameKey = freshSubstep.frameKey;
       const freshLinkage: DelegationLinkage = {
@@ -1472,17 +1557,6 @@ export async function claimAndLaunch(
         parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
       });
-    }
-
-    // 4c. Check for cancellation
-    if (freshDelegation.cancelledAt) {
-      return {
-        ok: false,
-        reason: 'delegation-cancelled',
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
-        cancelledAt: freshDelegation.cancelledAt,
-      };
     }
 
     // 4d. Orphan reconciliation: scan for child run with matching tokenHash
@@ -1676,7 +1750,7 @@ export async function claimAndLaunch(
           // post-mortem from CLI output reveals the cause.
           invariantViolation = claimResult;
           throw new Error(
-            `Claim invariant violated for fresh child ${claimResult.childRunId}: ${claimResult.reason}`,
+            `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
           );
         }
         await updateStepDelegationChildRunId(
@@ -1704,12 +1778,35 @@ export async function claimAndLaunch(
     });
 
     if (invariantViolation !== undefined) {
+      // The durable latch (R2) is not an invariant violation. `claimRunbook`
+      // re-reads the parent inside its own transaction, so a parent that
+      // advanced, terminalized, or reissued its token between the 4a′ precheck
+      // and this claim legitimately refuses here. Reporting that as
+      // CLAIM_INVARIANT_VIOLATED blames Rundown for a real supersession and
+      // drops the no-retry signal the bearer holder needs. The child created
+      // moments ago has already been rolled back by afterCreateRollback.
+      if (invariantViolation.reason === 'delegation-superseded') {
+        return {
+          ok: false,
+          reason: 'delegation-superseded',
+          parentRunId: freshParent.id,
+          stepId: substepId ?? stepId,
+        };
+      }
+      // Same reasoning for a parent deleted between the 4a re-read and the
+      // claim transaction: a race, not a broken invariant. `claimResultToFailure`
+      // already owns the mapping, and 4a emits this very refusal earlier for the
+      // same fact — so the outcome must not change just because the race lost
+      // later.
+      if (invariantViolation.reason === 'parent-missing') {
+        return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
+      }
       return {
         ok: false,
         reason: 'launch-failed',
         runbook: childDisplayPath,
         code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
-        cause: `Claim invariant violated for fresh child ${invariantViolation.childRunId}: ${invariantViolation.reason}`,
+        cause: `Claim invariant violated for fresh child ${describeClaimFailureTarget(invariantViolation)}: ${invariantViolation.reason}`,
         details: {
           runbookName: childDisplayPath,
           runbook: childDisplayPath,

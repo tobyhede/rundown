@@ -12,6 +12,7 @@ import {
   type ArtifactPathOptions,
   type PublicArtifactRecord,
   type RunbookState,
+  type StaleClaimRefusalCode,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -28,7 +29,11 @@ type ActiveArtifactState =
       readonly artifactPathOptions: ArtifactPathOptions;
     }
   | { readonly kind: 'none' }
-  | { readonly kind: 'stale_claim'; readonly message: string };
+  | {
+      readonly kind: 'stale_claim';
+      readonly message: string;
+      readonly code: StaleClaimRefusalCode;
+    };
 
 /** Context handed to an artifact action body once an active runbook is resolved. */
 interface ArtifactActionContext {
@@ -49,7 +54,8 @@ async function resolveActiveArtifactState(): Promise<ActiveArtifactState> {
   const sessionService = new SessionService(manager);
   const active = await resolveCommandTarget(sessionService, { allowStashed: true });
   if (active.kind === 'none') return { kind: 'none' };
-  if (active.kind === 'stale_claim') return { kind: 'stale_claim', message: active.message };
+  if (active.kind === 'stale_claim')
+    return { kind: 'stale_claim', message: active.message, code: active.code };
   // `unknown_run` carries no state; artifact never passes a runId, so this is
   // unreachable today — guard the `.state` narrowing below (never crash).
   if (active.kind === 'unknown_run') return { kind: 'none' };
@@ -84,7 +90,7 @@ async function runArtifactAction(
         return;
       }
       if (active.kind === 'stale_claim') {
-        output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+        output.error(active.message, active.code);
         output.flush();
         process.exitCode = 1;
         return;

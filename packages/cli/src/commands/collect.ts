@@ -95,6 +95,10 @@ export function registerCollectCommand(program: Command): void {
                 output.flush();
                 return;
               case 'stale_claim':
+                output.error(contextResult.message, contextResult.code);
+                output.flush();
+                process.exitCode = 1;
+                return;
               case 'terminal_claim':
                 output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
                 output.flush();

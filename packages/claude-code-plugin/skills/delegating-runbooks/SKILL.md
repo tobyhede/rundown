@@ -164,6 +164,8 @@ On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundo
 
 `OPEN_DELEGATED_CHILDREN` is a separate, still-current guard: a claim-backed parent advance is refused while a claimed child is open. If you see it, wait for the child to report (or `rundown abort <token> --claim-id <claim_id> --force`) before advancing the parent with the orchestrator claim.
 
+`DELEGATION_SUPERSEDED` (RD-825) means the parent already moved past this delegation — it advanced, ended, reset the substep, or reissued the token — before the claim landed. **Do not retry the token.** Report the superseded delegation to the orchestrator; the parent is the source of truth for what to do next (it may have already advanced or reissued a fresh token to claim instead).
+
 ### Inline composition and derived authority
 
 When a delegation-exposed step links child runbooks **inline** (no `- DELEGATE`), a bare `rundown pass` on an inline unit is refused too. Use the orchestrator `claim_id` for the inline run you are controlling. A delegation boundary severs the chain: claimed children are never `--run`-reachable (they are not members of the default stack — reach them only with their `--claim-id`). Run ids are not secrets; they are freely available from `rundown run` output and every event's `runbookId` (names are not capabilities), so `--run` is only target selection.

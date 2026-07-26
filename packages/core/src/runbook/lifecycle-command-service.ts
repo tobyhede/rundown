@@ -30,6 +30,7 @@ import {
   resolveTerminalTarget,
   resolveTransitionTarget,
   unknownRunRefusal,
+  type StaleClaimRefusal,
   type TerminalCommandName,
   type TransitionCommandName,
   type TransitionTargetResolution,
@@ -352,20 +353,11 @@ export type DelegationIssuanceOutcome =
       readonly runId: RunId;
       /** Operator-facing refusal message. */
       readonly message: string;
-    }
-  | {
-      /**
-       * Refusal: the presented bearer claim cannot anchor issuance because it is
-       * missing, invalid for this session, stashed, or points at missing child
-       * state. Carries the resolver's cause-specific message, already redacted
-       * to the claim key.
-       */
-      readonly kind: 'stale_claim';
-      /** Bearer claim id presented by the caller. */
-      readonly claimId: ClaimId;
-      /** Operator-facing refusal message from the shared claim resolution. */
-      readonly message: string;
-    }
+    } // Refusal: the presented bearer claim cannot anchor issuance because it is
+  // missing, invalid for this session, stashed, superseded, or points at missing
+  // child state. Carries the resolver's cause-specific message (already redacted
+  // to the claim key) and the symbolic code it renders as.
+  | StaleClaimRefusal
   | {
       /**
        * Refusal: the presented bearer claim points at a terminal child runbook.
@@ -458,7 +450,7 @@ export interface LifecycleTransitionInput {
  */
 export type LifecycleTransitionOutcome =
   | { readonly kind: 'none' }
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
@@ -575,7 +567,7 @@ export type LifecycleTerminalOutcome =
   /** No active runbook (bare path) to complete/stop. */
   | { readonly kind: 'none' }
   /** The targeted claim id does not resolve to a live claimed child. */
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
   | { readonly kind: 'actor_context_required' }
   /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
@@ -672,7 +664,7 @@ export type LifecycleNavigationOutcome =
   /** No active runbook (bare path) to navigate. */
   | { readonly kind: 'none' }
   /** The targeted claim id does not resolve to a live claimed child. */
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   | {
       /** The targeted claim id points at a terminal (completed/stopped) child. */
       readonly kind: 'terminal_claim';
@@ -1686,7 +1678,12 @@ export class RunbookLifecycleCommandService {
       case 'none':
         return { kind: 'none' };
       case 'stale_claim':
-        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+        return {
+          kind: 'stale_claim',
+          claimId: resolution.claimId,
+          message: resolution.message,
+          code: resolution.code,
+        };
       case 'terminal_claim':
         return {
           kind: 'terminal_claim',
@@ -1789,7 +1786,12 @@ export class RunbookLifecycleCommandService {
 
     switch (resolution.kind) {
       case 'stale_claim':
-        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+        return {
+          kind: 'stale_claim',
+          claimId: resolution.claimId,
+          message: resolution.message,
+          code: resolution.code,
+        };
       case 'terminal_claim_confirmed':
         // Idempotent no-op: child already terminal. Still release with retain so a
         // later --claim-id can confirm/conflict again (item 4, second site).
@@ -2205,6 +2207,7 @@ export class RunbookLifecycleCommandService {
             kind: 'stale_claim',
             claimId: resolution.claimId,
             message: resolution.message,
+            code: resolution.code,
           },
         };
       case 'terminal_claim_confirmed':

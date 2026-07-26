@@ -86,7 +86,7 @@ export function registerStatusCommand(program: Command): void {
             case 'none':
               break;
             case 'stale_claim':
-              output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+              output.error(active.message, active.code);
               output.flush();
               process.exitCode = 1;
               return;

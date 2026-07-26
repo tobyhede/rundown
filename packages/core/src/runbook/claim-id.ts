@@ -166,7 +166,58 @@ export type ClaimRunbookResult =
       readonly childRunId: RunId;
       readonly incoming: DelegationLinkage;
       readonly persisted: RunbookState['parentLinkage'];
+    }
+  | {
+      /**
+       * The parent has moved past this delegation (advanced, ended, reset, or
+       * reissued its token). The durable latch refuses the claim; the bearer
+       * must not be retried. `childRunId` is present only when an existing or
+       * orphaned child was identified — the fresh prelaunch path omits it
+       * because no child has been created.
+       */
+      readonly status: 'delegation-superseded';
+      readonly parentRunId: RunId;
+      readonly parentStepId: string;
+      readonly childRunId?: RunId;
+    }
+  | {
+      /**
+       * The claim's parent run cannot be read. Under one-database persistence a
+       * delegated claim always names a live parent, so this is not reachable
+       * through a supported delete — it is the same corruption class as
+       * `missing-child`, and it is refused the same way rather than thrown, so
+       * one policy covers one class. {@link ClaimIdResolution} already reports
+       * this softly as `unlinked` / `parent-missing`.
+       */
+      readonly status: 'missing-parent';
+      readonly parentRunId: RunId;
+      readonly parentStepId: string;
     };
+
+/**
+ * Why a presented claim is no longer mutation authority.
+ *
+ * The first four mirror {@link DelegationLiveness}'s closed reasons, classified
+ * against the parent state read in the deciding transaction. `parent-unreadable`
+ * is a delegated tombstone whose parent no longer exists; `claim-rotated` is a
+ * non-delegated tombstone (a run-control claim replaced or released), which has
+ * no parent to classify against.
+ */
+export type ClaimSupersededReason =
+  | 'parent-ended'
+  | 'cursor-advanced'
+  | 'resolved'
+  | 'token-reissued'
+  | 'parent-unreadable'
+  | 'claim-rotated';
+
+/** Parent coordinates carried by a superseded delegated claim. */
+export interface SupersededDelegationOrigin {
+  /** Parent run that issued the delegation. */
+  readonly parentRunId: RunId;
+  /** Parent step/substep id the delegation occupied. */
+  readonly parentStepId: string;
+}
 
 /** Result of resolving a claim id to a usable child runbook. */
 export type ClaimIdResolution =
@@ -179,12 +230,13 @@ export type ClaimIdResolution =
     }
   | { readonly status: 'missing'; readonly claimId: ClaimId }
   | { readonly status: 'invalid-secret'; readonly claimId: ClaimId }
-  // NOTE: there is deliberately no `stale` status. It existed only to describe a
-  // half-applied delete under JSON persistence, where a run file and the session
-  // file could disagree. Runs and their claims now live in one database and are
-  // deleted together, so a claim referencing an absent run is an integrity
-  // violation, not an outcome — `getActiveForClaimId` throws rather than
-  // reporting it. Rundown never adapts to invalid persisted state.
+  // A claim whose controlled run state cannot be read. Under one-database
+  // persistence the FK cascade (`claims.controlled_run` ON DELETE CASCADE)
+  // deletes a claim with its run, so this is not reachable through a supported
+  // delete — but the caller-visible refusal taxonomy (superseded plan Task 6)
+  // keeps the typed outcome rather than throwing, so a corrupted or externally
+  // mutated database degrades to a graceful refusal.
+  | { readonly status: 'stale'; readonly claimId: ClaimId; readonly reason: 'missing-state' }
   | {
       readonly status: 'terminal';
       readonly claim: VerifiedClaim;
@@ -194,7 +246,26 @@ export type ClaimIdResolution =
   | {
       readonly status: 'unlinked';
       readonly claim: VerifiedClaim;
-      readonly reason: 'parent-missing' | 'parent-ended' | 'child-linkage-mismatch' | 'stashed';
+      // `parent-ended` is deliberately absent: a parent that ended closed the
+      // delegation, which is a supersession, and it resolves as `superseded`
+      // below with that reason. Keeping both would give one fact two refusals.
+      readonly reason: 'parent-missing' | 'child-linkage-mismatch' | 'stashed';
+    }
+  | {
+      /**
+       * The claim was superseded — either it is a tombstone the parent-side latch
+       * already wrote, or it is still active but its delegation is no longer live
+       * in the committed parent state (the window where the latch deferred the
+       * tombstone because the controlled child held an execution lease).
+       *
+       * Distinct from `missing`: the bearer was real and authority ended. The
+       * holder must not retry the token; it reports to the orchestrator instead.
+       * `delegation` is absent for a non-delegated (run-control) claim.
+       */
+      readonly status: 'superseded';
+      readonly claimId: ClaimId;
+      readonly reason: ClaimSupersededReason;
+      readonly delegation?: SupersededDelegationOrigin;
     };
 
 /** Result of verifying a bearer claim id against persisted session state. */

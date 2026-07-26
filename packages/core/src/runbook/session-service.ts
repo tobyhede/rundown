@@ -29,12 +29,14 @@ import {
   type ClaimLookupKey,
   type ClaimRecord,
   type ClaimRunbookResult,
+  type ClaimSupersededReason,
   type ClaimVerificationResult,
   type DelegationClaimLinkage,
+  type SupersededDelegationOrigin,
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
-import { findSubstepState } from './targeting.js';
+import { classifyDelegationLiveness, findSubstepState } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -158,6 +160,7 @@ export type ClaimSeenRecordResult =
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
+  | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | { readonly status: 'not-stashed'; readonly claim: ClaimRecord }
   | {
       readonly status: 'terminal-child';
@@ -167,9 +170,16 @@ export type UnstashForClaimIdResult =
   | { readonly status: 'child-linkage-mismatch'; readonly claim: ClaimRecord }
   | { readonly status: 'parent-missing'; readonly claim: ClaimRecord }
   | {
-      readonly status: 'parent-ended';
-      readonly claim: ClaimRecord;
-      readonly lifecycle: 'completed' | 'stopped';
+      /**
+       * The claim is no longer authority: either a tombstone the parent-side
+       * latch wrote, or an active row whose delegation has closed in the
+       * committed parent state. Replaces the former `parent-ended` outcome — a
+       * parent that ended closed the delegation, which is one of several ways a
+       * claim gets superseded, and `reason` names which.
+       */
+      readonly status: 'superseded';
+      readonly claimId: ClaimId;
+      readonly reason: ClaimSupersededReason;
     };
 
 /**
@@ -287,6 +297,127 @@ export class SessionService {
    */
   private mutate<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
     return this.manager.mutateSession(work);
+  }
+
+  /**
+   * Describe why a superseded claim stopped being authority.
+   *
+   * The single decision for every path that reports a supersession — the async
+   * `getActiveForClaimId` read (on both its tombstone and its active-row arms)
+   * and the in-transaction `unstashForClaimId` — which differ only in how they
+   * read the parent. Two copies of this mapping would be two places for the
+   * taxonomy to drift. Callers narrow to `closed` first where they must
+   * distinguish an active row's own refusals; this only maps the reason.
+   *
+   * A non-delegated claim has no parent to classify against, and a tombstone
+   * whose delegation still reads live was retired on the claim side (released,
+   * rotated, pruned): both are `claim-rotated`, not a parent-side reason that
+   * did not happen.
+   *
+   * @param record - The tombstoned claim record.
+   * @param parent - Parent state for `record.delegation`, read by the caller in
+   *   its own transaction; ignored for a non-delegated claim.
+   * @returns The supersession reason, plus the parent coordinates when delegated.
+   */
+  private describeSupersession(
+    record: ClaimRecord,
+    parent: RunbookState | null,
+  ): { readonly reason: ClaimSupersededReason; readonly delegation?: SupersededDelegationOrigin } {
+    const { delegation } = record;
+    if (delegation === undefined) {
+      return { reason: 'claim-rotated' };
+    }
+    const liveness = classifyDelegationLiveness(parent, delegation);
+    const origin = {
+      parentRunId: delegation.parentRunId,
+      parentStepId: delegation.parentStepId,
+    };
+    switch (liveness.kind) {
+      case 'closed':
+        return { reason: liveness.reason, delegation: origin };
+      case 'parent-unreadable':
+        return { reason: 'parent-unreadable', delegation: origin };
+      case 'live':
+        return { reason: 'claim-rotated', delegation: origin };
+      default: {
+        const _exhaustive: never = liveness;
+        return _exhaustive;
+      }
+    }
+  }
+
+  /**
+   * The superseded refusal for a *stashed* claim, when supersession is the more
+   * useful of the two true refusals — otherwise null.
+   *
+   * Null for a non-delegated claim (nothing to classify), for a live delegation
+   * (the claim really is just parked, and `rundown pop` will resume it), and for
+   * a terminal child (whose delegation reads `resolved` but which must keep
+   * reporting as terminal evidence rather than as a closed delegation).
+   *
+   * @param record - The active claim record whose child is the stashed run.
+   * @param claimId - The presented bearer, echoed on the refusal.
+   * @returns The superseded resolution, or null to fall through to `stashed`.
+   */
+  private async supersededStashedClaim(
+    record: ClaimRecord,
+    claimId: ClaimId,
+  ): Promise<ClaimIdResolution | null> {
+    const { delegation } = record;
+    if (delegation === undefined) {
+      return null;
+    }
+    const parent = await this.manager.load(delegation.parentRunId);
+    if (classifyDelegationLiveness(parent, delegation).kind !== 'closed') {
+      return null;
+    }
+    const child = await this.manager.load(record.controlledRunId);
+    if (child?.lifecycle === 'completed' || child?.lifecycle === 'stopped') {
+      return null;
+    }
+    return { status: 'superseded', claimId, ...this.describeSupersession(record, parent) };
+  }
+
+  /**
+   * Resolve a bearer whose key is not among the session's active claims.
+   *
+   * Splits "superseded" from "never existed". The parent-side latch tombstones a
+   * claim whose delegation closed, and `loadSession` surfaces only active claims,
+   * so without the by-key read every superseded bearer reports as `missing` —
+   * "Claim id … does not exist", which reads as a mistyped id and invites the
+   * retry the no-retry signal exists to prevent.
+   *
+   * @param parsed - Parsed bearer (lookup key + secret).
+   * @param claimId - The presented bearer, echoed on the refusal.
+   * @returns A `superseded`, `invalid-secret`, or `missing` resolution.
+   */
+  private async resolveInactiveClaim(
+    parsed: ReturnType<typeof parseClaimBearer>,
+    claimId: ClaimId,
+  ): Promise<ClaimIdResolution> {
+    const presented = await this.manager.loadClaim(parsed.claimKey);
+    if (presented === null) {
+      return { status: 'missing', claimId };
+    }
+    // Secret first: a caller who cannot prove the bearer learns no more about a
+    // tombstone than about an active claim (`invalid-secret` already reveals that
+    // the key exists), so naming the supersession widens no oracle.
+    if (!verifyClaimSecret(parsed.secret, presented.record.secretHash)) {
+      return { status: 'invalid-secret', claimId };
+    }
+    if (presented.status === 'active') {
+      // The row is active but was absent from the snapshot this resolution read —
+      // a concurrent insert landing between the two reads. Report it as the
+      // snapshot saw it; the next resolution reads the row.
+      return { status: 'missing', claimId };
+    }
+    const parentRunId = presented.record.delegation?.parentRunId;
+    const parent = parentRunId === undefined ? null : await this.manager.load(parentRunId);
+    return {
+      status: 'superseded',
+      claimId,
+      ...this.describeSupersession(presented.record, parent),
+    };
   }
 
   private findClaimByChildRunId(
@@ -591,19 +722,48 @@ export class SessionService {
     return this.mutate((ctx): ClaimRunbookResult => {
       const { session } = ctx;
       const now = this.now();
+
+      // Claim-side half of the durable latch (R2). Validate the exact delegation
+      // is still live in the parent state read inside THIS transaction, before
+      // any existing-claim refresh or fresh insertion. If the parent commit that
+      // moved past this delegation already landed, refuse — the tombstoned bearer
+      // cannot be resurrected by a later reset. An unreadable parent is refused
+      // with a typed result, not thrown: it is the same FK-impossible corruption
+      // class as `missing-child` below, and `getActiveForClaimId` already reports
+      // it softly as `unlinked` / `parent-missing`. One class, one policy.
+      const parent = ctx.readState(linkage.parentRunId);
+      const liveness = classifyDelegationLiveness(parent, linkage);
+      if (liveness.kind === 'parent-unreadable') {
+        return {
+          status: 'missing-parent',
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+        };
+      }
+      // Terminal evidence outlives the parent-side delegation. Checked before
+      // classification, not after: every terminal child also reads closed on the
+      // parent side (its substep is `done`), so the order is what decides. The
+      // matching terminal-skip in `RunbookStore.invalidateClosedDelegatedClaims`
+      // (`storage/runbook-store.ts`) is what keeps such a claim active for this
+      // read, so the two orderings must stay tied together — checking liveness
+      // first reports `delegation-superseded` for a claim whose real refusal is
+      // the terminal child it can still name. Both are non-retryable; the loss is
+      // diagnostic precision, not safety. `parent-unreadable` stays ahead of
+      // this: it is a corruption signal about the state this read depends on.
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
+      let existingLiveClaim:
+        | { readonly claim: ClaimRecord; readonly state: RunbookState }
+        | undefined;
       if (existingForDelegation !== undefined) {
         const existingState = ctx.readState(existingForDelegation.controlledRunId);
         if (!existingState) {
-          // Unreachable through any supported operation: a claim row is deleted with
-          // the run it controls in one transaction (`claims.controlled_run` FK, ON
-          // DELETE CASCADE). Reaching it means the database was tampered with or its
-          // referential integrity was violated, which is invalid state — fail closed
-          // instead of degrading to a soft `missing-child` outcome.
-          throw new Error(
-            `Runbook state for run ${existingForDelegation.controlledRunId} is missing while claim ${existingForDelegation.claimKey} still references it. ` +
-              'The runbook database is inconsistent. Finish or prune active runbooks and restart.',
-          );
+          // The claim's controlled run state cannot be read. The FK cascade
+          // (`claims.controlled_run` ON DELETE CASCADE) deletes a claim with its
+          // run, so this is not reachable through a supported delete — but the
+          // caller-visible refusal taxonomy (superseded plan Task 6) returns a
+          // typed `missing-child` rather than throwing, so a corrupted database
+          // degrades gracefully.
+          return { status: 'missing-child', childRunId: existingForDelegation.controlledRunId };
         }
         if (existingState.lifecycle === 'completed' || existingState.lifecycle === 'stopped') {
           return {
@@ -612,18 +772,31 @@ export class SessionService {
             lifecycle: existingState.lifecycle,
           };
         }
-        if (!linkageMatchesLinkage(existingState.parentLinkage, linkage)) {
+        existingLiveClaim = { claim: existingForDelegation, state: existingState };
+      }
+
+      if (liveness.kind === 'closed') {
+        return {
+          status: 'delegation-superseded',
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          childRunId,
+        };
+      }
+
+      if (existingLiveClaim !== undefined) {
+        if (!linkageMatchesLinkage(existingLiveClaim.state.parentLinkage, linkage)) {
           return {
             status: 'linkage-mismatch',
-            childRunId: existingForDelegation.controlledRunId,
+            childRunId: existingLiveClaim.claim.controlledRunId,
             incoming: linkage,
-            persisted: existingState.parentLinkage,
+            persisted: existingLiveClaim.state.parentLinkage,
           };
         }
         return {
           status: 'already-claimed',
-          childRunId: existingForDelegation.controlledRunId,
-          claim: existingForDelegation,
+          childRunId: existingLiveClaim.claim.controlledRunId,
+          claim: existingLiveClaim.claim,
         };
       }
 
@@ -704,7 +877,7 @@ export class SessionService {
     const parsed = parseClaimBearer(claimId);
     const session = await this.manager.loadSession();
     if (!Object.hasOwn(session.claims, parsed.claimKey)) {
-      return { status: 'missing', claimId };
+      return this.resolveInactiveClaim(parsed, claimId);
     }
     const record = session.claims[parsed.claimKey];
     if (!verifyClaimSecret(parsed.secret, record.secretHash)) {
@@ -713,19 +886,34 @@ export class SessionService {
     const claim = verifiedClaimFromRecord(record);
 
     if (options.includeStashed !== true && session.stashedRunbookId === record.controlledRunId) {
-      return { status: 'unlinked', claim, reason: 'stashed' };
+      // Supersession outranks the parked-runbook gate. "Run `rundown pop` to
+      // resume" names a recovery that cannot succeed once authority has ended —
+      // `pop` refuses the same claim — so the caller spends a command to reach a
+      // refusal that contradicts the advice it followed. Between two
+      // simultaneously true refusals, the one that ends the caller's work beats
+      // the one that invites more of it.
+      //
+      // Deliberately not hoisted past the checks below: a terminal child still
+      // reports `terminal` (the idempotent confirm-or-conflict contract, whose
+      // delegation also reads closed), and unreadable or diverged child state
+      // still reports its corruption signal with a `prune` remedy.
+      return (
+        (await this.supersededStashedClaim(record, claimId)) ?? {
+          status: 'unlinked',
+          claim,
+          reason: 'stashed',
+        }
+      );
     }
 
     const state = await this.manager.load(record.controlledRunId);
     if (!state) {
-      // Unreachable through any supported operation: a claim row is deleted with
-      // the run it controls in one transaction. Reaching it means the database
-      // was tampered with or its referential integrity was violated, which is
-      // invalid state — fail closed instead of degrading to a soft outcome.
-      throw new Error(
-        `Runbook state for run ${record.controlledRunId} is missing while claim ${parsed.claimKey} still references it. ` +
-          'The runbook database is inconsistent. Finish or prune active runbooks and restart.',
-      );
+      // The claim's controlled run state cannot be read. The FK cascade deletes a
+      // claim with its run, so this is not reachable through a supported delete —
+      // but the caller-visible refusal taxonomy (superseded plan Task 6) returns
+      // a typed `stale` refusal rather than throwing, so a corrupted database
+      // degrades gracefully.
+      return { status: 'stale', claimId, reason: 'missing-state' };
     }
     if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
       return { status: 'terminal', claim, state, lifecycle: state.lifecycle };
@@ -735,12 +923,21 @@ export class SessionService {
     }
 
     if (record.delegation) {
+      // Classify, rather than only checking the parent's lifecycle. The store
+      // tombstone is an optimization; liveness against the committed parent is
+      // the enforcement. The parent-side latch defers supersession while the
+      // controlled child holds an execution lease, so a claim row can still read
+      // `active` after its delegation closed — and if the parent never writes
+      // again, it stays that way. A lifecycle-only check catches `parent-ended`
+      // and misses `cursor-advanced`, letting the bearer report a result into a
+      // delegation the parent has already left.
       const parent = await this.manager.load(record.delegation.parentRunId);
-      if (!parent) {
+      const liveness = classifyDelegationLiveness(parent, record.delegation);
+      if (liveness.kind === 'parent-unreadable') {
         return { status: 'unlinked', claim, reason: 'parent-missing' };
       }
-      if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
-        return { status: 'unlinked', claim, reason: 'parent-ended' };
+      if (liveness.kind === 'closed') {
+        return { status: 'superseded', claimId, ...this.describeSupersession(record, parent) };
       }
     }
 
@@ -1169,7 +1366,26 @@ export class SessionService {
       const parsed = parseClaimBearer(claimId);
       const { session } = ctx;
       if (!Object.hasOwn(session.claims, parsed.claimKey)) {
-        return { status: 'missing-claim', claimId };
+        // Same split as `getActiveForClaimId`: a bearer the parent-side latch
+        // tombstoned is superseded, not unknown. `ctx.claim` reads through the
+        // open transaction, so the tombstone is read under the same snapshot.
+        const presented = ctx.claim(parsed.claimKey);
+        if (
+          presented === null ||
+          presented.status === 'active' ||
+          !verifyClaimSecret(parsed.secret, presented.record.secretHash)
+        ) {
+          return { status: 'missing-claim', claimId };
+        }
+        const parentRunId = presented.record.delegation?.parentRunId;
+        return {
+          status: 'superseded',
+          claimId,
+          reason: this.describeSupersession(
+            presented.record,
+            parentRunId === undefined ? null : ctx.readState(parentRunId),
+          ).reason,
+        };
       }
       const claim = session.claims[parsed.claimKey];
       if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
@@ -1181,15 +1397,12 @@ export class SessionService {
 
       const state = ctx.readState(claim.controlledRunId);
       if (!state) {
-        // Unreachable through any supported operation: a claim row is deleted with
-        // the run it controls in one transaction (`claims.controlled_run` FK, ON
-        // DELETE CASCADE). Reaching it means the database was tampered with or its
-        // referential integrity was violated, which is invalid state — fail closed
-        // instead of degrading to a soft outcome.
-        throw new Error(
-          `Runbook state for run ${claim.controlledRunId} is missing while claim ${claim.claimKey} still references it. ` +
-            'The runbook database is inconsistent. Finish or prune active runbooks and restart.',
-        );
+        // The claim's controlled run state cannot be read. The FK cascade deletes
+        // a claim with its run, so this is not reachable through a supported
+        // delete — but the caller-visible refusal taxonomy (superseded plan
+        // Task 6) returns a typed `missing-child` rather than throwing, so a
+        // corrupted database degrades gracefully.
+        return { status: 'missing-child', childRunId: claim.controlledRunId };
       }
       if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
         return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
@@ -1200,12 +1413,17 @@ export class SessionService {
       if (!claim.delegation) {
         return { status: 'child-linkage-mismatch', claim };
       }
+      // Classified, not lifecycle-checked, for the reason given in
+      // `getActiveForClaimId`: an active row whose delegation has closed must
+      // still refuse, including the `cursor-advanced` case a lifecycle check
+      // cannot see.
       const parent = ctx.readState(claim.delegation.parentRunId);
-      if (!parent) {
+      const liveness = classifyDelegationLiveness(parent, claim.delegation);
+      if (liveness.kind === 'parent-unreadable') {
         return { status: 'parent-missing', claim };
       }
-      if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
-        return { status: 'parent-ended', claim, lifecycle: parent.lifecycle };
+      if (liveness.kind === 'closed') {
+        return { status: 'superseded', claimId, reason: liveness.reason };
       }
 
       session.stashedRunbookId = undefined;

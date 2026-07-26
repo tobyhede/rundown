@@ -17,9 +17,9 @@ scenarios:
     expect:
       result: COMPLETE
       errors:
-        - code: CLAIMED_RUNBOOK_UNAVAILABLE
+        - code: DELEGATION_SUPERSEDED
           command: pass
-          error: parent-ended
+          error: moved past this delegation (parent-ended)
   fail-after-parent-complete:
     description: fail --claim-id fails after the parent has completed
     commands:
@@ -31,9 +31,9 @@ scenarios:
     expect:
       result: COMPLETE
       errors:
-        - code: CLAIMED_RUNBOOK_UNAVAILABLE
+        - code: DELEGATION_SUPERSEDED
           command: fail
-          error: parent-ended
+          error: moved past this delegation (parent-ended)
   goto-after-parent-complete:
     description: goto --claim-id fails after the parent has completed
     commands:
@@ -45,9 +45,9 @@ scenarios:
     expect:
       result: COMPLETE
       errors:
-        - code: CLAIMED_RUNBOOK_UNAVAILABLE
+        - code: DELEGATION_SUPERSEDED
           command: goto
-          error: parent-ended
+          error: moved past this delegation (parent-ended)
   stop-after-parent-complete:
     description: stop --claim-id fails after the parent has completed
     commands:
@@ -59,9 +59,9 @@ scenarios:
     expect:
       result: COMPLETE
       errors:
-        - code: CLAIMED_RUNBOOK_UNAVAILABLE
+        - code: DELEGATION_SUPERSEDED
           command: stop
-          error: parent-ended
+          error: moved past this delegation (parent-ended)
   complete-after-parent-complete:
     description: complete --claim-id fails after the parent has completed
     commands:
@@ -73,15 +73,19 @@ scenarios:
     expect:
       result: COMPLETE
       errors:
-        - code: CLAIMED_RUNBOOK_UNAVAILABLE
+        - code: DELEGATION_SUPERSEDED
           command: complete
-          error: parent-ended
+          error: moved past this delegation (parent-ended)
 ---
 
 # Claimed Child Writes Fail after Parent Completion
 
 Claim-id targeted write commands fail closed when their parent runbook has
-already reached a terminal lifecycle.
+already reached a terminal lifecycle. The refusal is `DELEGATION_SUPERSEDED`
+(RD-825), naming `parent-ended` as the cause: the parent-side latch tombstoned
+the bearer when the parent terminalized, and a tombstoned bearer is superseded,
+not unknown. Reporting it as a claim that does not exist would read as a
+mistyped id and invite a retry that can never succeed.
 
 ## 1. Delegated child
 

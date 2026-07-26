@@ -16,6 +16,7 @@ import {
   patchPersistedRunState,
   seedRawRunState,
 } from '@rundown-org/core/testing/session-fixtures';
+import { makeDelegatedSubstepState } from '@rundown-org/core/testing/delegation-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests` credits the
@@ -411,11 +412,14 @@ describe('stash command', () => {
 
     result = await runCliInProcess(['pop', '--claim-id', claimId], workspace);
     expect(result.exitCode).toBe(1);
+    // The parent ending closed this delegation, so `rd pop` refuses with the same
+    // typed no-retry signal the pass/fail seam gives — not a generic unavailable
+    // envelope, and never "does not exist" (the claim is a real tombstone).
     expect(JSON.parse(result.stdout)).toEqual(
       expect.objectContaining({
         kind: 'error',
-        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-        error: expect.stringContaining('parent runbook has completed'),
+        code: 'DELEGATION_SUPERSEDED',
+        error: expect.stringContaining('moved past this delegation (parent-ended)'),
       }),
     );
     // The refusal must identify the claim by its non-secret lookup key and must
@@ -587,6 +591,21 @@ rd echo "hello"
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       runbookSrc: '# Parent\n\n## 1. Parent step\n- PASS CONTINUE\n',
+      // The parent must carry the delegation on its substep row, because that is
+      // what `rundown delegate` writes and what claim liveness is classified
+      // against. A hand-seeded parent without it is indistinguishable from one
+      // whose cursor advanced past the delegation, and pop correctly refuses it.
+      // Built by the shared factory so the shape cannot drift from the real type.
+      substepStates: [
+        makeDelegatedSubstepState({
+          id: '1',
+          delegation: {
+            tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+            childRunbookPath: 'owned.runbook.md',
+            childRunbookRef: { source: 'project', path: 'owned.runbook.md' },
+          },
+        }),
+      ],
       lifecycle: 'running',
       schemaVersion: 1,
     });

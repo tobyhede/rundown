@@ -35,6 +35,16 @@ export const Errors = {
 
   runbookStopped: (file?: string): RundownError => new RundownError('RUNBOOK_STOPPED', { file }),
 
+  incompatibleStateSchema: (foundVersion: number, expectedVersion: number): RundownError =>
+    new RundownError('INCOMPATIBLE_STATE_SCHEMA', {
+      foundVersion,
+      expectedVersion,
+      message:
+        `found version ${String(foundVersion)}, expected ${String(expectedVersion)}. ` +
+        `Any in-flight runs in this database are unrecoverable — delete ` +
+        `.rundown/rundown.db and restart your runbooks from source`,
+    }),
+
   // Validation
   gotoTargetNotFound: (step: string, substep?: string): RundownError =>
     new RundownError('GOTO_TARGET_NOT_FOUND', { step, substep }),

@@ -6,6 +6,7 @@ import {
   type ClaimId,
   type ClaimIdResolution,
   type ClaimRecord,
+  type ClaimSupersededReason,
   type ClaimVerificationResult,
   type VerifiedClaim,
   type VerifiedClaimAuthority,
@@ -39,6 +40,83 @@ export type UnknownRunRefusal = {
 };
 
 /**
+ * Symbolic error code a stale-claim refusal renders as.
+ *
+ * `DELEGATION_SUPERSEDED` (RD-825) is not interchangeable with the generic
+ * unavailable code: it is the no-retry signal a bearer holder acts on, so the
+ * code travels with the refusal instead of being re-derived per front end.
+ */
+export type StaleClaimRefusalCode = 'CLAIMED_RUNBOOK_UNAVAILABLE' | 'DELEGATION_SUPERSEDED';
+
+/**
+ * Message and code for a claim that is no longer authority.
+ *
+ * Exported so every front end that can present a bearer — the shared claim
+ * target resolution here, and `rd pop`'s unstash refusal, which does not route
+ * through it — renders one wording and one code per cause.
+ *
+ * RD-825 is reserved for the reasons where the *parent* moved past the
+ * delegation — those are the ones carrying the no-retry instruction. A claim
+ * retired on the claim side (released, rotated, pruned) and a claim whose parent
+ * row is gone are not that, and say what they are instead: over-broadening the
+ * superseded code would make "do not retry the token" advice for cases where the
+ * token was never the problem.
+ *
+ * @param claimKey - Already-redacted claim key for the message.
+ * @param reason - Why the claim stopped being authority.
+ * @returns The refusal message and the symbolic code it renders as.
+ */
+export function describeSupersededClaim(
+  claimKey: string,
+  reason: ClaimSupersededReason,
+): { readonly message: string; readonly code: StaleClaimRefusalCode } {
+  switch (reason) {
+    case 'parent-ended':
+    case 'cursor-advanced':
+    case 'resolved':
+    case 'token-reissued':
+      return {
+        message: `Claim id ${claimKey} is superseded: the parent has moved past this delegation (${reason}). Do not retry the token; report the superseded delegation to the orchestrator.`,
+        code: 'DELEGATION_SUPERSEDED',
+      };
+    case 'claim-rotated':
+      return {
+        message: `Claim id ${claimKey} was released or replaced and is no longer authority. Claim the parent's current delegation instead of reusing this id.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      };
+    case 'parent-unreadable':
+      return {
+        message: `Claim id ${claimKey} is superseded and its parent run no longer exists. Recover with \`rundown prune\` and restart from source.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      };
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * A presented claim that cannot be a target, with the message and code its
+ * front end renders.
+ *
+ * One kind rather than one per cause: every consumer refuses identically, and
+ * only the envelope differs. `code` is required so each construction site names
+ * the cause it means — omission would silently default a real supersession back
+ * to "unavailable".
+ */
+export type StaleClaimRefusal = {
+  /** Discriminant. */
+  readonly kind: 'stale_claim';
+  /** The presented bearer, echoed for the caller. */
+  readonly claimId: ClaimId;
+  /** Operator-facing refusal message (claim id already redacted). */
+  readonly message: string;
+  /** Symbolic error code for the emitted envelope. */
+  readonly code: StaleClaimRefusalCode;
+};
+
+/**
  * Resolved target for any command that acts on the active or an explicitly
  * claimed runbook (goto, stop, complete, stash, status, artifact, collect).
  *
@@ -62,7 +140,7 @@ export type CommandTargetResolution =
     }
   | { readonly kind: 'default'; readonly state: RunbookState }
   | { readonly kind: 'none' }
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   | {
       /** Ready resolution for an explicit `--run` target on the session stack. */
       readonly kind: 'run';
@@ -103,7 +181,7 @@ export type TransitionTargetResolution =
     }
   | { readonly kind: 'default'; readonly state: RunbookState }
   | { readonly kind: 'none' }
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
@@ -303,12 +381,18 @@ export async function resolveClaimTarget(
         message: `Claim id ${claimKey} points at a ${claimed.lifecycle} child runbook.`,
       };
     case 'missing':
-      return { kind: 'stale_claim', claimId, message: `Claim id ${claimKey} does not exist.` };
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message: `Claim id ${claimKey} does not exist.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      };
     case 'invalid-secret':
       return {
         kind: 'stale_claim',
         claimId,
         message: `Claim id ${claimKey} is not valid for this session.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
       };
     case 'unlinked':
       return {
@@ -318,6 +402,16 @@ export async function resolveClaimTarget(
           claimed.reason === 'stashed'
             ? `Claim id ${claimKey} is currently stashed. Run \`rundown pop\` with its claim id to resume.`
             : `Claim id ${claimKey} is no longer linked to an active delegation (${claimed.reason}).`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      };
+    case 'superseded':
+      return { ...describeSupersededClaim(claimKey, claimed.reason), kind: 'stale_claim', claimId };
+    case 'stale':
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message: `Claim id ${claimKey} no longer has readable runbook state (${claimed.reason}). Recover with \`rundown prune\` and restart from source.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
       };
     default: {
       const _exhaustive: never = claimed;
@@ -688,7 +782,7 @@ export type TerminalTargetResolution =
       readonly claim: VerifiedClaim;
       readonly state: RunbookState;
     }
-  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | StaleClaimRefusal
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;

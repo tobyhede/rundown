@@ -379,10 +379,27 @@ describe('guarded state writes', () => {
     const key = await mintClaim(state.id, '2'.repeat(32));
     const cap = await store.captureAuthority(state.id, assertClaimLookupKey(key));
     if (cap.kind !== 'captured') throw new Error('capture failed');
-    // Minting another claim bumps the run's claim_generation.
+    // Rotate the claim — supersede the first, then mint its replacement. This is
+    // the production rotate path and the only way to have a second active claim
+    // under claims_one_active_per_run; both writes bump the run's claim_generation.
+    await store.transaction((txn) => {
+      txn.tombstoneClaim(assertClaimLookupKey(key));
+    });
     await mintClaim(state.id, '3'.repeat(32));
     const result = await store.saveState(cap.authority, { ...state, stepName: 'x' });
     expect(result.kind).toBe('claim_superseded');
+  });
+
+  it('rejects a second active claim on the same controlled run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await mintClaim(state.id, 'a'.repeat(32));
+    // Pin the column the uniqueness is on, not a bare /UNIQUE/: node:sqlite
+    // reports the offending column rather than the index name, and asserting the
+    // column keeps the test from passing on some unrelated UNIQUE violation.
+    await expect(mintClaim(state.id, 'b'.repeat(32))).rejects.toThrow(
+      /UNIQUE constraint failed: claims\.controlled_run/,
+    );
   });
 
   it('refuses execution_in_progress when the run is owned', async () => {
@@ -518,6 +535,60 @@ describe('tombstone preservation (#519 lastSeenAt survives)', () => {
           .get<{ readonly last_seen_at: string }>({ k: key2 })?.last_seen_at,
     );
     expect(seen).toBe(now);
+  });
+
+  // `loadClaim` is the read that tells a superseded bearer apart from an unknown
+  // one, so the tombstone-visible case is its whole reason to exist. Tested here,
+  // in the store's own suite, and not only through `SessionService`: a scoped
+  // mutation run over this file selects no test outside it — it reported "Ran 0.00
+  // tests per mutant" and then marked every mutant in `readClaim` as *survived*,
+  // which is a false negative no session-level test can correct.
+  describe('loadClaim (by key, tombstones included)', () => {
+    it('returns an active claim with its status', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      const key = await mintClaim(state.id, 'b1'.repeat(16));
+
+      const presented = await store.loadClaim(assertClaimLookupKey(key));
+
+      expect(presented?.status).toBe('active');
+      expect(presented?.record.claimKey).toBe(key);
+      expect(presented?.record.controlledRunId).toBe(state.id);
+    });
+
+    it('returns a superseded tombstone rather than reporting it absent', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      const key = await mintClaim(state.id, 'b2'.repeat(16));
+      await store.transaction((txn) => {
+        txn.tombstoneClaim(assertClaimLookupKey(key));
+      });
+
+      const presented = await store.loadClaim(assertClaimLookupKey(key));
+
+      // `loadSession` deliberately omits this row; `loadClaim` deliberately does
+      // not. Losing the distinction is what makes a superseded bearer read as a
+      // claim id that never existed.
+      expect((await store.loadSession()).claims[key]).toBeUndefined();
+      expect(presented?.status).toBe('superseded');
+      expect(presented?.record.claimKey).toBe(key);
+    });
+
+    it('returns null for a key no row carries', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      await mintClaim(state.id, 'b3'.repeat(16));
+
+      const absent = await store.loadClaim(assertClaimLookupKey(`rdclk_${'b4'.repeat(16)}`));
+
+      expect(absent).toBeNull();
+    });
+
+    // No test stages an out-of-union `status`: the column's CHECK constraint
+    // forbids the value, so no SQL the store can issue produces that row.
+    // `assertClaimStatus` remains as the edge validation this file requires of
+    // every raw row — defence against an externally-corrupted database, which is
+    // not reachable from here.
   });
 
   it('records claim activity without bumping claim_generation', async () => {
@@ -742,17 +813,27 @@ describe('session persistence and run listing', () => {
   });
 
   it('inserts a genuinely new session claim at its controlled run current generation', async () => {
-    const state = await newState();
-    await store.createRun(state);
-    // An existing claim so the run's generation is already non-zero.
-    const existing = await mintClaim(state.id, 'f1'.repeat(16));
+    // Two runs, because claims_one_active_per_run permits only one active claim
+    // per run: the persisted claim holds `held`, the fresh one targets `target`.
+    const held = await newState();
+    const target = await newState();
+    await store.createRun(held);
+    await store.createRun(target);
+    const existing = await mintClaim(held.id, 'f1'.repeat(16));
     const existingRecord = makeClaimRecord({
       claimKey: assertClaimLookupKey(existing),
-      controlledRunId: state.id,
+      controlledRunId: held.id,
+    });
+    // Churn `target`'s generation so it is already non-zero at insert time: the
+    // insert bumps it once, the tombstone once more.
+    const retired = await mintClaim(target.id, 'f4'.repeat(16));
+    await store.transaction((txn) => {
+      txn.tombstoneClaim(assertClaimLookupKey(retired));
     });
     const fresh = assertClaimLookupKey(`rdclk_${'f2'.repeat(16)}`);
-    const freshRecord = makeClaimRecord({ claimKey: fresh, controlledRunId: state.id });
-    const before = (await counters(state.id)).claimGeneration;
+    const freshRecord = makeClaimRecord({ claimKey: fresh, controlledRunId: target.id });
+    const before = (await counters(target.id)).claimGeneration;
+    expect(before).toBeGreaterThan(0);
 
     await store.saveSession({
       defaultStack: [],
@@ -764,7 +845,7 @@ describe('session persistence and run listing', () => {
     expect(session.claims[fresh]).toBeDefined();
     // Only the new claim was written: one insert, one generation bump, and the
     // issuance metadata records the generation observed at insert time.
-    expect((await counters(state.id)).claimGeneration).toBe(before + 1);
+    expect((await counters(target.id)).claimGeneration).toBe(before + 1);
     const issued = await store.read(
       (txn) =>
         txn.tx
@@ -855,6 +936,39 @@ describe('session persistence and run listing', () => {
     expect((await counters(stashed.id)).claimGeneration).toBe(before);
   });
 
+  it('refuses the whole session save when a dropped claim controls an executing run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const key = await mintClaim(state.id, 'a7'.repeat(16));
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+
+    // `applySession` tombstones dropped claims unconditionally, and `status` is
+    // inside claims_guard_update's column list, so the trigger aborts the save
+    // while the controlled run holds a lease. Fail-closed is correct here, and
+    // deliberately the opposite reaction to `invalidateClosedDelegatedClaims`,
+    // which skips an executing child: that deferral is safe only because the
+    // claim-side latch enforces independently and `afterAuthoritativeStateWrite`
+    // re-drives the tombstone. `applySession` has neither, and `readSession`
+    // selects `WHERE status = 'active'` — so a skipped claim would resurrect into
+    // the next snapshot and never drop, leaking authority the caller revoked.
+    await expect(store.saveSession({ defaultStack: [], claims: {} })).rejects.toThrow(
+      /execution_in_progress/,
+    );
+
+    // The abort rolls the whole transaction back: the claim is untouched, so the
+    // drop is refused rather than half-applied.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: key })?.status,
+    );
+    expect(status).toBe('active');
+    expect((await store.loadSession()).claims[key]).toBeDefined();
+  });
+
   it('bumps claim_generation on every real stash transition and on no no-op save', async () => {
     const a = await newState();
     const b = await newState();
@@ -911,6 +1025,48 @@ describe('session persistence and run listing', () => {
       takeOwnership(txn.tx, state.id);
     });
     await expect(store.deleteRun(state.id)).rejects.toThrow(/execution_in_progress/);
+  });
+
+  it('refuses to delete an unowned parent run while its delegated child is executing', async () => {
+    const parent = await newState();
+    const child = await newState();
+    await store.createRun(parent);
+    await store.createRun(child);
+    const claimKey = assertClaimLookupKey(`rdclk_${'a8'.repeat(16)}`);
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({
+          claimKey,
+          controlledRunId: child.id,
+          delegation: {
+            childRunId: child.id,
+            parentRunId: parent.id,
+            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            parentStepId: '2',
+            parentStep: '2',
+            parentFrameKey: buildFrameKey('2'),
+            parentEntry: 1,
+          },
+        }),
+        assertClaimGeneration(0),
+      );
+      takeOwnership(txn.tx, child.id);
+    });
+
+    // `rd prune` shape: a terminal parent deleted while its delegated child is
+    // mid-command. The parent is unowned, so `deleteRun`'s own `exec_token IS
+    // NULL` predicate passes — but `claims.parent_run_id` is ON DELETE SET NULL
+    // and sits inside claims_guard_update's column list, so the FK cascade issues
+    // a guarded UPDATE on the CHILD's claim and aborts. That predicate guards the
+    // deleted run's own lease and cannot see a delegated child's. The refusal is
+    // therefore the RAW abort, not `deleteRun`'s typed throw — anchored so a later
+    // move to the typed variant shows up here rather than passing silently.
+    await expect(store.deleteRun(parent.id)).rejects.toThrow(/^execution_in_progress$/);
+
+    // The abort rolls back the whole delete: neither run nor the claim is lost.
+    expect(await store.loadRun(parent.id)).not.toBeNull();
+    expect(await store.loadRun(child.id)).not.toBeNull();
+    expect((await store.loadSession()).claims[claimKey].delegation?.parentRunId).toBe(parent.id);
   });
 });
 
@@ -1644,18 +1800,71 @@ describe('session reconstruction', () => {
     const deadKey = assertClaimLookupKey(`rdclk_${'e2'.repeat(16)}`);
     const record = makeClaimRecord({ claimKey: activeKey, controlledRunId: state.id });
     await store.transaction((txn) => {
-      txn.insertClaim(record, assertClaimGeneration(0));
+      // The dead claim is tombstoned BEFORE the active one is inserted: both
+      // control the same run, and claims_one_active_per_run permits only one
+      // active row per run (tombstones are unconstrained).
       txn.insertClaim(
         makeClaimRecord({ claimKey: deadKey, controlledRunId: state.id }),
         assertClaimGeneration(0),
       );
       txn.tombstoneClaim(deadKey);
+      txn.insertClaim(record, assertClaimGeneration(0));
     });
 
     const session = await store.loadSession();
     expect(Object.keys(session.claims)).toEqual([activeKey]);
     expect(session.claims[activeKey]).toEqual(record);
     expect(session.claims[activeKey]).not.toHaveProperty('delegation');
+  });
+
+  it('defers supersession while the controlled child is executing, instead of aborting the parent commit', async () => {
+    const parent = await newState();
+    const child = await newState();
+    await store.createRun(parent);
+    await store.createRun(child);
+    const childClaim = assertClaimLookupKey(`rdclk_${'c7'.repeat(16)}`);
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({
+          claimKey: childClaim,
+          controlledRunId: child.id,
+          delegation: {
+            childRunId: child.id,
+            parentRunId: parent.id,
+            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            parentStepId: '2',
+            parentStep: '2',
+            parentFrameKey: buildFrameKey('2'),
+            parentEntry: 1,
+          },
+        }),
+        assertClaimGeneration(0),
+      );
+      takeOwnership(txn.tx, child.id);
+    });
+
+    const parentClaim = await mintClaim(parent.id, 'c8'.repeat(16));
+    const cap = await store.captureAuthority(parent.id, assertClaimLookupKey(parentClaim));
+    if (cap.kind !== 'captured') throw new Error('capture failed');
+
+    // The parent terminalizes, so this delegation reads `parent-ended` and the
+    // R2 latch wants to supersede the child's claim. `status` is inside
+    // claims_guard_update's column list, so attempting it while the child holds
+    // an execution token aborts with execution_in_progress — taking THIS
+    // parent's unrelated commit down with it. The parent write must succeed.
+    const saved = await store.saveState(cap.authority, { ...parent, lifecycle: 'completed' });
+    expect(saved.kind).toBe('committed');
+
+    // Deferred, not lost: the row stays active, and the claim-side half of the
+    // latch (SessionService.claimRunbook) refuses the closed delegation without
+    // consulting this status.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: childClaim })?.status,
+    );
+    expect(status).toBe('active');
   });
 
   it('restores the delegation linkage of a delegated claim', async () => {

@@ -23,7 +23,7 @@ import {
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';
-import type { ClaimRecord } from './claim-id.js';
+import type { ClaimLookupKey, ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { getErrorMessage, isError, isNodeError } from '../errors.js';
@@ -39,6 +39,7 @@ import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import type {
+  PresentedClaim,
   RunbookStore,
   SessionMutationTxn,
   StateMutationResult,
@@ -872,6 +873,20 @@ export class RunbookStateManager {
       );
     }
     return result.data;
+  }
+
+  /**
+   * Load a single claim by key, tombstones included.
+   *
+   * {@link loadSession} surfaces only active claims. This is the read a caller
+   * uses to tell a superseded bearer apart from an unknown one.
+   *
+   * @param key - Claim lookup key derived from the presented bearer.
+   * @returns The claim and its status, or null when no row carries that key.
+   */
+  async loadClaim(key: ClaimLookupKey): Promise<PresentedClaim | null> {
+    const store = await this.store();
+    return store.loadClaim(key);
   }
 
   /**

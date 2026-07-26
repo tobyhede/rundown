@@ -330,12 +330,18 @@ export function registerDelegateCommand(program: Command): void {
                 process.exitCode = 1;
                 break;
               case 'stale_claim':
+                // Core owns the cause-specific message AND the code (a
+                // parent-superseded claim renders RD-825, not the generic
+                // unavailable code).
+                renderStaleClaimRefusal(output, outcome.message, outcome.code);
+                process.exitCode = 1;
+                break;
               case 'terminal_claim':
                 // Core owns the cause-specific message (shared with pass/fail).
-                // Both render as CLAIMED_RUNBOOK_UNAVAILABLE: delegate has no
-                // confirm/conflict notion for a terminal claim — there is no
-                // expected result to reconcile a lifecycle against.
-                renderStaleClaimRefusal(output, outcome.message);
+                // A terminal claim renders CLAIMED_RUNBOOK_UNAVAILABLE: delegate
+                // has no confirm/conflict notion for one — there is no expected
+                // result to reconcile a lifecycle against.
+                renderStaleClaimRefusal(output, outcome.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
                 process.exitCode = 1;
                 break;
               case 'run_target_mismatch':
@@ -441,12 +447,18 @@ export function registerDelegateCommand(program: Command): void {
               process.exitCode = 1;
               break;
             case 'stale_claim':
+              // Core owns the cause-specific message AND the code (a
+              // parent-superseded claim renders RD-825, not the generic
+              // unavailable code).
+              renderStaleClaimRefusal(output, outcome.message, outcome.code);
+              process.exitCode = 1;
+              break;
             case 'terminal_claim':
               // Core owns the cause-specific message (shared with pass/fail).
-              // Both render as CLAIMED_RUNBOOK_UNAVAILABLE: delegate has no
-              // confirm/conflict notion for a terminal claim — there is no
-              // expected result to reconcile a lifecycle against.
-              renderStaleClaimRefusal(output, outcome.message);
+              // A terminal claim renders CLAIMED_RUNBOOK_UNAVAILABLE: delegate
+              // has no confirm/conflict notion for one — there is no expected
+              // result to reconcile a lifecycle against.
+              renderStaleClaimRefusal(output, outcome.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
               process.exitCode = 1;
               break;
             case 'invalid_index':

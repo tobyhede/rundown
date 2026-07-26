@@ -24,7 +24,7 @@ import {
 } from '../../src/runbook/claim-id.js';
 import type { Runbook, RunId, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import { linkageFor, assertClaimed } from './claim-test-helpers.js';
+import { linkageFor, assertClaimed, claimLiveDelegation } from './claim-test-helpers.js';
 import { patchPersistedClaim } from '../../src/testing/session-fixtures.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
@@ -239,7 +239,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
       parentLinkage: linkage,
     });
     await sessionService.pushRunbook(parent.id);
-    const delegated = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+    const delegated = assertClaimed(
+      await claimLiveDelegation(sessionService, manager, child.id, linkage),
+    );
 
     expect(delegated.claim.lastSeenAt).toBe(delegated.claim.issuedAt);
   });
@@ -376,7 +378,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       runbookPath: 'child.md',
       parentLinkage: linkageFor(runId, 'a'),
     });
-    assertClaimed(await sessionService.claimRunbook(child.id, linkageFor(runId, 'a')));
+    assertClaimed(
+      await claimLiveDelegation(sessionService, manager, child.id, linkageFor(runId, 'a')),
+    );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -656,7 +660,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     });
     const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
     const { claimId: claimB, claim: recordB } = assertClaimed(
-      await sessionService.claimRunbook(child.id, linkage),
+      await claimLiveDelegation(sessionService, manager, child.id, linkage),
     );
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -671,6 +675,11 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(Date.parse(after.claims[recordA.claimKey].lastSeenAt)).toBeGreaterThan(
       Date.parse(recordA.lastSeenAt),
     );
+    // Caller A's liveness was recorded, target B's was not. Completing the child
+    // resolves its parent delegation, but the R2 latch retains a claim whose
+    // controlled child is terminal: B survives as terminal evidence with its mark
+    // untouched. Asserting B is absent would pin the pre-correction latch, and
+    // would pass just as well if B had been refreshed and then dropped.
     expect(after.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
   });
 });

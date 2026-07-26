@@ -24,7 +24,11 @@ import {
   type SqljsDriverOptions,
   type SqljsPersistStage,
 } from '../../../src/runbook/storage/sqljs-driver.js';
-import { ensureSchema, IncompatibleSchemaError } from '../../../src/runbook/storage/schema.js';
+import {
+  ensureSchema,
+  IncompatibleSchemaError,
+  SCHEMA_VERSION,
+} from '../../../src/runbook/storage/schema.js';
 import {
   isWebContainerRuntime,
   selectStorageRuntime,
@@ -900,7 +904,10 @@ describe('positive driver selection', () => {
       (tx) =>
         tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>()?.user_version,
     );
-    expect(version).toBe(1);
+    // Asserted against the constant, not a literal: this pair has already been
+    // flipped 1<->2 once by the replayed commits, and a literal makes every
+    // future DDL bump a two-file change that silently rots if missed.
+    expect(version).toBe(SCHEMA_VERSION);
   });
 
   it('opens a schema-ensured sql.js driver when that runtime is selected', async () => {
@@ -913,7 +920,10 @@ describe('positive driver selection', () => {
       (tx) =>
         tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>()?.user_version,
     );
-    expect(version).toBe(1);
+    // Asserted against the constant, not a literal: this pair has already been
+    // flipped 1<->2 once by the replayed commits, and a literal makes every
+    // future DDL bump a two-file change that silently rots if missed.
+    expect(version).toBe(SCHEMA_VERSION);
   });
 
   it('disposes the opened driver when schema initialization fails', async () => {

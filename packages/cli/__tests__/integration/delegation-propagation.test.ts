@@ -854,17 +854,19 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(await withRunTarget(['pass', '--text'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
-      // Now claim and complete child - parent already done.
-      // Drop --text so we can capture claim_id, then thread it through pass.
+      // Now try to claim - parent already done. The durable latch supersedes a
+      // delegation whose parent has terminalized, so the token is refused rather
+      // than minting authority that could never report a result anywhere.
       result = await runCliInProcess(`claim ${token}`, workspace);
-      expect(result.exitCode).toBe(0);
-      const claimAction = findActionOutput(result.stdout);
-      expect(claimAction).not.toBeNull();
-      const claimId = String(claimAction!.claim_id);
-
-      result = await runCliInProcess(['pass', '--claim-id', claimId, '--text'], workspace);
-      // Should succeed even though parent is already done
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        code?: string;
+        details?: { parentRunId?: string };
+      };
+      expect(payload.code).toBe('DELEGATION_SUPERSEDED');
+      // Typed as superseded, never as a missing or unavailable child: the bearer
+      // must not be retried, and the cause must name the parent.
+      expect(payload.details?.parentRunId).toBe(parentState!.id);
     });
 
     it('handles concurrent delegation completions gracefully', async () => {

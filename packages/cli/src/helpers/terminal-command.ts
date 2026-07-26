@@ -132,7 +132,7 @@ export async function renderTerminalOutcome(
       output.noActiveRunbook(command);
       return false;
     case 'stale_claim':
-      return renderStaleClaimRefusal(output, outcome.message);
+      return renderStaleClaimRefusal(output, outcome.message, outcome.code);
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, command);
     case 'claim_grant_required':

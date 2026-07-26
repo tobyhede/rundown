@@ -5,10 +5,12 @@ import {
   RunbookStateManager,
   SessionService,
   countNumberedSteps,
+  describeSupersededClaim,
   redactClaimId,
   type ActionBlockData,
   type ClaimId,
   type RunbookState,
+  type StaleClaimRefusalCode,
   type UnstashForClaimIdResult,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
@@ -18,26 +20,35 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
-function claimPopUnavailableMessage(
+function claimPopRefusal(
   claimId: ClaimId,
   result: Exclude<UnstashForClaimIdResult, { status: 'restored' }>,
-): string {
+): { readonly message: string; readonly code: StaleClaimRefusalCode } {
   // User- and log-facing refusal: identify the claim by its non-secret lookup
   // key, never the bearer `claimId` (which carries the live secret segment).
   const claimKey = redactClaimId(claimId);
+  const unavailable = (message: string) =>
+    ({ message, code: 'CLAIMED_RUNBOOK_UNAVAILABLE' }) as const;
   switch (result.status) {
     case 'missing-claim':
-      return `Claim id ${claimKey} does not exist.`;
+      return unavailable(`Claim id ${claimKey} does not exist.`);
+    case 'missing-child':
+      return unavailable(
+        `Claim id ${claimKey} no longer has readable child runbook state. Recover with \`rundown prune\` and restart from source.`,
+      );
     case 'not-stashed':
-      return `Claim id ${claimKey} is not currently stashed.`;
+      return unavailable(`Claim id ${claimKey} is not currently stashed.`);
     case 'terminal-child':
-      return `Claim id ${claimKey} points at a ${result.lifecycle} child runbook.`;
+      return unavailable(`Claim id ${claimKey} points at a ${result.lifecycle} child runbook.`);
     case 'child-linkage-mismatch':
-      return `Claim id ${claimKey} is no longer linked to its child runbook.`;
+      return unavailable(`Claim id ${claimKey} is no longer linked to its child runbook.`);
     case 'parent-missing':
-      return `Claim id ${claimKey} parent runbook is missing.`;
-    case 'parent-ended':
-      return `Claim id ${claimKey} parent runbook has ${result.lifecycle}.`;
+      return unavailable(`Claim id ${claimKey} parent runbook is missing.`);
+    case 'superseded':
+      // Core owns this wording and code, shared with the pass/fail/goto seam:
+      // `rd pop` refusing a superseded bearer must carry the same RD-825
+      // no-retry signal, not a generic unavailable envelope.
+      return describeSupersededClaim(claimKey, result.reason);
     default: {
       const _exhaustive: never = result;
       return _exhaustive;
@@ -70,10 +81,8 @@ export function registerPopCommand(program: Command): void {
           if (claimTarget.claimId !== undefined) {
             const restoreResult = await sessionService.unstashForClaimId(claimTarget.claimId);
             if (restoreResult.status !== 'restored') {
-              output.error(
-                claimPopUnavailableMessage(claimTarget.claimId, restoreResult),
-                'CLAIMED_RUNBOOK_UNAVAILABLE',
-              );
+              const refusal = claimPopRefusal(claimTarget.claimId, restoreResult);
+              output.error(refusal.message, refusal.code);
               output.flush();
               process.exitCode = 1;
               return;
