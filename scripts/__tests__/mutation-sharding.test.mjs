@@ -66,39 +66,22 @@ test('plan: a dispatch for core emits only balanced, disjoint core shards', () =
 // dedicated unit test. That per-file isolation is what makes core affordable on a
 // PR (`testFiles` is a whole-run setting, so a shared shard cannot give each file
 // a tight test scope).
-test('plan: a pull_request emits one shard per changed file with its own test scope', () => {
-  // HEAD~1 is a real commit in this repo, so the planner has a reachable base
-  // without depending on which branch the suite runs on.
-  const { include } = plan({ EVENT_NAME: 'pull_request', BASE_REF: 'HEAD~1' });
-  for (const entry of include) {
-    assert.equal(typeof entry.mutate, 'string');
-    assert.ok(entry.mutate.length > 0, 'every PR shard must carry a --mutate scope');
-    assert.doesNotMatch(entry.mutate, /[{}]/, 'PR scope must use the comma form, never braces');
-    // `scopes` is newline-separated so the workflow can read it with
-    // `while IFS= read -r` and stay correct for paths containing spaces. It holds
-    // one entry per RANGE, so there are at least as many scopes as files.
-    assert.equal(typeof entry.scopes, 'string');
-    const scopes = entry.scopes.split('\n').filter(Boolean);
-    const files = entry.label.split(' ').filter(Boolean);
-    assert.ok(scopes.length >= files.length, 'every file needs at least one scope');
-    for (const scope of scopes) {
-      assert.match(scope, /^src\//, 'PR shards mutate package-relative src paths');
-    }
-    // The scorer is driven from `scopes`, so they must describe the same thing
-    // Stryker was given — otherwise the gate scores mutants the run never touched.
-    assert.deepEqual(
-      [...scopes].sort(),
-      [...entry.mutate.split(',')].sort(),
-      'scopes must match the --mutate scope exactly',
-    );
-    // Every scope belongs to a file this shard actually claims.
-    for (const scope of scopes) {
-      assert.ok(
-        files.includes(scope.split(':')[0]),
-        `scope ${scope} is not one of this shard's files`,
-      );
-    }
-  }
+
+// The pull_request planner is exercised at two levels. Its per-shard MAPPING is
+// pure and lives in the lib, tested there against synthetic groupings
+// (`toShardEntry`, `partitionPrEntries`). What is worth asserting against the real
+// script is only what depends on the environment: that it fails closed, and that a
+// no-op diff plans nothing.
+//
+// Deliberately NOT tested here: shard shape against a real git range. Those
+// assertions needed `HEAD~1`, which does not exist under the `scenarios` job's
+// shallow `fetch-depth: 1` checkout, and they went vacuous whenever the diff
+// touched no package source — a green check asserting nothing.
+test('plan: a pull_request with no changes against its base plans nothing', () => {
+  // HEAD is reachable in any checkout, shallow or not, and merge-base(HEAD, HEAD)
+  // is HEAD — so the diff is empty by construction, everywhere.
+  const { include } = plan({ EVENT_NAME: 'pull_request', BASE_REF: 'HEAD' });
+  assert.deepEqual(include, [], 'an empty diff must plan no shards');
 });
 
 test('plan: a pull_request fails closed on an unreachable base ref', () => {
@@ -106,15 +89,6 @@ test('plan: a pull_request fails closed on an unreachable base ref', () => {
     () => plan({ EVENT_NAME: 'pull_request', BASE_REF: 'origin/definitely-not-a-ref' }),
     'an unreachable base must raise, not plan an empty always-green matrix',
   );
-});
-
-test('plan: a pull_request honours MAX_PR_SHARDS by batching', () => {
-  const { include } = plan({
-    EVENT_NAME: 'pull_request',
-    BASE_REF: 'HEAD~1',
-    MAX_PR_SHARDS: '1',
-  });
-  assert.ok(include.length <= 1, 'MAX_PR_SHARDS must cap the fan-out');
 });
 
 test('plan: respects the config mutate exclusions (no output/cli/index)', () => {
@@ -326,33 +300,3 @@ test('merge: never uploads a module with a missing shard, and still fails', () =
 // A shard may only name --testFiles when EVERY file in it has a dedicated test:
 // supplying the flag disables --findRelatedTests for the whole group, so a
 // dedicated-test-less file would be judged against another file's tests.
-test('plan: a pull_request shard names testFiles only if every file has one', () => {
-  for (const cap of ['1', '2', '16']) {
-    const { include } = plan({
-      EVENT_NAME: 'pull_request',
-      BASE_REF: 'HEAD~1',
-      MAX_PR_SHARDS: cap,
-    });
-    for (const entry of include) {
-      if (!entry.testFiles) continue;
-      assert.equal(
-        entry.testFiles.split(',').filter(Boolean).length,
-        entry.label.split(' ').filter(Boolean).length,
-        `cap ${cap}: a shard naming testFiles must name one per file`,
-      );
-    }
-  }
-});
-
-test('plan: a pull_request never plans more shards than MAX_PR_SHARDS', () => {
-  for (const cap of [1, 2, 3, 16]) {
-    const { include } = plan({
-      EVENT_NAME: 'pull_request',
-      BASE_REF: 'HEAD~1',
-      MAX_PR_SHARDS: String(cap),
-    });
-    // The one-shard-per-pool floor may exceed a very small cap; it can never
-    // exceed the number of pools, which is bounded by packages x test-scope kinds.
-    assert.ok(include.length <= Math.max(cap, 8), `cap ${cap} planned ${include.length} shards`);
-  }
-});

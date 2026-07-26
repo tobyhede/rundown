@@ -40,7 +40,7 @@ import {
   buildScope,
   git,
   mutateArg,
-  scopeParts,
+  toShardEntry,
   partitionPrEntries,
   mutatePatterns,
   reachable,
@@ -183,43 +183,16 @@ async function planPullRequest() {
   const grouped = partitionPrEntries(items, maxPrShards);
   // Number shards per package so artifact names stay unique and readable.
   const perPackage = new Map();
+  const shardCounts = new Map();
+  for (const group of grouped) {
+    const name = group[0].pkg.package;
+    shardCounts.set(name, (shardCounts.get(name) ?? 0) + 1);
+  }
   return grouped.map((group) => {
-    const pkg = group[0].pkg;
-    const n = (perPackage.get(pkg.package) ?? 0) + 1;
-    perPackage.set(pkg.package, n);
-    // `--testFiles` is all-or-nothing for a shard: supplying it switches the jest
-    // runner's `--findRelatedTests` off for EVERY mutant in the group. So a shard
-    // may only carry it when every file in the group has a dedicated test —
-    // otherwise the dedicated-test-less file would be judged against another
-    // file's tests, inventing no-coverage and survivor results.
-    //
-    // partitionPrEntries already pools by test-scope kind, so a mixed group should
-    // be unreachable; asserting the invariant here keeps it true regardless of how
-    // the grouping evolves.
-    const testFiles = group.every(({ entry }) => entry.testFile)
-      ? group.map(({ entry }) => entry.testFile).join(',')
-      : '';
-    return {
-      package: pkg.package,
-      dir: pkg.dir,
-      module: pkg.module,
-      shard: n,
-      shardCount: grouped.filter((g) => g[0].pkg.package === pkg.package).length,
-      mutate: group.map(({ entry }) => mutateArg(entry)).join(','),
-      // Empty when no file in the shard has a dedicated test: the workflow then
-      // omits --testFiles and the jest runner falls back to --findRelatedTests.
-      testFiles,
-      // Newline-separated so the workflow can read it with `while IFS= read -r`
-      // and stay correct for paths containing spaces; `label` is space-joined and
-      // is for display only.
-      //
-      // `scopes` carries the SAME `file` / `file:start-end` scopes that went to
-      // `--mutate`, because the scorer needs them too: an incremental report
-      // retains baseline mutants outside the range, and scoring the whole file
-      // would dilute a changed-line survivor below the floor.
-      scopes: group.flatMap(({ entry }) => scopeParts(entry)).join('\n'),
-      label: group.map(({ entry }) => entry.file).join(' '),
-    };
+    const name = group[0].pkg.package;
+    const n = (perPackage.get(name) ?? 0) + 1;
+    perPackage.set(name, n);
+    return toShardEntry(group, n, shardCounts.get(name));
   });
 }
 

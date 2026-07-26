@@ -468,6 +468,50 @@ export function partitionPrEntries(items, maxShards) {
 }
 
 /**
+ * Render one shard grouping as a GitHub Actions matrix entry.
+ *
+ * Pure on purpose: this is the mapping the workflow actually consumes, and
+ * keeping it out of the planner script means it can be tested against synthetic
+ * groupings instead of by spawning the planner against real git history — which a
+ * shallow CI checkout cannot supply, and which yields nothing to assert whenever a
+ * PR touches no package source.
+ *
+ * @param {Array<{pkg: {package: string, dir: string, module: string}, entry: object}>} group - one shard's entries.
+ * @param {number} shard - 1-based shard number within its package.
+ * @param {number} shardCount - total shards for that package.
+ * @returns {{package: string, dir: string, module: string, shard: number, shardCount: number, mutate: string, testFiles: string, scopes: string, label: string}}
+ */
+export function toShardEntry(group, shard, shardCount) {
+  const { pkg } = group[0];
+  return {
+    package: pkg.package,
+    dir: pkg.dir,
+    module: pkg.module,
+    shard,
+    shardCount,
+    mutate: group.map(({ entry }) => mutateArg(entry)).join(','),
+    // `--testFiles` is all-or-nothing for a shard: naming it switches the jest
+    // runner's `--findRelatedTests` off for EVERY mutant in the group, so a shard
+    // may only carry it when every file has a dedicated test. Otherwise the
+    // dedicated-test-less file would be judged against another file's tests,
+    // inventing no-coverage and survivor results. partitionPrEntries already pools
+    // by test-scope kind so a mixed group should be unreachable; asserting it here
+    // keeps the invariant true however the grouping later evolves.
+    testFiles: group.every(({ entry }) => entry.testFile)
+      ? group.map(({ entry }) => entry.testFile).join(',')
+      : '',
+    // The SAME scopes that went to `--mutate`, one per line, because the scorer
+    // needs them too: an incremental report retains baseline mutants outside the
+    // range, and scoring the whole file would dilute a changed-line survivor.
+    // Newline-separated so the workflow can read it with `while IFS= read -r` and
+    // stay correct for paths containing spaces.
+    scopes: group.flatMap(({ entry }) => scopeParts(entry)).join('\n'),
+    // Space-joined, for display only.
+    label: group.map(({ entry }) => entry.file).join(' '),
+  };
+}
+
+/**
  * A cheap proxy for an entry's mutation cost, used to balance shards. Mutant
  * count scales with the mutated line count, not the file size — which is why the
  * line-count-per-file weighting is wrong for this purpose: `src/paths.ts` is 223

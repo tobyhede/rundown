@@ -18,6 +18,7 @@ import {
   partitionPrEntries,
   scopeParts,
   sourceForTestPath,
+  toShardEntry,
 } from '../lib/mutation-scope.mjs';
 
 test('PACKAGES covers the four mutation-tested packages with dirs, modules, filters', () => {
@@ -354,4 +355,93 @@ test('partitionPrEntries never allocates more shards than a group has entries', 
   for (const group of partitionPrEntries(items, 16)) {
     assert.ok(group.length >= 1, 'an empty shard would be a wasted CI job');
   }
+});
+
+// The matrix-entry mapping is pure: given a shard grouping it must produce the
+// exact fields the workflow consumes. Testing it here rather than by spawning the
+// planner keeps it deterministic — the planner-level equivalents depended on git
+// ancestry that a shallow CI checkout does not have, and went vacuous whenever a
+// PR touched no package source.
+test('toShardEntry: scopes describe exactly the same scope as --mutate', () => {
+  const group = [
+    {
+      pkg: { package: 'core', dir: 'packages/core', module: 'core' },
+      entry: {
+        file: 'src/a.ts',
+        lines: 900,
+        whole: false,
+        ranges: [
+          { start: 10, end: 20 },
+          { start: 44, end: 44 },
+        ],
+        testFile: '__tests__/a.test.ts',
+      },
+    },
+  ];
+  const shard = toShardEntry(group, 1, 1);
+  assert.deepEqual(shard.scopes.split('\n'), shard.mutate.split(','));
+  assert.deepEqual(shard.scopes.split('\n'), ['src/a.ts:10-20', 'src/a.ts:44-44']);
+  assert.doesNotMatch(shard.mutate, /[{}]/, 'must be the comma form, never braces');
+  assert.equal(shard.label, 'src/a.ts');
+  assert.equal(shard.package, 'core');
+  assert.equal(shard.dir, 'packages/core');
+});
+
+// `--testFiles` is all-or-nothing for a shard: naming it switches
+// --findRelatedTests off for EVERY mutant in the group, so a file without a
+// dedicated test would be judged against another file's tests.
+test('toShardEntry: names testFiles only when every file in the shard has one', () => {
+  const pkg = { package: 'core', dir: 'packages/core', module: 'core' };
+  const withTest = (file, testFile) => ({
+    pkg,
+    entry: { file, lines: 10, whole: true, ranges: [], testFile },
+  });
+
+  const allHave = toShardEntry([withTest('src/a.ts', '__tests__/a.test.ts')], 1, 1);
+  assert.equal(allHave.testFiles, '__tests__/a.test.ts');
+
+  const mixed = toShardEntry(
+    [withTest('src/a.ts', '__tests__/a.test.ts'), withTest('src/b.ts', null)],
+    1,
+    1,
+  );
+  assert.equal(mixed.testFiles, '', 'a mixed shard must fall back to findRelatedTests');
+
+  const noneHave = toShardEntry([withTest('src/b.ts', null)], 1, 1);
+  assert.equal(noneHave.testFiles, '');
+});
+
+test('toShardEntry: a batched shard concatenates every file scope and label', () => {
+  const pkg = { package: 'cli', dir: 'packages/cli', module: 'cli' };
+  const shard = toShardEntry(
+    [
+      {
+        pkg,
+        entry: {
+          file: 'src/a.ts',
+          lines: 10,
+          whole: true,
+          ranges: [],
+          testFile: '__tests__/a.test.ts',
+        },
+      },
+      {
+        pkg,
+        entry: {
+          file: 'src/b.ts',
+          lines: 900,
+          whole: false,
+          ranges: [{ start: 5, end: 6 }],
+          testFile: '__tests__/b.test.ts',
+        },
+      },
+    ],
+    2,
+    3,
+  );
+  assert.equal(shard.shard, 2);
+  assert.equal(shard.shardCount, 3);
+  assert.equal(shard.label, 'src/a.ts src/b.ts');
+  assert.deepEqual(shard.scopes.split('\n'), ['src/a.ts', 'src/b.ts:5-6']);
+  assert.equal(shard.testFiles, '__tests__/a.test.ts,__tests__/b.test.ts');
 });
