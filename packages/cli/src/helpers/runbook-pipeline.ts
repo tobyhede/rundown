@@ -1494,8 +1494,8 @@ export async function claimAndLaunch(
     // name (`stepId`) — not `freshParent.step` — so a top-level cursor advance
     // (parent moved on without a `done` substep row) surfaces here as
     // `delegation-superseded`. Scoped to `cursor-advanced` only: parent
-    // termination (handled above), cancellation (4c), and replay/resolution
-    // (4b) keep their more specific diagnostics, and `token-reissued` cannot
+    // termination (handled above), cancellation (4b), and replay/resolution
+    // (4c) keep their more specific diagnostics, and `token-reissued` cannot
     // occur since `freshSubstep` was matched on this exact token. `childRunId`
     // is omitted — no child is guaranteed on the fresh path and none may be
     // synthesized. Core's claim transaction stays authoritative for the rest.
@@ -1515,7 +1515,18 @@ export async function claimAndLaunch(
       };
     }
 
-    // 4b. Refuse replay if already claimed
+    // 4b. Check for cancellation before replaying a linked child.
+    if (freshDelegation.cancelledAt) {
+      return {
+        ok: false,
+        reason: 'delegation-cancelled',
+        parentRunId: freshParent.id,
+        stepId: substepId ?? stepId,
+        cancelledAt: freshDelegation.cancelledAt,
+      };
+    }
+
+    // 4c. Refuse replay if already claimed
     if (freshDelegation.childRunId) {
       const delegationFrameKey = freshSubstep.frameKey;
       const freshLinkage: DelegationLinkage = {
@@ -1546,17 +1557,6 @@ export async function claimAndLaunch(
         parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
       });
-    }
-
-    // 4c. Check for cancellation
-    if (freshDelegation.cancelledAt) {
-      return {
-        ok: false,
-        reason: 'delegation-cancelled',
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
-        cancelledAt: freshDelegation.cancelledAt,
-      };
     }
 
     // 4d. Orphan reconciliation: scan for child run with matching tokenHash

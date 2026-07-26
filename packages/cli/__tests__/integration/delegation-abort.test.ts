@@ -8,6 +8,7 @@ import {
   parseConcatenatedJson,
   readRunbookState,
   runCli,
+  runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
@@ -188,6 +189,47 @@ describe('Delegation abort integration', () => {
     const blocked = runCli(`pass --claim-id ${parentClaimId}`, workspace);
     expect(blocked.exitCode).toBe(1);
     expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
+  });
+
+  it('replaying the original token after force-abort reports DELEGATION_CANCELLED', async () => {
+    await writeParentRunbook();
+    await writeChildRunbook();
+
+    const created = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+    expect(created.exitCode).toBe(0);
+    const started = parseConcatenatedJson(created.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    expect(typeof started?.claim_id).toBe('string');
+    const entered = parseConcatenatedJson(created.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'step_entered',
+    );
+    const token = (
+      entered?.delegateFrontier as ReadonlyArray<{ readonly token?: unknown }> | undefined
+    )?.[0]?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const parentClaimId = String(started!.claim_id);
+
+    const claimed = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claimed.exitCode).toBe(0);
+
+    const aborted = await runCliInProcess(
+      `abort ${token} --claim-id ${parentClaimId} --force`,
+      workspace,
+    );
+    expect(aborted.exitCode).toBe(0);
+
+    const replayed = await runCliInProcess(`claim ${token}`, workspace);
+    expect(replayed.exitCode).toBe(1);
+    expect(parseCliJsonObject(replayed.stdout || replayed.stderr)).toEqual(
+      expect.objectContaining({ kind: 'error', code: 'DELEGATION_CANCELLED' }),
+    );
   });
 
   it('force-aborts a resolved failed linked child without RD-812', async () => {
