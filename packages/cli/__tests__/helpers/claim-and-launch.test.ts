@@ -736,6 +736,78 @@ describe('claimAndLaunch', () => {
     }
   });
 
+  it('returns delegation-superseded before launch when the fresh parent cursor advanced', async () => {
+    const parentState = {
+      id: RUN_ID,
+      step: '2',
+      variables: {},
+      substepStates: [
+        {
+          id: 'delegate',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const claimRunbook = mockClaimRunbookSuccess();
+    const create = mockFn<RunbookStateManager['create']>();
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create,
+      },
+      sessionService: {
+        claimRunbook,
+      },
+    });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: 'delegate',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+    mockHappyDelegationLock();
+    jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
+      kind: 'closed',
+      reason: 'cursor-advanced',
+    } as ReturnType<typeof core.classifyDelegationLiveness>);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'delegation-superseded',
+      parentRunId: RUN_ID,
+      stepId: 'delegate',
+    });
+    expect(core.classifyDelegationLiveness).toHaveBeenCalledTimes(1);
+    const [classifiedParent, linkage] = jest.mocked(core.classifyDelegationLiveness).mock.calls[0];
+    expect(classifiedParent).toBe(parentState);
+    expect(linkage.parentStep).toBe('1');
+    expect(linkage.parentStepId).toBe('delegate');
+    expect(linkage.parentFrameKey).toBe('1|0');
+    expect(linkage.tokenHash).toBe(MOCK_TOKEN_HASH);
+    expect(create).not.toHaveBeenCalled();
+    expect(claimRunbook).not.toHaveBeenCalled();
+  });
+
   it('returns TOKEN_CANCELLED when delegation is cancelled', async () => {
     const ctx = makeCtx();
 
@@ -776,6 +848,10 @@ describe('claimAndLaunch', () => {
     // Mock manager.load returning fresh state with cancelled delegation
     // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
+    jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
+      kind: 'closed',
+      reason: 'token-reissued',
+    });
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1899,6 +1975,156 @@ describe('claimAndLaunch', () => {
     expect(mockClaimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
     // Lock must be released even on claim failure
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('returns delegation-superseded and rolls back a fresh child when the claim race loses', async () => {
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: 'delegate',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: 'delegate',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+    mockHappyDelegationLock();
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/tmp/test/child.md',
+      source: 'project',
+      sourceRoot: '/tmp/test',
+    });
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
+      status: 'delegation-superseded',
+      parentRunId: RUN_ID,
+      parentStepId: 'delegate',
+      childRunId: NEW_CHILD_ID,
+    });
+    const releaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
+      status: 'released',
+      runbookId: NEW_CHILD_ID,
+      removedFromDefaultStack: false,
+      nextDefaultRunbookId: null,
+    } satisfies ReleaseRunbookResult);
+    const update = mockFn<RunbookStateManager['update']>().mockResolvedValue(
+      parentState as unknown as RunbookState,
+    );
+    const removeChild = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+    const initializeState = mockFn<() => Promise<RunbookState>>();
+    const rollbackParentState = {
+      ...parentState,
+      substepStates: [
+        {
+          ...parentState.substepStates[0],
+          delegation: {
+            ...parentState.substepStates[0].delegation,
+            childRunId: NEW_CHILD_ID,
+          },
+        },
+      ],
+    };
+    const load = mockFn<() => Promise<RunbookState>>()
+      .mockResolvedValueOnce(parentState as unknown as RunbookState)
+      .mockResolvedValue(rollbackParentState as unknown as RunbookState);
+    const ctx = makeCtx({
+      manager: {
+        load,
+        create: mockFn<
+          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        update,
+        delete: removeChild,
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: { initializeState },
+      sessionService: {
+        claimRunbook,
+        releaseRunbook,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+      lifecycleService: {
+        ensureActiveEntry: mockFn<
+          () => Promise<{
+            state: { activeEntry: number; activeFrameKey: string };
+            frameKey: string;
+            entry: number;
+          }>
+        >().mockResolvedValue({
+          state: { activeEntry: 1, activeFrameKey: '1|0' },
+          frameKey: '1|0',
+          entry: 1,
+        }),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'delegation-superseded',
+      parentRunId: RUN_ID,
+      stepId: 'delegate',
+    });
+    expect(claimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
+    expect(releaseRunbook).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(update).toHaveBeenCalledWith(
+      RUN_ID,
+      expect.objectContaining({
+        substepStates: [
+          expect.objectContaining({
+            delegation: expect.objectContaining({ childRunId: null }),
+          }),
+        ],
+      }),
+    );
+    expect(removeChild).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(initializeState).not.toHaveBeenCalled();
+    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('keeps parent-missing typed when the parent is deleted after fresh launch, rather than RD-820', async () => {
