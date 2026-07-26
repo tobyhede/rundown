@@ -8,8 +8,6 @@ import { join } from 'node:path';
 import {
   PACKAGES,
   RANGE_MERGE_GAP,
-  TEST_ONLY_WHOLE_FILE_LIMIT,
-  WHOLE_FILE_LINE_LIMIT,
   buildScope,
   changedRanges,
   dedicatedTestPath,
@@ -18,9 +16,11 @@ import {
   mutatedLines,
   partitionPrEntries,
   scopeParts,
-  sourceForTestPath,
   toShardEntry,
+  toTestOnlyEntry,
 } from '../lib/mutation-scope.mjs';
+
+// cspell:ignore gpgsign
 
 test('PACKAGES covers the four mutation-tested packages with dirs, modules, filters', () => {
   assert.deepEqual(
@@ -103,17 +103,6 @@ test('dedicatedTestPath rejects paths outside src/ and non-TypeScript files', ()
   assert.equal(dedicatedTestPath('src/paths.js'), null);
 });
 
-test('sourceForTestPath inverts dedicatedTestPath', () => {
-  for (const src of ['src/paths.ts', 'src/runbook/state.ts']) {
-    assert.equal(sourceForTestPath(dedicatedTestPath(src)), src);
-  }
-});
-
-test('sourceForTestPath rejects non-dedicated test paths', () => {
-  assert.equal(sourceForTestPath('__tests__/helpers/util.ts'), null);
-  assert.equal(sourceForTestPath('src/paths.test.ts'), null);
-});
-
 // Stryker splits --mutate on commas BEFORE brace expansion, so the comma form is
 // the only form that scopes; a brace pattern degrades to patterns matching
 // nothing and the run reports success having mutated zero files.
@@ -159,14 +148,6 @@ test('mutatedLines counts mutated lines, not file size', () => {
       ],
     }),
     12,
-  );
-});
-
-test('the whole-file thresholds match the documented budgets', () => {
-  assert.equal(WHOLE_FILE_LINE_LIMIT, 300);
-  assert.ok(
-    TEST_ONLY_WHOLE_FILE_LIMIT > WHOLE_FILE_LINE_LIMIT,
-    'a test-only change has no ranges, so its whole-file budget must be the looser one',
   );
 });
 
@@ -241,7 +222,7 @@ test('mutateArg is scopeParts joined with commas', () => {
 // deletion is exactly the test change most worth catching. The default `d` diff
 // filter excludes deletions, so the deleted test was never mapped back to its
 // source and the planner reported a clean empty scope.
-test('buildScope maps a DELETED dedicated test back to its source', () => {
+test('buildScope preserves a deleted dedicated test as a package-level test change', () => {
   const dir = mkdtempSync(join(tmpdir(), 'scope-del-'));
   try {
     mkdirSync(join(dir, 'pkg/src'), { recursive: true });
@@ -258,13 +239,62 @@ test('buildScope maps a DELETED dedicated test back to its source', () => {
         deletedTests: ['pkg/__tests__/a.test.ts'],
       },
     });
-    assert.equal(scope.entries.length, 1, 'the deleted test must pull in its source file');
-    assert.equal(scope.entries[0].file, 'src/a.ts');
-    assert.equal(scope.entries[0].whole, true, 'no source lines changed, so mutate the file whole');
-    // The test no longer exists, so it must not be handed to --testFiles; the
-    // jest runner falls back to --findRelatedTests.
-    assert.equal(scope.entries[0].testFile, null);
-    assert.match(scope.entries[0].reason, /deleted/);
+    assert.deepEqual(scope.entries, []);
+    assert.deepEqual(scope.testChanges, ['__tests__/a.test.ts']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildScope preserves non-conventional tests for native incremental analysis', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scope-test-only-'));
+  try {
+    mkdirSync(join(dir, 'pkg/src'), { recursive: true });
+    writeFileSync(join(dir, 'pkg/src/a.ts'), 'export const a = 1;\n');
+    const scope = buildScope({
+      repoRoot: dir,
+      pkg: { dir: 'pkg' },
+      base: 'IGNORED',
+      patterns: ['src/**/*.ts'],
+      diffs: {
+        changedSrc: [],
+        addedSrc: [],
+        deletedSrc: [],
+        changedTests: ['pkg/__tests__/integration/workflow.test.ts'],
+        deletedTests: [],
+      },
+    });
+    assert.deepEqual(scope.entries, []);
+    assert.deepEqual(scope.testChanges, ['__tests__/integration/workflow.test.ts']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildScope reports deleted sources instead of silently omitting them', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scope-source-delete-'));
+  try {
+    mkdirSync(join(dir, 'pkg/src'), { recursive: true });
+    const scope = buildScope({
+      repoRoot: dir,
+      pkg: { dir: 'pkg' },
+      base: 'IGNORED',
+      patterns: ['src/**/*.ts'],
+      diffs: {
+        changedSrc: [],
+        addedSrc: [],
+        deletedSrc: ['pkg/src/removed.ts'],
+        changedTests: [],
+        deletedTests: [],
+      },
+    });
+    assert.deepEqual(scope.entries, []);
+    assert.deepEqual(scope.skipped, [
+      {
+        file: 'src/removed.ts',
+        why: 'source file was deleted; there is no current code to mutate',
+      },
+    ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -380,12 +410,51 @@ test('toShardEntry: scopes describe exactly the same scope as --mutate', () => {
     },
   ];
   const shard = toShardEntry(group, 1, 1);
+  assert.equal(shard.kind, 'source');
+  assert.equal(shard.testScope, 'dedicated');
   assert.deepEqual(shard.scopes.split('\n'), shard.mutate.split(','));
   assert.deepEqual(shard.scopes.split('\n'), ['src/a.ts:10-20', 'src/a.ts:44-44']);
   assert.doesNotMatch(shard.mutate, /[{}]/, 'must be the comma form, never braces');
   assert.equal(shard.label, 'src/a.ts');
   assert.equal(shard.package, 'core');
   assert.equal(shard.dir, 'packages/core');
+});
+
+test('toShardEntry: related mode drops dedicated testFiles for the whole shard', () => {
+  const pkg = { package: 'core', dir: 'packages/core', module: 'core' };
+  const group = [
+    {
+      pkg,
+      entry: {
+        file: 'src/a.ts',
+        whole: false,
+        ranges: [{ start: 3, end: 4 }],
+        testFile: '__tests__/a.test.ts',
+      },
+    },
+  ];
+
+  const shard = toShardEntry(group, 1, 1, 'related');
+  assert.equal(shard.kind, 'source');
+  assert.equal(shard.testScope, 'related');
+  assert.equal(shard.testFiles, '');
+});
+
+test('toTestOnlyEntry emits a package-level native incremental shard', () => {
+  const pkg = { package: 'core', dir: 'packages/core', module: 'core' };
+  assert.deepEqual(toTestOnlyEntry(pkg, ['__tests__/integration/workflow.test.ts']), {
+    kind: 'test-only',
+    testScope: 'incremental',
+    package: 'core',
+    dir: 'packages/core',
+    module: 'core',
+    shard: 1,
+    shardCount: 1,
+    mutate: '',
+    testFiles: '',
+    scopes: '',
+    label: '__tests__/integration/workflow.test.ts',
+  });
 });
 
 // `--testFiles` is all-or-nothing for a shard: naming it switches
@@ -460,6 +529,7 @@ function makeRepo() {
   run(['init', '--quiet', '--initial-branch=main']);
   run(['config', 'user.email', 'test@example.com']);
   run(['config', 'user.name', 'Test']);
+  run(['config', 'commit.gpgsign', 'false']);
   mkdirSync(join(dir, 'pkg/src'), { recursive: true });
   mkdirSync(join(dir, 'pkg/__tests__'), { recursive: true });
   writeFileSync(join(dir, 'pkg/src/a.ts'), 'export const a = 1;\n');
@@ -491,6 +561,8 @@ test('buildScope: an UNSTAGED source edit is invisible to CI but seen locally', 
     const local = scopeOf(dir, base, true);
     assert.equal(local.entries.length, 1);
     assert.equal(local.entries[0].file, 'src/a.ts');
+    assert.equal(local.entries[0].whole, false, 'an existing small file must stay range-scoped');
+    assert.deepEqual(local.entries[0].ranges, [{ start: 1, end: 1 }]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -526,20 +598,14 @@ test('buildScope: an UNTRACKED new source file is seen locally, and mutated whol
   }
 });
 
-test('buildScope: an uncommitted test DELETION maps back to its source locally', () => {
+test('buildScope: an uncommitted test deletion becomes a package-level test change locally', () => {
   const { dir, base } = makeRepo();
   try {
     rmSync(join(dir, 'pkg/__tests__/a.test.ts'));
     assert.deepEqual(scopeOf(dir, base, false).entries, []);
     const local = scopeOf(dir, base, true);
-    assert.equal(local.entries.length, 1);
-    assert.equal(local.entries[0].file, 'src/a.ts');
-    assert.equal(
-      local.entries[0].testFile,
-      null,
-      'the deleted test cannot be a --testFiles target',
-    );
-    assert.match(local.entries[0].reason, /deleted/);
+    assert.deepEqual(local.entries, []);
+    assert.deepEqual(local.testChanges, ['__tests__/a.test.ts']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -548,13 +614,9 @@ test('buildScope: an uncommitted test DELETION maps back to its source locally',
 test('buildScope: local ranges come from the working tree, not the last commit', () => {
   const { dir } = makeRepo();
   try {
-    // A file big enough to be range-scoped rather than mutated whole. It must
-    // exist AT the base commit: a file added after the base is genuinely new
-    // relative to it, and is then correctly mutated whole rather than ranged.
-    const lines = Array.from(
-      { length: WHOLE_FILE_LINE_LIMIT + 50 },
-      (_, i) => `export const v${i} = ${i};`,
-    );
+    // The file must exist AT the base commit: a file added after the base is
+    // genuinely new relative to it, and is correctly mutated whole.
+    const lines = Array.from({ length: 350 }, (_, i) => `export const v${i} = ${i};`);
     writeFileSync(join(dir, 'pkg/src/big.ts'), `${lines.join('\n')}\n`);
     execFileSync('git', ['add', '-A'], { cwd: dir });
     execFileSync('git', ['commit', '--quiet', '-m', 'add big'], { cwd: dir });
@@ -566,7 +628,7 @@ test('buildScope: local ranges come from the working tree, not the last commit',
     const local = scopeOf(dir, base, true);
     const entry = local.entries.find((e) => e.file === 'src/big.ts');
     assert.ok(entry, 'the edited file must be scoped');
-    assert.equal(entry.whole, false, 'a large file must be range-scoped');
+    assert.equal(entry.whole, false, 'an existing file must be range-scoped');
     assert.ok(
       entry.ranges.some((r) => r.start <= 101 && r.end >= 101),
       `the uncommitted edit at line 101 must be in ${JSON.stringify(entry.ranges)}`,

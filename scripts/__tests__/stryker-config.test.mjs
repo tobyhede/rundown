@@ -126,6 +126,11 @@ for (const configPath of configs) {
     );
   });
 
+  test(`${configPath} disables the aggregate break threshold only for scoped runs`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_SCOPED: 'true' });
+    assert.equal(config.thresholds?.break, null);
+  });
+
   test(`${configPath} defaults ignoreStatic to false for exhaustive fidelity (issue #485)`, async () => {
     const config = await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: undefined });
     // The producer run (mutation.yml) sets no env, so static mutants MUST be

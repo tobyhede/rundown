@@ -30,7 +30,7 @@
 // `file:start-end` range) list passed straight to `stryker run --mutate`. PR
 // entries additionally carry `testFiles` and a human-readable `label`.
 
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { globSync } from 'glob';
@@ -39,8 +39,8 @@ import {
   PACKAGES,
   buildScope,
   git,
-  mutateArg,
   toShardEntry,
+  toTestOnlyEntry,
   partitionPrEntries,
   mutatePatterns,
   reachable,
@@ -53,6 +53,12 @@ const pushBase = process.env.PUSH_BASE ?? '';
 const baseRef = process.env.BASE_REF ?? '';
 const maxShardLines = Number.parseInt(process.env.MAX_SHARD_LINES ?? '', 10) || 9000;
 const maxPrShards = Number.parseInt(process.env.MAX_PR_SHARDS ?? '', 10) || 16;
+const testScope = process.env.TEST_SCOPE ?? 'dedicated';
+const summaryPath = process.env.SUMMARY_PATH ?? '';
+const notices = [];
+if (testScope !== 'dedicated' && testScope !== 'related') {
+  throw new Error(`TEST_SCOPE must be 'dedicated' or 'related', got '${testScope}'`);
+}
 
 /**
  * Which packages this event should run. Schedule and push cover every package;
@@ -163,24 +169,41 @@ async function planPullRequest() {
   process.stderr.write(`pull_request diff base: ${base}\n`);
   /** @type {Array<{pkg: object, entry: object}>} */
   const items = [];
+  const testOnly = [];
   for (const pkg of PACKAGES) {
     const patterns = await mutatePatterns(repoRoot, pkg.dir);
     const scope = buildScope({ repoRoot, pkg, base, patterns });
     for (const file of scope.excluded) {
       process.stderr.write(`  ${pkg.package}/${file}: excluded by stryker.config.mjs mutate\n`);
+      notices.push(`${pkg.package}/${file}: excluded by the package mutation configuration`);
     }
     for (const { file, why } of scope.skipped) {
       process.stderr.write(`  ${pkg.package}/${file}: NOT SCORED — ${why}\n`);
+      notices.push(`${pkg.package}/${file}: not scored — ${why}`);
     }
     for (const entry of scope.entries) items.push({ pkg, entry });
+    if (scope.entries.length === 0 && scope.testChanges.length > 0) {
+      testOnly.push(toTestOnlyEntry(pkg, scope.testChanges));
+    } else if (scope.entries.length > 0 && scope.testChanges.length > 0) {
+      process.stderr.write(
+        `  ${pkg.package}: source and test changes are mixed; the ${testScope} source tier runs, ` +
+          'and test-only regression attribution is not independently evaluated.\n',
+      );
+      notices.push(
+        `${pkg.package}: source and test changes are mixed; the ${testScope} source tier ran, ` +
+          'but test-only regression attribution was not independently evaluated',
+      );
+    }
   }
-  if (items.length > maxPrShards) {
+  const sourceShardCap = Math.max(1, maxPrShards - testOnly.length);
+  if (items.length > sourceShardCap) {
     process.stderr.write(
-      `${items.length} changed file(s) exceeds MAX_PR_SHARDS=${maxPrShards}; batching. ` +
+      `${items.length} changed file(s) exceeds the ${sourceShardCap} source shard slot(s) ` +
+        `remaining under MAX_PR_SHARDS=${maxPrShards}; batching. ` +
         `Batched shards run the union of their files' tests per mutant, so they cost more.\n`,
     );
   }
-  const grouped = partitionPrEntries(items, maxPrShards);
+  const grouped = partitionPrEntries(items, sourceShardCap);
   // Number shards per package so artifact names stay unique and readable.
   const perPackage = new Map();
   const shardCounts = new Map();
@@ -188,12 +211,14 @@ async function planPullRequest() {
     const name = group[0].pkg.package;
     shardCounts.set(name, (shardCounts.get(name) ?? 0) + 1);
   }
-  return grouped.map((group) => {
+  const sourceEntries = grouped.map((group) => {
     const name = group[0].pkg.package;
     const n = (perPackage.get(name) ?? 0) + 1;
     perPackage.set(name, n);
-    return toShardEntry(group, n, shardCounts.get(name));
+    return toShardEntry(group, n, shardCounts.get(name), testScope);
   });
+  sourceEntries.push(...testOnly);
+  return sourceEntries;
 }
 
 const include = [];
@@ -261,6 +286,23 @@ const out = process.env.GITHUB_OUTPUT;
 if (out) {
   appendFileSync(out, `matrix=${JSON.stringify(matrix)}\n`);
   appendFileSync(out, `empty=${empty}\n`);
+}
+if (eventName === 'pull_request' && summaryPath) {
+  const htmlEscape = (value) =>
+    String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/`/g, '&#96;')
+      .replace(/\r?\n/g, ' ');
+  const lines = ['#### ℹ️ Mutation scope plan', ''];
+  if (include.length === 0 && notices.length === 0) {
+    lines.push('_No eligible source or test changes in this PR._');
+  } else {
+    lines.push(`Source test selection: <code>${htmlEscape(testScope)}</code>.`);
+    for (const notice of notices) lines.push(`- ⚠️ ${htmlEscape(notice)}`);
+  }
+  writeFileSync(summaryPath, `${lines.join('\n')}\n`);
 }
 process.stderr.write(`mutation shard plan (${eventName}):\n${summary || '(no shards)'}\n`);
 if (!out) process.stdout.write(`${JSON.stringify(matrix, null, 2)}\n`);

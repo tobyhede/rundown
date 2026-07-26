@@ -48,21 +48,6 @@ export const PACKAGES = [
 ];
 
 /**
- * Files at or below this many lines are mutated whole rather than reduced to
- * changed-line ranges. Whole-file `--mutate` on a large module is a full run
- * wearing a scoped flag; ranges keep the mutant count proportional to the change.
- */
-export const WHOLE_FILE_LINE_LIMIT = 300;
-
-/**
- * A source file reached only because its dedicated test changed has no changed
- * lines of its own, so it must be mutated whole. Above this size that is too
- * expensive to be worth doing on an advisory PR run, and the planner reports it
- * as skipped rather than silently dropping it.
- */
-export const TEST_ONLY_WHOLE_FILE_LIMIT = 600;
-
-/**
  * Changed-line ranges closer together than this many lines are merged into one
  * range. Keeps `--mutate` short without widening the scope meaningfully.
  */
@@ -158,20 +143,6 @@ export function dedicatedTestPath(srcRel) {
 }
 
 /**
- * The inverse of {@link dedicatedTestPath}: the source file a dedicated test
- * covers.
- *
- * @param {string} testRel - package-relative test path.
- * @returns {string | null} the paired source path, or null when `testRel` is not
- *   a conventional dedicated test.
- */
-export function sourceForTestPath(testRel) {
-  if (!testRel.startsWith('__tests__/') || !testRel.endsWith('.test.ts')) return null;
-  const inner = testRel.slice('__tests__/'.length).replace(/\.test\.ts$/, '.ts');
-  return `src/${inner}`;
-}
-
-/**
  * Resolve a file's dedicated test, if it exists on disk.
  *
  * @param {string} repoRoot - absolute repo root.
@@ -260,13 +231,10 @@ export function untrackedFiles(pathspec, cwd) {
 /**
  * Build the per-file mutation scope for one package.
  *
- * Entries come from two sources:
- *  1. changed source files — reduced to changed-line ranges, or mutated whole
- *     when the file is new or small;
- *  2. source files whose dedicated test changed but whose own source did not —
- *     mutated whole, because a test change can only be judged against the
- *     module's full mutant set, and bounded by
- *     {@link TEST_ONLY_WHOLE_FILE_LIMIT}.
+ * Source changes are reduced to changed-line ranges, except newly added files,
+ * which are mutated whole. Test changes are returned separately so callers can
+ * use Stryker's native incremental test differ instead of guessing source/test
+ * ownership from file names.
  *
  * @param {object} params - build parameters.
  * @param {string} params.repoRoot - absolute repo root.
@@ -274,7 +242,7 @@ export function untrackedFiles(pathspec, cwd) {
  * @param {string} params.base - diff base commit-ish.
  * @param {boolean} [params.wholeFile] - mutate whole files, ignoring line ranges.
  * @param {string[]} params.patterns - the package's Stryker mutate patterns.
- * @returns {{entries: Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>, excluded: string[], skipped: Array<{file: string, why: string}>}}
+ * @returns {{entries: Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>, excluded: string[], skipped: Array<{file: string, why: string}>, testChanges: string[]}}
  */
 export function buildScope({
   repoRoot,
@@ -298,6 +266,7 @@ export function buildScope({
   const {
     changedSrc,
     addedSrc,
+    deletedSrc,
     changedTests,
     // Deletions need their OWN filter: the default `d` filter EXCLUDES deleted
     // paths, so a PR that only deletes a dedicated test looked like no change at
@@ -306,11 +275,21 @@ export function buildScope({
   } = diffs ?? {
     changedSrc: [...changedFiles(base, srcPath, 'd', opts), ...untrackedSrc],
     addedSrc: [...changedFiles(base, srcPath, 'A', opts), ...untrackedSrc],
+    deletedSrc: changedFiles(base, srcPath, 'D', opts),
     changedTests: [...changedFiles(base, testPath, 'd', opts), ...untrackedTests],
     deletedTests: changedFiles(base, testPath, 'D', opts),
   };
-  if (changedSrc.length === 0 && changedTests.length === 0 && deletedTests.length === 0) {
-    return { entries: [], excluded: [], skipped: [] };
+  const deletedSources = deletedSrc ?? [];
+  const testChanges = [...new Set([...changedTests, ...deletedTests])].map((repoRel) =>
+    repoRel.slice(`${pkg.dir}/`.length),
+  );
+  if (
+    changedSrc.length === 0 &&
+    deletedSources.length === 0 &&
+    changedTests.length === 0 &&
+    deletedTests.length === 0
+  ) {
+    return { entries: [], excluded: [], skipped: [], testChanges: [] };
   }
 
   const eligible = eligibleFiles(repoRoot, pkg.dir, patterns);
@@ -323,7 +302,6 @@ export function buildScope({
   const excluded = [];
   /** @type {Array<{file: string, why: string}>} */
   const skipped = [];
-  const seen = new Set();
 
   const lineCount = (rel) => readFileSync(join(repoRoot, pkg.dir, rel), 'utf8').split('\n').length;
 
@@ -334,7 +312,7 @@ export function buildScope({
       continue;
     }
     const lines = lineCount(rel);
-    const whole = wholeFile || added.has(repoRel) || lines <= WHOLE_FILE_LINE_LIMIT;
+    const whole = wholeFile || added.has(repoRel);
     // Same revision form as the file listing above, or the ranges would describe
     // a file's committed state while the listing picked it up for working-tree
     // edits — scoping Stryker to lines the change did not touch.
@@ -348,8 +326,13 @@ export function buildScope({
         );
     // A modified file whose every hunk was a pure deletion has no new-side lines
     // left to mutate; including it would only widen the scope back to the file.
-    if (!whole && ranges.length === 0) continue;
-    seen.add(rel);
+    if (!whole && ranges.length === 0) {
+      skipped.push({
+        file: rel,
+        why: 'source change has no new-side lines; there is no changed code to mutate',
+      });
+      continue;
+    }
     entries.push({
       file: rel,
       lines,
@@ -360,42 +343,14 @@ export function buildScope({
     });
   }
 
-  // A PR that only weakens or deletes tests changes no source line, yet it is
-  // exactly the regression mutation testing exists to catch. Pair each changed or
-  // DELETED dedicated test back to its source file so it is still scored.
-  const testChanges = [
-    ...changedTests.map((repoRel) => ({ repoRel, deleted: false })),
-    ...deletedTests.map((repoRel) => ({ repoRel, deleted: true })),
-  ];
-  for (const { repoRel, deleted } of testChanges) {
-    const testRel = repoRel.slice(prefix.length);
-    const srcRel = sourceForTestPath(testRel);
-    if (!srcRel || seen.has(srcRel)) continue;
-    if (!eligible.has(srcRel)) continue;
-    if (!existsSync(join(repoRoot, pkg.dir, srcRel))) continue;
-    const lines = lineCount(srcRel);
-    if (lines > TEST_ONLY_WHOLE_FILE_LIMIT) {
-      skipped.push({
-        file: srcRel,
-        why: `only its test changed and the file is ${lines} lines (> ${TEST_ONLY_WHOLE_FILE_LIMIT}); whole-file mutation is too costly for an advisory run`,
-      });
-      continue;
-    }
-    seen.add(srcRel);
-    entries.push({
-      file: srcRel,
-      lines,
-      ranges: [],
-      whole: true,
-      // A deleted test cannot be handed to --testFiles; leaving it null makes the
-      // jest runner fall back to --findRelatedTests, which is the only way left to
-      // reach the code.
-      testFile: deleted ? null : testRel,
-      reason: deleted ? 'its dedicated test was deleted' : 'its dedicated test changed',
+  for (const repoRel of deletedSources) {
+    skipped.push({
+      file: repoRel.slice(prefix.length),
+      why: 'source file was deleted; there is no current code to mutate',
     });
   }
 
-  return { entries, excluded, skipped };
+  return { entries, excluded, skipped, testChanges };
 }
 
 /**
@@ -454,7 +409,7 @@ export function partitionPrEntries(items, maxShards) {
   const pools = new Map();
   for (const item of items) {
     const kind = item.entry.testFile ? 'unit' : 'related';
-    const key = `${item.pkg.package} ${kind}`;
+    const key = `${item.pkg.package}:${kind}`;
     if (!pools.has(key)) pools.set(key, []);
     pools.get(key).push(item);
   }
@@ -525,11 +480,14 @@ export function partitionPrEntries(items, maxShards) {
  * @param {Array<{pkg: {package: string, dir: string, module: string}, entry: object}>} group - one shard's entries.
  * @param {number} shard - 1-based shard number within its package.
  * @param {number} shardCount - total shards for that package.
- * @returns {{package: string, dir: string, module: string, shard: number, shardCount: number, mutate: string, testFiles: string, scopes: string, label: string}}
+ * @param {'dedicated' | 'related'} [testScope='dedicated'] - test selection mode.
+ * @returns {{kind: 'source', testScope: 'dedicated' | 'related', package: string, dir: string, module: string, shard: number, shardCount: number, mutate: string, testFiles: string, scopes: string, label: string}}
  */
-export function toShardEntry(group, shard, shardCount) {
+export function toShardEntry(group, shard, shardCount, testScope = 'dedicated') {
   const { pkg } = group[0];
   return {
+    kind: 'source',
+    testScope,
     package: pkg.package,
     dir: pkg.dir,
     module: pkg.module,
@@ -543,9 +501,10 @@ export function toShardEntry(group, shard, shardCount) {
     // inventing no-coverage and survivor results. partitionPrEntries already pools
     // by test-scope kind so a mixed group should be unreachable; asserting it here
     // keeps the invariant true however the grouping later evolves.
-    testFiles: group.every(({ entry }) => entry.testFile)
-      ? group.map(({ entry }) => entry.testFile).join(',')
-      : '',
+    testFiles:
+      testScope === 'dedicated' && group.every(({ entry }) => entry.testFile)
+        ? group.map(({ entry }) => entry.testFile).join(',')
+        : '',
     // The SAME scopes that went to `--mutate`, one per line, because the scorer
     // needs them too: an incremental report retains baseline mutants outside the
     // range, and scoring the whole file would dilute a changed-line survivor.
@@ -554,6 +513,31 @@ export function toShardEntry(group, shard, shardCount) {
     scopes: group.flatMap(({ entry }) => scopeParts(entry)).join('\n'),
     // Space-joined, for display only.
     label: group.map(({ entry }) => entry.file).join(' '),
+  };
+}
+
+/**
+ * Render a package-level shard for a test-only change. Native Stryker
+ * incremental mode decides which baseline mutants need to be retested; there is
+ * intentionally no custom mutation or test-file scope in this path.
+ *
+ * @param {{package: string, dir: string, module: string}} pkg - package descriptor.
+ * @param {string[]} testChanges - changed package-relative test paths.
+ * @returns {{kind: 'test-only', testScope: 'incremental', package: string, dir: string, module: string, shard: 1, shardCount: 1, mutate: '', testFiles: '', scopes: '', label: string}}
+ */
+export function toTestOnlyEntry(pkg, testChanges) {
+  return {
+    kind: 'test-only',
+    testScope: 'incremental',
+    package: pkg.package,
+    dir: pkg.dir,
+    module: pkg.module,
+    shard: 1,
+    shardCount: 1,
+    mutate: '',
+    testFiles: '',
+    scopes: '',
+    label: testChanges.join(' '),
   };
 }
 

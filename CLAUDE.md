@@ -419,11 +419,14 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   work, and what an agent should reach for first. It derives the diff base
   (merge-base with `main`) and runs **one Stryker invocation per changed source
   file**, each scoped to that file's changed `file:start-end` ranges (whole-file
-  only when the file is new or under 300 lines) and to that file's dedicated
-  unit test, then scores each file through `assert-mutation-score.mjs`. It
-  encodes every foot-gun below by construction, adds `--force` (mandatory, see
-  below), and fails loudly when Stryker instrumented 0 files — the silent no-op
-  that a hand-written `--mutate` reports as success.
+  only when the file is new) and to that file's dedicated unit test, then
+  reports every in-scope Survived or NoCoverage mutant through
+  `assert-mutation-score.mjs`; the percentage is secondary context. For a
+  test-only change it uses Stryker's native incremental analysis and compares
+  stable mutant IDs with an existing baseline, refusing an unbounded cold run
+  when no baseline exists. It encodes every foot-gun below by construction, adds
+  `--force` (mandatory, see below), and fails loudly when Stryker instrumented 0
+  files — the silent no-op that a hand-written `--mutate` reports as success.
 
   ```bash
   pnpm run test:mutate:changed                    # every changed package
@@ -439,6 +442,11 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   documents `testFiles` for — not "nothing in the suite covers this". Pass
   `--related-tests` to check the broader question, at roughly 13x the cost per
   mutant on a widely-imported module.
+
+  The advisory PR workflow uses the same hybrid: custom changed ranges for
+  source changes, native incremental analysis for test-only changes. Dedicated
+  tests are the default fast tier; add the `mutation:related` PR label (or
+  choose `related` in a manual dispatch) to retain Jest's related-test fallback.
 
   **`--force` is not optional.** Every package config sets `incremental: true`,
   so without `--force` Stryker may serve cached results from the `main` baseline

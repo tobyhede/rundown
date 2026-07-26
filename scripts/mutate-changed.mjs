@@ -23,8 +23,6 @@
  *   files being judged, and the gate would report main's score for your change.
  *   The Stryker docs call `--force` "especially beneficial when combined with a
  *   custom `--mutate` pattern" for exactly this reason.
- * - `--allowEmpty`, so a legitimately empty scope is not an error.
- *
  * And the foot-guns it removes by construction: comma form only (Stryker splits
  * `--mutate` on commas before brace expansion); package-relative paths (`pnpm
  * --filter … exec` runs with cwd = the package dir); no `--` separator (pnpm
@@ -35,8 +33,9 @@
  * Read the result as survivors in the changed lines, never as an aggregate
  * percentage: Stryker's `thresholds.break` gates the project aggregate, which
  * over a handful of lines is meaningless, and there is no CLI override for it. So
- * Stryker's own exit code is not the verdict here — `assert-mutation-score.mjs`
- * scores each file against the floor.
+ * Stryker's own exit code only proves execution here —
+ * `assert-mutation-score.mjs` reports every undetected in-scope mutant and uses
+ * the score only as context.
  *
  * Because each run is scoped to one dedicated test, a mutant killed only by an
  * integration test shows up as a **survivor**. That is the intended reading:
@@ -57,7 +56,7 @@
  * @module scripts/mutate-changed
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -156,11 +155,9 @@ export function parseInstrumented(output) {
 /**
  * Decide what a finished Stryker invocation means.
  *
- * Stryker's exit code cannot be the verdict: `thresholds.break` gates the project
- * aggregate, which over a few changed lines is meaningless, and there is no CLI
- * override for it — so a perfectly good run routinely exits non-zero. The
- * discriminator between "threshold exit" and "crashed" is therefore whether a
- * FRESH report appeared (the caller deletes any previous one before spawning).
+ * Scoped runs disable the aggregate break threshold through `STRYKER_SCOPED`, so
+ * any non-zero Stryker exit is an execution failure. A fresh report is still
+ * required before the independent changed-scope scorer may run.
  *
  * @param {object} params - the finished run.
  * @param {{files: number, mutants: number} | null} params.instrumented - parsed instrumentation counts.
@@ -170,6 +167,9 @@ export function parseInstrumented(output) {
  *   `score` is true when there is a report worth handing to the per-file gate.
  */
 export function runOutcome({ instrumented, reportWritten, exitStatus }) {
+  if (exitStatus !== 0) {
+    return { ok: false, score: false, reason: 'execution', exitStatus };
+  }
   if (!instrumented || instrumented.files === 0) {
     return { ok: false, score: false, reason: 'no-scope' };
   }
@@ -210,9 +210,20 @@ export function scorerArgs(entry, pkgDir) {
  * @returns {string[]} arguments after `stryker run`.
  */
 export function strykerArgs(entry, relatedTests) {
-  const args = ['--mutate', mutateArg(entry), '--force', '--allowEmpty'];
+  const args = ['--mutate', mutateArg(entry), '--force'];
   if (!relatedTests && entry.testFile) args.push('--testFiles', entry.testFile);
   return args;
+}
+
+/**
+ * Build the Stryker arguments for a test-only change. Native incremental mode
+ * owns both mutant and test selection; a custom mutate/testFiles scope would
+ * defeat its changed-test analysis.
+ *
+ * @returns {string[]} arguments after `stryker run`.
+ */
+export function testOnlyStrykerArgs() {
+  return ['--incremental'];
 }
 
 /**
@@ -236,6 +247,9 @@ export function formatPlan(name, scope) {
   }
   for (const { file, why } of scope.skipped) {
     lines.push(`  ${file} — skipped (${why})`);
+  }
+  for (const file of scope.testChanges ?? []) {
+    lines.push(`  ${file} — native incremental test-only input`);
   }
   return lines.join('\n');
 }
@@ -272,7 +286,12 @@ async function main() {
       // the HEAD-only view, because it scores a commit that has been pushed.
       includeWorkingTree: true,
     });
-    if (scope.entries.length === 0 && scope.excluded.length === 0 && scope.skipped.length === 0) {
+    if (
+      scope.entries.length === 0 &&
+      scope.excluded.length === 0 &&
+      scope.skipped.length === 0 &&
+      scope.testChanges.length === 0
+    ) {
       continue;
     }
     planned.push({ pkg, scope });
@@ -292,6 +311,11 @@ async function main() {
           .map((a) => (a.includes(',') || a.includes(':') ? `'${a}'` : a))
           .join(' ');
         process.stdout.write(`pnpm --filter ${pkg.filter} exec stryker run ${args}\n`);
+      }
+      if (scope.entries.length === 0 && scope.testChanges.length > 0) {
+        process.stdout.write(
+          `pnpm --filter ${pkg.filter} exec stryker run ${testOnlyStrykerArgs().join(' ')}\n`,
+        );
       }
     }
     return 0;
@@ -316,7 +340,12 @@ async function main() {
           'run',
           ...strykerArgs(entry, opts.relatedTests),
         ],
-        { cwd: repoRoot, encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] },
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          stdio: ['inherit', 'pipe', 'pipe'],
+          env: { ...process.env, STRYKER_SCOPED: 'true' },
+        },
       );
       const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
       process.stdout.write(output);
@@ -329,9 +358,11 @@ async function main() {
       });
       if (!outcome.ok) {
         const why =
-          outcome.reason === 'no-scope'
-            ? 'Stryker instrumented 0 source files, so the --mutate scope matched nothing and this run proves nothing'
-            : `Stryker exited ${String(outcome.exitStatus)} without writing a report, so it failed to execute rather than merely missing a threshold`;
+          outcome.reason === 'execution'
+            ? `Stryker exited ${String(outcome.exitStatus)}; scoped runs have no aggregate threshold, so a non-zero status is an execution failure`
+            : outcome.reason === 'no-scope'
+              ? 'Stryker instrumented 0 source files, so the --mutate scope matched nothing and this run proves nothing'
+              : 'Stryker completed without writing a fresh report, so the result cannot be scored';
         process.stderr.write(`\n${pkg.package}/${entry.file}: FAILED — ${why}.\n`);
         failed = true;
         continue;
@@ -358,6 +389,65 @@ async function main() {
         { cwd: repoRoot, encoding: 'utf8', stdio: 'inherit' },
       );
       if (score.status !== 0) failed = true;
+    }
+
+    if (scope.entries.length > 0 && scope.testChanges.length > 0) {
+      process.stderr.write(
+        `\n${pkg.package}: source and test changes are mixed; source mutation results were evaluated, ` +
+          'but test-only regression attribution was not run independently.\n',
+      );
+      continue;
+    }
+    if (scope.entries.length === 0 && scope.testChanges.length > 0) {
+      const incremental = join(repoRoot, pkg.dir, 'reports/stryker-incremental.json');
+      const baseline = join(repoRoot, pkg.dir, 'reports/stryker-local-baseline.json');
+      const report = join(repoRoot, pkg.dir, 'reports/mutation/mutation-report.json');
+      if (!existsSync(incremental)) {
+        process.stderr.write(
+          `\n${pkg.package}: INCOMPLETE — test-only mutation analysis requires an existing ` +
+            `${pkg.dir}/reports/stryker-incremental.json baseline; refusing a cold full-package run.\n`,
+        );
+        failed = true;
+        continue;
+      }
+      copyFileSync(incremental, baseline);
+      rmSync(report, { force: true });
+      try {
+        process.stderr.write(`\n=== native incremental test-only run: ${pkg.package} ===\n`);
+        const result = spawnSync(
+          'pnpm',
+          ['--filter', pkg.filter, 'exec', 'stryker', 'run', ...testOnlyStrykerArgs()],
+          {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            stdio: 'inherit',
+            env: { ...process.env, STRYKER_SCOPED: 'true' },
+          },
+        );
+        if (result.status !== 0 || !existsSync(report)) {
+          process.stderr.write(
+            `${pkg.package}: FAILED — native incremental Stryker execution did not produce a trustworthy report.\n`,
+          );
+          failed = true;
+          continue;
+        }
+        const comparison = spawnSync(
+          process.execPath,
+          [
+            join(repoRoot, 'scripts/assert-mutation-regressions.mjs'),
+            '--baseline',
+            baseline,
+            '--current',
+            report,
+            '--package-name',
+            pkg.package,
+          ],
+          { cwd: repoRoot, encoding: 'utf8', stdio: 'inherit' },
+        );
+        if (comparison.status !== 0) failed = true;
+      } finally {
+        rmSync(baseline, { force: true });
+      }
     }
   }
   return failed ? 1 : 0;

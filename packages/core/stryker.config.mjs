@@ -39,6 +39,7 @@ const parseBoolean = (value, fallback) => {
 // STRYKER_IGNORE_STATIC=true to reclaim the static-mutant time on a run whose
 // false negatives are acceptable (it never blocks merge). See issue #485.
 const ignoreStatic = parseBoolean(process.env.STRYKER_IGNORE_STATIC, false);
+const scoped = parseBoolean(process.env.STRYKER_SCOPED, false);
 
 // The dashboard reporter UPLOADS the report and requires an API key, so enable
 // it only when one is present. The producer workflow (mutation.yml) sets the
@@ -111,7 +112,7 @@ const config = {
   // report. The aggregate cannot catch a single-file regression it absorbs --
   // the per-PR changed-file gate (scripts/assert-mutation-score.mjs) is that
   // guard. See issue #483.
-  thresholds: { high: 80, low: 60, break: 70 },
+  thresholds: { high: 80, low: 60, break: scoped ? null : 70 },
   reporters,
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },

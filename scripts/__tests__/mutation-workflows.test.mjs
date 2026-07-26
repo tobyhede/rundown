@@ -11,7 +11,7 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   assert.match(yml, /STRYKER_IGNORE_STATIC:\s*'true'/, 'PR run must opt into ignoreStatic');
   assert.match(
     yml,
-    /- name: Run mutation shard[\s\S]*?continue-on-error:\s*true/,
+    /- name: Run source mutation shard[\s\S]*?continue-on-error:\s*true/,
     'Stryker advisory run must be non-fatal',
   );
   assert.match(
@@ -46,6 +46,18 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
     /STRYKER_DASHBOARD_API_KEY/,
     'PR workflow must not reference the upload secret',
   );
+});
+
+test('mutation-pr.yml implements the hybrid source and native test-only paths', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  assert.match(yml, /matrix\.kind == 'source'/);
+  assert.match(yml, /matrix\.kind == 'test-only'/);
+  assert.match(yml, /Run native incremental test-only shard/);
+  assert.match(yml, /assert-mutation-regressions\.mjs/);
+  assert.match(yml, /mutation:related/);
+  assert.match(yml, /test_scope:/);
+  assert.match(yml, /STRYKER_SCOPED:\s*'true'/);
+  assert.doesNotMatch(yml, /--allowEmpty/);
 });
 
 test('mutation-pr.yml uploads per-package markdown summaries', async () => {
@@ -121,6 +133,7 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, shards score 
     'producer must score static mutants (no ignoreStatic env assignment)',
   );
   assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main');
+  assert.doesNotMatch(yml, /--allowEmpty/);
 });
 
 test('mutation.yml shards the campaign across a plan/mutate/merge pipeline', async () => {

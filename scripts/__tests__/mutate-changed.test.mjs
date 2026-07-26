@@ -9,6 +9,7 @@ import {
   runOutcome,
   scorerArgs,
   strykerArgs,
+  testOnlyStrykerArgs,
 } from '../mutate-changed.mjs';
 
 test('parseArgs defaults to every package, run mode, range scoping, dedicated tests', () => {
@@ -83,10 +84,10 @@ test('parseInstrumented returns null when Stryker never instrumented', () => {
 // --force is mandatory, not optional: `incremental: true` is set in every package
 // config, so without it Stryker can serve cached `main` results for the very
 // lines being judged and the gate reports main's score for the change.
-test('strykerArgs always passes --force and --allowEmpty', () => {
+test('strykerArgs always passes --force and never suppresses an empty-scope error', () => {
   const args = strykerArgs({ file: 'src/a.ts', whole: true, ranges: [], testFile: null }, false);
   assert.ok(args.includes('--force'), '--force must always be passed');
-  assert.ok(args.includes('--allowEmpty'), '--allowEmpty must always be passed');
+  assert.ok(!args.includes('--allowEmpty'), '--allowEmpty would turn a broken scope green');
 });
 
 test('strykerArgs scopes to the dedicated test when there is one', () => {
@@ -94,14 +95,7 @@ test('strykerArgs scopes to the dedicated test when there is one', () => {
     { file: 'src/a.ts', whole: true, ranges: [], testFile: '__tests__/a.test.ts' },
     false,
   );
-  assert.deepEqual(args, [
-    '--mutate',
-    'src/a.ts',
-    '--force',
-    '--allowEmpty',
-    '--testFiles',
-    '__tests__/a.test.ts',
-  ]);
+  assert.deepEqual(args, ['--mutate', 'src/a.ts', '--force', '--testFiles', '__tests__/a.test.ts']);
 });
 
 // No dedicated test means no --testFiles, so the jest runner falls back to
@@ -136,6 +130,10 @@ test('strykerArgs passes ranges as a single comma-joined --mutate value', () => 
   assert.equal(args[1], 'src/a.ts:3-4,src/a.ts:8-8');
 });
 
+test('testOnlyStrykerArgs uses native incremental mode without a custom scope', () => {
+  assert.deepEqual(testOnlyStrykerArgs(), ['--incremental']);
+});
+
 test('formatPlan reports scope, test scope, reason, exclusions and skips', () => {
   const plan = formatPlan('core', {
     entries: [
@@ -158,6 +156,7 @@ test('formatPlan reports scope, test scope, reason, exclusions and skips', () =>
     ],
     excluded: ['src/output/zod-schemas.ts'],
     skipped: [{ file: 'src/huge.ts', why: 'only its test changed and the file is 900 lines' }],
+    testChanges: ['__tests__/integration/workflow.test.ts'],
   });
   assert.match(plan, /^core:/);
   assert.match(plan, /src\/small\.ts — whole file \(120 lines\) — __tests__\/small\.test\.ts/);
@@ -168,6 +167,10 @@ test('formatPlan reports scope, test scope, reason, exclusions and skips', () =>
     /src\/output\/zod-schemas\.ts — skipped \(excluded by stryker\.config\.mjs mutate\)/,
   );
   assert.match(plan, /src\/huge\.ts — skipped \(only its test changed/);
+  assert.match(
+    plan,
+    /__tests__\/integration\/workflow\.test\.ts — native incremental test-only input/,
+  );
 });
 
 test('mutate-changed re-exports the shared package list', () => {
@@ -184,26 +187,25 @@ test('mutate-changed re-exports the shared package list', () => {
 // only checked with existsSync, so a leftover report from an earlier file's run
 // satisfied the check and got scored — and because it lacked the current file the
 // scorer merely marked it skipped, letting the command exit 0.
-test('runOutcome: fails when Stryker wrote no report, whatever its exit code', () => {
+test('runOutcome: fails when a successful Stryker run wrote no report', () => {
   const outcome = runOutcome({
     instrumented: { files: 1, mutants: 12 },
     reportWritten: false,
-    exitStatus: 1,
+    exitStatus: 0,
   });
   assert.equal(outcome.ok, false);
   assert.equal(outcome.reason, 'no-report');
 });
 
-test('runOutcome: a non-zero exit WITH a fresh report is a threshold exit, not a failure', () => {
-  // thresholds.break gates the project aggregate, which over a few changed lines
-  // is meaningless; the per-file gate is the verdict.
+test('runOutcome: a non-zero exit is an execution failure even when a report exists', () => {
   const outcome = runOutcome({
     instrumented: { files: 1, mutants: 12 },
     reportWritten: true,
     exitStatus: 1,
   });
-  assert.equal(outcome.ok, true);
-  assert.equal(outcome.score, true, 'a fresh report must still be scored');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.score, false);
+  assert.equal(outcome.reason, 'execution');
 });
 
 test('runOutcome: fails when the scope matched nothing', () => {

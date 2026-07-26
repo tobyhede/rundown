@@ -8,7 +8,8 @@
  * script closes that gap by post-processing the JSON report Stryker already
  * emits (`reports/mutation/mutation-report.json`): it computes the mutation
  * score of every file that changed in the PR and fails (non-zero exit) when any
- * changed, mutated file scores below a floor.
+ * changed, mutated scope contains a Survived or NoCoverage mutant. The score is
+ * retained as secondary context, not used to dilute an individual escape.
  *
  * The score formula mirrors mutation-testing-metrics exactly so the number this
  * gate reports equals the number Stryker prints:
@@ -44,9 +45,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 /**
- * Default per-file mutation-score floor (percent). A changed, mutated file must
- * score at or above this to pass. Kept equal to the package-level `break`
- * threshold so the per-file gate and the weekly aggregate gate agree.
+ * Reference mutation-score floor (percent), displayed as context alongside the
+ * individual mutant verdict. The scoped gate fails on any undetected mutant;
+ * only the full producer applies this value as an aggregate break threshold.
  */
 export const DEFAULT_FLOOR = 70;
 
@@ -198,14 +199,14 @@ function assertValidReport(report) {
  * Result of evaluating the per-file gate.
  *
  * @typedef {object} GateResult
- * @property {boolean} ok - true when no changed file scored below the floor.
- * @property {{ file: string, score: number }[]} failures - changed files below
- *   the floor.
- * @property {{ file: string, score: number }[]} checked - changed files that had
- *   a judgeable score and met the floor.
+ * @property {boolean} ok - true when every valid in-scope mutant was detected.
+ * @property {{ file: string, score: number, undetected: object[] }[]} failures -
+ *   changed files containing Survived or NoCoverage mutants.
+ * @property {{ file: string, score: number }[]} checked - changed files whose
+ *   valid in-scope mutants were all detected.
  * @property {{ file: string, reason: string }[]} skipped - changed files that
  *   could not be judged (not mutated, or no valid mutants).
- * @property {number} floor - the floor that was applied.
+ * @property {number} floor - the reference floor displayed as score context.
  */
 
 /**
@@ -221,7 +222,7 @@ function assertValidReport(report) {
  *   PR.
  * @param {string} args.packageDir - repo-relative package directory the report
  *   belongs to (e.g. `packages/core`).
- * @param {number} [args.floor] - minimum acceptable score (inclusive).
+ * @param {number} [args.floor] - reference score shown in output.
  * @returns {GateResult} structured outcome of the evaluation.
  * @throws {Error} when the report is missing or structurally invalid, or when a
  *   per-file entry present in the report lacks a `mutants` array (malformed
@@ -274,8 +275,17 @@ export function assertMutationScore({
       });
       continue;
     }
-    if (score < floor) {
-      failures.push({ file: relative, score });
+    const undetected = inScope
+      .filter((mutant) => mutant.status === 'Survived' || mutant.status === 'NoCoverage')
+      .map((mutant) => ({
+        id: mutant.id,
+        status: mutant.status,
+        mutatorName: mutant.mutatorName,
+        replacement: mutant.replacement,
+        location: mutant.location,
+      }));
+    if (undetected.length > 0) {
+      failures.push({ file: relative, score, undetected });
     } else {
       checked.push({ file: relative, score });
     }
@@ -310,7 +320,7 @@ export function renderMarkdown(result, packageName) {
       .replace(/\r?\n/g, ' ');
   const codeCell = (value) => `<code>${htmlEscape(value)}</code>`;
   const lines = [
-    `#### ${status} ${codeCell(packageName)} — per-file mutation score (floor ${floor}%)`,
+    `#### ${status} ${codeCell(packageName)} — changed-scope mutants (floor ${floor}% shown as score context)`,
     '',
   ];
   if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
@@ -318,10 +328,26 @@ export function renderMarkdown(result, packageName) {
     return lines.join('\n');
   }
   lines.push('| File | Score | Status |', '| --- | ---: | --- |');
-  for (const f of failures)
-    lines.push(`| ${codeCell(f.file)} | ${f.score.toFixed(2)}% | ❌ below floor |`);
+  for (const f of failures) {
+    const undetected = f.undetected ?? [];
+    lines.push(
+      `| ${codeCell(f.file)} | ${f.score.toFixed(2)}% | ❌ ${undetected.length || 'undetected'} mutant${undetected.length === 1 ? '' : 's'} |`,
+    );
+  }
   for (const c of checked) lines.push(`| ${codeCell(c.file)} | ${c.score.toFixed(2)}% | ✅ |`);
   for (const s of skipped) lines.push(`| ${codeCell(s.file)} | — | ⏭️ ${htmlEscape(s.reason)} |`);
+  for (const failure of failures) {
+    for (const mutant of failure.undetected ?? []) {
+      const line = mutant.location?.start?.line;
+      const where = typeof line === 'number' ? `line ${line}` : 'unknown location';
+      const mutation = [mutant.mutatorName, mutant.replacement]
+        .filter((value) => value !== undefined)
+        .join(' → ');
+      lines.push(
+        `- ${codeCell(failure.file)} ${htmlEscape(where)}: ${codeCell(mutant.id ?? 'unknown-id')} ${htmlEscape(mutant.status)}${mutation ? ` — ${codeCell(mutation)}` : ''}`,
+      );
+    }
+  }
   return lines.join('\n');
 }
 
@@ -408,8 +434,8 @@ export function parseArgs(argv) {
  * print a human-readable summary.
  *
  * @param {string[]} argv - process arguments (excluding node + script).
- * @returns {number} process exit code (0 = pass, 1 = a changed file is below
- *   the floor, 2 = usage/IO error).
+ * @returns {number} process exit code (0 = pass, 1 = an in-scope mutant is
+ *   undetected, 2 = usage/IO error).
  */
 export function main(argv) {
   let opts;
@@ -469,19 +495,25 @@ export function main(argv) {
 
   const fmt = (score) => `${score.toFixed(2)}%`;
   for (const c of result.checked) {
-    console.log(`ok    ${c.file} — ${fmt(c.score)} (floor ${result.floor}%)`);
+    console.log(`ok    ${c.file} — ${fmt(c.score)} (all valid mutants detected)`);
   }
   for (const s of result.skipped) {
     console.log(`skip  ${s.file} — ${s.reason}`);
   }
   for (const f of result.failures) {
-    console.error(`FAIL  ${f.file} — ${fmt(f.score)} is below floor ${result.floor}%`);
+    console.error(`FAIL  ${f.file} — ${f.undetected.length} undetected mutant(s), ${fmt(f.score)}`);
+    for (const mutant of f.undetected) {
+      const line = mutant.location?.start?.line;
+      console.error(
+        `      ${mutant.id ?? 'unknown-id'} ${mutant.status}${typeof line === 'number' ? ` at line ${line}` : ''}`,
+      );
+    }
   }
 
   if (!result.ok) {
     console.error(
-      `\nmutation gate: ${result.failures.length} changed file(s) below the ${result.floor}% floor. ` +
-        'Add tests that kill the surviving mutants, or justify a floor change in review.',
+      `\nmutation gate: ${result.failures.length} changed file(s) contain undetected mutants. ` +
+        'Add tests that kill or cover each listed mutant.',
     );
     return 1;
   }

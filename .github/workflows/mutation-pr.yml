@@ -2,9 +2,9 @@ name: Mutation Gate (PR)
 
 # Per-PR ADVISORY mutation report (issue #485).
 #
-# This check is advisory: it never blocks merge. It mutation-tests the code the
-# PR actually changed and surfaces per-file scores as a sticky PR comment (see
-# the `comment` job).
+# This check is advisory: it never blocks merge. Source changes use custom line
+# ranges; test-only changes use native Stryker incremental analysis against the
+# main baseline. Findings are surfaced in a sticky PR comment (see `comment`).
 #
 # Shape: a `plan` job turns the PR diff into a matrix of PER-FILE shards
 # (scripts/mutation-shard-plan.mjs with EVENT_NAME=pull_request), then one job
@@ -32,7 +32,17 @@ name: Mutation Gate (PR)
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Source-shard test selection'
+        required: true
+        default: dedicated
+        type: choice
+        options:
+          - dedicated
+          - related
 
 concurrency:
   group: mutation-pr-${{ github.ref }}
@@ -70,7 +80,18 @@ jobs:
           # runs the union of its files' tests per mutant — the planner logs when
           # that happens, so a large PR degrades loudly rather than silently.
           MAX_PR_SHARDS: '16'
+          TEST_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_scope || (contains(github.event.pull_request.labels.*.name, 'mutation:related') && 'related' || 'dedicated') }}
+          SUMMARY_PATH: ${{ runner.temp }}/mutation-summary-plan.md
         run: node scripts/mutation-shard-plan.mjs
+
+      - name: Upload scope summary
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: mutation-summary-plan
+          path: ${{ runner.temp }}/mutation-summary-plan.md
+          if-no-files-found: ignore
+          retention-days: 7
 
   mutation-gate:
     needs: plan
@@ -89,6 +110,9 @@ jobs:
       # PR-only: reclaim static-mutant time on the advisory run. The producer
       # leaves this unset so it scores static mutants. See issue #485.
       STRYKER_IGNORE_STATIC: 'true'
+      # Scoped runs are judged by the dedicated source/test-only comparators,
+      # not by the package-wide aggregate threshold.
+      STRYKER_SCOPED: 'true'
     permissions:
       contents: read
     steps:
@@ -109,24 +133,29 @@ jobs:
       # out-of-scope mutants when --mutate is narrowed). Best-effort: a
       # 404/empty body degrades to a cold run, still bounded by --mutate scoping.
       - name: Download Stryker baseline from dashboard
+        id: baseline
         env:
           MODULE: ${{ matrix.module }}
           PKG_DIR: ${{ matrix.dir }}
         run: |
           set -uo pipefail
           mkdir -p "${PKG_DIR}/reports"
-          baseline="${PKG_DIR}/reports/stryker-incremental.json"
+          baseline="${PKG_DIR}/reports/stryker-main.json"
           url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/main?module=${MODULE}"
           # A 200 with an empty or truncated body must not be trusted as a
           # baseline: require a non-empty file AND valid JSON before keeping it.
           if curl --fail --silent --show-error --max-time 60 \
                --output "${baseline}" "${url}" \
                && [ -s "${baseline}" ] \
-               && node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${baseline}"; then
+               && node -e 'const r=JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (!r.files || !r.testFiles || Object.keys(r.testFiles).length === 0) process.exit(1)' "${baseline}"; then
             echo "Baseline downloaded for module ${MODULE}."
+            cp "${baseline}" "${PKG_DIR}/reports/stryker-incremental.json"
+            echo "available=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "::notice::no dashboard baseline for module ${MODULE}; running cold."
+            echo "::notice::no dashboard baseline for module ${MODULE}."
             rm -f "${baseline}"
+            rm -f "${PKG_DIR}/reports/stryker-incremental.json"
+            echo "available=false" >> "${GITHUB_OUTPUT}"
           fi
 
       # `--force` is what makes the baseline safe to use: without it Stryker may
@@ -138,8 +167,9 @@ jobs:
       #
       # matrix values go through env, never templated into the shell, so a path
       # with shell metacharacters cannot inject.
-      - name: Run mutation shard (${{ matrix.package }} — ${{ matrix.label }})
-        id: stryker
+      - name: Run source mutation shard (${{ matrix.package }} — ${{ matrix.label }})
+        if: ${{ matrix.kind == 'source' }}
+        id: source_stryker
         continue-on-error: true
         env:
           MUTATE: ${{ matrix.mutate }}
@@ -147,19 +177,33 @@ jobs:
         working-directory: ${{ matrix.dir }}
         run: |
           set -uo pipefail
+          rm -f reports/mutation/mutation-report.json
           # An empty testFiles means no file in this shard has a dedicated test;
           # omit the flag so the jest runner falls back to --findRelatedTests.
           if [ -n "${TEST_FILES}" ]; then
             pnpm exec stryker run --incremental --force \
-              --mutate "${MUTATE}" --testFiles "${TEST_FILES}" --allowEmpty
+              --mutate "${MUTATE}" --testFiles "${TEST_FILES}"
           else
             pnpm exec stryker run --incremental --force \
-              --mutate "${MUTATE}" --allowEmpty
+              --mutate "${MUTATE}"
           fi
 
-      # Score the shard's files and render the advisory markdown. Non-fatal: a
-      # below-floor file annotates the comment, it does not fail the check.
+      - name: Run native incremental test-only shard (${{ matrix.package }})
+        if: ${{ matrix.kind == 'test-only' && steps.baseline.outputs.available == 'true' }}
+        id: test_stryker
+        continue-on-error: true
+        env:
+          # Match the full-fidelity producer that created the baseline so the
+          # stable mutant-ID sets remain comparable.
+          STRYKER_IGNORE_STATIC: 'false'
+        working-directory: ${{ matrix.dir }}
+        run: |
+          rm -f reports/mutation/mutation-report.json
+          pnpm exec stryker run --incremental
+
+      # Report every in-scope undetected mutant and render advisory markdown.
       - name: Score changed files (advisory)
+        if: ${{ matrix.kind == 'source' }}
         id: assert
         continue-on-error: true
         env:
@@ -192,20 +236,66 @@ jobs:
             --package-name "${PKG}" \
             --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
 
-      # If Stryker or scoring failed, no markdown summary was written and the
-      # comment job would otherwise report a clean result — masking the failure.
-      # A below-floor file makes the scorer exit non-zero *after* writing a valid
-      # score table, so only write the generic diagnostic when no non-empty
-      # summary exists; never clobber the below-floor annotation.
-      - name: Diagnose advisory failure
-        if: ${{ steps.stryker.outcome == 'failure' || steps.assert.outcome == 'failure' }}
+      - name: Compare test-only mutant regressions (advisory)
+        if: ${{ matrix.kind == 'test-only' && steps.baseline.outputs.available == 'true' }}
+        id: compare
+        continue-on-error: true
+        env:
+          PKG_DIR: ${{ matrix.dir }}
+          PKG: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          node scripts/assert-mutation-regressions.mjs \
+            --baseline "${PKG_DIR}/reports/stryker-main.json" \
+            --current "${PKG_DIR}/reports/mutation/mutation-report.json" \
+            --package-name "${PKG}" \
+            --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+
+      - name: Report unavailable test-only baseline
+        if: ${{ matrix.kind == 'test-only' && steps.baseline.outputs.available != 'true' }}
         env:
           PKG: ${{ matrix.package }}
           SHARD: ${{ matrix.shard }}
           LABEL: ${{ matrix.label }}
         run: |
+          {
+            echo "#### ⚠️ \`${PKG}\` — test-only mutation result incomplete"
+            echo
+            echo "Changed tests: \`${LABEL}\`"
+            echo
+            echo "_No valid main-branch dashboard baseline was available. A cold full-package run was intentionally not substituted._"
+          } > "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+
+      # If Stryker or scoring failed, no markdown summary was written and the
+      # comment job would otherwise report a clean result — masking the failure.
+      # A mutation finding makes a comparator exit non-zero *after* writing a
+      # valid summary, so only write the generic diagnostic when no non-empty
+      # summary exists; never clobber a detailed annotation.
+      - name: Diagnose advisory failure
+        if: ${{ steps.source_stryker.outcome == 'failure' || steps.test_stryker.outcome == 'failure' || steps.assert.outcome == 'failure' || steps.compare.outcome == 'failure' }}
+        env:
+          PKG: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          LABEL: ${{ matrix.label }}
+          SOURCE_OUTCOME: ${{ steps.source_stryker.outcome }}
+          TEST_OUTCOME: ${{ steps.test_stryker.outcome }}
+        run: |
           set -euo pipefail
           summary="${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+          if [ "${SOURCE_OUTCOME}" = "failure" ] || [ "${TEST_OUTCOME}" = "failure" ]; then
+            if [ ! -s "${summary}" ]; then
+              {
+                echo "#### ⚠️ \`${PKG}\` — advisory mutation execution failed"
+                echo
+                echo "Scope: \`${LABEL}\`"
+              } > "${summary}"
+            fi
+            {
+              echo
+              echo "_⚠️ Stryker exited non-zero. Scoped runs have no aggregate break threshold, so this is an execution failure; any partial findings above are incomplete._"
+            } >> "${summary}"
+            exit 0
+          fi
           if [ -s "${summary}" ]; then
             exit 0
           fi
@@ -270,7 +360,7 @@ jobs:
           {
             echo "### 🧬 Mutation score (advisory)"
             echo
-            echo "_Per-file mutation scores for the lines this PR changed, scored against each file's own unit tests. **This check is advisory and never blocks merge.** A survivor here means the file's dedicated tests do not kill that mutant independently. Trend & full reports: the Stryker Dashboard. See issue #485._"
+            echo "_Hybrid mutation analysis: source changes use changed-line scopes (dedicated tests by default; \`mutation:related\` opts into related tests), while test-only changes use native incremental comparison with the main baseline. **This check is advisory and never blocks merge.** Trend & full reports: the Stryker Dashboard. See issue #485._"
             echo
             if ls summaries/*.md >/dev/null 2>&1; then
               for f in summaries/*.md; do

@@ -76,7 +76,7 @@ test('assertMutationScore: changed file below floor fails', () => {
   assert.equal(result.failures[0].score, 80);
 });
 
-test('assertMutationScore: changed file above floor passes', () => {
+test('assertMutationScore: an undetected mutant fails even when the score is above the floor', () => {
   const report = makeReport({
     'src/runbook/collection-service.ts': [
       ...Array(95).fill('Killed'),
@@ -89,15 +89,15 @@ test('assertMutationScore: changed file above floor passes', () => {
     packageDir: 'packages/core',
     floor: 90,
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.failures.length, 0);
-  assert.equal(result.checked.length, 1);
-  assert.equal(result.checked[0].score, 95);
+  assert.equal(result.ok, false);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].score, 95);
+  assert.equal(result.failures[0].undetected.length, 5);
 });
 
-test('assertMutationScore: changed file exactly at floor passes (floor is inclusive)', () => {
+test('assertMutationScore: only fully detected changed scopes pass', () => {
   const report = makeReport({
-    'src/a.ts': [...Array(90).fill('Killed'), ...Array(10).fill('Survived')],
+    'src/a.ts': [...Array(90).fill('Killed'), ...Array(10).fill('Timeout')],
   });
   const result = assertMutationScore({
     report,
@@ -111,7 +111,7 @@ test('assertMutationScore: changed file exactly at floor passes (floor is inclus
 test('assertMutationScore: unchanged file below floor is ignored', () => {
   const report = makeReport({
     'src/unchanged.ts': [...Array(10).fill('Killed'), ...Array(90).fill('Survived')],
-    'src/changed.ts': [...Array(95).fill('Killed'), ...Array(5).fill('Survived')],
+    'src/changed.ts': Array(100).fill('Killed'),
   });
   const result = assertMutationScore({
     report,
@@ -292,11 +292,25 @@ test('assertMutationScore: floor of 0 with no valid mutants still passes', () =>
   assert.equal(result.ok, true);
 });
 
-test('renderMarkdown renders a table of checked, failed, and skipped files', () => {
+test('renderMarkdown renders scores plus individual undetected mutants', () => {
   const md = renderMarkdown(
     {
       ok: false,
-      failures: [{ file: 'src/a.ts', score: 42.5 }],
+      failures: [
+        {
+          file: 'src/a.ts',
+          score: 42.5,
+          undetected: [
+            {
+              id: 'm-7',
+              status: 'Survived',
+              mutatorName: 'ConditionalExpression',
+              replacement: 'false',
+              location: { start: { line: 12, column: 2 }, end: { line: 12, column: 8 } },
+            },
+          ],
+        },
+      ],
       checked: [{ file: 'src/b.ts', score: 91.0 }],
       skipped: [{ file: 'src/c.ts', reason: 'not mutated' }],
       floor: 70,
@@ -311,6 +325,10 @@ test('renderMarkdown renders a table of checked, failed, and skipped files', () 
   assert.match(md, /91\.00%/);
   assert.match(md, /src\/c\.ts/);
   assert.match(md, /not mutated/);
+  assert.match(md, /m-7/);
+  assert.match(md, /Survived/);
+  assert.match(md, /ConditionalExpression/);
+  assert.match(md, /line 12/);
 });
 
 test('renderMarkdown HTML-escapes backticks, pipes, angle brackets, and newlines', () => {
@@ -558,8 +576,9 @@ function makeLocatedReport(fileMutants, projectRoot = '/repo/packages/core') {
 // mutants OUTSIDE the --mutate range, and the report therefore mixes this PR's
 // freshly-run mutants with hundreds of untouched baseline ones. Scoring the whole
 // file lets survivors introduced in the changed lines be diluted below
-// visibility: here 2 fresh survivors against 100 baseline kills score 98% and sail
-// past the floor, when the changed lines alone score 0%.
+// visibility. The gate now fails either way because every individual escape is
+// primary, while range filtering still ensures the displayed score describes
+// only mutants Stryker actually reran.
 test('assertMutationScore: ranges score only mutants inside the changed lines', () => {
   const baseline = Array.from({ length: 100 }, (_, i) => ['Killed', 500 + i, 500 + i]);
   const report = makeLocatedReport({
@@ -572,9 +591,11 @@ test('assertMutationScore: ranges score only mutants inside the changed lines', 
     floor: 70,
   };
 
-  // Without ranges the baseline mutants dominate and the gate passes.
+  // Without ranges the baseline mutants dilute the score, but cannot hide the
+  // individual survivors.
   const unscoped = assertMutationScore(args);
-  assert.equal(unscoped.ok, true, 'whole-file scoring is diluted by baseline mutants');
+  assert.equal(unscoped.ok, false);
+  assert.equal(unscoped.failures[0].score.toFixed(2), '98.04');
 
   // Scoped to the changed lines, only the two survivors count.
   const scoped = assertMutationScore({
@@ -582,7 +603,9 @@ test('assertMutationScore: ranges score only mutants inside the changed lines', 
     ranges: new Map([['packages/core/src/big.ts', [{ start: 10, end: 11 }]]]),
   });
   assert.equal(scoped.ok, false, 'range-scoped gate must see the changed-line survivors');
-  assert.deepEqual(scoped.failures, [{ file: 'src/big.ts', score: 0 }]);
+  assert.equal(scoped.failures[0].file, 'src/big.ts');
+  assert.equal(scoped.failures[0].score, 0);
+  assert.equal(scoped.failures[0].undetected.length, 2);
 });
 
 // Mirror Stryker's own rule, not an approximation of it. `locationIncluded` in
