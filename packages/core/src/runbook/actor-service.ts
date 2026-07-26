@@ -38,6 +38,7 @@ import {
   type RunbookStateManager,
   type RunbookStateUpdate,
 } from './state.js';
+import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import {
   compileRunbookToMachine,
   isCompoundLeafValue,
@@ -276,6 +277,12 @@ type LastResultSync =
 
 interface ActorUpdateOptions {
   readonly consumeResolvedCompletionKey?: string;
+  /**
+   * Parent-advance guard forwarded to the state write. When present, the write
+   * refuses (aborts) if the run still has a live delegated child. Supplied only
+   * on the guarded parent-advance path.
+   */
+  readonly guard?: ParentAdvanceGuard;
 }
 
 interface CommandSyncObservation {
@@ -954,7 +961,14 @@ export class RunbookActorService {
    * @param lastResultSync - Optional persisted-result update applied alongside
    *   the snapshot sync
    * @param options - Internal update options applied atomically with the snapshot sync
+   * @param options.guard - Parent-advance guard forwarded to the state write; when
+   *   present the write refuses inside its transaction if the run still has a live
+   *   delegated child.
    * @returns Updated persisted RunbookState and the raw snapshot
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live
+   *   delegated child blocks the advance. Raised by the store write this method
+   *   delegates to, so it is not lexically visible here — see
+   *   {@link RunbookStateManager.update}.
    * @throws {Error} If the actor snapshot's stateValue is not a string
    * @throws {Error} If the actor snapshot's active state ID is invalid or unsupported
    * @throws {Error} If the actor snapshot references a step missing from the current runbook
@@ -978,7 +992,7 @@ export class RunbookActorService {
         ? await this.buildConsumedCompletionPatch(id, options.consumeResolvedCompletionKey)
         : {};
     const patch = deriveActorStatePatch(id, snapshot, steps, lastResultSync, consumePatch);
-    const state = await this.manager.update(id, patch);
+    const state = await this.manager.update(id, patch, guardOptions(options.guard));
     return { state, snapshot };
   }
 
@@ -1270,6 +1284,14 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
    * @param event - Runbook event to send (PASS, FAIL, RETRY, or GOTO)
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard threaded into the SUCCESS-path
+   *   persist only (never the effects-failure stopped-lifecycle fallback); when
+   *   present the write refuses if the run has a live delegated child.
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live
+   *   delegated child blocks the advance. Raised by the store write beneath
+   *   {@link updateFromActor}, so it is not lexically visible here — callers of the
+   *   guarded form must expect a rejection, not just a refusal return value.
    * @throws {Error} If the actor snapshot's stateValue is not a string (from {@link updateFromActor})
    * @throws {Error} If the steps array is empty for a non-terminal state (from {@link updateFromActor})
    * @returns Updated state and snapshot; or null if state not found
@@ -1278,6 +1300,7 @@ export class RunbookActorService {
     id: string,
     steps: readonly ResolvedStep[],
     event: RunbookEvent,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<ActorSyncResult | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
@@ -1382,10 +1405,17 @@ export class RunbookActorService {
         }
         throw effectsErr;
       }
-      const updateOptions =
+      const baseUpdateOptions: ActorUpdateOptions =
         event.type === 'APPLY_CURRENT_RESOLVED_COMPLETION'
           ? { consumeResolvedCompletionKey: event.completionKey }
           : {};
+      // The guard rides only the SUCCESS-path persist here, never the
+      // effects-failure fallback above (which must always land the stopped
+      // lifecycle regardless of open delegated children).
+      const updateOptions: ActorUpdateOptions = {
+        ...baseUpdateOptions,
+        ...guardOptions(options.guard),
+      };
       const lastResultSync = lastResultSyncForEvent(event, {
         commandOutput: collector.commandOutput,
         commandFailureMessage: collector.commandFailureMessage,

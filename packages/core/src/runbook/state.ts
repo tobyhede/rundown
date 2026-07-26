@@ -38,11 +38,13 @@ import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
-import type {
-  PresentedClaim,
-  RunbookStore,
-  SessionMutationTxn,
-  StateMutationResult,
+import {
+  guardOptions,
+  type ParentAdvanceGuard,
+  type PresentedClaim,
+  type RunbookStore,
+  type SessionMutationTxn,
+  type StateMutationResult,
 } from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
@@ -604,11 +606,21 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID to update
    * @param updates - Partial state updates with tagged ops on record-shaped fields
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
-  async update(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
-    const state = await this.mutate(id, () => updates, { missingIsError: true });
+  async update(
+    id: string,
+    updates: RunbookStateUpdate,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
+  ): Promise<RunbookState> {
+    const state = await this.mutate(id, () => updates, {
+      missingIsError: true,
+      ...guardOptions(options.guard),
+    });
     if (state === null) {
       throw new Error(`Runbook ${id} not found`);
     }
@@ -628,16 +640,20 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID to update
    * @param buildUpdates - Callback that derives a patch from current state
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated state, or current state when the callback returns `null`
    * @throws {Error} If the runbook with the given ID is not found
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
   async updateWithState(
     id: string,
     buildUpdates: (
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RunbookState> {
-    const updated = await this.updateWithStateIfExists(id, buildUpdates);
+    const updated = await this.updateWithStateIfExists(id, buildUpdates, options);
     if (updated === null) {
       throw new Error(`Runbook ${id} not found`);
     }
@@ -655,16 +671,23 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID to update
    * @param buildUpdates - Callback that derives a patch from current state
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated state, the current state when the callback returns
    *   `null`, or `null` when the runbook does not exist
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
   async updateWithStateIfExists(
     id: string,
     buildUpdates: (
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RunbookState | null> {
-    return await this.mutate(id, buildUpdates, { missingIsError: false });
+    return await this.mutate(id, buildUpdates, {
+      missingIsError: false,
+      ...guardOptions(options.guard),
+    });
   }
 
   /**
@@ -725,18 +748,22 @@ export class RunbookStateManager {
    *
    * @param id - Runbook id.
    * @param buildUpdates - Derives the patch; `null` means leave the state alone.
-   * @param options - Whether a missing run throws or resolves to null.
+   * @param options - Whether a missing run throws or resolves to null, and an optional guard.
    * @param options.missingIsError - When true, a missing run throws; when false, it resolves to null.
+   * @param options.guard - Parent-advance guard forwarded to the store; when
+   *   present the write refuses if the run still has a live delegated child.
    * @returns The resulting state, or null when missing and tolerated.
    * @throws {Error} When the run is missing (and not tolerated), owned by an
    *   execution, or lost to a concurrent writer.
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
+   *   live delegated child blocks the advance.
    */
   private async mutate(
     id: string,
     buildUpdates: (
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
-    options: { readonly missingIsError: boolean },
+    options: { readonly missingIsError: boolean; readonly guard?: ParentAdvanceGuard },
   ): Promise<RunbookState | null> {
     const runId = this.toRunId(id);
     if (runId === null) {
@@ -746,12 +773,16 @@ export class RunbookStateManager {
       return null;
     }
     const store = await this.store();
-    const result = await store.mutateState(runId, async (current) => {
-      const updates = await buildUpdates(current);
-      return updates === null
-        ? null
-        : applyRunbookStateUpdate(current, updates, new Date().toISOString());
-    });
+    const result = await store.mutateState(
+      runId,
+      async (current) => {
+        const updates = await buildUpdates(current);
+        return updates === null
+          ? null
+          : applyRunbookStateUpdate(current, updates, new Date().toISOString());
+      },
+      guardOptions(options.guard),
+    );
     if (result.kind === 'missing' && !options.missingIsError) {
       return null;
     }

@@ -7,9 +7,12 @@ import * as path from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { closeRunbookStores } from '../../src/runbook/storage/store-registry.js';
+import { assertClaimId } from '../../src/runbook/claim-id.js';
+import { findSubstepState } from '../../src/runbook/targeting.js';
 import type { RunId, Runbook, Step, DelegationLinkage } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import { linkageFor, seedLiveDelegation } from './claim-test-helpers.js';
+import { linkageFor, seedLiveDelegation, assertClaimed } from './claim-test-helpers.js';
+import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js';
 
 /**
  * CROSS-PROCESS session-write contention.
@@ -55,40 +58,6 @@ const mockRunbook: Runbook = {
   description: 'A test',
   steps: mockSteps,
 };
-
-/** One session mutation for a child process to perform after the barrier. */
-type ChildOp =
-  | { readonly kind: 'issueRunControlClaim'; readonly runId: string }
-  | {
-      readonly kind: 'claimRunbook';
-      readonly childRunId: string;
-      readonly linkage: DelegationLinkage;
-    }
-  | { readonly kind: 'pushRunbook'; readonly runId: string }
-  | { readonly kind: 'recordClaimSeen'; readonly claimId: string }
-  | { readonly kind: 'releaseRunbook'; readonly runId: string }
-  | { readonly kind: 'popRunbook' };
-
-/**
- * A child's reported outcome, as written to its result file. `t0`/`t1` bracket
- * the mutation window (epoch ms) and `pid` names the writer; they carry on BOTH
- * arms so the overlap witness can read them without narrowing on `ok`.
- */
-type ChildResult =
-  | {
-      readonly ok: true;
-      readonly value: unknown;
-      readonly t0: number;
-      readonly t1: number;
-      readonly pid: number;
-    }
-  | {
-      readonly ok: false;
-      readonly error: string;
-      readonly t0: number;
-      readonly t1: number;
-      readonly pid: number;
-    };
 
 let dir: string;
 let manager: RunbookStateManager;
@@ -194,16 +163,20 @@ async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
   // Attach exit listeners BEFORE releasing the barrier. A child released first
   // could exit before its listener was attached, and `exit` does not replay —
   // the await below would then hang until the test timeout.
-  const exits = parked.map(
-    ({ child }) =>
-      new Promise<void>((resolve, reject) => {
-        child.on('exit', (code, signal) => {
-          code === 0
-            ? resolve()
-            : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
-        });
-      }),
-  );
+  // Marked handled for the same reason as `childExit`: `Promise.all` below settles
+  // on the FIRST rejection, so if two children fail the second rejects with nobody
+  // watching and Jest reports an unhandled rejection over the real failure.
+  const exits = parked.map(({ child }) => {
+    const exit = new Promise<void>((resolve, reject) => {
+      child.on('exit', (code, signal) => {
+        code === 0
+          ? resolve()
+          : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
+      });
+    });
+    exit.catch(() => {});
+    return exit;
+  });
 
   // Release every child at once. This is the only synchronization point.
   await fs.writeFile(goFile, 'go');
@@ -247,6 +220,72 @@ function expectOverlap(results: readonly ChildResult[]): void {
     results.some((b, j) => i !== j && a.t0 < b.t1 && b.t0 < a.t1),
   );
   expect(overlapping).toBe(true);
+}
+
+/**
+ * Resolve when the child exits cleanly; reject on a non-zero exit. Attach BEFORE
+ * releasing the worker so a fast exit is not missed (`exit` does not replay).
+ *
+ * @param child - The spawned worker.
+ * @returns A promise settling on the worker's exit.
+ */
+function childExit(child: ChildProcess): Promise<void> {
+  const exit = new Promise<void>((resolve, reject) => {
+    // A spawn failure emits 'error' and never 'exit', so without this the promise
+    // would hang until the suite timeout and report nothing about the real cause.
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      code === 0
+        ? resolve()
+        : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
+    });
+  });
+  // Mark it handled. This promise is created before the barrier protocol runs but
+  // awaited only at `collect`, so any assertion that throws in between leaves it
+  // unawaited; teardown then kills the worker and it rejects with nobody watching.
+  // Jest reports that as an unhandled rejection ON TOP OF — or instead of — the
+  // assertion that actually failed, which on a cross-process race test destroys
+  // exactly the signal being sought. Attaching a no-op handler suppresses only the
+  // unhandled-rejection report; the returned promise still rejects for `collect`.
+  exit.catch(() => {});
+  return exit;
+}
+
+/**
+ * Await the worker's exit, then read its result file.
+ *
+ * @param parked - The parked worker handle.
+ * @param exit - The exit promise attached before release.
+ * @returns The worker's reported result.
+ */
+async function collect(parked: ParkedChild, exit: Promise<void>): Promise<ChildResult> {
+  await exit;
+  return JSON.parse(await fs.readFile(parked.resultFile, 'utf8')) as ChildResult;
+}
+
+/**
+ * Poll for a protocol file the worker writes, failing fast if the worker exits
+ * first. The wait only OBSERVES a barrier file; it never establishes ordering by
+ * elapsed time.
+ *
+ * @param file - Path the worker writes to signal a stage.
+ * @param child - The worker, so a premature exit fails the wait promptly.
+ * @throws {Error} When the worker exits before writing the file, or on timeout.
+ */
+async function waitForFile(file: string, child: ChildProcess): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    try {
+      await fs.access(file);
+      return;
+    } catch {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`worker exited before writing ${path.basename(file)}`);
+      }
+      if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path.basename(file)}`);
+      await wait(10);
+    }
+  }
 }
 
 describe('cross-process session write contention (transaction replaces SessionLock)', () => {
@@ -372,5 +411,67 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // Four independent removals from a four-entry stack must empty it. Any
     // survivor is an entry a losing writer's stale snapshot put back.
     expect(defaultStack).toEqual([]);
+  }, 120_000);
+
+  it('refuses after a claim commits between the fast check and guarded parent write', async () => {
+    // Forces the exact defective ordering across TWO OS processes: the advance
+    // worker completes its fast pre-check ([] open children) and parks inside its
+    // advance callback; while it is parked, THIS process commits the racing claim
+    // from a separate SQLite connection; only then is the worker released to
+    // attempt the guarded decisive write. No timing luck: the callback-ready ->
+    // claim-commit -> callback-go protocol makes it deterministic.
+    const parentId = await newRun();
+    const linkage = linkageFor(parentId, 'a');
+    const childRunId = await newRun({ parentLinkage: linkage });
+    await seedLiveDelegation(manager, linkage);
+
+    const goFile = path.join(dir, 'advance-go');
+    const callbackReadyFile = path.join(dir, 'advance-callback-ready');
+    const callbackGoFile = path.join(dir, 'advance-callback-go');
+    const parked = await park(goFile, {
+      kind: 'guardedParentAdvance',
+      parentRunId: parentId,
+      linkage,
+      callbackReadyFile,
+      callbackGoFile,
+    });
+    const exit = childExit(parked.child); // attach before releasing the worker
+    await fs.writeFile(goFile, 'go');
+
+    // The worker's fast pre-check returned [] and its advance callback is parked.
+    await waitForFile(callbackReadyFile, parked.child);
+
+    // Commit the claim from this process/SQLite connection while the worker waits.
+    const claimed = assertClaimed(await sessionService.claimRunbook(childRunId, linkage));
+    expect((await sessionService.verifyClaimId(assertClaimId(claimed.claimId))).status).toBe(
+      'verified',
+    );
+
+    // Only now permit the worker's guarded decisive write.
+    await fs.writeFile(callbackGoFile, 'go');
+    // The real union, not a hand-written structural stand-in: a cast that invents
+    // the shape cannot catch the production type drifting away from it.
+    const advance = values([await collect(parked, exit)])[0] as Awaited<
+      ReturnType<SessionService['runGuardedParentAdvance']>
+    >;
+
+    expect(advance.kind).toBe('open_delegated_children');
+    if (advance.kind !== 'open_delegated_children') throw new Error('expected a guard refusal');
+    expect(advance.claims.map((claim) => claim.controlledRunId)).toEqual([childRunId]);
+    // The claimant's bearer survives the refused advance.
+    expect((await sessionService.verifyClaimId(assertClaimId(claimed.claimId))).status).toBe(
+      'verified',
+    );
+    // The parent did not advance: the decisive write rolled back. Exact value, not
+    // `not.toBe('done')` — that negative also passes when the parent fails to load.
+    const parentAfter = await manager.load(parentId);
+    expect(parentAfter).toBeDefined();
+    expect(
+      findSubstepState(
+        parentAfter?.substepStates ?? [],
+        linkage.parentStepId,
+        linkage.parentFrameKey,
+      )?.status,
+    ).toBe('running');
   }, 120_000);
 });

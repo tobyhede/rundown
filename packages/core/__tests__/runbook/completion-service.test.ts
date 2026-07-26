@@ -28,6 +28,7 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
+import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -289,8 +290,47 @@ describe('RunbookCompletionService', () => {
         completionKey: key,
         completion: expect.objectContaining({ targetEntry: 1, targetSubstep: '1' }),
       }),
+      // An unguarded drain forwards no parent-advance guard. The guard rides this
+      // argument only when the drain is the decisive write (duplicate record path).
+      {},
     );
     await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
+  });
+
+  it('forwards a parent-advance guard from the drain into the applied completion write', async () => {
+    // The drain is the decisive parent-advancing write whenever the preceding
+    // record short-circuited as a duplicate, so the guard must reach sendAndSync's
+    // store write. Without this forwarding the guard is accepted and dropped.
+    const current = state();
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    await manager.save({
+      ...current,
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+    const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: state({ substep: '2' }),
+      snapshot: {},
+      effects: [],
+    });
+
+    const guard = parentAdvanceGuard(runbookId);
+    await service.drainResolvedCompletions({ runbookId, steps, currentState: current, guard });
+
+    expect(sendAndSync).toHaveBeenCalledWith(
+      runbookId,
+      steps,
+      expect.objectContaining({ type: 'APPLY_CURRENT_RESOLVED_COMPLETION' }),
+      { guard },
+    );
   });
 
   it('does not delete a resolved completion when actor sync fails before applying it', async () => {

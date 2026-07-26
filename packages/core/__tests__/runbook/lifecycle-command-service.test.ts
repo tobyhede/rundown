@@ -45,8 +45,14 @@ import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
+import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
-import { assertClaimed, linkageFor, claimLiveDelegation } from './claim-test-helpers.js';
+import {
+  assertClaimed,
+  linkageFor,
+  claimLiveDelegation,
+  seedLiveDelegation,
+} from './claim-test-helpers.js';
 import { patchPersistedClaim } from '../../src/testing/session-fixtures.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
@@ -2282,6 +2288,288 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome.kind).toBe('open_delegated_children');
+    });
+
+    it('refuses a racing claim through the top-level production path (sendAndSync)', async () => {
+      // A claim that commits INSIDE the guarded advance window — after the cheap
+      // pre-check, before the decisive sendAndSync write — must refuse the advance
+      // via the in-transaction guard, preserving the bearer. Drives the real
+      // LifecycleCommandService -> sendAndSync -> updateFromActor -> manager.update
+      // forwarding: fails if any layer drops the guard.
+      loadStepsImpl = () => twoSteps;
+      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac');
+      const linkage = linkageFor(namedRunId, 'a');
+      await activate(baseState({ id: namedRunId }));
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realSendAndSync = actorService.sendAndSync.bind(actorService);
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
+      jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (...args) => {
+        // Inject on the FIRST call only: the claim must land inside the first
+        // guarded window, and re-claiming on later calls would mask a guard that
+        // refused for the wrong reason.
+        claimed ??= assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+        return realSendAndSync(...args);
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('open_delegated_children');
+      // The injection actually ran — without this an unasserted spy that silently
+      // stopped firing would leave the test passing while racing nothing.
+      expect(claimed).toBeDefined();
+      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
+        'verified',
+      );
+      expect((await manager.load(namedRunId))?.step).toBe('1');
+    });
+
+    it('refuses a racing claim through the substep production path (recordManualCompletion)', async () => {
+      // Same race as the top-level test, but through #driveSubstep ->
+      // recordManualCompletion -> recordManualCompletionUnlocked ->
+      // manager.updateWithState. Fails if any of those layers drops the guard.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad');
+      const linkage = linkageFor(namedRunId, 'a');
+      await activate(baseState({ id: namedRunId, substep: '1' }));
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realRecord = completionService.recordManualCompletion.bind(completionService);
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
+      jest
+        .spyOn(completionService, 'recordManualCompletion')
+        .mockImplementation(async (...args) => {
+          // First call only — see the sendAndSync spy above.
+          claimed ??= assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+          return realRecord(...args);
+        });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('open_delegated_children');
+      // The injection actually ran — without this an unasserted spy that silently
+      // stopped firing would leave the test passing while racing nothing.
+      expect(claimed).toBeDefined();
+      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
+        'verified',
+      );
+      // Exact post-rollback value: `not.toBe('done')` would also pass if the parent
+      // failed to load or the substep vanished. seedLiveDelegation left it 'running'.
+      const parentAfter = await manager.load(namedRunId);
+      expect(parentAfter).toBeDefined();
+      expect(
+        findSubstepState(
+          parentAfter?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.status,
+      ).toBe('running');
+    });
+
+    it('refuses a racing claim when the substep completion was already recorded', async () => {
+      // Same race as the test above, with one difference: the completion row already
+      // exists, so recordManualCompletionUnlocked short-circuits on `duplicate`
+      // BEFORE reaching any store write. The guard threaded into it is therefore
+      // never evaluated, and the decisive write moves to the drain below — which
+      // must carry the guard itself, or a claim landing in the window advances the
+      // parent past a live delegated child.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      // The drain is stubbed inert (as in the exemption test below): these
+      // hand-seeded states carry no actor snapshot, so a real drain dies inside
+      // sendAndSync. That only makes the assertion STRICTER — with the drain unable
+      // to advance anything, `applied` can only mean the guard failed to refuse.
+      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
+        status: 'not_active',
+        frameKey: buildFrameKey('1'),
+        activeFrameKey: buildFrameKey('1'),
+        unresolved: 1,
+        applied: [],
+      });
+      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae');
+      const linkage = linkageFor(namedRunId, 'a');
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await activate(
+        baseState({
+          id: namedRunId,
+          substep: '1',
+          // An undrained completion: recorded, then the process died before the drain.
+          // `agentId: 'manual'` is load-bearing — a 'delegation' row would trip
+          // runGuardedParentAdvance's collection-pending refusal before the callback
+          // ever runs, hiding the branch under test.
+          resolvedCompletions: {
+            [completionKey]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-06-28T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realRecord = completionService.recordManualCompletion.bind(completionService);
+      let claimed:
+        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
+        | undefined;
+      jest
+        .spyOn(completionService, 'recordManualCompletion')
+        .mockImplementation(async (...args) => {
+          // First call only — see the sendAndSync spy above.
+          claimed ??= assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+          return realRecord(...args);
+        });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('open_delegated_children');
+      // The injection actually ran — without this an unasserted spy that silently
+      // stopped firing would leave the test passing while racing nothing.
+      expect(claimed).toBeDefined();
+      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
+        'verified',
+      );
+      // Exact post-rollback value: `not.toBe('done')` would also pass if the parent
+      // failed to load or the substep vanished. seedLiveDelegation left it 'running'.
+      const parentAfter = await manager.load(namedRunId);
+      expect(parentAfter).toBeDefined();
+      expect(
+        findSubstepState(
+          parentAfter?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.status,
+      ).toBe('running');
+    });
+
+    it('threads a real guard into the drain and proceeds when no child is live', async () => {
+      // The non-refusing arm of the guarded drain, and the only test that actually
+      // INVOKES its callback: the duplicate race test above refuses at this guarded
+      // advance's own pre-check (the claim is already committed by then), so it never
+      // reaches the callback that threads the guard. Without this, the wiring inside
+      // that branch is unexercised and the refusal check is trivially always-true.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
+        status: 'not_active',
+        frameKey: buildFrameKey('1'),
+        activeFrameKey: buildFrameKey('1'),
+        unresolved: 1,
+        applied: [],
+      });
+      const drainSpy = jest.spyOn(completionService, 'drainResolvedCompletions');
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await activate(
+        baseState({
+          id: namedRunId,
+          substep: '1',
+          resolvedCompletions: {
+            [completionKey]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-06-28T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // No live delegated child, so the guarded drain commits rather than refusing.
+      expect(outcome.kind).toBe('applied');
+      expect(drainSpy).toHaveBeenCalled();
+      // ...and it was handed a real guard naming this parent, not undefined.
+      for (const [args] of drainSpy.mock.calls) {
+        expect(args.guard).toEqual(parentAdvanceGuard(namedRunId));
+      }
+    });
+
+    it('leaves the follow-on drain unguarded when the record actually committed', async () => {
+      // The complement of the duplicate test: a `recorded` result means the decisive
+      // write already committed under its own guard, so the drain that follows must
+      // NOT be re-guarded. Re-guarding it would let an unrelated live child abort the
+      // drain and strand a recorded-but-undrained completion — manufacturing the very
+      // state the duplicate defect exploits.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      const drainSpy = jest
+        .spyOn(completionService, 'drainResolvedCompletionsUnlocked')
+        .mockResolvedValue({
+          status: 'not_active',
+          frameKey: buildFrameKey('1'),
+          activeFrameKey: buildFrameKey('1'),
+          unresolved: 1,
+          applied: [],
+        });
+      await activate(baseState({ id: namedRunId, substep: '1' }));
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect(drainSpy).toHaveBeenCalled();
+      for (const [args] of drainSpy.mock.calls) {
+        expect(args.guard).toBeUndefined();
+      }
     });
 
     it('keeps the targeted exemption for run+step over pending outcomes (sanctioned operator recovery)', async () => {
