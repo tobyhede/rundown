@@ -24,17 +24,11 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * version is invalid and rejected with an {@link IncompatibleSchemaError}; the
  * recovery path is explicit user action (finish, stop, prune, restart).
  *
- * Deliberately NOT bumped for DDL edits made during the #608 controlled rebuild
- * (for example `claims_one_active_per_run`): the store is unreleased, so no
- * persisted database exists outside a development tree and there is nothing for
- * {@link ensureSchema} to reject. Delete `.rundown/rundown.db` after pulling a
- * DDL change. **From the first release onward this constant MUST move with any
- * DDL edit** — leaving it fixed makes two different schemas share one version,
- * and `ensureSchema` then accepts the older one silently (a database missing a
- * new index or trigger runs with that invariant unenforced, and RD-305 can never
- * fire).
+ * Version 2 adds `claims_one_active_per_run`. Sharing version 1 with databases
+ * created before that index existed would silently run without its invariant,
+ * so those databases are rejected rather than migrated.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;

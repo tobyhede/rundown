@@ -165,6 +165,41 @@ describe('storage schema', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('rejects a version-1 database missing the active-claim index without migrating', async () => {
+    await using driver = memoryDriver();
+    await driver.immediate((tx) => {
+      installSchema(tx);
+      tx.exec('DROP INDEX claims_one_active_per_run');
+      tx.exec('PRAGMA user_version = 1');
+    });
+
+    let refusal: unknown;
+    try {
+      await driver.immediate((tx) => {
+        ensureSchema(tx);
+      });
+    } catch (err) {
+      refusal = err;
+    }
+
+    expect(refusal).toBeInstanceOf(IncompatibleSchemaError);
+    expect(refusal).toMatchObject({
+      foundVersion: 1,
+      expectedVersion: SCHEMA_VERSION,
+    });
+
+    const [version, indexes] = await driver.read((tx) => [
+      readSchemaVersion(tx),
+      tx
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='claims_one_active_per_run'",
+        )
+        .all<{ readonly name: string }>(),
+    ]);
+    expect(version).toBe(1);
+    expect(indexes).toEqual([]);
+  });
+
   it('rejects an incompatible future schema version, never migrating', async () => {
     await using driver = memoryDriver();
     const future = SCHEMA_VERSION + 1;
