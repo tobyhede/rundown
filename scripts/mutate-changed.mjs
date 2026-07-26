@@ -50,6 +50,9 @@
  *   node scripts/mutate-changed.mjs --whole-file          # ignore line ranges
  *   node scripts/mutate-changed.mjs --related-tests       # keep findRelatedTests
  *
+ * The local scope includes STAGED, UNSTAGED and UNTRACKED changes, so it judges
+ * the tree as it stands rather than the last commit. CI keeps the HEAD-only view.
+ *
  * @see issue #485
  * @module scripts/mutate-changed
  */
@@ -258,7 +261,17 @@ async function main() {
   for (const pkg of selected) {
     if (!existsSync(join(repoRoot, pkg.dir, 'stryker.config.mjs'))) continue;
     const patterns = await mutatePatterns(repoRoot, pkg.dir);
-    const scope = buildScope({ repoRoot, pkg, base, wholeFile: opts.wholeFile, patterns });
+    const scope = buildScope({
+      repoRoot,
+      pkg,
+      base,
+      wholeFile: opts.wholeFile,
+      patterns,
+      // Local runs judge what you have RIGHT NOW, including staged, unstaged and
+      // untracked work — this command exists to be run before committing. CI keeps
+      // the HEAD-only view, because it scores a commit that has been pushed.
+      includeWorkingTree: true,
+    });
     if (scope.entries.length === 0 && scope.excluded.length === 0 && scope.skipped.length === 0) {
       continue;
     }

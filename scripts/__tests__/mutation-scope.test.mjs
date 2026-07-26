@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -444,4 +445,133 @@ test('toShardEntry: a batched shard concatenates every file scope and label', ()
   assert.equal(shard.label, 'src/a.ts src/b.ts');
   assert.deepEqual(shard.scopes.split('\n'), ['src/a.ts', 'src/b.ts:5-6']);
   assert.equal(shard.testFiles, '__tests__/a.test.ts,__tests__/b.test.ts');
+});
+
+/**
+ * Build a throwaway git repo with one committed source file and its test, and
+ * return the base commit. Real git, because the defect being pinned is precisely
+ * which git revision syntax is used.
+ *
+ * @returns {{dir: string, base: string}} the repo path and base commit sha.
+ */
+function makeRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'scope-wt-'));
+  const run = (args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  run(['init', '--quiet', '--initial-branch=main']);
+  run(['config', 'user.email', 'test@example.com']);
+  run(['config', 'user.name', 'Test']);
+  mkdirSync(join(dir, 'pkg/src'), { recursive: true });
+  mkdirSync(join(dir, 'pkg/__tests__'), { recursive: true });
+  writeFileSync(join(dir, 'pkg/src/a.ts'), 'export const a = 1;\n');
+  writeFileSync(join(dir, 'pkg/__tests__/a.test.ts'), '// test\n');
+  run(['add', '-A']);
+  run(['commit', '--quiet', '-m', 'base']);
+  return { dir, base: run(['rev-parse', 'HEAD']) };
+}
+
+const scopeOf = (dir, base, includeWorkingTree) =>
+  buildScope({
+    repoRoot: dir,
+    pkg: { dir: 'pkg' },
+    base,
+    patterns: ['src/**/*.ts'],
+    includeWorkingTree,
+  });
+
+// REGRESSION (P2): `test:mutate:changed` is advertised as the way to check your
+// work BEFORE pushing, but the diff ended at HEAD — so uncommitted edits were
+// invisible and the command reported "nothing to run" while sitting on real
+// changes. CI must keep the HEAD-only view (it scores a pushed commit), so this
+// is opt-in rather than a change of default.
+test('buildScope: an UNSTAGED source edit is invisible to CI but seen locally', () => {
+  const { dir, base } = makeRepo();
+  try {
+    writeFileSync(join(dir, 'pkg/src/a.ts'), 'export const a = 2;\n');
+    assert.deepEqual(scopeOf(dir, base, false).entries, [], 'CI scope must end at HEAD');
+    const local = scopeOf(dir, base, true);
+    assert.equal(local.entries.length, 1);
+    assert.equal(local.entries[0].file, 'src/a.ts');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildScope: a STAGED source edit is seen locally', () => {
+  const { dir, base } = makeRepo();
+  try {
+    writeFileSync(join(dir, 'pkg/src/a.ts'), 'export const a = 3;\n');
+    execFileSync('git', ['add', 'pkg/src/a.ts'], { cwd: dir });
+    assert.deepEqual(scopeOf(dir, base, false).entries, []);
+    assert.equal(scopeOf(dir, base, true).entries.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A brand-new module is the most likely thing to be sitting uncommitted when the
+// gate is run, and `git diff` never reports untracked paths at all — so they need
+// their own lookup or the new file is never scored at all.
+test('buildScope: an UNTRACKED new source file is seen locally, and mutated whole', () => {
+  const { dir, base } = makeRepo();
+  try {
+    writeFileSync(join(dir, 'pkg/src/brand-new.ts'), 'export const b = 1;\n');
+    assert.deepEqual(scopeOf(dir, base, false).entries, []);
+    const local = scopeOf(dir, base, true);
+    const entry = local.entries.find((e) => e.file === 'src/brand-new.ts');
+    assert.ok(entry, 'an untracked source file must be scoped');
+    assert.equal(entry.whole, true, 'a new file has no prior side, so mutate it whole');
+    assert.deepEqual(entry.ranges, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildScope: an uncommitted test DELETION maps back to its source locally', () => {
+  const { dir, base } = makeRepo();
+  try {
+    rmSync(join(dir, 'pkg/__tests__/a.test.ts'));
+    assert.deepEqual(scopeOf(dir, base, false).entries, []);
+    const local = scopeOf(dir, base, true);
+    assert.equal(local.entries.length, 1);
+    assert.equal(local.entries[0].file, 'src/a.ts');
+    assert.equal(
+      local.entries[0].testFile,
+      null,
+      'the deleted test cannot be a --testFiles target',
+    );
+    assert.match(local.entries[0].reason, /deleted/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildScope: local ranges come from the working tree, not the last commit', () => {
+  const { dir } = makeRepo();
+  try {
+    // A file big enough to be range-scoped rather than mutated whole. It must
+    // exist AT the base commit: a file added after the base is genuinely new
+    // relative to it, and is then correctly mutated whole rather than ranged.
+    const lines = Array.from(
+      { length: WHOLE_FILE_LINE_LIMIT + 50 },
+      (_, i) => `export const v${i} = ${i};`,
+    );
+    writeFileSync(join(dir, 'pkg/src/big.ts'), `${lines.join('\n')}\n`);
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['commit', '--quiet', '-m', 'add big'], { cwd: dir });
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    // Now edit one line WITHOUT committing.
+    lines[100] = 'export const v100 = 999;';
+    writeFileSync(join(dir, 'pkg/src/big.ts'), `${lines.join('\n')}\n`);
+
+    const local = scopeOf(dir, base, true);
+    const entry = local.entries.find((e) => e.file === 'src/big.ts');
+    assert.ok(entry, 'the edited file must be scoped');
+    assert.equal(entry.whole, false, 'a large file must be range-scoped');
+    assert.ok(
+      entry.ranges.some((r) => r.start <= 101 && r.end >= 101),
+      `the uncommitted edit at line 101 must be in ${JSON.stringify(entry.ranges)}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

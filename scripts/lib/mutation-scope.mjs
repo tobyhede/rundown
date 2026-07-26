@@ -227,9 +227,31 @@ export function eligibleFiles(repoRoot, dir, patterns) {
  * @param {string} [filter] - `--diff-filter` value (default excludes deletions).
  * @returns {string[]} repo-relative paths.
  */
-export function changedFiles(base, pathspec, filter = 'd') {
-  const flag = filter === 'd' ? '--diff-filter=d' : `--diff-filter=${filter}`;
-  return git(['diff', '--name-only', flag, `${base}...HEAD`, '--', pathspec])
+export function changedFiles(base, pathspec, filter = 'd', { cwd, workingTree = false } = {}) {
+  // `<base>...HEAD` ends at the last commit; a bare `<base>` diffs the base
+  // against the INDEX AND WORKING TREE. CI wants the former — it scores a pushed
+  // commit — while the local runner must see work that is not committed yet, which
+  // is the whole point of running the gate before pushing.
+  const revs = workingTree ? [base] : [`${base}...HEAD`];
+  return git(['diff', '--name-only', `--diff-filter=${filter}`, ...revs, '--', pathspec], cwd)
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Untracked, non-ignored files under a pathspec.
+ *
+ * `git diff` never reports untracked paths in any revision form, so a brand-new
+ * file — the thing most likely to be sitting uncommitted when the local gate is
+ * run — needs its own lookup or it is never scored at all.
+ *
+ * @param {string} pathspec - a git pathspec to limit the listing to.
+ * @param {string} [cwd] - working directory.
+ * @returns {string[]} repo-relative paths.
+ */
+export function untrackedFiles(pathspec, cwd) {
+  return git(['ls-files', '--others', '--exclude-standard', '--', pathspec], cwd)
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
@@ -254,9 +276,25 @@ export function changedFiles(base, pathspec, filter = 'd') {
  * @param {string[]} params.patterns - the package's Stryker mutate patterns.
  * @returns {{entries: Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>, excluded: string[], skipped: Array<{file: string, why: string}>}}
  */
-export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns, diffs }) {
+export function buildScope({
+  repoRoot,
+  pkg,
+  base,
+  wholeFile = false,
+  patterns,
+  diffs,
+  includeWorkingTree = false,
+}) {
   // `diffs` is a seam for tests; production callers omit it and the diff is read
   // from git here.
+  const opts = { cwd: repoRoot, workingTree: includeWorkingTree };
+  const srcPath = `${pkg.dir}/src`;
+  const testPath = `${pkg.dir}/__tests__`;
+  // Untracked files are absent from every `git diff` form, so they are collected
+  // separately and treated as added — a new file has no prior side, so there are
+  // no ranges to compute and it is mutated whole.
+  const untrackedSrc = includeWorkingTree ? untrackedFiles(srcPath, repoRoot) : [];
+  const untrackedTests = includeWorkingTree ? untrackedFiles(testPath, repoRoot) : [];
   const {
     changedSrc,
     addedSrc,
@@ -266,10 +304,10 @@ export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns, d
     // all — the single test change most worth catching.
     deletedTests,
   } = diffs ?? {
-    changedSrc: changedFiles(base, `${pkg.dir}/src`),
-    addedSrc: changedFiles(base, `${pkg.dir}/src`, 'A'),
-    changedTests: changedFiles(base, `${pkg.dir}/__tests__`),
-    deletedTests: changedFiles(base, `${pkg.dir}/__tests__`, 'D'),
+    changedSrc: [...changedFiles(base, srcPath, 'd', opts), ...untrackedSrc],
+    addedSrc: [...changedFiles(base, srcPath, 'A', opts), ...untrackedSrc],
+    changedTests: [...changedFiles(base, testPath, 'd', opts), ...untrackedTests],
+    deletedTests: changedFiles(base, testPath, 'D', opts),
   };
   if (changedSrc.length === 0 && changedTests.length === 0 && deletedTests.length === 0) {
     return { entries: [], excluded: [], skipped: [] };
@@ -297,9 +335,17 @@ export function buildScope({ repoRoot, pkg, base, wholeFile = false, patterns, d
     }
     const lines = lineCount(rel);
     const whole = wholeFile || added.has(repoRel) || lines <= WHOLE_FILE_LINE_LIMIT;
+    // Same revision form as the file listing above, or the ranges would describe
+    // a file's committed state while the listing picked it up for working-tree
+    // edits — scoping Stryker to lines the change did not touch.
     const ranges = whole
       ? []
-      : changedRanges(git(['diff', '-U0', `${base}...HEAD`, '--', repoRel]));
+      : changedRanges(
+          git(
+            ['diff', '-U0', ...(includeWorkingTree ? [base] : [`${base}...HEAD`]), '--', repoRel],
+            repoRoot,
+          ),
+        );
     // A modified file whose every hunk was a pure deletion has no new-side lines
     // left to mutate; including it would only widen the scope back to the file.
     if (!whole && ranges.length === 0) continue;
