@@ -1970,6 +1970,7 @@ describe('claimAndLaunch', () => {
       parentRunId: RUN_ID,
       parentStepId: '1',
     });
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
 
     const ctx = makeCtx({
       manager: {
@@ -1980,6 +1981,7 @@ describe('claimAndLaunch', () => {
           (...args: unknown[]) => Promise<{ id: RunId; title: string }>
         >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
         update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        delete: mockDelete,
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
       },
@@ -2018,6 +2020,7 @@ describe('claimAndLaunch', () => {
       assertVariant(result, 'reason', 'parent-missing');
       expect(result.parentRunId).toBe(RUN_ID);
     }
+    expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(runExecutionLoop).not.toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
