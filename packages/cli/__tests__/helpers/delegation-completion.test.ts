@@ -55,6 +55,31 @@ const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>()
  */
 type SeamResult = TerminalUpwardPropagationResult;
 
+/**
+ * A core-composed refusal, as the seam now hands it back (#603).
+ *
+ * The message and code are core's (their text is pinned by the seam's own
+ * tests); these adapters only render them, so the fixture deliberately uses a
+ * placeholder message no adapter could have composed on its own — reproducing it
+ * is what proves the render is pass-through.
+ */
+const REPEAT_CYCLE_SEAM_RESULT = {
+  kind: 'linkage-cycle',
+  trip: {
+    cause: 'repeat',
+    repeatedRunId: CHILD_RUN_ID,
+    code: 'INLINE_PARENT_CYCLE',
+    message: 'core-composed repeat message',
+  },
+} as const satisfies SeamResult;
+
+/** The envelope every adapter must emit when it collapses the refusal. */
+const REPEAT_CYCLE_ENVELOPE = [
+  'core-composed repeat message',
+  'INLINE_PARENT_CYCLE',
+  { cause: 'repeat', runId: CHILD_RUN_ID },
+] as const;
+
 // Mock @rundown-org/core. The report-only helper (Plan 5) constructs only
 // RunbookStateManager, ExecutionLifecycleService, and RunbookCompletionService;
 // the remaining named exports satisfy the ESM link check for transitive imports.
@@ -74,14 +99,13 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // The thin CLI adapters delegate the decision to the core seam. Mock it so
   // adapter tests assert routing + result mapping; the REAL seam logic is
   // covered by packages/core/__tests__/runbook/inline-parent-advance.test.ts.
-  propagateTerminalChildUpward:
-    mockFn<
-      (
-        deps: unknown,
-        childState: RunbookState,
-        result: 'pass' | 'fail' | undefined,
-      ) => Promise<SeamResult>
-    >().mockResolvedValue('handled'),
+  propagateTerminalChildUpward: mockFn<
+    (
+      deps: unknown,
+      childState: RunbookState,
+      result: 'pass' | 'fail' | undefined,
+    ) => Promise<SeamResult>
+  >().mockResolvedValue({ kind: 'handled' }),
   // advanceParentForInlineChild lazily constructs a bridged emitter; a no-op
   // stub satisfies the link check (these tests assert on drain/loop branches).
   ExecutionEventEmitter: jest.fn().mockImplementation(() => ({ subscribe: jest.fn() })),
@@ -198,7 +222,7 @@ const {
   reportTerminalToDelegatingRun,
   advanceParentForInlineChild,
   buildAdvanceInlineParent,
-  buildLinkageCycleDiagnostic,
+  emitLinkageCycleDiagnostic,
   extractParentLinkage,
   propagateChildTerminal,
   propagateDrivenRunTerminal,
@@ -367,7 +391,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   // Default the seam mock to 'handled'; suites that assert a specific mapping
   // override it per test.
-  propagateTerminalChildUpward.mockResolvedValue('handled');
+  propagateTerminalChildUpward.mockResolvedValue({ kind: 'handled' });
   mockCreateCliRunbookActorService.mockImplementation(() => makeActorDouble());
   jest.mocked(drainResolvedCompletions).mockResolvedValue({
     unresolved: 0,
@@ -412,7 +436,7 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
       parentLinkage: makeDelegationLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('reported');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'reported' });
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
     expect(result).toBe('reported');
     expect(propagateTerminalChildUpward).toHaveBeenCalledWith(
@@ -429,7 +453,7 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
       parentLinkage: makeDelegationLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('duplicate');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'duplicate' });
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
     expect(result).toBe('reported');
   });
@@ -440,20 +464,23 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
       parentLinkage: makeDelegationLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('blocked');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'blocked' });
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
     expect(result).toBe('blocked');
   });
 
-  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+  it('renders the seam trip, then maps it onto the fail-closed blocked (#602/#603)', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeDelegationLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    propagateTerminalChildUpward.mockResolvedValue(REPEAT_CYCLE_SEAM_RESULT);
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
     expect(result).toBe('blocked');
+    // The operator diagnostic is no longer pushed out of core through a sink —
+    // this adapter owns the emitter, so it renders the returned trip itself.
+    expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
   it('maps a seam not-applicable result to not-applicable', async () => {
@@ -462,7 +489,7 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
       parentLinkage: makeDelegationLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('not-applicable');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'not-applicable' });
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
     expect(result).toBe('not-applicable');
   });
@@ -550,7 +577,7 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
       parentLinkage: makeInlineLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('stopped');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'stopped' });
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('stopped');
     expect(propagateTerminalChildUpward).toHaveBeenCalledWith(
@@ -566,7 +593,7 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
       parentLinkage: makeInlineLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('handled');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'handled' });
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('handled');
   });
@@ -577,20 +604,35 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
       parentLinkage: makeInlineLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('reported');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'reported' });
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('not-applicable');
   });
 
-  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+  it('renders the seam trip, then maps it onto the fail-closed blocked (#602/#603)', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeInlineLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    propagateTerminalChildUpward.mockResolvedValue(REPEAT_CYCLE_SEAM_RESULT);
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('blocked');
+    expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
+  });
+
+  it('renders no diagnostic when the seam did not refuse', async () => {
+    // The collapse and the render are two statements around one flush; a render
+    // that drifted outside the refusal arm would print INLINE_PARENT_CYCLE on a
+    // healthy advance.
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'handled' });
+    await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(output.error).not.toHaveBeenCalled();
   });
 });
 
@@ -599,15 +641,16 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
     propagateTerminalChildUpward.mockReset();
   });
 
-  it('maps a seam linkage-cycle onto the fail-closed blocked (#602)', async () => {
+  it('renders the seam trip, then maps it onto the fail-closed blocked (#602/#603)', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
       parentLinkage: makeInlineLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('linkage-cycle');
+    propagateTerminalChildUpward.mockResolvedValue(REPEAT_CYCLE_SEAM_RESULT);
     const result = await propagateChildTerminal(childState, 'pass', '/test', output);
     expect(result).toBe('blocked');
+    expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
   it('still collapses a seam duplicate to reported (finding 2 regression)', async () => {
@@ -616,19 +659,19 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
       parentLinkage: makeDelegationLinkage(),
     });
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('duplicate');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'duplicate' });
     const result = await propagateChildTerminal(childState, 'pass', '/test', output);
     expect(result).toBe('reported');
   });
 });
 
-describe('buildLinkageCycleDiagnostic (#602)', () => {
-  // The sink RENDERS; it does not compose. Core owns the message and code (the
+describe('emitLinkageCycleDiagnostic (#602/#603)', () => {
+  // The renderer RENDERS; it does not compose. Core owns the message and code (the
   // seam's own tests pin their text), so these assert pass-through + the run id
   // each cause carries under its own field name.
   it('renders core-composed repeat trip verbatim, naming the repeated run', () => {
     const output = makeOutput();
-    buildLinkageCycleDiagnostic(output)({
+    emitLinkageCycleDiagnostic(output, {
       cause: 'repeat',
       repeatedRunId: CHILD_RUN_ID,
       code: 'INLINE_PARENT_CYCLE',
@@ -646,7 +689,7 @@ describe('buildLinkageCycleDiagnostic (#602)', () => {
 
   it('renders core-composed depth trip verbatim, naming the deepest run walked', () => {
     const output = makeOutput();
-    buildLinkageCycleDiagnostic(output)({
+    emitLinkageCycleDiagnostic(output, {
       cause: 'depth',
       deepestRunId: CHILD_RUN_ID,
       code: 'INLINE_PARENT_CYCLE',
@@ -884,7 +927,7 @@ describe('propagateDrivenRunTerminal', () => {
     });
     const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('handled');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'handled' });
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -902,7 +945,7 @@ describe('propagateDrivenRunTerminal', () => {
     });
     const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('stopped');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'stopped' });
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -920,7 +963,7 @@ describe('propagateDrivenRunTerminal', () => {
     });
     const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('blocked');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'blocked' });
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -938,7 +981,7 @@ describe('propagateDrivenRunTerminal', () => {
     });
     const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('reported');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'reported' });
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,
@@ -959,7 +1002,7 @@ describe('propagateDrivenRunTerminal', () => {
     });
     const manager = makeManager(new Map([[child.id, child]]));
     const output = makeOutput();
-    propagateTerminalChildUpward.mockResolvedValue('reported');
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'reported' });
     const result = await propagateDrivenRunTerminal(
       manager as unknown as RunbookStateManagerType,
       CHILD_RUN_ID,

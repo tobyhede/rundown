@@ -35,7 +35,7 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   type AdvanceInlineParent,
-  type OnLinkageCycle,
+  type LinkageCycleTrip,
   type PropagateTerminalChildUpwardDeps,
   type RunbookState,
   type ParentLinkage,
@@ -195,7 +195,7 @@ export function buildAdvanceInlineParent(
 }
 
 /**
- * Build the CLI's linkage-guard diagnostic sink (Category A: terminal rendering).
+ * Render a tripped linkage guard (Category A: terminal rendering).
  *
  * Renders only. The message and the `INLINE_PARENT_CYCLE` code are composed by
  * core (#602) — choosing what a corrupt linkage graph says to an operator is
@@ -203,19 +203,23 @@ export function buildAdvanceInlineParent(
  * path, where core's `LifecycleTerminalOutcome` already carries both for the same
  * fact and the CLI merely renders them.
  *
- * The adapters call `output.flush()` after the seam returns, so the emitted
- * diagnostic lands with the rest of the command's output.
+ * Called by whichever frontend holds the trip, at the point it collapses the
+ * refusal onto its own fail-closed member (#603) — the three adapters below, and
+ * `rundown collect`, which receives the trip on `terminalInlineAdvance`. It is
+ * NOT a core dependency: core cannot express "render once, only on a refusal" in
+ * a `void` callback's type, and the callers that never walk had to stub one.
+ *
+ * Each adapter renders BEFORE its `output.flush()`, which is exactly where the
+ * former sink's output landed, so the emitted stream is unchanged.
  *
  * @param output - Output emitter owned by the calling command.
- * @returns The sink to place on the core deps bag.
+ * @param trip - The core-composed trip: cause, the run it found, message, code.
  */
-export function buildLinkageCycleDiagnostic(output: OutputEmitter): OnLinkageCycle {
-  return (trip) => {
-    output.error(trip.message, trip.code, {
-      cause: trip.cause,
-      runId: trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId,
-    });
-  };
+export function emitLinkageCycleDiagnostic(output: OutputEmitter, trip: LinkageCycleTrip): void {
+  output.error(trip.message, trip.code, {
+    cause: trip.cause,
+    runId: trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId,
+  });
 }
 
 /**
@@ -247,7 +251,6 @@ export async function buildInlineParentAdvanceDeps(
     sessionService,
     completionService,
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
-    onLinkageCycle: buildLinkageCycleDiagnostic(output),
   };
 }
 
@@ -286,18 +289,21 @@ export async function reportTerminalToDelegatingRun(
     childState,
     result,
   );
+  // #603: the trip rides the seam's return value, so render it here — this
+  // adapter owns the emitter — before the flush the sink's output used to precede.
+  if (outcome.kind === 'linkage-cycle') emitLinkageCycleDiagnostic(output, outcome.trip);
   output.flush();
   // A delegation linkage yields 'reported' | 'duplicate' | 'blocked' |
   // 'linkage-cycle' | 'not-applicable' from the seam. The CLI never distinguished a
   // duplicate from a fresh report, so collapse 'duplicate' back into 'reported'
   // (finding 2), and narrow away the inline-only members — all without a cast.
-  if (outcome === 'handled' || outcome === 'stopped') return 'not-applicable';
-  if (outcome === 'duplicate') return 'reported';
+  if (outcome.kind === 'handled' || outcome.kind === 'stopped') return 'not-applicable';
+  if (outcome.kind === 'duplicate') return 'reported';
   // #602: a corrupt linkage graph is fail-closed. 'blocked' is this adapter's
   // pre-existing "could not propagate; exit non-zero" member, so map onto it
   // explicitly rather than inventing a CLI-visible member no caller can act on.
-  if (outcome === 'linkage-cycle') return 'blocked';
-  return outcome;
+  if (outcome.kind === 'linkage-cycle') return 'blocked';
+  return outcome.kind;
 }
 
 /**
@@ -354,6 +360,8 @@ export async function advanceParentForInlineChild(
     childState,
     result,
   );
+  // #603: render the returned trip before the flush (see the delegation adapter).
+  if (outcome.kind === 'linkage-cycle') emitLinkageCycleDiagnostic(output, outcome.trip);
   // Flush any buffered parent-stream output the seam produced (the callable
   // flushes on its advance paths, but a record-only short-circuit — e.g. a
   // 'blocked'/'cancelled' record — returns before the callable runs).
@@ -361,8 +369,10 @@ export async function advanceParentForInlineChild(
   // An inline linkage never yields the delegation-only 'reported' / 'duplicate';
   // narrow them away without a cast. #602: a tripped linkage guard is fail-closed
   // onto this adapter's pre-existing 'blocked'.
-  if (outcome === 'linkage-cycle') return 'blocked';
-  return outcome === 'reported' || outcome === 'duplicate' ? 'not-applicable' : outcome;
+  if (outcome.kind === 'linkage-cycle') return 'blocked';
+  return outcome.kind === 'reported' || outcome.kind === 'duplicate'
+    ? 'not-applicable'
+    : outcome.kind;
 }
 
 /**
@@ -411,6 +421,8 @@ export async function propagateChildTerminal(
     childState,
     result,
   );
+  // #603: render the returned trip before the flush (see the delegation adapter).
+  if (outcome.kind === 'linkage-cycle') emitLinkageCycleDiagnostic(output, outcome.trip);
   // Flush any buffered parent-stream output the seam produced (matches the old
   // dispatch, where both sub-adapters flushed).
   output.flush();
@@ -418,8 +430,8 @@ export async function propagateChildTerminal(
   // distinguished it); collapse to 'reported' (finding 2). #602: nor a
   // 'linkage-cycle' member; collapse to the fail-closed 'blocked'. All other
   // members are shared between the seam union and TerminalPropagationResult.
-  if (outcome === 'linkage-cycle') return 'blocked';
-  return outcome === 'duplicate' ? 'reported' : outcome;
+  if (outcome.kind === 'linkage-cycle') return 'blocked';
+  return outcome.kind === 'duplicate' ? 'reported' : outcome.kind;
 }
 
 /**

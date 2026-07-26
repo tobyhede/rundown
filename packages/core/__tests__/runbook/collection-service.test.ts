@@ -15,13 +15,13 @@ import {
   assertRunId,
   type AdvanceInlineParent,
   type CallerEvidence,
-  type LinkageCycleTrip,
   type RunbookState,
   type RunId,
   type ClaimId,
   type ClaimSeenRecordResult,
   type ReleaseRunbookResult,
 } from '../../src/runbook/index.js';
+import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
 import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -219,11 +219,6 @@ describe('RunbookCollectionService', () => {
       advanceInlineParent: jest
         .fn<AdvanceInlineParent>()
         .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
-      // Default fake: the linkage graphs these tests build are acyclic, so a
-      // tripped guard here means a false positive, not an expected diagnostic.
-      onLinkageCycle: () => {
-        throw new Error('onLinkageCycle must not be called by this test');
-      },
     });
   });
 
@@ -1194,7 +1189,6 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
-        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1207,17 +1201,20 @@ describe('RunbookCollectionService', () => {
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
         // active -> handled: the inline parent is still running on siblings.
-        expect(outcome.terminalInlineAdvance).toBe('handled');
+        expect(outcome.terminalInlineAdvance).toEqual({ kind: 'handled' });
         // Inline advance never reports a delegation outcome.
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
       expect(advanceInlineParent).toHaveBeenCalledTimes(1);
     });
 
-    it('collapses a self-linked (cyclic) inline target onto a blocked advance (#602)', async () => {
+    it('surfaces a self-linked (cyclic) inline target as a trip naming the run to prune (#602/#603)', async () => {
       // The target's inline linkage points at ITSELF — corrupt persisted state.
-      // The seam's guard trips before any side effect, and collect maps the trip
-      // onto its fail-closed 'blocked' so the CLI exits non-zero.
+      // The seam's guard trips before any side effect, and collect passes the trip
+      // out on `terminalInlineAdvance` rather than flattening it to 'blocked':
+      // core no longer holds an emitter, so the run to prune has to reach the CLI
+      // as data. The CLI does the fail-closed collapse (and renders the trip) at
+      // its own boundary, exactly as the three delegation-completion adapters do.
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: { ...inlineLinkage, parentRunId: controlledRunId },
       });
@@ -1229,7 +1226,6 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
-        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1241,7 +1237,15 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
-        expect(outcome.terminalInlineAdvance).toBe('blocked');
+        expect(outcome.terminalInlineAdvance).toEqual({
+          kind: 'linkage-cycle',
+          trip: {
+            cause: 'repeat',
+            repeatedRunId: controlledRunId,
+            code: 'INLINE_PARENT_CYCLE',
+            message: `Parent linkage cycle detected at ${controlledRunId}`,
+          },
+        });
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
       expect(advanceInlineParent).not.toHaveBeenCalled();
@@ -1260,10 +1264,28 @@ describe('RunbookCollectionService', () => {
       // claim's grant to agree with the corrupted linkage — not corrupt state, a
       // forged bearer. This test pins that ordering so nobody "fixes" the
       // unreachable arm on the strength of reading the seam alone.
+      //
+      // #603 removed the diagnostic sink this used to observe (an empty `trips`
+      // array proved the guard never ran). Nothing downstream can distinguish
+      // "gate denied" from "guard tripped" — collect's delegation arm returns the
+      // same `reportedTerminalOutcome: false` either way, which is exactly WHY it
+      // needs no linkage-cycle disposition. So the ordering claim is pinned where
+      // it is actually decidable: on the gate predicate itself, against this same
+      // corrupt state, with the healthy linkage as the control that proves the
+      // denial comes from the corrupted `parentRunId` and nothing else.
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: { ...delegationLinkage, parentRunId: controlledRunId },
       });
-      const trips: LinkageCycleTrip[] = [];
+      const verified = await sessionService.verifyClaimId(claimId);
+      if (verified.status !== 'verified') throw new Error('fixture claim must verify');
+      expect(claimCanReportDelegationResult(verified.claim, controlled)).toBe(false);
+      expect(
+        claimCanReportDelegationResult(verified.claim, {
+          ...controlled,
+          parentLinkage: delegationLinkage,
+        }),
+      ).toBe(true);
+
       const svc = new RunbookCollectionService({
         manager,
         actorService,
@@ -1271,8 +1293,8 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent: jest.fn<AdvanceInlineParent>(),
-        onLinkageCycle: (trip) => trips.push(trip),
       });
+      const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1284,9 +1306,12 @@ describe('RunbookCollectionService', () => {
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(false);
+        // No inline arm either: a delegation target never yields one, so there is
+        // no channel on which a trip could have been silently dropped.
+        expect(outcome.terminalInlineAdvance).toBeUndefined();
       }
-      // The guard never ran: the claim gate is the prior refusal.
-      expect(trips).toEqual([]);
+      // The gate short-circuits before the seam, so nothing was recorded upward.
+      expect(recordSpy).not.toHaveBeenCalled();
     });
 
     it('reports report-only for a delegation-linked terminal target (claim gate honoured)', async () => {
@@ -1303,7 +1328,6 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
-        onLinkageCycle: () => {},
       });
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1342,7 +1366,6 @@ describe('RunbookCollectionService', () => {
         completionService,
         sessionService,
         advanceInlineParent,
-        onLinkageCycle: () => {},
       });
       const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
 

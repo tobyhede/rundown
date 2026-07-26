@@ -9,6 +9,7 @@ import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
+import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
@@ -232,12 +233,14 @@ export type DelegationPolicyOutcome =
       readonly reportedTerminalOutcome: boolean;
       /**
        * Set only when a terminal collect target carried INLINE linkage and the
-       * seam advanced its composing parent. Carries the collapsed inline-advance
-       * outcome so the CLI can map it to an exit code via
-       * `inlineAdvanceRequiresFailureExit`. Undefined for delegation targets and
-       * non-linked targets. In-memory command outcome only — never persisted.
+       * seam advanced its composing parent. Carries the inline-advance outcome so
+       * the CLI can map it to an exit code via `inlineAdvanceRequiresFailureExit`,
+       * and — on the `linkage-cycle` arm — the trip naming the run to prune, which
+       * the CLI renders before collapsing it fail-closed (#603). Undefined for
+       * delegation targets and non-linked targets. In-memory command outcome only
+       * — never persisted.
        */
-      readonly terminalInlineAdvance?: 'handled' | 'stopped' | 'blocked' | 'not-applicable';
+      readonly terminalInlineAdvance?: InlineUpwardPropagationResult;
       /**
        * Ordered transition observations projected from the applied collection
        * transitions. This is an in-memory command outcome only; it is never

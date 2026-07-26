@@ -68,9 +68,54 @@ export type AdvanceInlineParent = (
 ) => Promise<AdvanceInlineParentOutcome>;
 
 /**
- * Union of upward-propagation outcomes. Inline yields `handled` / `stopped` /
- * `blocked` / `not-applicable`; delegation yields `reported` / `duplicate` /
- * `blocked` / `not-applicable`.
+ * Dispositions an INLINE linkage can yield from the upward walk.
+ *
+ * Named separately from {@link TerminalUpwardPropagationResult} because two
+ * consumers narrow to exactly this subset — the CLI's `advanceParentForInlineChild`
+ * and the collect path's `terminalInlineAdvance` — and both must keep the
+ * `linkage-cycle` arm's payload. Deriving the full union from this one (rather
+ * than restating members in both) is what stops the subset and the whole from
+ * drifting apart when a member is added.
+ *
+ * `linkage-cycle` (#602) is the fail-closed trip of the upward walk's guard: the
+ * walk reached a run id it had already visited, or the chain exceeded
+ * {@link MAX_INLINE_PROPAGATION_CHAIN}. The inline linkage graph is a tree by
+ * construction (a parent stamps a child's `parentLinkage.parentRunId` at launch,
+ * always pointing at an already-existing ancestor), so either condition means the
+ * persisted linkage graph is corrupt. Per the project's no-migration / "reject,
+ * don't adapt" rule the seam refuses rather than guessing: it performs NO
+ * propagation side effects for the repeated run and RETURNS the cause on the arm
+ * itself (#603). It is the HIGHEST severity member — a cycle found deep in the
+ * walk is never downgraded by a shallower `done`/`stopped`, and the arm bubbles up
+ * UNCHANGED so its {@link LinkageCycleTrip} still names the run that actually
+ * repeated. Consumers that cannot represent it (the CLI adapters, the collect
+ * path) map it EXPLICITLY onto their pre-existing `blocked`, which carries "fail
+ * closed, exit non-zero"; the trip they collapse away is theirs to render first.
+ */
+export type InlineUpwardPropagationResult =
+  | { readonly kind: 'handled' }
+  | { readonly kind: 'stopped' }
+  | { readonly kind: 'blocked' }
+  | { readonly kind: 'not-applicable' }
+  | {
+      /** The walk's guard refused a corrupt linkage graph. */
+      readonly kind: 'linkage-cycle';
+      /** Which run to prune, why, and what to tell the operator. */
+      readonly trip: LinkageCycleTrip;
+    };
+
+/**
+ * Union of upward-propagation outcomes. Inline yields
+ * {@link InlineUpwardPropagationResult}; delegation adds `reported` / `duplicate`
+ * to the shared `blocked` / `not-applicable` / `linkage-cycle` arms.
+ *
+ * Discriminated objects, not bare strings (#603): the `linkage-cycle` arm carries
+ * the trip that ended the walk, so the run to prune is recoverable from the return
+ * type alone rather than arriving on a side channel a caller may or may not have
+ * wired. This matches the precedent for the same condition on the same graph —
+ * `SessionService.resolveActiveInlineForceTerminalPlan`'s
+ * `{ status: 'inline-cycle', repeatedRunId }` — and lets every consumer narrow on
+ * `kind` with no cast and no `typeof … === 'object'` check.
  *
  * `reported` vs `duplicate` (RD-598 review finding 2): `reported` means the
  * delegation outcome was FRESHLY recorded this call (`recordChildCompletion`
@@ -81,31 +126,11 @@ export type AdvanceInlineParent = (
  * at `collection-service.test.ts:1429`). The CLI adapters collapse `duplicate`
  * back into their pre-existing `'reported'` (they never distinguished), so the
  * seven CLI call sites and both exit predicates are unaffected.
- *
- * `linkage-cycle` (#602) is the fail-closed trip of the upward walk's guard: the
- * walk reached a run id it had already visited, or the chain exceeded
- * {@link MAX_INLINE_PROPAGATION_CHAIN}. The inline linkage graph is a tree by
- * construction (a parent stamps a child's `parentLinkage.parentRunId` at launch,
- * always pointing at an already-existing ancestor), so either condition means the
- * persisted linkage graph is corrupt. Per the project's no-migration / "reject,
- * don't adapt" rule the seam refuses rather than guessing: it performs NO
- * propagation side effects for the repeated run and surfaces the cause. It is the
- * HIGHEST severity member — a cycle found deep in the walk is never downgraded by
- * a shallower `done`/`stopped`. Consumers that cannot represent it (the CLI
- * adapters, the collect path) map it EXPLICITLY onto their pre-existing `blocked`,
- * which carries "fail closed, exit non-zero". The two causes are NOT distinguished
- * in this union — no consumer branches on the RESULT to route control flow — but
- * they are distinguished for the operator on the {@link OnLinkageCycle} sink,
- * which carries each cause's own run id, message, and code.
  */
 export type TerminalUpwardPropagationResult =
-  | 'handled'
-  | 'stopped'
-  | 'blocked'
-  | 'reported'
-  | 'duplicate'
-  | 'linkage-cycle'
-  | 'not-applicable';
+  | InlineUpwardPropagationResult
+  | { readonly kind: 'reported' }
+  | { readonly kind: 'duplicate' };
 
 /** Narrow state reader used for reload-on-recursion. Satisfied by `RunbookStateManager`. */
 export interface InlineParentAdvanceStateReader {
@@ -208,6 +233,10 @@ export function inlineParentDepthMessage(deepestRunId: RunId): string {
  * operator `message` and `code` because composing them is core's job — the same
  * shape `LifecycleTerminalOutcome` uses for this exact fact — leaving the frontend
  * to render, not to decide what a corrupt linkage graph should say.
+ *
+ * Reached through the `linkage-cycle` arm of {@link TerminalUpwardPropagationResult}
+ * (#603): a caller holding the refusal necessarily holds the run to prune, so the
+ * fail-closed exit code and the operator's recovery can never come apart.
  */
 export type LinkageCycleTrip =
   | {
@@ -232,28 +261,18 @@ export type LinkageCycleTrip =
     };
 
 /**
- * Frontend-supplied diagnostic sink invoked when the upward walk's guard trips.
- *
- * Rendering is a Category A (frontend) side effect, so the seam does not render —
- * it hands the frontend a fully-composed {@link LinkageCycleTrip} and the frontend
- * decides only HOW to display it. Required, not optional: a corrupt linkage graph
- * that fails closed with no named run leaves the operator unable to act, and the
- * project makes explicit user action (finish / stop / prune / restart) the only
- * recovery path for invalid persisted state. Called AT MOST ONCE per walk,
- * immediately before the guard returns `'linkage-cycle'` — i.e. at the level that
- * FOUND the trip, so the reported run is the true offender and cannot be lost to
- * the severity collapse on the way back out.
- *
- * @param trip - The composed trip: cause, the run it found, message, and code.
- */
-export type OnLinkageCycle = (trip: LinkageCycleTrip) => void;
-
-/**
  * Dependencies for {@link propagateTerminalChildUpward}.
  *
  * `manager` / `sessionService` / `completionService` are already-constructed
  * core services; `advanceInlineParent` is the CLI-supplied runtime callable
  * (Category C). None of these are persisted.
+ *
+ * There is deliberately NO diagnostic sink here (#603). Rendering a trip is a
+ * Category A (frontend) side effect, but so is deciding WHEN to render it — and a
+ * `void` callback can express neither "at most once per walk" nor "only when the
+ * walk refuses" in the type system. The trip rides the return value instead, so
+ * the frontend renders from data it already holds and callers that provably never
+ * walk have nothing to stub.
  */
 export interface PropagateTerminalChildUpwardDeps {
   /** State reader for reload-on-recursion. */
@@ -264,12 +283,6 @@ export interface PropagateTerminalChildUpwardDeps {
   readonly completionService: Pick<RunbookCompletionService, 'recordChildCompletion'>;
   /** CLI-supplied inline parent-advance execution callable. */
   readonly advanceInlineParent: AdvanceInlineParent;
-  /**
-   * Frontend-supplied diagnostic sink for a tripped linkage guard (#602). Rides
-   * the same rail as `advanceInlineParent`: a runtime callable in the deps bag,
-   * never persisted.
-   */
-  readonly onLinkageCycle: OnLinkageCycle;
 }
 
 /**
@@ -305,9 +318,11 @@ export const MAX_INLINE_PROPAGATION_CHAIN = 64;
  * set is a recursion ARGUMENT, so it survives the release/reload of each parent —
  * a reloaded parent carries no memory of the walk that produced it. On a repeat, or
  * past {@link MAX_INLINE_PROPAGATION_CHAIN} levels, the walk returns
- * `'linkage-cycle'` having performed no propagation side effects for the repeated
- * run. This mirrors `SessionService.resolveActiveInlineForceTerminalPlan`, which
- * fails closed on the same chain with `status: 'inline-cycle'`.
+ * `{ kind: 'linkage-cycle', trip }` having performed no propagation side effects
+ * for the repeated run. This mirrors
+ * `SessionService.resolveActiveInlineForceTerminalPlan`, which fails closed on the
+ * same chain with `{ status: 'inline-cycle', repeatedRunId }` — including in
+ * shape: both name the offending run on the returned value (#603).
  *
  * @param deps - Core services + the inline-advance callable.
  * @param childState - The terminal child run's state.
@@ -348,38 +363,44 @@ async function propagateTerminalChildUpwardInner(
   depth: number,
 ): Promise<TerminalUpwardPropagationResult> {
   const linkage = childState.parentLinkage;
-  if (!linkage) return 'not-applicable';
+  if (!linkage) return { kind: 'not-applicable' };
 
   const projection = projectDelegationTerminalOutcome(childState, result);
-  if (projection.kind === 'not_terminal') return 'not-applicable';
-  if (projection.kind === 'command_infrastructure') return 'blocked';
+  if (projection.kind === 'not_terminal') return { kind: 'not-applicable' };
+  if (projection.kind === 'command_infrastructure') return { kind: 'blocked' };
 
   // #602 guard — BEFORE any side effect, and before the kind dispatch, so a
   // cyclic delegation linkage is refused as firmly as a cyclic inline one. A
   // repeat means the persisted graph is not the tree it is built as; refuse
   // rather than re-run record → advance → release on a run already walked.
   //
-  // The sink fires HERE, at the level that found the trip, so it names the true
-  // offending run: the severity collapse on the way back out keeps only the member.
+  // The trip is composed HERE, at the level that found it, so it names the true
+  // offending run; the severity collapse below returns the arm UNCHANGED so the
+  // name survives the way back out (#603 — it used to survive only because a
+  // side-channel sink fired before the collapse could discard it).
   // The 'depth' arm names `childState.id` — the deepest run actually walked —
   // because `linkage.parentRunId` was never reached.
   if (visited.has(linkage.parentRunId)) {
-    deps.onLinkageCycle({
-      cause: 'repeat',
-      repeatedRunId: linkage.parentRunId,
-      code: INLINE_PARENT_CYCLE_CODE,
-      message: inlineParentCycleMessage(linkage.parentRunId),
-    });
-    return 'linkage-cycle';
+    return {
+      kind: 'linkage-cycle',
+      trip: {
+        cause: 'repeat',
+        repeatedRunId: linkage.parentRunId,
+        code: INLINE_PARENT_CYCLE_CODE,
+        message: inlineParentCycleMessage(linkage.parentRunId),
+      },
+    };
   }
   if (depth >= MAX_INLINE_PROPAGATION_CHAIN) {
-    deps.onLinkageCycle({
-      cause: 'depth',
-      deepestRunId: childState.id,
-      code: INLINE_PARENT_CYCLE_CODE,
-      message: inlineParentDepthMessage(childState.id),
-    });
-    return 'linkage-cycle';
+    return {
+      kind: 'linkage-cycle',
+      trip: {
+        cause: 'depth',
+        deepestRunId: childState.id,
+        code: INLINE_PARENT_CYCLE_CODE,
+        message: inlineParentDepthMessage(childState.id),
+      },
+    };
   }
 
   if (linkage.kind === 'delegation') {
@@ -387,16 +408,16 @@ async function propagateTerminalChildUpwardInner(
       childState,
       result: projection.result,
     });
-    if (recorded === 'blocked') return 'blocked';
-    if (recorded === 'not-applicable') return 'not-applicable';
+    if (recorded === 'blocked') return { kind: 'blocked' };
+    if (recorded === 'not-applicable') return { kind: 'not-applicable' };
     // 'recorded' = FRESH upward report; 'duplicate'/'cancelled' = the ancestor
     // already holds the row (or an ordinary cancel short-circuited). Preserve the
     // distinction so the collect path's `reportedTerminalOutcome` stays
     // 'recorded'-only (RD-598 review finding 2, pinned at
     // collection-service.test.ts:1429). The CLI adapters collapse both back to
     // 'reported'.
-    if (recorded === 'recorded') return 'reported';
-    return 'duplicate';
+    if (recorded === 'recorded') return { kind: 'reported' };
+    return { kind: 'duplicate' };
   }
 
   // Inline arm: record the child's outcome, then advance the composing parent.
@@ -404,9 +425,9 @@ async function propagateTerminalChildUpwardInner(
     childState,
     result: projection.result,
   });
-  if (recorded === 'not-applicable') return 'not-applicable';
-  if (recorded === 'cancelled') return 'handled';
-  if (recorded === 'blocked') return 'blocked';
+  if (recorded === 'not-applicable') return { kind: 'not-applicable' };
+  if (recorded === 'cancelled') return { kind: 'handled' };
+  if (recorded === 'blocked') return { kind: 'blocked' };
 
   const outcome = await deps.advanceInlineParent({
     parentRunId: linkage.parentRunId,
@@ -416,7 +437,7 @@ async function propagateTerminalChildUpwardInner(
   });
 
   // Parent is still running / waiting on sibling substeps: nothing to release.
-  if (outcome.status === 'active') return 'handled';
+  if (outcome.status === 'active') return { kind: 'handled' };
 
   // Parent reached a terminal (stopped/done) via the callable. This seam is the
   // SOLE release owner (the callable defers release via 'defer-to-caller'), so
@@ -452,16 +473,21 @@ async function propagateTerminalChildUpwardInner(
       // that set collapses identically to the same outcome. 'not-applicable' is the
       // honest name for "there was no parent to propagate to", not a load-bearing
       // discriminant.
-      // Stryker disable StringLiteral: equivalent — the value only has to miss the three severity comparisons below
-      'not-applicable';
-  // Stryker restore StringLiteral
+      // Stryker disable StringLiteral,ObjectLiteral: equivalent — the value only has to miss the three severity comparisons below
+      { kind: 'not-applicable' };
+  // Stryker restore StringLiteral,ObjectLiteral
 
   // Severity precedence: linkage-cycle > blocked > stopped > handled. The first
   // two lines extend the pre-#602 rule (blocked already outranked stopped) to the
   // new member; the rest is the same stopped/done collapse it always was.
-  if (propagated === 'linkage-cycle') return 'linkage-cycle';
-  if (propagated === 'blocked') return 'blocked';
-  if (outcome.status === 'stopped') return 'stopped';
-  if (propagated === 'stopped') return 'stopped';
-  return 'handled';
+  //
+  // The two escalating arms are returned AS THEY CAME BACK, not rebuilt: that is
+  // what carries a deep level's `trip` (the run that actually repeated) out past
+  // the shallower levels (#603). Rebuilding `{ kind: 'linkage-cycle' }` here would
+  // reintroduce the very loss the old sink existed to work around.
+  if (propagated.kind === 'linkage-cycle') return propagated;
+  if (propagated.kind === 'blocked') return propagated;
+  if (outcome.status === 'stopped') return { kind: 'stopped' };
+  if (propagated.kind === 'stopped') return { kind: 'stopped' };
+  return { kind: 'handled' };
 }
