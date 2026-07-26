@@ -60,6 +60,79 @@ test('mutation-pr.yml implements the hybrid source and native test-only paths', 
   assert.doesNotMatch(yml, /--allowEmpty/);
 });
 
+// REGRESSION (P2): the plan job uploaded its scope notice as
+// `mutation-summary-plan`, and the comment job downloads shard summaries with
+// `pattern: mutation-summary-*` — which matched it. On any successful plan
+// `ls summaries/*.md` therefore ALWAYS succeeded, making every branch below it
+// dead code: the PLAN_EMPTY no-op, the download-failure warning, and the
+// planned-but-no-summaries warning. The anti-masking guarantee the tests above
+// assert the *text* of was never actually in force.
+test('mutation-pr.yml keeps the plan notice out of the shard-summary download', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+
+  // Anchored on the JOB, not a step title: what matters is that whatever the
+  // plan job uploads cannot be swept up by the shard-summary glob.
+  const planJob = /\n {2}plan:\n([\s\S]*?)\n {2}\w[\w-]*:\n/.exec(yml)?.[1];
+  assert.ok(planJob, 'mutation-pr.yml must have a plan job');
+  const planArtifact = /upload-artifact@[\s\S]*?\n\s*name:\s*(\S+)/.exec(planJob)?.[1];
+  const downloadPattern = /\n\s*pattern:\s*(\S+)/.exec(yml)?.[1];
+  assert.ok(planArtifact, 'plan job must upload its scope notice as an artifact');
+  assert.ok(downloadPattern, 'comment job must download shard summaries by pattern');
+
+  const matcher = new RegExp(`^${downloadPattern.replaceAll('*', '.*')}$`);
+  assert.ok(
+    !matcher.test(planArtifact),
+    `the shard-summary pattern '${downloadPattern}' must not also match the plan ` +
+      `notice '${planArtifact}', or the no-summaries branches can never run`,
+  );
+});
+
+test('mutation-pr.yml still surfaces the plan notice in the comment', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  assert.match(
+    yml,
+    /- name: Download scope plan notice/,
+    'the plan notice needs its own download now that it is not a shard summary',
+  );
+  assert.match(
+    yml,
+    /cat plan\/[^\n]*\.md/,
+    'the assembled comment must still include the plan notice',
+  );
+});
+
+// `labeled`/`unlabeled` exist so `mutation:related` can be applied without a
+// push. Left unguarded they also pay a full plan + shard matrix for every
+// unrelated label added or removed on any PR.
+test('mutation-pr.yml ignores label churn that cannot change the plan', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  assert.match(yml, /types:\s*\[[^\]]*\blabeled\b[^\]]*\]/, 'the label must be actionable');
+
+  const guard =
+    /github\.event\.action != 'labeled'\s*&&\s*github\.event\.action != 'unlabeled'\s*\|\|\s*github\.event\.label\.name == 'mutation:related'/;
+  const job = (name) =>
+    new RegExp(`\\n {2}${name}:\\n([\\s\\S]*?)(?=\\n {2}\\w[\\w-]*:\\n|$)`).exec(yml)?.[1];
+
+  for (const name of ['plan', 'comment']) {
+    const block = job(name);
+    assert.ok(block, `mutation-pr.yml must have a ${name} job`);
+    assert.match(block, guard, `${name} must not run for an unrelated label event`);
+  }
+});
+
+// LABEL is a space-joined list of paths from the PR's own diff. The JS scorers
+// HTML-escape everything they render; these shell-written diagnostics did not,
+// so a path containing a backtick escaped its code span in the posted comment.
+test('mutation-pr.yml never puts a raw PR path inside a markdown code span', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  assert.doesNotMatch(
+    yml,
+    /`\$\{LABEL\}`/,
+    'LABEL must be sanitized before it is wrapped in backticks',
+  );
+  assert.match(yml, /LABEL_MD=/, 'the sanitized form is what the diagnostics must render');
+});
+
 test('mutation-pr.yml uploads per-package markdown summaries', async () => {
   const yml = await read('.github/workflows/mutation-pr.yml');
   assert.match(
@@ -97,6 +170,16 @@ test('mutation-pr.yml distinguishes a failed summary download from a genuine no-
     yml,
     /- name: Assemble comment body\n\s*env:\n\s*DOWNLOAD_OUTCOME:\s*\$\{\{\s*steps\.download\.outcome\s*\}\}/,
     'assemble step must read steps.download.outcome via env (no run: interpolation)',
+  );
+  assert.match(
+    yml,
+    /PLAN_OUTCOME:\s*\$\{\{\s*needs\.plan\.result\s*\}\}/,
+    'assemble step must receive the plan job result through env',
+  );
+  assert.match(
+    yml,
+    /if \[ "\$\{PLAN_OUTCOME\}" != "success" \]; then[\s\S]*Mutation scope planning failed[\s\S]*elif \[ "\$\{PLAN_EMPTY\}" = "true" \]; then/,
+    'plan failure must be reported before empty/download/no-summary fallbacks',
   );
   assert.match(
     yml,

@@ -25,6 +25,7 @@ const TARGETS = [
 ] as const;
 
 const COMMIT = 'a'.repeat(40);
+const artifactRoots: string[] = [];
 
 interface ManifestEntry {
   triple: string;
@@ -43,6 +44,7 @@ function sha256(bytes: Buffer): string {
 /** Build a well-formed artifact root: two target binaries + a matching manifest.json. */
 function buildArtifactRoot(commit: string): string {
   const root = mkdtempSync(join(tmpdir(), 'rd-artifacts-'));
+  artifactRoots.push(root);
   const cargoLockSha256 = sha256(readFileSync(CARGO_LOCK));
   const manifest: Manifest = { commit, cargoLockSha256, binaries: {} };
   for (const t of TARGETS) {
@@ -88,6 +90,10 @@ function runFromArtifacts(
 
 describe('build-native.mjs --from-artifacts', () => {
   afterEach(() => {
+    while (artifactRoots.length > 0) {
+      const root = artifactRoots.pop();
+      if (root) rmSync(root, { recursive: true, force: true });
+    }
     while (scratchDestinations.length > 0) {
       const dest = scratchDestinations.pop();
       if (dest) rmSync(dest, { recursive: true, force: true });

@@ -143,22 +143,26 @@ async function uploadToDashboard(module, report) {
  * gap into a merge failure (low-score exits are swallowed by continue-on-error,
  * so absence is the only crash signal left).
  *
- * @returns {Map<string, number>} module -> expected shard count.
+ * @returns {{known: true, counts: Map<string, number>} | {known: false, reason: string}}
+ *   known plan counts, or a diagnostic explaining why expectations are unknown.
  */
 function expectedShardCounts() {
   const counts = new Map();
   const raw = process.env.MATRIX;
-  if (!raw) return counts;
+  if (!raw) return { known: false, reason: 'MATRIX is absent' };
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return counts;
+    return { known: false, reason: 'MATRIX is not valid JSON' };
   }
-  for (const entry of parsed.include ?? []) {
+  if (!Array.isArray(parsed?.include)) {
+    return { known: false, reason: 'MATRIX has no include array' };
+  }
+  for (const entry of parsed.include) {
     counts.set(entry.module, (counts.get(entry.module) ?? 0) + 1);
   }
-  return counts;
+  return { known: true, counts };
 }
 
 const byModule = collectShardReports(downloadDir);
@@ -170,14 +174,20 @@ const expected = expectedShardCounts();
 // a run whose entire mutation campaign died reported success. That inverted the
 // partial-loss check below, which correctly fails when 1 of 2 shards is missing.
 if (byModule.size === 0) {
-  const wanted = [...expected.values()].reduce((sum, n) => sum + n, 0);
+  if (!expected.known) {
+    process.stderr.write(
+      `no shard reports found under ${downloadDir}, and plan expectations are unknown: ${expected.reason}.\n`,
+    );
+    process.exit(1);
+  }
+  const wanted = [...expected.counts.values()].reduce((sum, n) => sum + n, 0);
   if (wanted === 0) {
     process.stderr.write(`no shard reports found under ${downloadDir}; nothing to merge.\n`);
     process.exit(0);
   }
   process.stderr.write(
     `no shard reports found under ${downloadDir}, but the plan expected ${wanted} ` +
-      `(${[...expected].map(([m, n]) => `${m}:${n}`).join(', ')}); every shard crashed.\n`,
+      `(${[...expected.counts].map(([m, n]) => `${m}:${n}`).join(', ')}); every shard crashed.\n`,
   );
   process.exit(1);
 }
@@ -192,7 +202,7 @@ const summary = [];
 // also be barred from the dashboard upload below: seeding the baseline with a
 // partial report is exactly the corruption this check exists to prevent.
 const incomplete = new Set();
-for (const [module, want] of expected) {
+for (const [module, want] of expected.known ? expected.counts : []) {
   const got = byModule.get(module)?.length ?? 0;
   if (got < want) {
     incomplete.add(module);

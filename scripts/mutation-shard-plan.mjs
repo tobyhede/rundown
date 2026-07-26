@@ -195,7 +195,7 @@ async function planPullRequest() {
       );
     }
   }
-  const sourceShardCap = Math.max(1, maxPrShards - testOnly.length);
+  const sourceShardCap = Math.max(0, maxPrShards - testOnly.length);
   if (items.length > sourceShardCap) {
     process.stderr.write(
       `${items.length} changed file(s) exceeds the ${sourceShardCap} source shard slot(s) ` +
@@ -203,7 +203,7 @@ async function planPullRequest() {
         `Batched shards run the union of their files' tests per mutant, so they cost more.\n`,
     );
   }
-  const grouped = partitionPrEntries(items, sourceShardCap);
+  const grouped = partitionPrEntries(items, maxPrShards, testOnly.length);
   // Number shards per package so artifact names stay unique and readable.
   const perPackage = new Map();
   const shardCounts = new Map();

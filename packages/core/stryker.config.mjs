@@ -141,8 +141,9 @@ const config = {
   // false kills.
   //
   // Measured, mutating src/paths.ts against its own unit test: at 60000ms the
-  // report is 11 Killed / 15 Timeout / 2 Survived = 78.79% in 399s. At 8000ms the
-  // same scope yields 0 Killed / 31 Timeout / 0 Survived = 86.11% in 85s — every
+  // report is 11 Killed / 15 Timeout / 2 Survived / 5 NoCoverage = 78.79% in
+  // 399s. At 8000ms the same scope yields 0 Killed / 31 Timeout / 0 Survived /
+  // 5 NoCoverage = 86.11% in 85s — every
   // mutant run simply exceeded the budget, both genuine survivors vanished, and
   // the "4.7x speedup" is a report that measured nothing. Do not tune this for
   // speed; reduce the mutant count instead (changed-line ranges) or the tests per

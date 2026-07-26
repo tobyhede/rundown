@@ -55,6 +55,15 @@ jobs:
   # unreachable base or missing merge-base raises rather than planning an empty
   # (always-green) matrix.
   plan:
+    # `labeled`/`unlabeled` are subscribed so `mutation:related` takes effect
+    # without a push. Only that one label changes the plan, so every other label
+    # event is dropped here rather than paying for a full matrix. A skipped
+    # `plan` skips `mutation-gate` by dependency, and `comment` carries the same
+    # guard so a dropped event leaves the existing sticky comment untouched
+    # instead of overwriting it with a planning-failed notice.
+    if: >-
+      github.event.action != 'labeled' && github.event.action != 'unlabeled'
+      || github.event.label.name == 'mutation:related'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -81,15 +90,20 @@ jobs:
           # that happens, so a large PR degrades loudly rather than silently.
           MAX_PR_SHARDS: '16'
           TEST_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_scope || (contains(github.event.pull_request.labels.*.name, 'mutation:related') && 'related' || 'dedicated') }}
-          SUMMARY_PATH: ${{ runner.temp }}/mutation-summary-plan.md
+          SUMMARY_PATH: ${{ runner.temp }}/mutation-plan.md
         run: node scripts/mutation-shard-plan.mjs
 
-      - name: Upload scope summary
+      # Deliberately NOT named `mutation-summary-*`: that is the shard-summary
+      # pattern the comment job globs, and a plan notice matching it made
+      # `ls summaries/*.md` succeed on every successful plan — which silently
+      # killed the PLAN_EMPTY, download-failure and no-summaries branches that
+      # exist to stop a dead campaign reading as a clean result.
+      - name: Upload scope plan notice
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
-          name: mutation-summary-plan
-          path: ${{ runner.temp }}/mutation-summary-plan.md
+          name: mutation-plan-notice
+          path: ${{ runner.temp }}/mutation-plan.md
           if-no-files-found: ignore
           retention-days: 7
 
@@ -258,10 +272,15 @@ jobs:
           SHARD: ${{ matrix.shard }}
           LABEL: ${{ matrix.label }}
         run: |
+          # LABEL is a list of paths from the PR's own diff. A backtick in one
+          # would close the code span and let the rest render as markup in the
+          # posted comment, so strip them — the JS scorers HTML-escape for the
+          # same reason.
+          LABEL_MD="${LABEL//\`/}"
           {
             echo "#### ⚠️ \`${PKG}\` — test-only mutation result incomplete"
             echo
-            echo "Changed tests: \`${LABEL}\`"
+            echo "Changed tests: \`${LABEL_MD}\`"
             echo
             echo "_No valid main-branch dashboard baseline was available. A cold full-package run was intentionally not substituted._"
           } > "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
@@ -282,12 +301,15 @@ jobs:
         run: |
           set -euo pipefail
           summary="${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+          # Paths come from the PR's diff; a backtick would break out of the code
+          # span this renders them in.
+          LABEL_MD="${LABEL//\`/}"
           if [ "${SOURCE_OUTCOME}" = "failure" ] || [ "${TEST_OUTCOME}" = "failure" ]; then
             if [ ! -s "${summary}" ]; then
               {
                 echo "#### ⚠️ \`${PKG}\` — advisory mutation execution failed"
                 echo
-                echo "Scope: \`${LABEL}\`"
+                echo "Scope: \`${LABEL_MD}\`"
               } > "${summary}"
             fi
             {
@@ -302,7 +324,7 @@ jobs:
           {
             echo "#### ⚠️ \`${PKG}\` — advisory mutation scoring did not complete"
             echo
-            echo "Scope: \`${LABEL}\`"
+            echo "Scope: \`${LABEL_MD}\`"
             echo
             echo "_The mutation run or scoring step failed. This is advisory and does not block merge. See the workflow logs for details._"
           } > "${summary}"
@@ -330,7 +352,11 @@ jobs:
     # comment updates even when every shard was skipped. Fork PRs are skipped
     # cleanly: their read-only token cannot post a comment, so the job would only
     # fail noisily — the gate job still produced artifacts for them.
-    if: ${{ always() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+    if: >-
+      ${{ always() && github.event_name == 'pull_request'
+      && !github.event.pull_request.head.repo.fork
+      && (github.event.action != 'labeled' && github.event.action != 'unlabeled'
+      || github.event.label.name == 'mutation:related') }}
     runs-on: ubuntu-latest
     permissions:
       # Elevated solely so the "Post sticky comment" step can create/update the
@@ -346,6 +372,15 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
+      # Separate from the shard summaries above so their absence stays a real
+      # signal. Best-effort: the notice is context, never the verdict.
+      - name: Download scope plan notice
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: mutation-plan-notice
+          path: plan
+        continue-on-error: true
+
       # Distinguish a failed download from a genuine no-op. The download step is
       # continue-on-error, so a failure leaves zero summaries on disk — which the
       # assembly would otherwise read as "no mutated changed files", masking the
@@ -355,6 +390,7 @@ jobs:
         env:
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
           PLAN_EMPTY: ${{ needs.plan.outputs.empty }}
+          PLAN_OUTCOME: ${{ needs.plan.result }}
         run: |
           set -euo pipefail
           {
@@ -362,7 +398,16 @@ jobs:
             echo
             echo "_Hybrid mutation analysis: source changes use changed-line scopes (dedicated tests by default; \`mutation:related\` opts into related tests), while test-only changes use native incremental comparison with the main baseline. **This check is advisory and never blocks merge.** Trend & full reports: the Stryker Dashboard. See issue #485._"
             echo
-            if ls summaries/*.md >/dev/null 2>&1; then
+            # Scope context first, then the verdict. The notice is never the
+            # verdict itself, so it is emitted outside the branch chain below.
+            if [ -s plan/mutation-plan.md ]; then
+              cat plan/mutation-plan.md
+              echo
+              echo
+            fi
+            if [ "${PLAN_OUTCOME}" != "success" ]; then
+              echo "_⚠️ Mutation scope planning failed (plan job: ${PLAN_OUTCOME}) — see the workflow logs. This check is advisory and does not block merge._"
+            elif ls summaries/*.md >/dev/null 2>&1; then
               for f in summaries/*.md; do
                 cat "$f"
                 echo

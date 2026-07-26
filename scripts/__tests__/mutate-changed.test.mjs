@@ -8,9 +8,37 @@ import {
   parseInstrumented,
   runOutcome,
   scorerArgs,
+  spawnStreaming,
   strykerArgs,
   testOnlyStrykerArgs,
 } from '../mutate-changed.mjs';
+
+test('spawnStreaming forwards output before the child exits while retaining combined output', async () => {
+  let settled = false;
+  const chunks = [];
+  const run = spawnStreaming(
+    process.execPath,
+    [
+      '-e',
+      'process.stdout.write("first\\n"); setTimeout(() => process.stderr.write("second\\n"), 50)',
+    ],
+    {},
+    {
+      write(chunk) {
+        chunks.push({ chunk: String(chunk), settled });
+      },
+    },
+  );
+  const result = await run.finally(() => {
+    settled = true;
+  });
+
+  assert.equal(result.status, 0);
+  assert.ok(
+    chunks.some(({ chunk, settled: wasSettled }) => chunk.includes('first') && !wasSettled),
+  );
+  assert.match(result.output, /first\nsecond\n/);
+});
 
 test('parseArgs defaults to every package, run mode, range scoping, dedicated tests', () => {
   assert.deepEqual(parseArgs([]), {

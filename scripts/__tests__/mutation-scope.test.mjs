@@ -162,9 +162,12 @@ test('partitionPrEntries never puts two packages in one shard', () => {
     { pkg: { package: 'core' }, entry: { whole: true, lines: 80, ranges: [] } },
     { pkg: { package: 'parser' }, entry: { whole: true, lines: 70, ranges: [] } },
   ];
-  // A cap of 1 is the most aggressive batching possible, so if package purity
-  // survives here it survives anywhere.
-  for (const cap of [1, 2, 3, 4, 10]) {
+  assert.throws(
+    () => partitionPrEntries(items, 1),
+    /fewer than the 3 changed packages/,
+    'an impossible cap must fail closed instead of mixing or dropping packages',
+  );
+  for (const cap of [3, 4, 10]) {
     for (const group of partitionPrEntries(items, cap)) {
       const packages = new Set(group.map((i) => i.pkg.package));
       assert.equal(packages.size, 1, `cap ${cap} produced a mixed-package shard`);
@@ -325,24 +328,23 @@ test('buildScope does not duplicate a file whose source AND test both changed', 
 });
 
 // REGRESSION (P2): a batched shard emits ONE --testFiles value for the whole
-// group. If a group mixes files that have a dedicated test with files that do not,
-// that value is non-empty, so the workflow passes --testFiles and the jest runner
-// stops using --findRelatedTests — testing the dedicated-test-less file only
-// against another file's tests. That manufactures no-coverage and survivor
-// results out of nothing.
-test('partitionPrEntries never mixes files with and without a dedicated test', () => {
+// group. A mixed group must therefore omit --testFiles for the entire shard so
+// the dedicated-test-less files retain Stryker's related-tests fallback.
+test('partitionPrEntries may combine test-scope kinds only within one package', () => {
   const items = [
     { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: 'a' } },
     { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: null } },
     { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: 'c' } },
     { pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [], testFile: null } },
   ];
-  for (const cap of [1, 2, 3, 4, 16]) {
-    for (const group of partitionPrEntries(items, cap)) {
-      const kinds = new Set(group.map((i) => (i.entry.testFile ? 'unit' : 'related')));
-      assert.equal(kinds.size, 1, `cap ${cap} mixed dedicated-test and related-test entries`);
-    }
-  }
+  const [group] = partitionPrEntries(items, 1);
+  assert.equal(group.length, 4);
+  assert.equal(new Set(group.map((i) => i.pkg.package)).size, 1);
+  assert.equal(
+    toShardEntry(group, 1, 1).testFiles,
+    '',
+    'a mixed test-scope batch must retain the related-tests fallback',
+  );
 });
 
 // REGRESSION (P3): rounding each package's share independently could overshoot the
@@ -356,8 +358,48 @@ test('partitionPrEntries never exceeds the shard cap', () => {
     })),
   );
   assert.ok(partitionPrEntries(items, 16).length <= 16, 'allocation must respect the cap');
-  for (const cap of [2, 3, 5, 7, 11, 16, 32]) {
-    assert.ok(partitionPrEntries(items, cap).length <= Math.max(cap, counts.length));
+  for (const cap of [4, 5, 7, 11, 16, 32]) {
+    assert.ok(partitionPrEntries(items, cap).length <= cap);
+  }
+  assert.throws(() => partitionPrEntries(items, 3), /fewer than the 4 changed packages/);
+});
+
+test('partitionPrEntries reserves test-only shards inside the global cap', () => {
+  const items = [{ pkg: { package: 'core' }, entry: { lines: 10, whole: true, ranges: [] } }];
+  assert.throws(
+    () => partitionPrEntries(items, 2, 2),
+    /no source shard slots remain/,
+    'test-only shards must not be appended beyond the global cap',
+  );
+  assert.throws(
+    () => partitionPrEntries([], 2, 3),
+    /already exceed MAX_PR_SHARDS/,
+    'an impossible test-only plan must fail closed',
+  );
+});
+
+test('buildScope does not query untracked files when local diffs are injected', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mutation-injected-diffs-'));
+  try {
+    assert.deepEqual(
+      buildScope({
+        repoRoot: dir,
+        pkg: { dir: 'pkg' },
+        base: 'not-a-ref',
+        patterns: ['src/**/*.ts'],
+        includeWorkingTree: true,
+        diffs: {
+          changedSrc: [],
+          addedSrc: [],
+          deletedSrc: [],
+          changedTests: [],
+          deletedTests: [],
+        },
+      }),
+      { entries: [], excluded: [], skipped: [], testChanges: [] },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

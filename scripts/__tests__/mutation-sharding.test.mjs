@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { partitionPrEntries } from '../lib/mutation-scope.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
 const planScript = 'scripts/mutation-shard-plan.mjs';
@@ -107,6 +108,29 @@ test('plan: a dispatch for a single package excludes the others', () => {
   const { include } = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'parser' });
   assert.ok(include.length >= 1);
   assert.ok(include.every((e) => e.module === 'parser'));
+});
+
+test('PR partitioning globally caps a fixture-driven multi-package plan', () => {
+  const maxShards = 4;
+  const items = ['parser', 'core', 'cli', 'plugin'].flatMap((packageName) =>
+    Array.from({ length: 5 }, (_, index) => ({
+      pkg: { package: packageName },
+      entry: {
+        file: `src/${packageName}-${index}.ts`,
+        lines: 10,
+        whole: true,
+        ranges: [],
+        testFile: index % 2 === 0 ? `__tests__/${packageName}-${index}.test.ts` : null,
+      },
+    })),
+  );
+  const include = partitionPrEntries(items, maxShards);
+  assert.ok(include.length > 0, 'the fixture must plan at least one shard');
+  assert.ok(include.length <= maxShards, 'MAX_PR_SHARDS is a global cap');
+  assert.deepEqual(
+    new Set(include.map((group) => group[0].pkg.package)),
+    new Set(['parser', 'core', 'cli', 'plugin']),
+  );
 });
 
 /**
@@ -251,6 +275,31 @@ test('merge: still exits 0 when the plan expected no shards', () => {
   }
 });
 
+test('merge: fails closed when no reports exist and MATRIX is absent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-unknown-plan-'));
+  try {
+    const { status, stderr } = runMergeCapture(dir, { APPLY_BREAK: 'false' });
+    assert.equal(status, 1);
+    assert.match(stderr, /plan expectations are unknown.*MATRIX is absent/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('merge: fails closed when no reports exist and MATRIX is malformed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-malformed-plan-'));
+  try {
+    const { status, stderr } = runMergeCapture(dir, {
+      MATRIX: '{not-json',
+      APPLY_BREAK: 'false',
+    });
+    assert.equal(status, 1);
+    assert.match(stderr, /plan expectations are unknown.*MATRIX is not valid JSON/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('merge: enforces the aggregate break floor', () => {
   const dir = mkdtempSync(join(tmpdir(), 'merge-low-'));
   try {
@@ -296,7 +345,3 @@ test('merge: never uploads a module with a missing shard, and still fails', () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-// A shard may only name --testFiles when EVERY file in it has a dedicated test:
-// supplying the flag disables --findRelatedTests for the whole group, so a
-// dedicated-test-less file would be judged against another file's tests.

@@ -458,10 +458,10 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   **Never tune `timeoutMS` down for speed.** Timeout is a _detected_ state
   (score is `detected / valid`, detected = `killed + timeout`), so a spurious
   timeout inflates the score by crediting a kill no test performed. Measured on
-  `src/paths.ts`: 60000ms gives 11 Killed / 15 Timeout / 2 Survived = 78.79%;
-  8000ms gives 0 Killed / 31 Timeout / 0 Survived = 86.11% — both real survivors
-  erased. Reduce mutant count (ranges) or tests per mutant (`testFiles`)
-  instead.
+  `src/paths.ts`: 60000ms gives 11 Killed / 15 Timeout / 2 Survived / 5
+  NoCoverage = 78.79%; 8000ms gives 0 Killed / 31 Timeout / 0 Survived / 5
+  NoCoverage = 86.11% — both real survivors erased. Reduce mutant count (ranges)
+  or tests per mutant (`testFiles`) instead.
 
   Reach for the manual form below only when you need a scope the diff does not
   describe (a single function, a file you did not touch).
@@ -528,6 +528,23 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   shell) / `-- --no-build` (cached image).
 
 ## Testing Conventions
+
+- **A test that reads a file outside its own package must be named
+  `*.repo-asset.test.ts`.** Stryker copies only the package directory into
+  `.stryker-tmp/sandbox-*`, which adds two path segments, so a `../../../../`
+  traversal off `import.meta.url` lands on `packages/<pkg>/<path>` and the asset
+  is gone. That is not a skipped assertion — it is a hard
+  `There were failed tests in the initial test run.` abort that kills the whole
+  mutation campaign before one mutant is tested, and it is invisible because the
+  shard step is `continue-on-error`. Every package's `jest.config.shared.js`
+  ignores the pattern in the sandbox and runs it normally.
+
+  Prefer removing the traversal to renaming: a dependency should be located with
+  `createRequire(import.meta.url).resolve('<pkg>')`, whose `node_modules` walk
+  works from either tree, so the test keeps contributing mutation coverage.
+  Reserve the rename for genuinely out-of-package assets (a repo-root doc, the
+  `runbooks/` tree, a `scripts/**` build script).
+  `scripts/__tests__/mutation-sandbox-assets.test.mjs` enforces both halves.
 
 - **Use `isError()` / `isNodeError()` / `getErrorMessage()` from
   `@rundown-org/core`** (or `packages/claude-code-plugin/src/shared/errors.ts`

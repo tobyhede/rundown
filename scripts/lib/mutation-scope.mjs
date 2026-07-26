@@ -196,6 +196,10 @@ export function eligibleFiles(repoRoot, dir, patterns) {
  * @param {string} base - diff base commit-ish.
  * @param {string} pathspec - a git pathspec to limit the diff to.
  * @param {string} [filter] - `--diff-filter` value (default excludes deletions).
+ * @param {object} [options] - revision-range and location options.
+ * @param {string} [options.cwd] - directory to run git in.
+ * @param {boolean} [options.workingTree] - diff the base against the index and
+ *   working tree rather than ending at HEAD.
  * @returns {string[]} repo-relative paths.
  */
 export function changedFiles(base, pathspec, filter = 'd', { cwd, workingTree = false } = {}) {
@@ -229,6 +233,39 @@ export function untrackedFiles(pathspec, cwd) {
 }
 
 /**
+ * A source file selected for mutation testing.
+ *
+ * @typedef {object} MutationScopeEntry
+ * @property {string} file - package-relative source path.
+ * @property {number} lines - total number of lines in the source file.
+ * @property {Array<{start: number, end: number}>} ranges - inclusive changed-line ranges.
+ * @property {boolean} whole - whether the entire file should be mutated.
+ * @property {string | null} testFile - package-relative dedicated test, when one exists.
+ * @property {string} reason - human-readable explanation of why the file was selected.
+ */
+
+/**
+ * Precomputed git changes accepted by {@link buildScope} as a test seam.
+ *
+ * @typedef {object} MutationScopeDiffs
+ * @property {string[]} changedSrc - changed source paths, relative to the repository.
+ * @property {string[]} addedSrc - newly added source paths, relative to the repository.
+ * @property {string[]} [deletedSrc] - deleted source paths, relative to the repository.
+ * @property {string[]} changedTests - changed test paths, relative to the repository.
+ * @property {string[]} deletedTests - deleted test paths, relative to the repository.
+ */
+
+/**
+ * The mutation scope derived for a package.
+ *
+ * @typedef {object} MutationScope
+ * @property {MutationScopeEntry[]} entries - source files and ranges to mutate.
+ * @property {string[]} excluded - changed source files excluded by the configured patterns.
+ * @property {Array<{file: string, why: string}>} skipped - changed files that cannot be mutated, with reasons.
+ * @property {string[]} testChanges - package-relative changed or deleted tests.
+ */
+
+/**
  * Build the per-file mutation scope for one package.
  *
  * Source changes are reduced to changed-line ranges, except newly added files,
@@ -242,7 +279,9 @@ export function untrackedFiles(pathspec, cwd) {
  * @param {string} params.base - diff base commit-ish.
  * @param {boolean} [params.wholeFile] - mutate whole files, ignoring line ranges.
  * @param {string[]} params.patterns - the package's Stryker mutate patterns.
- * @returns {{entries: Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>, excluded: string[], skipped: Array<{file: string, why: string}>, testChanges: string[]}}
+ * @param {MutationScopeDiffs} [params.diffs] - precomputed changed paths to use instead of discovering paths from git.
+ * @param {boolean} [params.includeWorkingTree] - include index, working-tree, and untracked changes.
+ * @returns {MutationScope} the derived source and test mutation scope.
  */
 export function buildScope({
   repoRoot,
@@ -261,8 +300,10 @@ export function buildScope({
   // Untracked files are absent from every `git diff` form, so they are collected
   // separately and treated as added — a new file has no prior side, so there are
   // no ranges to compute and it is mutated whole.
-  const untrackedSrc = includeWorkingTree ? untrackedFiles(srcPath, repoRoot) : [];
-  const untrackedTests = includeWorkingTree ? untrackedFiles(testPath, repoRoot) : [];
+  const untrackedSrc =
+    includeWorkingTree && diffs === undefined ? untrackedFiles(srcPath, repoRoot) : [];
+  const untrackedTests =
+    includeWorkingTree && diffs === undefined ? untrackedFiles(testPath, repoRoot) : [];
   const {
     changedSrc,
     addedSrc,
@@ -296,7 +337,7 @@ export function buildScope({
   const added = new Set(addedSrc);
   const prefix = `${pkg.dir}/`;
 
-  /** @type {Array<{file: string, lines: number, ranges: Array<{start: number, end: number}>, whole: boolean, testFile: string | null, reason: string}>} */
+  /** @type {MutationScopeEntry[]} */
   const entries = [];
   /** @type {string[]} */
   const excluded = [];
@@ -395,32 +436,46 @@ export function mutateArg(entry) {
  * multiplies with batch size. Callers report that rather than hiding it.
  *
  * @param {Array<{pkg: {package: string}, entry: object}>} items - per-file entries.
- * @param {number} maxShards - cap on the number of shards.
+ * @param {number} maxShards - global cap on the number of shards.
+ * @param {number} [reservedShards] - non-source shards already consuming the global cap.
  * @returns {Array<Array<{pkg: {package: string}, entry: object}>>} shard groupings.
  */
-export function partitionPrEntries(items, maxShards) {
-  // Pool key is (package, test-scope kind). Package, because a shard inherits its
-  // directory from its first entry. Kind, because a shard emits ONE `--testFiles`
-  // value for the whole group: mixing a file that has a dedicated test with one
-  // that does not yields a non-empty value, which switches `--findRelatedTests`
-  // off for BOTH and tests the dedicated-test-less file only against another
-  // file's tests — manufacturing no-coverage and survivor results.
+export function partitionPrEntries(items, maxShards, reservedShards = 0) {
+  if (reservedShards > maxShards) {
+    throw new Error(`${reservedShards} test-only shards already exceed MAX_PR_SHARDS=${maxShards}`);
+  }
+  const availableShards = maxShards - reservedShards;
+  if (items.length > 0 && availableShards === 0) {
+    throw new Error(
+      `no source shard slots remain under MAX_PR_SHARDS=${maxShards} after reserving ` +
+        `${reservedShards} test-only shard(s)`,
+    );
+  }
+  // Pool by package because a shard inherits its directory from its first entry.
+  // Dedicated-test and related-test entries may share a package shard: the
+  // matrix mapper emits `testFiles` only when EVERY entry has one, so a mixed
+  // batch safely retains the related-tests fallback for the whole group.
   /** @type {Map<string, Array<{pkg: {package: string}, entry: object}>>} */
   const pools = new Map();
   for (const item of items) {
-    const kind = item.entry.testFile ? 'unit' : 'related';
-    const key = `${item.pkg.package}:${kind}`;
+    const key = item.pkg.package;
     if (!pools.has(key)) pools.set(key, []);
     pools.get(key).push(item);
   }
 
   const keys = [...pools.keys()];
-  // Every pool gets one shard: a package with changes must never be starved of
-  // scoring. When there are more pools than the cap allows, that floor wins and
-  // the cap yields — the alternative is silently dropping a package's coverage.
+  if (keys.length > availableShards) {
+    throw new Error(
+      `${availableShards} source shard slot(s) under MAX_PR_SHARDS=${maxShards} is fewer than ` +
+        `the ${keys.length} changed packages; ` +
+        'refusing to mix packages or drop mutation coverage',
+    );
+  }
+  // Every changed package gets one shard, then the remaining global budget is
+  // allocated to the most loaded package. This makes maxShards a hard cap.
   /** @type {Map<string, number>} */
   const allocation = new Map(keys.map((key) => [key, 1]));
-  let remaining = Math.max(0, maxShards - keys.length);
+  let remaining = Math.max(0, availableShards - keys.length);
   // Hand out the rest one shard at a time to whichever pool is currently carrying
   // the most entries per shard, and never give a pool more shards than it has
   // entries (an empty shard is a wasted CI job). Allocating incrementally is what

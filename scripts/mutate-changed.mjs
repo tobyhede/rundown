@@ -55,7 +55,7 @@
  * @see issue #485
  * @module scripts/mutate-changed
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -150,6 +150,37 @@ export function parseInstrumented(output) {
   const match = /Instrumented (\d+) source file\(s\) with (\d+) mutant\(s\)/.exec(output);
   if (!match) return null;
   return { files: Number.parseInt(match[1], 10), mutants: Number.parseInt(match[2], 10) };
+}
+
+/**
+ * Run a child process while forwarding stdout and stderr to one writer as each
+ * chunk arrives, retaining the same combined stream for post-run parsing.
+ *
+ * @param {string} command - executable to spawn.
+ * @param {string[]} args - child arguments.
+ * @param {{cwd?: string, env?: NodeJS.ProcessEnv}} options - spawn options.
+ * @param {{write: (chunk: string) => unknown}} [writer=process.stdout] - live output sink.
+ * @returns {Promise<{status: number | null, output: string}>} exit status and accumulated output.
+ */
+export function spawnStreaming(command, args, options, writer = process.stdout) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ['inherit', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const forward = (chunk) => {
+      const text = chunk.toString();
+      output += text;
+      writer.write(text);
+    };
+    child.stdout.on('data', forward);
+    child.stderr.on('data', forward);
+    child.on('error', (error) => {
+      forward(`${error.message}\n`);
+    });
+    child.on('close', (status) => resolve({ status, output }));
+  });
 }
 
 /**
@@ -330,7 +361,7 @@ async function main() {
       // check below and be scored as if it belonged to this run.
       const report = join(repoRoot, pkg.dir, 'reports/mutation/mutation-report.json');
       rmSync(report, { force: true });
-      const result = spawnSync(
+      const result = await spawnStreaming(
         'pnpm',
         [
           '--filter',
@@ -342,13 +373,10 @@ async function main() {
         ],
         {
           cwd: repoRoot,
-          encoding: 'utf8',
-          stdio: ['inherit', 'pipe', 'pipe'],
           env: { ...process.env, STRYKER_SCOPED: 'true' },
         },
       );
-      const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-      process.stdout.write(output);
+      const { output } = result;
 
       const instrumented = parseInstrumented(output);
       const outcome = runOutcome({
