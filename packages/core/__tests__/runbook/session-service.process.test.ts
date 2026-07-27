@@ -172,20 +172,15 @@ async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
   // Attach exit listeners BEFORE releasing the barrier. A child released first
   // could exit before its listener was attached, and `exit` does not replay —
   // the await below would then hang until the test timeout.
-  // Marked handled for the same reason as `childExit`: `Promise.all` below settles
-  // on the FIRST rejection, so if two children fail the second rejects with nobody
-  // watching and Jest reports an unhandled rejection over the real failure.
-  const exits = parked.map(({ child }) => {
-    const exit = new Promise<void>((resolve, reject) => {
-      child.on('exit', (code, signal) => {
-        code === 0
-          ? resolve()
-          : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
-      });
-    });
-    exit.catch(() => {});
-    return exit;
-  });
+  //
+  // `childExit` rather than a hand-rolled promise: this used to be a second copy
+  // that drifted, omitting the 'error' listener, so a spawn failure in a cohort
+  // hung to the suite timeout while the same failure in the single-child path
+  // failed fast. One definition removes the divergence by construction — and it
+  // already marks itself handled, which matters here because `Promise.all` settles
+  // on the FIRST rejection and a second failing child would otherwise reject with
+  // nobody watching.
+  const exits = parked.map(({ child }) => childExit(child));
 
   // Release every child at once. This is the only synchronization point.
   await fs.writeFile(goFile, 'go');
@@ -482,5 +477,33 @@ describe('cross-process session write contention (transaction replaces SessionLo
         linkage.parentFrameKey,
       )?.status,
     ).toBe('running');
+  }, 120_000);
+
+  it('reports an unhandled op kind instead of succeeding with no value', async () => {
+    // `ChildOp` is shared by both halves, so the PARENT cannot construct an
+    // unhandled kind — but the wire is JSON across a process boundary, and the
+    // child re-parses it as `ChildOp` without checking. The cast is the point: it
+    // stands in for the real failure mode, which is a variant added to the union
+    // and handled on one side only. With no `default:` arm the child's switch
+    // falls through, `run` returns `undefined`, and the child reports `ok: true` —
+    // a silent success for work it never performed.
+    const [result] = await race([{ kind: 'unhandledFutureOp' } as unknown as ChildOp]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('unhandledFutureOp');
+  }, 120_000);
+
+  it('rejects rather than hanging when a worker fails to spawn', async () => {
+    // A spawn failure emits 'error' and never 'exit'. Without an 'error' listener
+    // the exit promise never settles and the cohort await hangs to the 120s suite
+    // timeout, reporting nothing about the cause. `race` used to hand-roll its own
+    // exit promise without this listener; it now shares `childExit`, so this pins
+    // the single definition both paths depend on.
+    const child = spawn(path.join(dir, 'no-such-binary-should-not-exist'), [], {
+      stdio: 'ignore',
+    });
+
+    await expect(childExit(child)).rejects.toThrow(/ENOENT/);
   }, 120_000);
 });
