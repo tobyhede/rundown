@@ -111,6 +111,22 @@ async function run(service: SessionService): Promise<unknown> {
         return 'advanced';
       });
     }
+    default: {
+      // Exhaustiveness check, and the only thing making the shared `ChildOp` union
+      // checkable from THIS side. The parent constructs ops against the union so
+      // TypeScript checks it there, but the child re-parses JSON off argv, where no
+      // static guarantee survives. Without this arm a variant added to the union and
+      // handled only by the parent compiles clean here and returns `undefined`,
+      // which the caller records as a successful mutation that never ran.
+      //
+      // `never` is what turns "forgot the child" into a compile error; the throw is
+      // what turns a genuine wire mismatch into a diagnosis instead of a silent
+      // success.
+      const unhandled: never = op;
+      throw new Error(
+        `session-writer-child: unhandled op kind ${JSON.stringify((unhandled as { kind?: unknown }).kind)}`,
+      );
+    }
   }
 }
 

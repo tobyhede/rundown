@@ -4,11 +4,14 @@
 // Both halves live in separate OS processes and talk over JSON in argv and result
 // files, so TypeScript cannot check one against the other. Declaring these types
 // twice — which is what this file replaces — made that gap silent: adding a
-// variant on one side and forgetting the other produced no compile error, only a
-// child exiting non-zero with an opaque message from a `default:` arm.
+// variant on one side and forgetting the other produced no compile error at all.
 //
-// One definition, imported by both sides, is the only thing that makes the
-// contract checkable at all.
+// One definition, imported by both sides, is what makes the contract checkable.
+// It is necessary but not sufficient: the parent constructs ops against this union
+// so TypeScript checks that side, while the child re-parses JSON off argv, where
+// no static guarantee survives. The child's `default:` arm closes that half with a
+// `never` assignment, so a variant added here and unhandled there is a compile
+// error rather than a `run` that returns `undefined` and is recorded as success.
 
 import type { DelegationLinkage } from '../../../../src/runbook/types.js';
 

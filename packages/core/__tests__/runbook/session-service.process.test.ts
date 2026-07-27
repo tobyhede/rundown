@@ -126,16 +126,34 @@ interface ParkedChild {
  * @returns The parked child handle.
  * @throws {Error} When the child never signals readiness within the timeout.
  */
-async function park(goFile: string, op: ChildOp): Promise<ParkedChild> {
+async function park(
+  goFile: string,
+  op: ChildOp,
+  options: { readonly executable?: string } = {},
+): Promise<ParkedChild> {
   opSeq += 1;
   const tag = String(opSeq);
   const readyFile = path.join(dir, `ready-${tag}`);
   const resultFile = path.join(dir, `result-${tag}`);
   const child = spawn(
-    process.execPath,
+    options.executable ?? process.execPath,
     ['--import', TSX, CHILD, dir, readyFile, goFile, resultFile, JSON.stringify(op)],
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
+  // A spawn failure emits 'error' and never 'exit'. This listener must be attached
+  // HERE, at spawn, because nothing else is listening yet: `childExit` attaches its
+  // own only after `park` resolves, which a failed spawn never does — so the cohort
+  // path is not covered by that listener at all.
+  //
+  // Two measured facts make recording it necessary. An 'error' with no listener is
+  // fatal in plain Node (`throw er` out of EventEmitter), and `child.exitCode` is
+  // still null when it fires, so the liveness check below cannot see the failure
+  // either — leaving the loop to spin to its 60s deadline and report a readiness
+  // timeout that names nothing about the real cause.
+  let spawnError: Error | undefined;
+  child.on('error', (error: Error) => {
+    spawnError = error;
+  });
   let stderr = '';
   child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
   children.push(child);
@@ -146,6 +164,7 @@ async function park(goFile: string, op: ChildOp): Promise<ParkedChild> {
       await fs.access(readyFile);
       return { child, resultFile };
     } catch {
+      if (spawnError) throw new Error(`child failed to spawn: ${spawnError.message}`);
       if (child.exitCode !== null || child.signalCode !== null) {
         throw new Error(
           `child exited before readiness (code=${String(child.exitCode)}): ${stderr}`,
@@ -172,20 +191,18 @@ async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
   // Attach exit listeners BEFORE releasing the barrier. A child released first
   // could exit before its listener was attached, and `exit` does not replay —
   // the await below would then hang until the test timeout.
-  // Marked handled for the same reason as `childExit`: `Promise.all` below settles
-  // on the FIRST rejection, so if two children fail the second rejects with nobody
-  // watching and Jest reports an unhandled rejection over the real failure.
-  const exits = parked.map(({ child }) => {
-    const exit = new Promise<void>((resolve, reject) => {
-      child.on('exit', (code, signal) => {
-        code === 0
-          ? resolve()
-          : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
-      });
-    });
-    exit.catch(() => {});
-    return exit;
-  });
+  //
+  // `childExit` rather than a hand-rolled promise: this used to be a second copy of
+  // it that had drifted, omitting the 'error' listener. One definition removes that
+  // divergence by construction — and it already marks itself handled, which matters
+  // here because `Promise.all` settles on the FIRST rejection and a second failing
+  // child would otherwise reject with nobody watching.
+  //
+  // Note this is a dedup, NOT the cohort's spawn-failure guard. By the time these
+  // listeners are attached every child has already signalled readiness, so it has
+  // demonstrably spawned. Spawn failure is `park`'s to catch, and it does — see the
+  // 'error' listener there. Do not remove that one believing this covers it.
+  const exits = parked.map(({ child }) => childExit(child));
 
   // Release every child at once. This is the only synchronization point.
   await fs.writeFile(goFile, 'go');
@@ -249,13 +266,16 @@ function childExit(child: ChildProcess): Promise<void> {
         : reject(new Error(`child exited code=${String(code)} signal=${String(signal)}`));
     });
   });
-  // Mark it handled. This promise is created before the barrier protocol runs but
-  // awaited only at `collect`, so any assertion that throws in between leaves it
-  // unawaited; teardown then kills the worker and it rejects with nobody watching.
-  // Jest reports that as an unhandled rejection ON TOP OF — or instead of — the
-  // assertion that actually failed, which on a cross-process race test destroys
-  // exactly the signal being sought. Attaching a no-op handler suppresses only the
-  // unhandled-rejection report; the returned promise still rejects for `collect`.
+  // Mark it handled. Both callers can leave this promise unawaited at the moment it
+  // rejects: the single-child path creates it before the barrier protocol and awaits
+  // it only at `collect`, so an assertion throwing in between leaves it unwatched
+  // while teardown kills the worker; and `race` awaits a whole cohort through
+  // `Promise.all`, which settles on the FIRST rejection, leaving any second failing
+  // child rejecting with nobody watching. Either way Jest reports an unhandled
+  // rejection ON TOP OF — or instead of — the assertion that actually failed, which
+  // on a cross-process race test destroys exactly the signal being sought. The no-op
+  // handler suppresses only that report; the returned promise still rejects for the
+  // caller that awaits it.
   exit.catch(() => {});
   return exit;
 }
@@ -483,4 +503,55 @@ describe('cross-process session write contention (transaction replaces SessionLo
       )?.status,
     ).toBe('running');
   }, 120_000);
+
+  it('reports an unhandled op kind instead of succeeding with no value', async () => {
+    // `ChildOp` is shared by both halves, so the PARENT cannot construct an
+    // unhandled kind — but the wire is JSON across a process boundary, and the
+    // child re-parses it as `ChildOp` without checking. The cast is the point: it
+    // stands in for the real failure mode, which is a variant added to the union
+    // and handled on one side only. With no `default:` arm the child's switch
+    // falls through, `run` returns `undefined`, and the child reports `ok: true` —
+    // a silent success for work it never performed.
+    const unhandledOperation = { kind: 'unhandledFutureOp' } as unknown as ChildOp;
+
+    const [result] = await race([unhandledOperation]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('unhandledFutureOp');
+  }, 120_000);
+
+  it('reports a spawn failure from park instead of taking the worker down', async () => {
+    // The cohort path spawns inside `park`, and until `park` resolves NOTHING is
+    // listening for 'error'. A spawn failure emits 'error' with no listener, which
+    // Node escalates to an uncaught exception — killing the whole Jest worker
+    // before `child.exitCode` is ever set, so park's liveness check never sees it.
+    // `childExit`'s own 'error' listener cannot close this window: `race` attaches
+    // it only after `park` resolves, which a failed spawn never does.
+    await expect(
+      park(
+        path.join(dir, 'unused-go'),
+        { kind: 'popRunbook' },
+        {
+          executable: path.join(dir, 'no-such-node-binary'),
+        },
+      ),
+    ).rejects.toThrow(/ENOENT/);
+  }, 15_000);
+
+  it('rejects rather than hanging when a worker fails to spawn', async () => {
+    // A spawn failure emits 'error' and never 'exit'. Without an 'error' listener
+    // the exit promise never settles and the cohort await hangs to the 120s suite
+    // timeout, reporting nothing about the cause. `race` used to hand-roll its own
+    // exit promise without this listener; it now shares `childExit`, so this pins
+    // the single definition both paths depend on.
+    const child = spawn(path.join(dir, 'no-such-binary-should-not-exist'), [], {
+      stdio: 'ignore',
+    });
+
+    await expect(childExit(child)).rejects.toThrow(/ENOENT/);
+    // Short on purpose: the guarded regression (deleting childExit's 'error'
+    // listener) makes this promise never settle, and a 120s ceiling would turn a
+    // clear failure into a two-minute stall in a suite that otherwise runs in ~3s.
+  }, 15_000);
 });
