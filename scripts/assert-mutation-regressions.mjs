@@ -75,7 +75,13 @@ function indexReport(report, label) {
     for (const mutant of entry.mutants) {
       const key = mutantIdentity(mutant, file);
       if (index.has(key)) {
-        throw new Error(`${label} report has duplicate mutant identity ${key.replace(/\n/, ' ')}`);
+        // Collapse EVERY newline, not just the key's own field separator:
+        // `replacement` is verbatim mutated source and a multi-line block mutant is
+        // ordinary, so a non-global replace would leave the rest raw and break the
+        // single greppable line this collapse exists to produce.
+        throw new Error(
+          `${label} report has duplicate mutant identity ${key.replace(/\r?\n/g, ' ')}`,
+        );
       }
       index.set(key, { ...mutant, file, identity: key });
     }

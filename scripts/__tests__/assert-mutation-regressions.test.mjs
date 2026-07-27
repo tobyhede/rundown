@@ -168,6 +168,25 @@ test('rejects a report whose mutants share one content identity', () => {
   );
 });
 
+// The identity key embeds a newline as its own field separator, and the duplicate
+// diagnostic collapses it so the error stays one greppable line. `replacement` is
+// verbatim mutated source, so it can contain newlines of its own — a Stryker
+// mutant replacing a multi-line block is ordinary. Collapsing only the first
+// newline leaves the rest raw and breaks the line the collapse exists to protect.
+test('the duplicate-identity diagnostic stays on one line for a multi-line replacement', () => {
+  const multiline = mutant('1', 'Killed', { replacement: '{\n  return null;\n}' });
+  try {
+    compareMutationRegressions({
+      baseline: report([multiline, { ...multiline, id: '2' }]),
+      current: report([multiline]),
+    });
+    assert.fail('a duplicate identity must throw');
+  } catch (err) {
+    assert.match(err.message, /duplicate mutant/i);
+    assert.doesNotMatch(err.message, /\n/, `diagnostic must be one line, got: ${err.message}`);
+  }
+});
+
 // A mutant with no location cannot be placed in the identity space. Correlating
 // it by anything else would silently pair unrelated mutants.
 test('rejects a mutant that carries no location', () => {
