@@ -131,7 +131,7 @@ export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as cons
 export const RECOVERY_TAG = 'recovery' as const;
 
 /** Name of the top-level non-final recoveryRequired state. */
-const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
+export const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -2473,6 +2473,9 @@ function buildRecoveryReconcileTransitions(
       interruptedReason: undefined,
       interruptedStepId: undefined,
       retryCount: 0,
+      substep: first.substepId,
+      substepCompletedCount: 0,
+      deferredResults: EMPTY_RESULTS,
       lastAction: buildGotoLastActionFromEvent(first.substepId),
     }),
   }));

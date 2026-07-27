@@ -587,7 +587,8 @@ const ClaimGrantSchema: z.ZodType<ClaimGrant> = z.discriminatedUnion('action', [
   ReportDelegationResultGrantSchema,
 ]);
 
-const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
+/** Canonical schema shared by in-memory claims and persisted linkage rows. */
+export const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
   .object({
     childRunId: RunIdSchema,
     tokenHash: DelegationTokenHashSchema,

@@ -230,7 +230,7 @@ interface OwnerRow {
   readonly execPid: number | null;
   readonly execTokenHash: string | null;
   readonly execEpoch: number | null;
-  readonly phase: string | null;
+  readonly phase: ExecutionPhase | null;
 }
 
 /** Thrown inside an all-or-none transaction to roll back on the first refusal. */
@@ -450,14 +450,20 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     owner: OwnerRow,
     epoch: ExecutionEpoch,
   ): Promise<DeadOwnerRecovery> {
-    await this.driver.immediate((tx) => {
-      tx.prepare(
-        `UPDATE execution_attempts
-            SET phase = 'recovery_pending', reason = COALESCE(reason, 'owner_dead')
-          WHERE run_id = :runId AND exec_epoch = :epoch AND exec_token = :hash
-            AND phase IN ('effect_started', 'recovery_pending')`,
-      ).run({ runId, epoch, hash: owner.execTokenHash });
-    });
+    const changes = await this.driver.immediate(
+      (tx) =>
+        tx
+          .prepare(
+            `UPDATE execution_attempts
+                SET phase = 'recovery_pending', reason = COALESCE(reason, 'owner_dead')
+              WHERE run_id = :runId AND exec_epoch = :epoch AND exec_token = :hash
+                AND phase IN ('effect_started', 'recovery_pending')`,
+          )
+          .run({ runId, epoch, hash: owner.execTokenHash }).changes,
+    );
+    if (changes !== 1) {
+      return { kind: 'missing', runId };
+    }
     return { kind: 'recovery_pending', runId, epoch };
   }
 
@@ -499,6 +505,9 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
       }
       if (recovery.kind === 'reclaimed_pre_effect') {
         continue; // The dead lease is cleared; retry immediately.
+      }
+      if (recovery.kind === 'missing') {
+        continue; // Another actor cleared the tuple; retry without waiting.
       }
       attempts += 1;
       const remainingMs = Math.max(0, deadline - this.clock.now());
@@ -602,7 +611,7 @@ function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
       readonly exec_pid: number | null;
       readonly exec_token: string | null;
       readonly exec_epoch: number | null;
-      readonly phase: string | null;
+      readonly phase: ExecutionPhase | null;
     }>({ runId });
   if (row === undefined) {
     return { present: false, execPid: null, execTokenHash: null, execEpoch: null, phase: null };

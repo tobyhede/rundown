@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from '@jest/globals';
+import { describe, it, expect, afterEach, jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as os from 'node:os';
@@ -185,6 +185,233 @@ describe('runbook store registry', () => {
     await closeRunbookStore(cwd);
     const second = await getRunbookStore(cwd, { runtime: 'native' });
     expect(second).not.toBe(first);
+  });
+
+  it.each([
+    'close-one',
+    'close-all',
+  ] as const)('waits for %s disposal before reopening the same project', async (mode) => {
+    const cwd = await newRoot();
+    const first = await openRunbookStore(cwd, { runtime: 'native' });
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let enterDisposal!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      enterDisposal = resolve;
+    });
+    let releaseDisposal!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      releaseDisposal = resolve;
+    });
+    const disposeSpy = jest
+      .spyOn(first.driver, Symbol.asyncDispose)
+      .mockImplementation(async () => {
+        enterDisposal();
+        await disposalReleased;
+        await originalDispose();
+      });
+
+    const closing = mode === 'close-one' ? closeRunbookStore(cwd) : closeRunbookStores();
+    await disposalEntered;
+    let reopenSettled = false;
+    const reopening = openRunbookStore(cwd, { runtime: 'native' }).then((opened) => {
+      reopenSettled = true;
+      return opened;
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const settledBeforeRelease = reopenSettled;
+    releaseDisposal();
+    const [, reopened] = await Promise.all([closing, reopening]);
+    disposeSpy.mockRestore();
+
+    expect(settledBeforeRelease).toBe(false);
+    expect(reopened.store).not.toBe(first.store);
+  });
+
+  it('waits for a close found by original cwd after its canonical key drifts', async () => {
+    const parent = await newRoot();
+    const cwd = path.join(parent, 'created-by-open');
+    const moved = path.join(parent, 'moved-after-open');
+    const beforeKey = runbookStoreKey(cwd);
+    const first = await openRunbookStore(cwd, { runtime: 'native' });
+    await fs.rename(cwd, moved);
+    await fs.symlink(moved, cwd, 'dir');
+    const afterKey = runbookStoreKey(cwd);
+    expect(afterKey).not.toBe(beforeKey);
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let enterDisposal!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      enterDisposal = resolve;
+    });
+    let releaseDisposal!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      releaseDisposal = resolve;
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      enterDisposal();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    const closing = closeRunbookStore(cwd);
+    await disposalEntered;
+    let reopenSettled = false;
+    const reopening = openRunbookStore(cwd, { runtime: 'native' }).then((opened) => {
+      reopenSettled = true;
+      return opened;
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const settledBeforeRelease = reopenSettled;
+    releaseDisposal();
+    const [, reopened] = await Promise.all([closing, reopening]);
+
+    expect(settledBeforeRelease).toBe(false);
+    expect(reopened.store).not.toBe(first.store);
+  });
+
+  it('waits by canonical key when close and reopen use different root spellings', async () => {
+    const real = await newRoot();
+    const link = path.join(await newRoot(), 'link');
+    await fs.symlink(real, link, 'dir');
+    const first = await openRunbookStore(real, { runtime: 'native' });
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let entered!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      entered();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    const closing = closeRunbookStore(real);
+    await disposalEntered;
+    let settled = false;
+    const reopening = openRunbookStore(link, { runtime: 'native' }).then((opened) => {
+      settled = true;
+      return opened;
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(settled).toBe(false);
+    release();
+    await Promise.all([closing, reopening]);
+  });
+
+  it('closes by canonical key when the close uses a different root spelling', async () => {
+    const real = await newRoot();
+    const link = path.join(await newRoot(), 'link');
+    await fs.symlink(real, link, 'dir');
+    const { driver } = await openRunbookStore(real, { runtime: 'native' });
+
+    await closeRunbookStore(link);
+
+    await expect(driver.read((tx) => tx.prepare('SELECT 1 AS x').get())).rejects.toThrow(
+      /used after disposal/,
+    );
+  });
+
+  it('does not serialize an unrelated project behind another project close', async () => {
+    const closingCwd = await newRoot();
+    const unrelatedCwd = await newRoot();
+    const first = await openRunbookStore(closingCwd, { runtime: 'native' });
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let entered!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      entered();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    const closing = closeRunbookStore(closingCwd);
+    await disposalEntered;
+    const unrelated = await openRunbookStore(unrelatedCwd, { runtime: 'native' });
+    expect(unrelated.store).toBeDefined();
+    release();
+    await closing;
+  });
+
+  it('forgets a completed close before serializing a second close cycle', async () => {
+    const cwd = await newRoot();
+    await openRunbookStore(cwd, { runtime: 'native' });
+    await closeRunbookStore(cwd);
+    const second = await openRunbookStore(cwd, { runtime: 'native' });
+    const originalDispose = second.driver[Symbol.asyncDispose].bind(second.driver);
+    let entered!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    jest.spyOn(second.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      entered();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    const closing = closeRunbookStore(cwd);
+    await disposalEntered;
+    let settled = false;
+    const reopening = openRunbookStore(cwd, { runtime: 'native' }).then((opened) => {
+      settled = true;
+      return opened;
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(settled).toBe(false);
+    release();
+    await Promise.all([closing, reopening]);
+  });
+
+  it('close-all waits for a close that was already active', async () => {
+    const cwd = await newRoot();
+    const first = await openRunbookStore(cwd, { runtime: 'native' });
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let entered!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      entered();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    const closingOne = closeRunbookStore(cwd);
+    await disposalEntered;
+    let closeAllSettled = false;
+    const closingAll = closeRunbookStores().then(() => {
+      closeAllSettled = true;
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(closeAllSettled).toBe(false);
+    release();
+    await Promise.all([closingOne, closingAll]);
   });
 
   it('exposes the driver for explicit disposal', async () => {

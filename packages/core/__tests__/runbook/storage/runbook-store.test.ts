@@ -1941,6 +1941,22 @@ describe('session reconstruction', () => {
     await expect(store.loadSession()).rejects.toThrow(/^Invalid persisted delegation linkage:/);
   });
 
+  it('accepts the canonical empty parent frame key', async () => {
+    await corruptDelegationBlob('ea'.repeat(16), { parentFrameKey: '' });
+    const session = await store.loadSession();
+    expect(session.claims[`rdclk_${'ea'.repeat(16)}`].delegation?.parentFrameKey).toBe('');
+  });
+
+  it('rejects zero parentEntry through the canonical positive-entry schema', async () => {
+    await corruptDelegationBlob('e9'.repeat(16), { parentEntry: 0 });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+  });
+
+  it('rejects unknown delegation-linkage fields through the canonical strict schema', async () => {
+    await corruptDelegationBlob('e2'.repeat(16), { unexpected: true });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+  });
+
   it('refuses to hydrate a claim whose persisted delegation token hash is not a hash', async () => {
     await corruptDelegationBlob('e4'.repeat(16), { tokenHash: 'not-a-delegation-token-hash' });
     await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
@@ -1960,21 +1976,14 @@ describe('session reconstruction', () => {
     );
   });
 
-  it('refuses to hydrate a claim whose parent frame key has no iteration separator', async () => {
-    await corruptDelegationBlob('e5'.repeat(16), { parentFrameKey: 'no-iteration-separator' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
-  });
-
-  it('refuses to hydrate a claim whose parent frame key has a non-numeric iteration', async () => {
-    await corruptDelegationBlob('e7'.repeat(16), { parentFrameKey: '2|abc' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
-  });
-
-  it('refuses to hydrate a claim whose parent frame key carries an extra separator', async () => {
-    // The step segment is anchored, so a key with a second separator is not
-    // rescued by a suffix that happens to look well-formed.
-    await corruptDelegationBlob('e9'.repeat(16), { parentFrameKey: 'a|b|3' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+  it.each([
+    ['e5', 'no-iteration-separator'],
+    ['e7', '2|abc'],
+    ['e1', 'a|b|3'],
+  ])('accepts opaque frame key %s exactly as the canonical schema does', async (keyHex, frameKey) => {
+    await corruptDelegationBlob(keyHex.repeat(16), { parentFrameKey: frameKey });
+    const session = await store.loadSession();
+    expect(session.claims[`rdclk_${keyHex.repeat(16)}`].delegation?.parentFrameKey).toBe(frameKey);
   });
 
   it('hydrates a claim whose parent frame key carries a multi-digit iteration', async () => {

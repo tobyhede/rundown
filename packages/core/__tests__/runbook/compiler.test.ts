@@ -12903,4 +12903,49 @@ echo ok
       actor.stop();
     });
   });
+
+  describe('recoveryRequired GOTO reconcile', () => {
+    const source = `## 1. Review
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Next
+- PASS COMPLETE
+`;
+
+    it('resets the target step to its first substep with no stale cursor', () => {
+      const machine = compileRunbookToMachine(createRunbook(source));
+      const fresh = createActor(machine).start();
+      const firstSubstep = fresh.getSnapshot().context.substep;
+      fresh.stop();
+      const actor = createActor(machine).start();
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.substep).not.toBe(firstSubstep);
+      expect(actor.getSnapshot().context.substepCompletedCount).toBeGreaterThan(0);
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+
+      const context = actor.getSnapshot().context;
+      expect(context.substep).toBe(firstSubstep);
+      expect(context.substepCompletedCount).toBe(0);
+      expect(context.deferredResults ?? []).toEqual([]);
+      expect(context.interruptedEpoch).toBeUndefined();
+      expect(context.interruptedReason).toBeUndefined();
+      expect(context.interruptedStepId).toBeUndefined();
+      actor.stop();
+    });
+  });
 });

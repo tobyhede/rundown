@@ -16,7 +16,7 @@
  */
 
 import { z } from 'zod';
-import { makeRunbookStateSchema } from '../../schemas.js';
+import { DelegationClaimLinkageSchema, makeRunbookStateSchema } from '../../schemas.js';
 import type {
   RunbookState,
   ResolvedCompletion,
@@ -31,13 +31,7 @@ import {
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
-import { assertDelegationTokenHash } from '../delegation-token.js';
-import {
-  assertFrameKey,
-  classifyDelegationLiveness,
-  findSubstepState,
-  linkageMatchesClaim,
-} from '../targeting.js';
+import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from '../targeting.js';
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
@@ -223,7 +217,7 @@ export interface CommitRow {
   readonly claimStatus: string | null;
   /** Whether the presented claim controls the target run (#613 unification). */
   readonly claimControlsRun: boolean;
-  /** Parent run id for a delegated claim, else null. */
+  /** Live parent run id for a delegated claim, else null (including deleted parents). */
   readonly parentId: string | null;
   /** Parent lifecycle for a delegated claim, else null. */
   readonly parentLifecycle: string | null;
@@ -1274,10 +1268,10 @@ export class RunbookStore {
   /**
    * Commit an interrupted-execution recovery snapshot.
    *
-   * Persists the `recoveryRequired` snapshot (lifecycle stays `running`), records
-   * the attempt's recovery reason, and clears active ownership — atomically,
-   * keyed on the exact interrupted epoch. If the interrupted attempt was
-   * superseded meanwhile, the commit changes zero rows and refuses.
+   * Persists the `recoveryRequired` snapshot (lifecycle stays `running`), closes
+   * the exact recovery attempt as committed with its reason and finish time, and
+   * clears active ownership atomically. If either exact row was superseded, the
+   * transaction rolls back rather than committing only half of the recovery.
    *
    * Unlike the three authoritative commit sites, this does not call
    * {@link afterAuthoritativeStateWrite}: restoring an attempt's own snapshot
@@ -1319,12 +1313,15 @@ export class RunbookStore {
           message: `The interrupted attempt for run ${next.id} was superseded before recovery committed.`,
         };
       }
-      txn.tx
+      const attemptChanges = txn.tx
         .prepare(
-          `UPDATE execution_attempts SET reason = COALESCE(reason, :reason)
+          `UPDATE execution_attempts
+              SET phase = 'committed', finished_at = :now,
+                  reason = COALESCE(reason, :reason)
             WHERE run_id = :runId AND exec_epoch = :epoch AND phase = 'recovery_pending'`,
         )
-        .run({ reason, runId: next.id, epoch });
+        .run({ reason, now: next.updatedAt, runId: next.id, epoch }).changes;
+      assertExactlyOneRow(attemptChanges, next.id);
       return { kind: 'committed', value: next };
     });
   }
@@ -1958,17 +1955,6 @@ function assertClaimStatus(value: string): ClaimStatus {
 /** Zod schema for the grants JSON blob, kept permissive at this edge. */
 const GrantsSchema = z.array(z.record(z.string(), z.unknown()));
 
-/** Structural schema for the delegation linkage blob, branded below. */
-const DelegationSchema = z.object({
-  childRunId: z.string(),
-  tokenHash: z.string(),
-  parentRunId: z.string(),
-  parentStepId: z.string(),
-  parentStep: z.string(),
-  parentFrameKey: z.string(),
-  parentEntry: z.number().int().nonnegative(),
-});
-
 /**
  * Reconstruct a delegation linkage from its persisted blob.
  *
@@ -1983,20 +1969,11 @@ const DelegationSchema = z.object({
  */
 function deserializeDelegation(json: string): DelegationClaimLinkage {
   try {
-    const parsed = DelegationSchema.safeParse(JSON.parse(json));
+    const parsed = DelegationClaimLinkageSchema.safeParse(JSON.parse(json));
     if (!parsed.success) {
       throw new Error(parsed.error.message);
     }
-    const raw = parsed.data;
-    return {
-      childRunId: assertRunId(raw.childRunId),
-      tokenHash: assertDelegationTokenHash(raw.tokenHash),
-      parentRunId: assertRunId(raw.parentRunId),
-      parentStepId: raw.parentStepId,
-      parentStep: raw.parentStep,
-      parentFrameKey: assertFrameKey(raw.parentFrameKey),
-      parentEntry: raw.parentEntry,
-    };
+    return parsed.data;
   } catch (error) {
     throw new Error(`Invalid persisted delegation linkage: ${getErrorMessage(error)}`);
   }

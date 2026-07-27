@@ -61,6 +61,40 @@ interface StoreEntry {
 /** Open stores, each registered under exactly one key (see {@link registryKey}). */
 const openStores = new Map<string, StoreEntry>();
 
+/** One removed entry whose driver is still being disposed. */
+interface ClosingStore {
+  readonly key: string;
+  readonly cwd: string;
+  readonly closing: Promise<void>;
+}
+
+/** Active closes retained until disposal settles. */
+const closingStores = new Set<ClosingStore>();
+
+/**
+ * Apply owner-only permissions to the database and any existing sidecars.
+ *
+ * @param target - Main SQLite database path.
+ */
+async function hardenDatabaseFileMode(target: string): Promise<void> {
+  await Promise.all(
+    [target, `${target}-wal`, `${target}-shm`].map(async (file, index) => {
+      try {
+        await fs.chmod(file, 0o600);
+      } catch (err) {
+        if (
+          isNodeError(err) &&
+          (err.code === 'ENOSYS' || err.code === 'ENOTSUP' || err.code === 'EOPNOTSUPP')
+        ) {
+          return;
+        }
+        if (index > 0 && isNodeError(err) && err.code === 'ENOENT') return;
+        throw err;
+      }
+    }),
+  );
+}
+
 /**
  * Resolve a project root to the canonical key for its database.
  *
@@ -121,10 +155,12 @@ function registryKey(cwd: string): string {
  * @param cwd - Project root as it was passed to the open.
  * @returns The matching entry, or `undefined` when none was opened for it.
  */
-function findEntryByCwd(cwd: string): StoreEntry | undefined {
-  for (const entry of openStores.values()) {
+function findEntryByCwd(
+  cwd: string,
+): { readonly key: string; readonly entry: StoreEntry } | undefined {
+  for (const [key, entry] of openStores) {
     if (entry.cwd === cwd) {
-      return entry;
+      return { key, entry };
     }
   }
   return undefined;
@@ -143,6 +179,48 @@ function forgetEntry(entry: StoreEntry): void {
       openStores.delete(key);
     }
   }
+}
+
+/**
+ * Find an active close by its registered key or original cwd spelling.
+ *
+ * @param key - Canonical database key derived for the current caller.
+ * @param cwd - Project root spelling supplied by the current caller.
+ * @returns The matching close record, or `undefined` when none is active.
+ */
+function findClosingStore(key: string, cwd: string): ClosingStore | undefined {
+  for (const closing of closingStores) {
+    if (closing.key === key || closing.cwd === cwd) return closing;
+  }
+  return undefined;
+}
+
+/**
+ * Register an entry's best-effort disposal before allowing a reopen.
+ *
+ * @param key - Registry key under which the entry was opened.
+ * @param entry - Entry whose driver should be disposed.
+ * @returns A promise that resolves after best-effort disposal finishes.
+ */
+function registerStoreClose(key: string, entry: StoreEntry): Promise<void> {
+  let finishClose!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    finishClose = resolve;
+  });
+  const record: ClosingStore = { key, cwd: entry.cwd, closing };
+  closingStores.add(record);
+  void (async (): Promise<void> => {
+    try {
+      const { driver } = await entry.opening;
+      await driver[Symbol.asyncDispose]();
+    } catch {
+      // Best-effort teardown: an open or disposal failure cannot mask callers.
+    } finally {
+      closingStores.delete(record);
+      finishClose();
+    }
+  })();
+  return closing;
 }
 
 /**
@@ -177,19 +255,26 @@ export function openRunbookStore(
   if (existing !== undefined) {
     return existing.opening;
   }
+  const activeClose = findClosingStore(key, cwd)?.closing;
   const opening = (async (): Promise<OpenStore> => {
+    await activeClose;
     const target = dbPath(cwd);
     await fs.mkdir(path.dirname(target), { recursive: true });
     const driver = await openRunbookDriver(target, options);
     // The database holds run state and hashed claim secrets, so it inherits the
     // owner-only mode the per-run JSON state files carried before it. Applied
     // after open because the file does not exist until the driver creates it.
-    // Best-effort: a filesystem without POSIX modes must not fail the open.
-    await Promise.all(
-      [target, `${target}-wal`, `${target}-shm`].map((file) =>
-        fs.chmod(file, 0o600).catch(() => undefined),
-      ),
-    );
+    // Filesystems without POSIX modes are tolerated; permission failures are not.
+    try {
+      await hardenDatabaseFileMode(target);
+    } catch (err) {
+      try {
+        await driver[Symbol.asyncDispose]();
+      } catch {
+        // The permission refusal is authoritative and must not be masked.
+      }
+      throw err;
+    }
     return { driver, store: new RunbookStore(driver, cwd) };
   })();
   const entry: StoreEntry = { opening, cwd };
@@ -213,41 +298,33 @@ export function openRunbookStore(
  * @returns Resolves once every store has been disposed and the registry cleared.
  */
 export async function closeRunbookStores(): Promise<void> {
-  const entries = [...openStores.values()];
+  const activeClosings = [...closingStores].map(({ closing }) => closing);
+  const entries = [...openStores.entries()];
   openStores.clear();
-  await Promise.all(
-    entries.map(async (entry) => {
-      try {
-        const { driver } = await entry.opening;
-        await driver[Symbol.asyncDispose]();
-      } catch {
-        // Best-effort teardown: a store that failed to open or dispose must not
-        // prevent the others from closing.
-      }
-    }),
-  );
+  const newClosings = entries.map(([key, entry]) => registerStoreClose(key, entry));
+  await Promise.all([...activeClosings, ...newClosings]);
 }
 
 /**
  * Close and forget the store for one project root.
  *
  * @param cwd - Project root whose store should be closed.
- * @returns Resolves once the store is disposed, or immediately when none is open.
+ * @returns Resolves once an open or already-closing store is disposed, or
+ *   immediately when the project is neither open nor closing.
  */
 export async function closeRunbookStore(cwd: string): Promise<void> {
   // Key first, so the common case is a lookup; then the exact spelling the open
   // recorded, the only thing that still matches once the filesystem has moved
   // the derivation. Missing here does not merely fail to tidy the map — it leaks
   // the driver for the process lifetime.
-  const entry = openStores.get(registryKey(cwd)) ?? findEntryByCwd(cwd);
-  if (entry === undefined) {
+  const key = registryKey(cwd);
+  const direct = openStores.get(key);
+  const registration = direct === undefined ? findEntryByCwd(cwd) : { key, entry: direct };
+  if (registration === undefined) {
+    await findClosingStore(key, cwd)?.closing;
     return;
   }
+  const { key: registeredKey, entry } = registration;
   forgetEntry(entry);
-  try {
-    const { driver } = await entry.opening;
-    await driver[Symbol.asyncDispose]();
-  } catch {
-    // Best-effort teardown, as above.
-  }
+  await registerStoreClose(registeredKey, entry);
 }

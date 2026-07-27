@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
 import { getEventListeners } from 'node:events';
 import * as fs from 'node:fs/promises';
@@ -114,6 +114,17 @@ async function preparedRun(): Promise<{ state: RunbookState; captured: CapturedA
 function setOwnerPid(runId: RunId, pid: number): Promise<void> {
   return store.transaction((txn) => {
     txn.tx.prepare('UPDATE runs SET exec_pid = :pid WHERE id = :id').run({ pid, id: runId });
+  });
+}
+
+/** Clear the run's active ownership as a concurrent recovery commit would. */
+function clearOwner(runId: RunId): Promise<void> {
+  return store.transaction((txn) => {
+    txn.tx
+      .prepare(
+        'UPDATE runs SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL WHERE id = :id',
+      )
+      .run({ id: runId });
   });
 }
 
@@ -334,6 +345,25 @@ describe('PID-aware dead-owner recovery', () => {
     expect(phase).toBe('recovery_pending');
   });
 
+  it('does not re-record recovery after another actor resolved the observed attempt', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await lease.markEffectStarted(acquired.value);
+    await setOwnerPid(state.id, deadPid());
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          "UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :r AND exec_epoch = :e",
+        )
+        .run({ r: state.id, e: acquired.value.epoch });
+    });
+
+    const recovered = await lease.recoverDeadOwner(state.id);
+
+    expect(recovered.kind).toBe('missing');
+  });
+
   it('returns missing for an absent run', async () => {
     const recovered = await lease.recoverDeadOwner('rd_00000000000000000000000000000000' as RunId);
     expect(recovered.kind).toBe('missing');
@@ -469,6 +499,27 @@ describe('default contention policy and finite wait', () => {
     expect(recorder.calls).toEqual(['immediate']);
     expect(clock.sleeps).toEqual([]);
     expect(progress).toEqual([]);
+  });
+
+  it('retries immediately without progress or backoff when recovery finds a cleared tuple', async () => {
+    const { state, captured } = await preparedRun();
+    await lease.acquire(captured, process.pid);
+    const { lease: waiting, clock, progress } = instrumentedLease();
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      await clearOwner(runId);
+      return { kind: 'missing', runId };
+    });
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+
+    const result = await waiting.acquire(recap.authority, process.pid, {
+      budgetMs: 1000,
+      backoff: () => 1000,
+    });
+
+    expect(result.kind).toBe('committed');
+    expect(progress).toEqual([]);
+    expect(clock.sleeps).toEqual([]);
   });
 
   it('retries on a schedule of delays capped to the remaining budget', async () => {
