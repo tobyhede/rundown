@@ -169,7 +169,7 @@ test('rejects a report whose mutants share one content identity', () => {
 });
 
 // The identity key embeds a newline as its own field separator, and the duplicate
-// diagnostic collapses it so the error stays one greppable line. `replacement` is
+// diagnostic collapses it so the error stays a single line. `replacement` is
 // verbatim mutated source, so it can contain newlines of its own — a Stryker
 // mutant replacing a multi-line block is ordinary. Collapsing only the first
 // newline leaves the rest raw and breaks the line the collapse exists to protect.
