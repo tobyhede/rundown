@@ -487,7 +487,9 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // and handled on one side only. With no `default:` arm the child's switch
     // falls through, `run` returns `undefined`, and the child reports `ok: true` —
     // a silent success for work it never performed.
-    const [result] = await race([{ kind: 'unhandledFutureOp' } as unknown as ChildOp]);
+    const unhandledOperation = { kind: 'unhandledFutureOp' } as unknown as ChildOp;
+
+    const [result] = await race([unhandledOperation]);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
