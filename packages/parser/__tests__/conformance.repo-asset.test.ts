@@ -76,9 +76,11 @@ describe('Rundown Conformance (Fixture Driven)', () => {
     const files = dirExists ? getFilesRecursively(PATTERNS_DIR) : [];
 
     // PATTERNS_DIR resolves to the monorepo root runbooks/ directory via a
-    // relative path (../../../../runbooks). Stryker mutation testing copies only
-    // the package under test into a temp sandbox, so that directory won't exist.
-    // Skip gracefully rather than crashing on a missing path.
+    // relative path (../../../../runbooks), which is why this file carries the
+    // `*.repo-asset.test.ts` name: Stryker copies only the package under test
+    // into its sandbox, so the sandbox config skips this file outright rather
+    // than collecting and re-transforming it for every mutant. This guard remains
+    // for any other environment where the tree is absent (a partial checkout).
     if (!dirExists) {
       it.skip('runbooks directory not found (e.g. Stryker sandbox)', () => {});
       return;

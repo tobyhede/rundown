@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -47,7 +48,15 @@ import { linkageFor, seedLiveDelegation } from './claim-test-helpers.js';
  */
 
 const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts', import.meta.url));
-const TSX = fileURLToPath(new URL('../../../../node_modules/tsx/dist/loader.mjs', import.meta.url));
+// Resolved, never traversed. `../../../../node_modules/tsx/…` is correct in the
+// normal tree but lands on `packages/core/node_modules/tsx` inside Stryker's
+// sandbox (the copy adds two path segments), and tsx is a ROOT-only
+// devDependency that pnpm never links there — so every child died with
+// ERR_MODULE_NOT_FOUND and aborted the whole core mutation run at the dry run.
+// Node's resolver walks `node_modules` up the directory chain, which reaches the
+// repo root from either location, and tsx's `exports` maps `.` to the same
+// `dist/loader.mjs` this used to name by hand.
+const TSX = createRequire(import.meta.url).resolve('tsx');
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = {

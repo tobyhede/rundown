@@ -1,7 +1,7 @@
-import { describe, it, expect } from '@jest/globals';
-import { spawnSync } from 'node:child_process';
+import { afterEach, describe, it, expect } from '@jest/globals';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,14 +28,22 @@ function staticElf(machine: number, eType = 2): Buffer {
   return b;
 }
 
-function runAssert(distRoot: string) {
+const fixtureRoots: string[] = [];
+
+function fixtureRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'native-'));
+  fixtureRoots.push(root);
+  return root;
+}
+
+function runAssert(distRoot: string): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [SCRIPT], {
     env: { ...process.env, RD_NATIVE_DIST_ROOT: distRoot },
     encoding: 'utf8',
   });
 }
 
-function place(root: string, arch: string, bytes: Buffer | string) {
+function place(root: string, arch: string, bytes: Buffer | string): void {
   const dir = join(root, 'native', arch);
   mkdirSync(dir, { recursive: true });
   const bin = join(dir, 'rd-landlock');
@@ -44,34 +52,41 @@ function place(root: string, arch: string, bytes: Buffer | string) {
 }
 
 describe('assert-native', () => {
+  afterEach(() => {
+    while (fixtureRoots.length > 0) {
+      const root = fixtureRoots.pop();
+      if (root) rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('exits non-zero when binaries are missing', () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    const root = fixtureRoot();
     expect(runAssert(root).status).not.toBe(0);
   });
 
   it('exits 0 for plausible static ELF64 executables of the expected arch', () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    const root = fixtureRoot();
     place(root, 'linux-x64', staticElf(EM_X86_64));
     place(root, 'linux-arm64', staticElf(EM_AARCH64));
     expect(runAssert(root).status).toBe(0);
   });
 
   it('REJECTS a shell script masquerading as a binary', () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    const root = fixtureRoot();
     place(root, 'linux-x64', '#!/bin/sh\ntrue\n');
     place(root, 'linux-arm64', staticElf(EM_AARCH64));
     expect(runAssert(root).status).not.toBe(0);
   });
 
   it('REJECTS a wrong-architecture ELF header', () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    const root = fixtureRoot();
     place(root, 'linux-x64', staticElf(EM_AARCH64)); // arm64 header in the x64 slot
     place(root, 'linux-arm64', staticElf(EM_AARCH64));
     expect(runAssert(root).status).not.toBe(0);
   });
 
   it('REJECTS a dynamically linked ELF (PT_INTERP present)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    const root = fixtureRoot();
     const b = staticElf(EM_X86_64);
     b.writeUInt32LE(3, 64); // program header p_type = PT_INTERP
     place(root, 'linux-x64', b);
@@ -80,7 +95,7 @@ describe('assert-native', () => {
   });
 
   it('REJECTS a dynamically linked ELF (PT_DYNAMIC present)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    const root = fixtureRoot();
     const b = staticElf(EM_X86_64);
     b.writeUInt32LE(2, 64); // program header p_type = PT_DYNAMIC
     place(root, 'linux-x64', b);

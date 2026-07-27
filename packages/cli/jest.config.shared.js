@@ -39,7 +39,18 @@ export function makeConfig({ sandboxed }) {
   // (instrumentation rewrites the literals they assert on) but still run under the
   // normal Jest config. They assert on source text, not behaviour, and contribute
   // nothing to mutation coverage.
-  const sandboxMetaTestIgnore = sandboxed ? ['\\.source-text\\.test\\.ts$'] : [];
+  //
+  // Repo-asset meta-tests instead read a file that lives OUTSIDE this package,
+  // via a relative traversal off `import.meta.url`. The sandbox copy adds two
+  // path segments, so that traversal lands on `packages/<pkg>/<path>` and the
+  // asset is gone — a HARD dry-run abort, not a skipped assertion. Name any such
+  // test `*.repo-asset.test.ts`; it is ignored in the sandbox and still runs
+  // under the normal Jest config. See
+  // scripts/__tests__/mutation-sandbox-assets.test.mjs, which enforces both the
+  // pattern and the absence of un-named offenders.
+  const sandboxMetaTestIgnore = sandboxed
+    ? ['\\.source-text\\.test\\.ts$', '\\.repo-asset\\.test\\.ts$']
+    : [];
 
   // The scenario authoring lint reads the repo-root `runbooks/` tree, which the
   // Stryker sandbox does not contain (only `packages/cli/` is copied in). It

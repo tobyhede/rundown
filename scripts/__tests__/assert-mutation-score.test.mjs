@@ -8,6 +8,7 @@ import {
   changedFilesFromGit,
   fileMutationScore,
   main,
+  mutantInRanges,
   normalizeReportFileKeys,
   parseArgs,
   renderMarkdown,
@@ -75,7 +76,7 @@ test('assertMutationScore: changed file below floor fails', () => {
   assert.equal(result.failures[0].score, 80);
 });
 
-test('assertMutationScore: changed file above floor passes', () => {
+test('assertMutationScore: an undetected mutant fails even when the score is above the floor', () => {
   const report = makeReport({
     'src/runbook/collection-service.ts': [
       ...Array(95).fill('Killed'),
@@ -88,15 +89,15 @@ test('assertMutationScore: changed file above floor passes', () => {
     packageDir: 'packages/core',
     floor: 90,
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.failures.length, 0);
-  assert.equal(result.checked.length, 1);
-  assert.equal(result.checked[0].score, 95);
+  assert.equal(result.ok, false);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].score, 95);
+  assert.equal(result.failures[0].undetected.length, 5);
 });
 
-test('assertMutationScore: changed file exactly at floor passes (floor is inclusive)', () => {
+test('assertMutationScore: only fully detected changed scopes pass', () => {
   const report = makeReport({
-    'src/a.ts': [...Array(90).fill('Killed'), ...Array(10).fill('Survived')],
+    'src/a.ts': [...Array(90).fill('Killed'), ...Array(10).fill('Timeout')],
   });
   const result = assertMutationScore({
     report,
@@ -110,7 +111,7 @@ test('assertMutationScore: changed file exactly at floor passes (floor is inclus
 test('assertMutationScore: unchanged file below floor is ignored', () => {
   const report = makeReport({
     'src/unchanged.ts': [...Array(10).fill('Killed'), ...Array(90).fill('Survived')],
-    'src/changed.ts': [...Array(95).fill('Killed'), ...Array(5).fill('Survived')],
+    'src/changed.ts': Array(100).fill('Killed'),
   });
   const result = assertMutationScore({
     report,
@@ -291,11 +292,25 @@ test('assertMutationScore: floor of 0 with no valid mutants still passes', () =>
   assert.equal(result.ok, true);
 });
 
-test('renderMarkdown renders a table of checked, failed, and skipped files', () => {
+test('renderMarkdown renders scores plus individual undetected mutants', () => {
   const md = renderMarkdown(
     {
       ok: false,
-      failures: [{ file: 'src/a.ts', score: 42.5 }],
+      failures: [
+        {
+          file: 'src/a.ts',
+          score: 42.5,
+          undetected: [
+            {
+              id: 'm-7',
+              status: 'Survived',
+              mutatorName: 'ConditionalExpression',
+              replacement: 'false',
+              location: { start: { line: 12, column: 2 }, end: { line: 12, column: 8 } },
+            },
+          ],
+        },
+      ],
       checked: [{ file: 'src/b.ts', score: 91.0 }],
       skipped: [{ file: 'src/c.ts', reason: 'not mutated' }],
       floor: 70,
@@ -310,6 +325,63 @@ test('renderMarkdown renders a table of checked, failed, and skipped files', () 
   assert.match(md, /91\.00%/);
   assert.match(md, /src\/c\.ts/);
   assert.match(md, /not mutated/);
+  assert.match(md, /m-7/);
+  assert.match(md, /Survived/);
+  assert.match(md, /ConditionalExpression/);
+  assert.match(md, /line 12/);
+});
+
+// A newly added file is mutated WHOLE, so one shard can legitimately carry
+// hundreds of undetected mutants — and every shard's summary is concatenated
+// into one sticky PR comment. GitHub rejects a comment over 65536 characters, so
+// an uncapped listing turns a large finding into a failed comment job: the most
+// interesting result is the one that cannot be posted.
+test('renderMarkdown caps the mutant listing and says how many it withheld', () => {
+  const undetected = Array.from({ length: 400 }, (_, i) => ({
+    id: `m-${i}`,
+    status: 'Survived',
+    mutatorName: 'ConditionalExpression',
+    replacement: 'false',
+    location: { start: { line: i + 1, column: 2 }, end: { line: i + 1, column: 8 } },
+  }));
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/new.ts', score: 0, undetected }],
+      checked: [],
+      skipped: [],
+      floor: 70,
+    },
+    'core',
+  );
+
+  const listed = [...md.matchAll(/^- <code>src\/new\.ts/gm)].length;
+  assert.ok(listed > 0, 'some mutants must still be named');
+  assert.ok(listed < undetected.length, 'the listing must be capped');
+  assert.ok(md.length < 65536, 'a single summary must fit inside a GitHub comment');
+  // The count still has to be honest about what was dropped.
+  assert.match(md, new RegExp(`${undetected.length - listed} more`));
+  // And the table row keeps the true total, which is the number that matters.
+  assert.match(md, /400 mutants/);
+});
+
+test('renderMarkdown lists every mutant when the count is under the cap', () => {
+  const undetected = [
+    { id: 'm-1', status: 'Survived', location: { start: { line: 3, column: 1 } } },
+    { id: 'm-2', status: 'NoCoverage', location: { start: { line: 9, column: 1 } } },
+  ];
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/a.ts', score: 0, undetected }],
+      checked: [],
+      skipped: [],
+      floor: 70,
+    },
+    'core',
+  );
+  assert.equal([...md.matchAll(/^- <code>src\/a\.ts/gm)].length, 2);
+  assert.doesNotMatch(md, /more undetected/);
 });
 
 test('renderMarkdown HTML-escapes backticks, pipes, angle brackets, and newlines', () => {
@@ -526,4 +598,187 @@ test('changedFilesFromGit: fails closed (throws) on an unresolvable base ref', (
     () => changedFilesFromGit('rundown-no-such-base-ref-zzz'),
     /failed to diff rundown-no-such-base-ref-zzz\.\.\.HEAD/,
   );
+});
+
+/**
+ * Build a report whose mutants carry `location`, so range filtering can place
+ * them. Each entry is `[status, startLine, endLine]`.
+ *
+ * @param {Record<string, Array<[string, number, number]>>} fileMutants - file key -> mutants.
+ * @param {string} [projectRoot] - absolute project root recorded in the report.
+ * @returns {object} a report object consumable by the assertion functions.
+ */
+function makeLocatedReport(fileMutants, projectRoot = '/repo/packages/core') {
+  const files = {};
+  let id = 0;
+  for (const [key, mutants] of Object.entries(fileMutants)) {
+    files[key] = {
+      language: 'typescript',
+      source: '',
+      mutants: mutants.map(([status, startLine, endLine]) => ({
+        id: String(id++),
+        status,
+        location: { start: { line: startLine, column: 1 }, end: { line: endLine, column: 9 } },
+      })),
+    };
+  }
+  return { schemaVersion: '1.0', projectRoot, files };
+}
+
+// REGRESSION (P1): with --incremental, Stryker retains baseline results for
+// mutants OUTSIDE the --mutate range, and the report therefore mixes this PR's
+// freshly-run mutants with hundreds of untouched baseline ones. Scoring the whole
+// file lets survivors introduced in the changed lines be diluted below
+// visibility. The gate now fails either way because every individual escape is
+// primary, while range filtering still ensures the displayed score describes
+// only mutants Stryker actually reran.
+test('assertMutationScore: ranges score only mutants inside the changed lines', () => {
+  const baseline = Array.from({ length: 100 }, (_, i) => ['Killed', 500 + i, 500 + i]);
+  const report = makeLocatedReport({
+    'src/big.ts': [['Survived', 10, 10], ['Survived', 11, 11], ...baseline],
+  });
+  const args = {
+    report,
+    changedFiles: ['packages/core/src/big.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+  };
+
+  // Without ranges the baseline mutants dilute the score, but cannot hide the
+  // individual survivors.
+  const unscoped = assertMutationScore(args);
+  assert.equal(unscoped.ok, false);
+  assert.equal(unscoped.failures[0].score.toFixed(2), '98.04');
+
+  // Scoped to the changed lines, only the two survivors count.
+  const scoped = assertMutationScore({
+    ...args,
+    ranges: new Map([['packages/core/src/big.ts', [{ start: 10, end: 11 }]]]),
+  });
+  assert.equal(scoped.ok, false, 'range-scoped gate must see the changed-line survivors');
+  assert.equal(scoped.failures[0].file, 'src/big.ts');
+  assert.equal(scoped.failures[0].score, 0);
+  assert.equal(scoped.failures[0].undetected.length, 2);
+});
+
+// Mirror Stryker's own rule, not an approximation of it. `locationIncluded` in
+// its incremental differ is `needle.start >= haystack.start && haystack.end >=
+// needle.end` — full CONTAINMENT. A multi-line mutant that merely crosses the
+// range boundary is therefore NOT in the mutated scope, so Stryker never reran it
+// and its result is a stale baseline one. Scoring it would let a stale kill (or a
+// stale survivor) decide the changed-line score.
+test('assertMutationScore: a mutant crossing a range boundary is OUT of scope', () => {
+  const report = makeLocatedReport({
+    'src/a.ts': [
+      ['Survived', 8, 12], // straddles the range: not rerun, result is stale
+      ['Killed', 10, 11], // fully contained: genuinely rerun
+    ],
+  });
+  const result = assertMutationScore({
+    report,
+    changedFiles: ['packages/core/src/a.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+    ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
+  });
+  // Only the contained mutant counts, so the file is 100% and passes. Under an
+  // overlap rule the straddling survivor would drag it to 50% and fail.
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.checked, [{ file: 'src/a.ts', score: 100 }]);
+});
+
+test('assertMutationScore: a mutant fully inside a range is in scope', () => {
+  const report = makeLocatedReport({ 'src/a.ts': [['Survived', 10, 11]] });
+  const result = assertMutationScore({
+    report,
+    changedFiles: ['packages/core/src/a.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+    ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
+  });
+  assert.equal(result.ok, false);
+});
+
+test('mutantInRanges: matches Stryker containment at the exact boundaries', () => {
+  const ranges = [{ start: 10, end: 20 }];
+  const at = (startLine, endLine) => ({
+    location: { start: { line: startLine, column: 1 }, end: { line: endLine, column: 9 } },
+  });
+  // Flush against both edges is contained; one line past either edge is not.
+  assert.equal(mutantInRanges(at(10, 20), ranges, 'src/a.ts'), true);
+  assert.equal(mutantInRanges(at(9, 20), ranges, 'src/a.ts'), false);
+  assert.equal(mutantInRanges(at(10, 21), ranges, 'src/a.ts'), false);
+  // A mutant spanning the whole range from outside is not contained either.
+  assert.equal(mutantInRanges(at(1, 100), ranges, 'src/a.ts'), false);
+});
+
+test('assertMutationScore: ranges with no in-scope mutants are skipped, not passed', () => {
+  // All the file's mutants are baseline ones outside the changed lines. There is
+  // nothing to judge, which must read as "skipped" — never as a silent pass on
+  // someone else's kills.
+  const report = makeLocatedReport({ 'src/a.ts': [['Killed', 900, 900]] });
+  const result = assertMutationScore({
+    report,
+    changedFiles: ['packages/core/src/a.ts'],
+    packageDir: 'packages/core',
+    floor: 70,
+    ranges: new Map([['packages/core/src/a.ts', [{ start: 10, end: 11 }]]]),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.checked, []);
+  assert.equal(result.skipped.length, 1);
+  assert.match(result.skipped[0].reason, /range/);
+});
+
+test('assertMutationScore: throws when a range is requested but a mutant has no location', () => {
+  // Silently dropping an mutant that cannot be placed would understate the changed-line
+  // scope; per the no-shim rule the gate fails loudly on a malformed report.
+  const report = makeReport({ 'src/a.ts': ['Survived'] }); // no `location`
+  assert.throws(
+    () =>
+      assertMutationScore({
+        report,
+        changedFiles: ['packages/core/src/a.ts'],
+        packageDir: 'packages/core',
+        floor: 70,
+        ranges: new Map([['packages/core/src/a.ts', [{ start: 1, end: 5 }]]]),
+      }),
+    /location/,
+  );
+});
+
+test('parseArgs: --changed-range collects file ranges', () => {
+  const opts = parseArgs([
+    '--report',
+    'r.json',
+    '--package-dir',
+    'packages/core',
+    '--changed-range',
+    'packages/core/src/a.ts:10-20',
+    '--changed-range',
+    'packages/core/src/a.ts:30-30',
+    // A Windows-style path must normalize here, at the source. `assertMutationScore`
+    // looks the ranges Map up with a POSIX-normalized key, so a `\`-separated range
+    // that reached the Map verbatim would never match — silently degrading the file
+    // to whole-file scoring, which surfaces out-of-range baseline survivors as
+    // findings and reports a percentage for lines the PR never touched.
+    '--changed-range',
+    'packages\\core\\src\\b.ts:5-6',
+  ]);
+  assert.deepEqual(opts.changedRanges, [
+    { file: 'packages/core/src/a.ts', start: 10, end: 20 },
+    { file: 'packages/core/src/a.ts', start: 30, end: 30 },
+    { file: 'packages/core/src/b.ts', start: 5, end: 6 },
+  ]);
+  // A ranged file is implicitly a changed file; the caller must not have to pass
+  // both. The implicit push must carry the normalized path too.
+  assert.ok(opts.changedFiles.includes('packages/core/src/a.ts'));
+  assert.ok(opts.changedFiles.includes('packages/core/src/b.ts'));
+});
+
+test('parseArgs: rejects a malformed --changed-range', () => {
+  const base = ['--report', 'r.json', '--package-dir', 'packages/core'];
+  assert.throws(() => parseArgs([...base, '--changed-range', 'packages/core/src/a.ts']), /range/);
+  assert.throws(() => parseArgs([...base, '--changed-range', 'a.ts:x-y']), /range/);
+  assert.throws(() => parseArgs([...base, '--changed-range', 'a.ts:20-10']), /range/);
 });

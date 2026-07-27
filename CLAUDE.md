@@ -415,6 +415,62 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   warning-severity findings — so a `warn` rule such as
   `noUnusedPrivateClassMembers` is reported by `verify` and still passes it.
   ESLint (`check:lint:typed`) is the linter whose findings block.
+- **`pnpm run test:mutate:changed`** — the default way to mutation-test your own
+  work, and what an agent should reach for first. It derives the diff base
+  (merge-base with `main`) and runs **one Stryker invocation per changed source
+  file**, each scoped to that file's changed `file:start-end` ranges (whole-file
+  only when the file is new) and to that file's dedicated unit test, then
+  reports every in-scope Survived or NoCoverage mutant through
+  `assert-mutation-score.mjs`; the percentage is secondary context. For a
+  test-only change it uses Stryker's native incremental analysis and compares
+  stable mutant IDs with an existing baseline, refusing an unbounded cold run
+  when no baseline exists. It encodes every foot-gun below by construction, adds
+  `--force` to every source-change scope (mandatory there, see below), and fails
+  loudly when Stryker instrumented 0 files — the silent no-op that a
+  hand-written `--mutate` reports as success.
+
+  ```bash
+  pnpm run test:mutate:changed                    # every changed package
+  pnpm run test:mutate:changed --package core     # one package
+  pnpm run test:mutate:changed --print            # show the plan + commands, run nothing
+  pnpm run test:mutate:changed --related-tests    # drop --testFiles, use findRelatedTests
+  ```
+
+  **Read a survivor correctly.** Scoping to one dedicated test disables the jest
+  runner's `--findRelatedTests`, so a mutant killed only by an integration test
+  reports as a **survivor**. That is the intended reading — "this module's own
+  unit tests do not kill this mutant independently", which is what Stryker
+  documents `testFiles` for — not "nothing in the suite covers this". Pass
+  `--related-tests` to check the broader question, at roughly 13x the cost per
+  mutant on a widely-imported module.
+
+  The advisory PR workflow uses the same hybrid: custom changed ranges for
+  source changes, native incremental analysis for test-only changes. Dedicated
+  tests are the default fast tier; add the `mutation:related` PR label (or
+  choose `related` in a manual dispatch) to retain Jest's related-test fallback.
+
+  **`--force` is not optional on a source-change scope.** Every package config
+  sets `incremental: true`, so without `--force` Stryker may serve cached
+  results from the `main` baseline for the very lines you changed, and the score
+  you read is main's. The Stryker docs call `--force` "especially beneficial
+  when combined with a custom `--mutate` pattern" for exactly this reason. It is
+  scope-limited, so the full-report benefit of incremental mode is preserved.
+  The **test-only tier is the deliberate exception**: it passes bare
+  `--incremental` and no `--force`, because that tier's entire method is diffing
+  stable mutant IDs against the retained baseline — a forced cold rerun would
+  discard the very results it compares against.
+
+  **Never tune `timeoutMS` down for speed.** Timeout is a _detected_ state
+  (score is `detected / valid`, detected = `killed + timeout`), so a spurious
+  timeout inflates the score by crediting a kill no test performed. Measured on
+  `src/paths.ts`: 60000ms gives 11 Killed / 15 Timeout / 2 Survived / 5
+  NoCoverage = 78.79%; 8000ms gives 0 Killed / 31 Timeout / 0 Survived / 5
+  NoCoverage = 86.11% — both real survivors erased. Reduce mutant count (ranges)
+  or tests per mutant (`testFiles`) instead.
+
+  Reach for the manual form below only when you need a scope the diff does not
+  describe (a single function, a file you did not touch).
+
 - **Scoped Stryker run** (any package) — use `exec`, and pass
   **package-relative** paths:
 
@@ -460,14 +516,16 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     `pnpm --filter … exec` runs with cwd = the package dir, so Stryker reports
     `Instrumented 0 source file(s) with 0 mutant(s)` and **exits 0** — a gate
     that cannot fail. Each `stryker.config.mjs`'s own `mutate` array is
-    package-relative (`'src/**/*.ts'`) for the same reason, as is
-    `.github/workflows/mutation-pr.yml:96` (`sed "s#^${PKG_DIR}/##"`).
+    package-relative (`'src/**/*.ts'`) for the same reason, and so are the
+    scopes `scripts/lib/mutation-scope.mjs` emits for both the local runner and
+    CI.
 
   Note `incremental: true`: a stale `reports/stryker-incremental.json` can print
-  a plausible aggregate over a zero-mutant run. Also note **core is excluded
-  from the per-PR mutation matrix** (`mutation-pr.yml:34-42`) and that workflow
-  is `continue-on-error`, so a scoped run you do by hand is the only mutation
-  signal a core PR gets.
+  a plausible aggregate over a zero-mutant run — pass `--force` (as
+  `test:mutate:changed` does) so a hand-run scope is actually executed rather
+  than replayed. **Core is included in the per-PR matrix**, as one shard per
+  changed file; that workflow is advisory (`continue-on-error` throughout, no
+  required check), so it reports but never blocks.
 
 - `pnpm run plugin:dev -- --no-build` (skip rebuild) /
   `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).
@@ -475,6 +533,23 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   shell) / `-- --no-build` (cached image).
 
 ## Testing Conventions
+
+- **A test that reads a file outside its own package must be named
+  `*.repo-asset.test.ts`.** Stryker copies only the package directory into
+  `.stryker-tmp/sandbox-*`, which adds two path segments, so a `../../../../`
+  traversal off `import.meta.url` lands on `packages/<pkg>/<path>` and the asset
+  is gone. That is not a skipped assertion — it is a hard
+  `There were failed tests in the initial test run.` abort that kills the whole
+  mutation campaign before one mutant is tested, and it is invisible because the
+  shard step is `continue-on-error`. Every package's `jest.config.shared.js`
+  ignores the pattern in the sandbox and runs it normally.
+
+  Prefer removing the traversal to renaming: a dependency should be located with
+  `createRequire(import.meta.url).resolve('<pkg>')`, whose `node_modules` walk
+  works from either tree, so the test keeps contributing mutation coverage.
+  Reserve the rename for genuinely out-of-package assets (a repo-root doc, the
+  `runbooks/` tree, a `scripts/**` build script).
+  `scripts/__tests__/mutation-sandbox-assets.test.mjs` enforces both halves.
 
 - **Use `isError()` / `isNodeError()` / `getErrorMessage()` from
   `@rundown-org/core`** (or `packages/claude-code-plugin/src/shared/errors.ts`

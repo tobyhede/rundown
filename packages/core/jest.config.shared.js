@@ -36,7 +36,26 @@ export function makeConfig({ sandboxed }) {
   // (instrumentation rewrites the literals they assert on) but still run under the
   // normal Jest config. They assert on source text, not behaviour, and contribute
   // nothing to mutation coverage.
-  const sandboxMetaTestIgnore = sandboxed ? ['\\.source-text\\.test\\.ts$'] : [];
+  //
+  // Repo-asset meta-tests read a file that lives OUTSIDE this package — a
+  // repo-root doc, a `scripts/**` build script, `native/**/Cargo.lock` — via a
+  // `../../../../` traversal off `import.meta.url`. Stryker copies only this
+  // package directory into `.stryker-tmp/sandbox-*`, which adds two path
+  // segments, so that traversal lands on `packages/core/<path>` and the asset is
+  // gone. The failure is not a skipped assertion but a HARD dry-run abort
+  // (`Something went wrong in the initial test run`), which kills the whole
+  // mutation run before a single mutant is tested — and it fires whenever the
+  // mutated scope's related-test set reaches such a test, e.g. any scope
+  // touching the widely-imported `src/paths.ts` or `src/runbook/types.ts`. Name
+  // any test that reads an out-of-package asset `*.repo-asset.test.ts`; it is
+  // ignored in the sandbox and still runs under the normal Jest config.
+  //
+  // Ignoring by path (rather than an in-test `existsSync` skip) also keeps the
+  // cost at zero: these files are never collected, so they are not re-loaded and
+  // re-transformed on every one of the thousands of per-mutant Jest runs.
+  const sandboxMetaTestIgnore = sandboxed
+    ? ['\\.source-text\\.test\\.ts$', '\\.repo-asset\\.test\\.ts$']
+    : [];
 
   return {
     testPathIgnorePatterns: [

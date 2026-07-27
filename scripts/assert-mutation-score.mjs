@@ -8,7 +8,8 @@
  * script closes that gap by post-processing the JSON report Stryker already
  * emits (`reports/mutation/mutation-report.json`): it computes the mutation
  * score of every file that changed in the PR and fails (non-zero exit) when any
- * changed, mutated file scores below a floor.
+ * changed, mutated scope contains a Survived or NoCoverage mutant. The score is
+ * retained as secondary context, not used to dilute an individual escape.
  *
  * The score formula mirrors mutation-testing-metrics exactly so the number this
  * gate reports equals the number Stryker prints:
@@ -29,18 +30,43 @@
  * already have the diff). Changed-file paths are repo-relative POSIX paths, the
  * same form `git diff --name-only` produces.
  *
+ * `--changed-range <path>:<startLine>-<endLine>` (repeatable) narrows scoring to
+ * the given lines of a file, using Stryker's own mutation-range notation. This is
+ * REQUIRED whenever the run was itself range-scoped: with `--incremental`, Stryker
+ * retains baseline results for mutants outside `--mutate`, so scoring the whole
+ * file would let a survivor introduced in the changed lines be diluted by
+ * hundreds of untouched baseline kills and still clear the floor. A ranged path is
+ * implicitly a changed file, so it need not also be passed as `--changed-file`.
+ *
+ * `--floor <percent>` does NOT decide the verdict. Every undetected in-scope
+ * mutant fails this gate on its own, because over a handful of changed lines a
+ * percentage is not a meaningful threshold — two survivors out of two is 0% and
+ * two out of four hundred is 99.5%, and both are the same defect. The floor is
+ * carried through to the rendered output purely as context for reading the
+ * score, and only the full producer run applies a percentage as a break
+ * threshold (`thresholds.break` in each package's stryker.config.mjs).
+ *
  * @see issue #483
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+import { htmlEscape } from './lib/pr-comment.mjs';
+
 /**
- * Default per-file mutation-score floor (percent). A changed, mutated file must
- * score at or above this to pass. Kept equal to the package-level `break`
- * threshold so the per-file gate and the weekly aggregate gate agree.
+ * Reference mutation-score floor (percent), displayed as context alongside the
+ * individual mutant verdict. The scoped gate fails on any undetected mutant;
+ * only the full producer applies this value as an aggregate break threshold.
  */
 export const DEFAULT_FLOOR = 70;
+
+/**
+ * Most individual mutants one summary will name before it starts counting the
+ * remainder instead. Bounds the sticky PR comment, which concatenates every
+ * shard's summary and is rejected by GitHub above 65536 characters.
+ */
+export const MAX_LISTED_MUTANTS = 25;
 
 /**
  * Compute the mutation score for a list of mutant status strings.
@@ -68,6 +94,72 @@ export function fileMutationScore(statuses) {
   const valid = detected + survived + noCoverage;
   if (valid === 0) return null;
   return (detected / valid) * 100;
+}
+
+/**
+ * Parse a `<path>:<startLine>-<endLine>` scope, mirroring Stryker's own
+ * mutation-range syntax so the gate is scoped with the same notation the run was.
+ *
+ * @param {string} raw - the `--changed-range` value.
+ * @returns {{file: string, start: number, end: number}} the parsed range; `file`
+ *   is POSIX-normalized, because {@link assertMutationScore} looks the ranges up
+ *   under a normalized key and a `\`-separated path would silently miss it —
+ *   degrading the file to whole-file scoring.
+ * @throws {Error} when the value is not a well-formed, non-inverted line range.
+ */
+export function parseChangedRange(raw) {
+  const match = /^(.+):(\d+)-(\d+)$/.exec(raw);
+  if (!match) {
+    throw new Error(`malformed --changed-range '${raw}'; expected <path>:<startLine>-<endLine>`);
+  }
+  const start = Number.parseInt(match[2], 10);
+  const end = Number.parseInt(match[3], 10);
+  if (start < 1 || end < start) {
+    throw new Error(`malformed --changed-range '${raw}'; start must be >= 1 and <= end`);
+  }
+  // Normalize at the source: this one call fixes both the `ranges` Map key built
+  // in `main` and the implicit `changedFiles` push in `parseArgs`.
+  return { file: toPosix(match[1]), start, end };
+}
+
+/**
+ * Whether a mutant lies inside any of a file's in-scope line ranges.
+ *
+ * CONTAINMENT, not overlap, because that is exactly the rule Stryker itself
+ * applies when deciding whether a mutant is in the mutated scope and must be
+ * rerun. From its incremental differ:
+ *
+ *     locationIncluded(haystack, needle) =
+ *       gte(needle.start, haystack.start) && gte(haystack.end, needle.end)
+ *
+ * A multi-line mutant that merely straddles the range boundary is therefore NOT
+ * rerun — Stryker keeps its result from the baseline report. Counting it would let
+ * a stale kill, or a stale survivor, decide the changed-line score, which is the
+ * opposite of what range scoping is for.
+ *
+ * Comparing line numbers alone is exact here rather than an approximation: for a
+ * line-only range (`file:start-end`, the only form emitted) Stryker fills in
+ * `startColumn = 0` and `endColumn = Number.MAX_SAFE_INTEGER`, so the column half
+ * of its comparison is always satisfied.
+ *
+ * @param {{location?: {start?: {line?: number}, end?: {line?: number}}}} mutant - a report mutant.
+ * @param {Array<{start: number, end: number}>} ranges - in-scope line ranges.
+ * @param {string} reportKey - the report key, for diagnostics.
+ * @returns {boolean} true when the mutant is contained in a range.
+ * @throws {Error} when the mutant carries no usable location.
+ */
+export function mutantInRanges(mutant, ranges, reportKey) {
+  const startLine = mutant?.location?.start?.line;
+  const endLine = mutant?.location?.end?.line ?? startLine;
+  if (typeof startLine !== 'number' || typeof endLine !== 'number') {
+    // A mutant with no location cannot be assigned to a range. Dropping it would
+    // understate the changed-line scope and could turn a survivor into a silent
+    // pass, so fail loudly instead of shimming a default.
+    throw new Error(
+      `mutation report entry for ${reportKey} has a mutant without a usable \`location\`; cannot scope it to the changed ranges`,
+    );
+  }
+  return ranges.some((r) => startLine >= r.start && endLine <= r.end);
 }
 
 /**
@@ -129,14 +221,14 @@ function assertValidReport(report) {
  * Result of evaluating the per-file gate.
  *
  * @typedef {object} GateResult
- * @property {boolean} ok - true when no changed file scored below the floor.
- * @property {{ file: string, score: number }[]} failures - changed files below
- *   the floor.
- * @property {{ file: string, score: number }[]} checked - changed files that had
- *   a judgeable score and met the floor.
+ * @property {boolean} ok - true when every valid in-scope mutant was detected.
+ * @property {{ file: string, score: number, undetected: object[] }[]} failures -
+ *   changed files containing Survived or NoCoverage mutants.
+ * @property {{ file: string, score: number }[]} checked - changed files whose
+ *   valid in-scope mutants were all detected.
  * @property {{ file: string, reason: string }[]} skipped - changed files that
  *   could not be judged (not mutated, or no valid mutants).
- * @property {number} floor - the floor that was applied.
+ * @property {number} floor - the reference floor displayed as score context.
  */
 
 /**
@@ -152,13 +244,19 @@ function assertValidReport(report) {
  *   PR.
  * @param {string} args.packageDir - repo-relative package directory the report
  *   belongs to (e.g. `packages/core`).
- * @param {number} [args.floor] - minimum acceptable score (inclusive).
+ * @param {number} [args.floor] - reference score shown in output.
  * @returns {GateResult} structured outcome of the evaluation.
  * @throws {Error} when the report is missing or structurally invalid, or when a
  *   per-file entry present in the report lacks a `mutants` array (malformed
  *   report).
  */
-export function assertMutationScore({ report, changedFiles, packageDir, floor = DEFAULT_FLOOR }) {
+export function assertMutationScore({
+  report,
+  changedFiles,
+  packageDir,
+  floor = DEFAULT_FLOOR,
+  ranges,
+}) {
   assertValidReport(report);
   const reportKeys = normalizeReportFileKeys(report);
   const pkgPrefix = `${toPosix(packageDir).replace(/\/+$/, '')}/`;
@@ -182,14 +280,34 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
         `mutation report entry for ${reportKey} has no \`mutants\` array (malformed report)`,
       );
     }
-    const statuses = entry.mutants.map((m) => m.status);
+    // Range scoping is what keeps an incremental run honest: Stryker retains
+    // baseline results for mutants outside `--mutate`, so scoring the whole file
+    // would let a survivor in the changed lines be diluted by hundreds of
+    // untouched baseline kills and still clear the floor.
+    const fileRanges = ranges?.get(changed);
+    const inScope = fileRanges
+      ? entry.mutants.filter((m) => mutantInRanges(m, fileRanges, reportKey))
+      : entry.mutants;
+    const statuses = inScope.map((m) => m.status);
     const score = fileMutationScore(statuses);
     if (score === null) {
-      skipped.push({ file: relative, reason: 'no valid mutants' });
+      skipped.push({
+        file: relative,
+        reason: fileRanges ? 'no valid mutants in the changed ranges' : 'no valid mutants',
+      });
       continue;
     }
-    if (score < floor) {
-      failures.push({ file: relative, score });
+    const undetected = inScope
+      .filter((mutant) => mutant.status === 'Survived' || mutant.status === 'NoCoverage')
+      .map((mutant) => ({
+        id: mutant.id,
+        status: mutant.status,
+        mutatorName: mutant.mutatorName,
+        replacement: mutant.replacement,
+        location: mutant.location,
+      }));
+    if (undetected.length > 0) {
+      failures.push({ file: relative, score, undetected });
     } else {
       checked.push({ file: relative, score });
     }
@@ -208,23 +326,12 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
 export function renderMarkdown(result, packageName) {
   const { checked, failures, skipped, floor, ok } = result;
   const status = ok ? '✅' : '⚠️';
-  // Render interpolated values as HTML-escaped text wrapped in <code>. GitHub
-  // renders the comment markdown to HTML, and backslash escapes do NOT work
-  // inside a markdown code span, so a backtick in a file path would still break
-  // a `...` span. Encoding `, |, <, >, & as HTML entities leaves nothing for the
-  // markdown/table parser to misinterpret. Newlines are collapsed to spaces so a
-  // value can't break the table row.
-  const htmlEscape = (value) =>
-    String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/`/g, '&#96;')
-      .replace(/\|/g, '&#124;')
-      .replace(/\r?\n/g, ' ');
+  // Render interpolated values as HTML-escaped text wrapped in <code>. See
+  // `scripts/lib/pr-comment.mjs` for why entity encoding — not backslash escaping
+  // — is the only thing that survives GitHub's markdown renderer.
   const codeCell = (value) => `<code>${htmlEscape(value)}</code>`;
   const lines = [
-    `#### ${status} ${codeCell(packageName)} — per-file mutation score (floor ${floor}%)`,
+    `#### ${status} ${codeCell(packageName)} — changed-scope mutants (floor ${floor}% shown as score context)`,
     '',
   ];
   if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
@@ -232,10 +339,44 @@ export function renderMarkdown(result, packageName) {
     return lines.join('\n');
   }
   lines.push('| File | Score | Status |', '| --- | ---: | --- |');
-  for (const f of failures)
-    lines.push(`| ${codeCell(f.file)} | ${f.score.toFixed(2)}% | ❌ below floor |`);
+  for (const f of failures) {
+    const undetected = f.undetected ?? [];
+    lines.push(
+      `| ${codeCell(f.file)} | ${f.score.toFixed(2)}% | ❌ ${undetected.length || 'undetected'} mutant${undetected.length === 1 ? '' : 's'} |`,
+    );
+  }
   for (const c of checked) lines.push(`| ${codeCell(c.file)} | ${c.score.toFixed(2)}% | ✅ |`);
   for (const s of skipped) lines.push(`| ${codeCell(s.file)} | — | ⏭️ ${htmlEscape(s.reason)} |`);
+  // Every shard's summary is concatenated into ONE sticky PR comment, and GitHub
+  // rejects a comment over 65536 characters. A newly added file is mutated whole,
+  // so a single shard can legitimately carry hundreds of escapes — uncapped, the
+  // most interesting result is precisely the one that fails to post. The table
+  // rows above still carry the true per-file counts, and the full list is in the
+  // uploaded mutation report.
+  let budget = MAX_LISTED_MUTANTS;
+  let withheld = 0;
+  for (const failure of failures) {
+    for (const mutant of failure.undetected ?? []) {
+      if (budget === 0) {
+        withheld += 1;
+        continue;
+      }
+      budget -= 1;
+      const line = mutant.location?.start?.line;
+      const where = typeof line === 'number' ? `line ${line}` : 'unknown location';
+      const mutation = [mutant.mutatorName, mutant.replacement]
+        .filter((value) => value !== undefined)
+        .join(' → ');
+      lines.push(
+        `- ${codeCell(failure.file)} ${htmlEscape(where)}: ${codeCell(mutant.id ?? 'unknown-id')} ${htmlEscape(mutant.status)}${mutation ? ` — ${codeCell(mutation)}` : ''}`,
+      );
+    }
+  }
+  if (withheld > 0) {
+    lines.push(
+      `- _…and ${withheld} more undetected mutant${withheld === 1 ? '' : 's'} not listed here; see the uploaded mutation report artifact._`,
+    );
+  }
   return lines.join('\n');
 }
 
@@ -277,11 +418,12 @@ export function changedFilesFromGit(base) {
  * Parse argv into options for the CLI entrypoint.
  *
  * @param {string[]} argv - process arguments (excluding node + script).
- * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], floor: number }}
+ * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], changedRanges: Array<{file: string, start: number, end: number}>, floor: number, markdown?: string, packageName?: string }}
+ *   parsed options; `floor` is reported as context and never decides the verdict.
  * @throws {Error} when a required option is missing or a flag lacks a value.
  */
 export function parseArgs(argv) {
-  const opts = { changedFiles: [], floor: DEFAULT_FLOOR };
+  const opts = { changedFiles: [], changedRanges: [], floor: DEFAULT_FLOOR };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = () => {
@@ -295,7 +437,13 @@ export function parseArgs(argv) {
     else if (arg === '--package-dir') opts.packageDir = next();
     else if (arg === '--base') opts.base = next();
     else if (arg === '--changed-file') opts.changedFiles.push(next());
-    else if (arg === '--floor') opts.floor = Number.parseInt(next(), 10);
+    else if (arg === '--changed-range') {
+      const range = parseChangedRange(next());
+      opts.changedRanges.push(range);
+      // A ranged file is implicitly a changed file, so a caller that scopes to
+      // ranges need not also repeat --changed-file for the same path.
+      if (!opts.changedFiles.includes(range.file)) opts.changedFiles.push(range.file);
+    } else if (arg === '--floor') opts.floor = Number.parseInt(next(), 10);
     else if (arg === '--markdown') opts.markdown = next();
     else if (arg === '--package-name') opts.packageName = next();
     else throw new Error(`unknown argument: ${arg}`);
@@ -316,8 +464,8 @@ export function parseArgs(argv) {
  * print a human-readable summary.
  *
  * @param {string[]} argv - process arguments (excluding node + script).
- * @returns {number} process exit code (0 = pass, 1 = a changed file is below
- *   the floor, 2 = usage/IO error).
+ * @returns {number} process exit code (0 = pass, 1 = an in-scope mutant is
+ *   undetected, 2 = usage/IO error).
  */
 export function main(argv) {
   let opts;
@@ -348,11 +496,18 @@ export function main(argv) {
 
   let result;
   try {
+    // Group the flat --changed-range list into per-file range arrays.
+    const ranges = opts.changedRanges.length > 0 ? new Map() : undefined;
+    for (const { file, start, end } of opts.changedRanges) {
+      if (!ranges.has(file)) ranges.set(file, []);
+      ranges.get(file).push({ start, end });
+    }
     result = assertMutationScore({
       report,
       changedFiles,
       packageDir: opts.packageDir,
       floor: opts.floor,
+      ranges,
     });
   } catch (err) {
     console.error(`error: ${err.message}`);
@@ -370,19 +525,25 @@ export function main(argv) {
 
   const fmt = (score) => `${score.toFixed(2)}%`;
   for (const c of result.checked) {
-    console.log(`ok    ${c.file} — ${fmt(c.score)} (floor ${result.floor}%)`);
+    console.log(`ok    ${c.file} — ${fmt(c.score)} (all valid mutants detected)`);
   }
   for (const s of result.skipped) {
     console.log(`skip  ${s.file} — ${s.reason}`);
   }
   for (const f of result.failures) {
-    console.error(`FAIL  ${f.file} — ${fmt(f.score)} is below floor ${result.floor}%`);
+    console.error(`FAIL  ${f.file} — ${f.undetected.length} undetected mutant(s), ${fmt(f.score)}`);
+    for (const mutant of f.undetected) {
+      const line = mutant.location?.start?.line;
+      console.error(
+        `      ${mutant.id ?? 'unknown-id'} ${mutant.status}${typeof line === 'number' ? ` at line ${line}` : ''}`,
+      );
+    }
   }
 
   if (!result.ok) {
     console.error(
-      `\nmutation gate: ${result.failures.length} changed file(s) below the ${result.floor}% floor. ` +
-        'Add tests that kill the surviving mutants, or justify a floor change in review.',
+      `\nmutation gate: ${result.failures.length} changed file(s) contain undetected mutants. ` +
+        'Add tests that kill or cover each listed mutant.',
     );
     return 1;
   }

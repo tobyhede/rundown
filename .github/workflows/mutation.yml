@@ -101,7 +101,7 @@ jobs:
         # file path with shell metacharacters can't inject into the command.
         env:
           MUTATE: ${{ matrix.mutate }}
-        run: pnpm exec stryker run --mutate "$MUTATE" --allowEmpty
+        run: pnpm exec stryker run --mutate "$MUTATE"
       - name: Upload shard report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7

@@ -2,20 +2,47 @@ name: Mutation Gate (PR)
 
 # Per-PR ADVISORY mutation report (issue #485).
 #
-# This check is advisory: it never blocks merge. It runs each affected package's
-# mutation suite scoped to the PR's changed files (so runtime tracks change size),
-# scores each changed file, and surfaces the result as a sticky PR comment (see
-# the `comment` job). Static mutants are ignored here (STRYKER_IGNORE_STATIC) to
-# keep the advisory run fast; the exhaustive producer run (mutation.yml) scores
-# them at full fidelity. The incremental baseline is downloaded from the public
-# Stryker Dashboard report for `main` — no API key is needed to read it, and this
-# workflow deliberately never uploads (which would corrupt the baseline with a
-# partial, changed-file-scoped report).
+# This check is advisory: it never blocks merge. Source changes use custom line
+# ranges; test-only changes use native Stryker incremental analysis against the
+# main baseline. Findings are surfaced in a sticky PR comment (see `comment`).
+#
+# Shape: a `plan` job turns the PR diff into a matrix of PER-FILE shards
+# (scripts/mutation-shard-plan.mjs with EVENT_NAME=pull_request), then one job
+# per shard runs Stryker scoped to that file's changed LINE RANGES and to that
+# file's dedicated unit test. This is what makes `core` affordable here — it was
+# previously excluded outright because a whole-file, related-tests run legitimately
+# approached the 60-min cap:
+#
+#   * Ranges (`--mutate file:start-end`, an official Stryker feature) cut a
+#     measured 9-file core change from 2261 mutants to 499.
+#   * `--testFiles` disables the jest runner's `--findRelatedTests` fan-out, which
+#     is the real cost on widely-imported modules (`src/paths.ts` pulls 148 of
+#     core's 200 test files). Measured: ~1.3s vs ~17s of wall time per mutant.
+#
+# Read a survivor here as "this module's own unit tests do not kill this mutant
+# independently" — a mutant killed only by an integration test reports as a
+# survivor under `--testFiles`. That is the documented purpose of the option.
+#
+# Static mutants are ignored (STRYKER_IGNORE_STATIC) to keep the advisory run
+# fast; the exhaustive producer run (mutation.yml) scores them at full fidelity.
+# The incremental baseline is downloaded from the public Stryker Dashboard report
+# for `main` — no API key is needed to read it, and this workflow deliberately
+# never uploads (which would corrupt the baseline with a partial report).
 
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Source-shard test selection'
+        required: true
+        default: dedicated
+        type: choice
+        options:
+          - dedicated
+          - related
 
 concurrency:
   group: mutation-pr-${{ github.ref }}
@@ -24,201 +51,314 @@ concurrency:
 permissions: {}
 
 jobs:
-  mutation-gate:
-    strategy:
-      fail-fast: false
-      matrix:
-        # `module` (the dashboard module name) always equals `package`, so it is
-        # derived from matrix.package rather than duplicated here.
-        #
-        # `core` is deliberately OMITTED from this advisory PR matrix. A
-        # changed-file core mutation run legitimately approaches the 60-min cap
-        # (the producer has to SHARD core to fit — see mutation.yml), so on a PR
-        # it almost always finishes after merge and gates nothing (this whole
-        # workflow is advisory: continue-on-error throughout, no required-check
-        # ruleset). The producer already differential-scores core on every push
-        # to main and full-fidelity weekly, which is the run that feeds the
-        # dashboard trend. Keeping core here only burned ~1h of CI per PR for a
-        # comment that arrived too late to act on. Do not re-add it without a
-        # sharding strategy that keeps a PR run under a few minutes.
-        include:
-          - package: parser
-            dir: packages/parser
-          - package: cli
-            dir: packages/cli
-          - package: plugin
-            dir: packages/claude-code-plugin
+  # Turn the PR diff into per-file shards. Fails CLOSED on git errors: an
+  # unreachable base or missing merge-base raises rather than planning an empty
+  # (always-green) matrix.
+  plan:
+    # `labeled`/`unlabeled` are subscribed so `mutation:related` takes effect
+    # without a push. Only that one label changes the plan, so every other label
+    # event is dropped here rather than paying for a full matrix. A skipped
+    # `plan` skips `mutation-gate` by dependency, and `comment` carries the same
+    # guard so a dropped event leaves the existing sticky comment untouched
+    # instead of overwriting it with a planning-failed notice.
+    if: >-
+      github.event.action != 'labeled' && github.event.action != 'unlabeled'
+      || github.event.label.name == 'mutation:related'
     runs-on: ubuntu-latest
-    # Advisory: this is a guardrail against a runaway run wasting minutes, not a
-    # merge gate. ignoreStatic + concurrency keep a scoped run well under it.
-    # With core excluded from this matrix, a changed-file run for the remaining
-    # packages lands in minutes; the cap only backstops a pathological run.
-    timeout-minutes: 60
-    env:
-      STRYKER_CONCURRENCY: '4'
-      # PR-only: reclaim static-mutant time on the advisory run. The producer
-      # run leaves this unset so it scores static mutants. See issue #485.
-      STRYKER_IGNORE_STATIC: 'true'
+    timeout-minutes: 10
     permissions:
       contents: read
-
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      empty: ${{ steps.plan.outputs.empty }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-          # Full history so the merge-base with the PR base ref is reachable;
-          # assert-mutation-score.mjs diffs `${base}...HEAD`.
+          # Full history so the merge-base with the PR base ref is reachable.
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-node-deps
+        with:
+          node-version: 24
+      - name: Plan per-file shards
+        id: plan
+        env:
+          EVENT_NAME: pull_request
+          BASE_REF: origin/${{ github.base_ref || github.event.repository.default_branch }}
+          # Cap the fan-out. Above this, files are batched and each batched shard
+          # runs the union of its files' tests per mutant — the planner logs when
+          # that happens, so a large PR degrades loudly rather than silently.
+          MAX_PR_SHARDS: '16'
+          TEST_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_scope || (contains(github.event.pull_request.labels.*.name, 'mutation:related') && 'related' || 'dedicated') }}
+          SUMMARY_PATH: ${{ runner.temp }}/mutation-plan.md
+        run: node scripts/mutation-shard-plan.mjs
+
+      # Deliberately NOT named `mutation-summary-*`: that is the shard-summary
+      # pattern the comment job globs, and a plan notice matching it made
+      # `ls summaries/*.md` succeed on every successful plan — which silently
+      # killed the PLAN_EMPTY, download-failure and no-summaries branches that
+      # exist to stop a dead campaign reading as a clean result.
+      - name: Upload scope plan notice
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: mutation-plan-notice
+          path: ${{ runner.temp }}/mutation-plan.md
+          if-no-files-found: ignore
+          retention-days: 7
+
+  mutation-gate:
+    needs: plan
+    if: ${{ needs.plan.outputs.empty != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    # Advisory: a guardrail against a runaway run wasting minutes, not a merge
+    # gate. A per-file shard lands in minutes; the cap only backstops a
+    # pathological run (e.g. a file whose mutants hang and burn the full
+    # timeoutMS budget each).
+    timeout-minutes: 30
+    env:
+      STRYKER_CONCURRENCY: '4'
+      # PR-only: reclaim static-mutant time on the advisory run. The producer
+      # leaves this unset so it scores static mutants. See issue #485.
+      STRYKER_IGNORE_STATIC: 'true'
+      # Scoped runs are judged by the dedicated source/test-only comparators,
+      # not by the package-wide aggregate threshold.
+      STRYKER_SCOPED: 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
           fetch-depth: 0
 
-      # Resolve the PR base ref and compute whether this package has changed
-      # source files. Skipping unaffected packages keeps the run cheap. Fails
-      # CLOSED on git errors (see issue #483 for the rationale on the layout).
-      - name: Detect changes for ${{ matrix.package }}
-        id: changes
-        env:
-          BASE_REF: ${{ github.base_ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          EVENT_NAME: ${{ github.event_name }}
-          PKG_DIR: ${{ matrix.dir }}
-        run: |
-          set -euo pipefail
-          base="origin/${BASE_REF}"
-          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
-            base="origin/${DEFAULT_BRANCH}"
-          fi
-          git rev-parse --verify --quiet "${base}^{commit}" >/dev/null \
-            || { echo "::error::base ref '${base}' is unreachable; cannot score." >&2; exit 1; }
-          git merge-base "${base}" HEAD >/dev/null \
-            || { echo "::error::no merge-base between '${base}' and HEAD; cannot score." >&2; exit 1; }
-          changed_files="$(git diff --name-only --diff-filter=d "${base}...HEAD" -- "${PKG_DIR}/src")"
-          if [ -n "${changed_files}" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            pkg_rel="$(printf '%s\n' "${changed_files}" | sed "s#^${PKG_DIR}/##")"
-            excludes="$(cd "${PKG_DIR}" && node --input-type=module -e 'import("./stryker.config.mjs").then((m) => { const c = m.default ?? m.config ?? {}; process.stdout.write((c.mutate ?? []).filter((p) => p.startsWith("!")).join("\n")); });')" \
-              || { echo "::error::failed to read mutate exclusions from ${PKG_DIR}/stryker.config.mjs" >&2; exit 1; }
-            mutate="$(printf '%s\n%s\n' "${pkg_rel}" "${excludes}" | sed '/^[[:space:]]*$/d' | paste -sd, -)"
-            echo "mutate=${mutate}" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No source changes under ${PKG_DIR}/src; skipping advisory run."
-          fi
-          echo "base=${base}" >> "$GITHUB_OUTPUT"
-
       - uses: ./.github/actions/setup-node-deps
-        if: ${{ steps.changes.outputs.changed == 'true' }}
         with:
           node-version: 24
 
       - name: Build
-        if: ${{ steps.changes.outputs.changed == 'true' }}
         run: pnpm run build
 
       # Download the public `main` baseline so incremental mode can reuse
-      # unchanged results. Best-effort: a 404/empty body degrades to a cold
-      # incremental run (still bounded by --mutate scoping). No API key needed —
-      # OSS dashboard reports are public reads.
+      # unchanged results and still emit a FULL report (Stryker keeps
+      # out-of-scope mutants when --mutate is narrowed). Best-effort: a
+      # 404/empty body degrades to a cold run, still bounded by --mutate scoping.
       - name: Download Stryker baseline from dashboard
-        if: ${{ steps.changes.outputs.changed == 'true' }}
+        id: baseline
         env:
-          MODULE: ${{ matrix.package }}
+          MODULE: ${{ matrix.module }}
           PKG_DIR: ${{ matrix.dir }}
         run: |
           set -uo pipefail
           mkdir -p "${PKG_DIR}/reports"
-          baseline="${PKG_DIR}/reports/stryker-incremental.json"
+          baseline="${PKG_DIR}/reports/stryker-main.json"
           url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/main?module=${MODULE}"
           # A 200 with an empty or truncated body must not be trusted as a
-          # baseline: require a non-empty file AND valid JSON before keeping it,
-          # otherwise fall through to a cold incremental run.
+          # baseline: require a non-empty file AND valid JSON before keeping it.
           if curl --fail --silent --show-error --max-time 60 \
                --output "${baseline}" "${url}" \
                && [ -s "${baseline}" ] \
-               && node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${baseline}"; then
+               && node -e 'const r=JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (!r.files || !r.testFiles || Object.keys(r.testFiles).length === 0) process.exit(1)' "${baseline}"; then
             echo "Baseline downloaded for module ${MODULE}."
+            cp "${baseline}" "${PKG_DIR}/reports/stryker-incremental.json"
+            echo "available=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "::notice::no dashboard baseline for module ${MODULE}; running cold incremental."
+            echo "::notice::no dashboard baseline for module ${MODULE}."
             rm -f "${baseline}"
+            rm -f "${PKG_DIR}/reports/stryker-incremental.json"
+            echo "available=false" >> "${GITHUB_OUTPUT}"
           fi
 
-      # Advisory run: scoped to changed files, incremental, never fatal.
-      - name: Run mutation tests (${{ matrix.package }})
-        id: stryker
-        if: ${{ steps.changes.outputs.changed == 'true' }}
+      # `--force` is what makes the baseline safe to use: without it Stryker may
+      # serve cached `main` results for the very lines this PR changed, and the
+      # per-file score below would report main's number instead of the PR's. It
+      # is scope-limited (in-scope mutants only), so the full-report benefit of
+      # incremental mode is preserved. The Stryker docs call --force "especially
+      # beneficial when combined with a custom --mutate pattern".
+      #
+      # matrix values go through env, never templated into the shell, so a path
+      # with shell metacharacters cannot inject.
+      - name: Run source mutation shard (${{ matrix.package }} — ${{ matrix.label }})
+        if: ${{ matrix.kind == 'source' }}
+        id: source_stryker
         continue-on-error: true
         env:
-          MUTATE: ${{ steps.changes.outputs.mutate }}
-        run: pnpm exec stryker run --incremental --mutate "${MUTATE}" --allowEmpty
+          MUTATE: ${{ matrix.mutate }}
+          TEST_FILES: ${{ matrix.testFiles }}
         working-directory: ${{ matrix.dir }}
+        run: |
+          set -uo pipefail
+          rm -f reports/mutation/mutation-report.json
+          # An empty testFiles means NOT EVERY file in this shard has a dedicated
+          # test — one such file in a batched shard empties it for the whole group,
+          # because the flag is all-or-nothing per Stryker run. Omit it so the jest
+          # runner falls back to --findRelatedTests.
+          if [ -n "${TEST_FILES}" ]; then
+            pnpm exec stryker run --incremental --force \
+              --mutate "${MUTATE}" --testFiles "${TEST_FILES}"
+          else
+            pnpm exec stryker run --incremental --force \
+              --mutate "${MUTATE}"
+          fi
 
-      # Score changed files and render the advisory markdown. Non-fatal: a
-      # below-floor file annotates the comment, it does not fail the check.
+      - name: Run native incremental test-only shard (${{ matrix.package }})
+        if: ${{ matrix.kind == 'test-only' && steps.baseline.outputs.available == 'true' }}
+        id: test_stryker
+        continue-on-error: true
+        env:
+          # Match the full-fidelity producer that created the baseline so the
+          # stable mutant-ID sets remain comparable.
+          STRYKER_IGNORE_STATIC: 'false'
+        working-directory: ${{ matrix.dir }}
+        run: |
+          rm -f reports/mutation/mutation-report.json
+          pnpm exec stryker run --incremental
+
+      # Report every in-scope undetected mutant and render advisory markdown.
       - name: Score changed files (advisory)
+        if: ${{ matrix.kind == 'source' }}
         id: assert
-        if: ${{ steps.changes.outputs.changed == 'true' }}
         continue-on-error: true
         env:
           PKG_DIR: ${{ matrix.dir }}
-          BASE: ${{ steps.changes.outputs.base }}
           PKG: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          SCOPES: ${{ matrix.scopes }}
         run: |
+          set -uo pipefail
+          # Score exactly what was mutated. `--incremental` retains baseline
+          # results for mutants OUTSIDE the range, so scoring a range-scoped file
+          # as a whole file would let a survivor in the changed lines be diluted
+          # by hundreds of untouched baseline kills and still clear the floor.
+          #
+          # SCOPES is newline-separated, read with IFS= so a path containing
+          # spaces stays one argument (word-splitting would not).
+          args=()
+          while IFS= read -r scope; do
+            [ -n "${scope}" ] || continue
+            case "${scope}" in
+              *:*-*) args+=(--changed-range "${PKG_DIR}/${scope}") ;;
+              *)     args+=(--changed-file  "${PKG_DIR}/${scope}") ;;
+            esac
+          done <<< "${SCOPES}"
           pnpm run assert:mutation-score -- \
             --report "${PKG_DIR}/reports/mutation/mutation-report.json" \
             --package-dir "${PKG_DIR}" \
-            --base "${BASE}" \
+            "${args[@]}" \
             --floor 70 \
             --package-name "${PKG}" \
-            --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}.md"
+            --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
 
-      # If Stryker or scoring failed, no markdown summary was written and the
-      # comment job would otherwise report a clean "no mutated changed files"
-      # result — masking the failure. Write a diagnostic summary so the sticky
-      # comment surfaces the failure. Advisory: never fails the job. Runs before
-      # the upload step so the diagnostic gets included in the artifact.
-      #
-      # A below-floor file makes the scorer exit non-zero *after* writing a valid
-      # score table, so `assert.outcome == 'failure'` does not mean "no summary".
-      # Only write the generic diagnostic when no non-empty summary exists, so we
-      # never clobber the below-floor annotation the gate exists to surface.
-      - name: Diagnose advisory failure (${{ matrix.package }})
-        if: ${{ steps.changes.outputs.changed == 'true' && (steps.stryker.outcome == 'failure' || steps.assert.outcome == 'failure') }}
+      - name: Compare test-only mutant regressions (advisory)
+        if: ${{ matrix.kind == 'test-only' && steps.baseline.outputs.available == 'true' }}
+        id: compare
+        continue-on-error: true
+        env:
+          PKG_DIR: ${{ matrix.dir }}
+          PKG: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          node scripts/assert-mutation-regressions.mjs \
+            --baseline "${PKG_DIR}/reports/stryker-main.json" \
+            --current "${PKG_DIR}/reports/mutation/mutation-report.json" \
+            --package-name "${PKG}" \
+            --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+
+      - name: Report unavailable test-only baseline
+        if: ${{ matrix.kind == 'test-only' && steps.baseline.outputs.available != 'true' }}
         env:
           PKG: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          # LABEL is a list of paths from the PR's own diff. A backtick in one
+          # would close the code span and let the rest render as markup in the
+          # posted comment, so strip them — the JS scorers HTML-escape for the
+          # same reason.
+          LABEL_MD="${LABEL//\`/}"
+          {
+            echo "#### ⚠️ \`${PKG}\` — test-only mutation result incomplete"
+            echo
+            echo "Changed tests: \`${LABEL_MD}\`"
+            echo
+            echo "_No valid main-branch dashboard baseline was available. A cold full-package run was intentionally not substituted._"
+          } > "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+
+      # If Stryker or scoring failed, no markdown summary was written and the
+      # comment job would otherwise report a clean result — masking the failure.
+      # A mutation finding makes a comparator exit non-zero *after* writing a
+      # valid summary, so only write the generic diagnostic when no non-empty
+      # summary exists; never clobber a detailed annotation.
+      - name: Diagnose advisory failure
+        if: ${{ steps.source_stryker.outcome == 'failure' || steps.test_stryker.outcome == 'failure' || steps.assert.outcome == 'failure' || steps.compare.outcome == 'failure' }}
+        env:
+          PKG: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          LABEL: ${{ matrix.label }}
+          SOURCE_OUTCOME: ${{ steps.source_stryker.outcome }}
+          TEST_OUTCOME: ${{ steps.test_stryker.outcome }}
         run: |
           set -euo pipefail
-          summary="${RUNNER_TEMP}/mutation-summary-${PKG}.md"
+          summary="${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
+          # Paths come from the PR's diff; a backtick would break out of the code
+          # span this renders them in.
+          LABEL_MD="${LABEL//\`/}"
+          if [ "${SOURCE_OUTCOME}" = "failure" ] || [ "${TEST_OUTCOME}" = "failure" ]; then
+            if [ ! -s "${summary}" ]; then
+              {
+                echo "#### ⚠️ \`${PKG}\` — advisory mutation execution failed"
+                echo
+                echo "Scope: \`${LABEL_MD}\`"
+              } > "${summary}"
+            fi
+            {
+              echo
+              echo "_⚠️ Stryker exited non-zero. Scoped runs have no aggregate break threshold, so this is an execution failure; any partial findings above are incomplete._"
+            } >> "${summary}"
+            exit 0
+          fi
           if [ -s "${summary}" ]; then
             exit 0
           fi
           {
             echo "#### ⚠️ \`${PKG}\` — advisory mutation scoring did not complete"
             echo
+            echo "Scope: \`${LABEL_MD}\`"
+            echo
             echo "_The mutation run or scoring step failed. This is advisory and does not block merge. See the workflow logs for details._"
           } > "${summary}"
 
       - name: Upload advisory summary
-        if: ${{ always() && steps.changes.outputs.changed == 'true' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
-          name: mutation-summary-${{ matrix.package }}
-          path: ${{ runner.temp }}/mutation-summary-${{ matrix.package }}.md
+          name: mutation-summary-${{ matrix.package }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/mutation-summary-${{ matrix.package }}-${{ matrix.shard }}.md
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Upload mutation report
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
-        if: ${{ always() && steps.changes.outputs.changed == 'true' }}
         with:
-          name: mutation-report-${{ matrix.package }}
+          name: mutation-report-${{ matrix.package }}-${{ matrix.shard }}
           path: ${{ matrix.dir }}/reports/mutation/
           retention-days: 30
 
   comment:
-    needs: mutation-gate
+    needs: [plan, mutation-gate]
     # Only on real PRs (sticky comments need a PR number). Always runs so the
-    # comment updates even when every package was skipped. Fork PRs are skipped
+    # comment updates even when every shard was skipped. Fork PRs are skipped
     # cleanly: their read-only token cannot post a comment, so the job would only
     # fail noisily — the gate job still produced artifacts for them.
-    if: ${{ always() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+    if: >-
+      ${{ always() && github.event_name == 'pull_request'
+      && !github.event.pull_request.head.repo.fork
+      && (github.event.action != 'labeled' && github.event.action != 'unlabeled'
+      || github.event.label.name == 'mutation:related') }}
     runs-on: ubuntu-latest
     permissions:
       # Elevated solely so the "Post sticky comment" step can create/update the
@@ -234,33 +374,53 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
+      # Separate from the shard summaries above so their absence stays a real
+      # signal. Best-effort: the notice is context, never the verdict.
+      - name: Download scope plan notice
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: mutation-plan-notice
+          path: plan
+        continue-on-error: true
+
       # Distinguish a failed download from a genuine no-op. The download step is
       # continue-on-error, so a failure leaves zero summaries on disk — which the
       # assembly would otherwise read as "no mutated changed files", masking the
-      # failure. DOWNLOAD_OUTCOME is the step's pre-continue-on-error outcome
-      # (success/failure/cancelled), passed via env (never interpolated into the
-      # script) so a step result cannot inject shell. When it is not 'success'
-      # we post a distinct advisory note instead of the clean no-op message.
+      # failure. DOWNLOAD_OUTCOME is passed via env (never interpolated into the
+      # script) so a step result cannot inject shell.
       - name: Assemble comment body
         env:
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          PLAN_EMPTY: ${{ needs.plan.outputs.empty }}
+          PLAN_OUTCOME: ${{ needs.plan.result }}
         run: |
           set -euo pipefail
           {
             echo "### 🧬 Mutation score (advisory)"
             echo
-            echo "_Per-file mutation scores for files changed in this PR. **This check is advisory and never blocks merge.** Trend & full reports: the Stryker Dashboard. See issue #485._"
+            echo "_Hybrid mutation analysis: source changes use changed-line scopes (dedicated tests by default; \`mutation:related\` opts into related tests), while test-only changes use native incremental comparison with the main baseline. **This check is advisory and never blocks merge.** Trend & full reports: the Stryker Dashboard. See issue #485._"
             echo
-            if ls summaries/*.md >/dev/null 2>&1; then
+            # Scope context first, then the verdict. The notice is never the
+            # verdict itself, so it is emitted outside the branch chain below.
+            if [ -s plan/mutation-plan.md ]; then
+              cat plan/mutation-plan.md
+              echo
+              echo
+            fi
+            if [ "${PLAN_OUTCOME}" != "success" ]; then
+              echo "_⚠️ Mutation scope planning failed (plan job: ${PLAN_OUTCOME}) — see the workflow logs. This check is advisory and does not block merge._"
+            elif ls summaries/*.md >/dev/null 2>&1; then
               for f in summaries/*.md; do
                 cat "$f"
                 echo
                 echo
               done
+            elif [ "${PLAN_EMPTY}" = "true" ]; then
+              echo "_No mutated source changes in this PR._"
             elif [ "${DOWNLOAD_OUTCOME}" != "success" ]; then
               echo "_⚠️ Could not download advisory summaries (download step: ${DOWNLOAD_OUTCOME}). The mutation results may be incomplete — see the workflow logs. This check is advisory and does not block merge._"
             else
-              echo "_No mutated changed files in this PR._"
+              echo "_⚠️ Shards were planned but produced no summaries — see the workflow logs. This check is advisory and does not block merge._"
             fi
           } > comment.md
           cat comment.md

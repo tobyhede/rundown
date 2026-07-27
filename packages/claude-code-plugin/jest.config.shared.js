@@ -30,8 +30,23 @@ export function makeConfig({ sandboxed }) {
   const up = sandboxed ? '../../../' : '../';
   const strykerTmpIgnore = sandboxed ? [] : ['/\\.stryker-tmp/'];
 
+  // Repo-asset meta-tests read a file that lives OUTSIDE this package via a
+  // relative traversal off `import.meta.url`. The sandbox copy adds two path
+  // segments, so that traversal lands on `packages/claude-code-plugin/<path>` and
+  // the asset is gone. The failure is a HARD dry-run abort that kills the
+  // campaign before a single mutant is tested, not a skipped assertion. Name any
+  // such test `*.repo-asset.test.ts`; it is ignored in the sandbox and still runs
+  // under the normal Jest config. See
+  // scripts/__tests__/mutation-sandbox-assets.test.mjs.
+  const sandboxMetaTestIgnore = sandboxed ? ['\\.repo-asset\\.test\\.ts$'] : [];
+
   return {
-    testPathIgnorePatterns: ['/node_modules/', '<rootDir>/../../.worktrees/', ...strykerTmpIgnore],
+    testPathIgnorePatterns: [
+      '/node_modules/',
+      '<rootDir>/../../.worktrees/',
+      ...strykerTmpIgnore,
+      ...sandboxMetaTestIgnore,
+    ],
     modulePathIgnorePatterns: ['<rootDir>/../../.worktrees/', ...strykerTmpIgnore],
     watchPathIgnorePatterns: ['<rootDir>/../../.worktrees/', ...strykerTmpIgnore],
     testEnvironment: 'node',
