@@ -92,10 +92,14 @@ export function isSqliteBusy(err: unknown): boolean {
     return false;
   }
   const errcode = (err as { errcode?: unknown }).errcode;
-  if (!Number.isInteger(errcode)) {
+  if (typeof errcode !== 'number') {
     return false;
   }
-  const primaryCode = (errcode as number) & 0xff;
+  const resultCode = errcode;
+  if (resultCode >>> 0 !== resultCode || resultCode >>> 31 !== 0) {
+    return false;
+  }
+  const primaryCode = resultCode & 0xff;
   return primaryCode === SQLITE_BUSY || primaryCode === SQLITE_LOCKED;
 }
 

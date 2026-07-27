@@ -307,6 +307,58 @@ describe('runbook store registry', () => {
     await Promise.all([closing, reopening]);
   });
 
+  it.each([
+    { identity: 'close-time alias', openViaAlias: false, closeViaAlias: true },
+    { identity: 'open-time alias', openViaAlias: true, closeViaAlias: false },
+  ])('waits by the $identity after its canonical key drifts', async (testCase) => {
+    const parent = await newRoot();
+    const real = path.join(parent, 'real');
+    const moved = path.join(parent, 'moved');
+    const alias = path.join(parent, 'alias');
+    await fs.mkdir(real);
+    await fs.symlink(real, alias, 'dir');
+    const openCwd = testCase.openViaAlias ? alias : real;
+    const closeCwd = testCase.closeViaAlias ? alias : real;
+    const first = await openRunbookStore(openCwd, { runtime: 'native' });
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let enterDisposal!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      enterDisposal = resolve;
+    });
+    let releaseDisposal!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      releaseDisposal = resolve;
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      enterDisposal();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    const keyAtClose = runbookStoreKey(closeCwd);
+    const closing = closeRunbookStore(closeCwd);
+    await disposalEntered;
+    await fs.rename(real, moved);
+    await fs.unlink(alias);
+    await fs.symlink(moved, alias, 'dir');
+    expect(runbookStoreKey(alias)).not.toBe(keyAtClose);
+
+    let reopenSettled = false;
+    const reopening = openRunbookStore(alias, { runtime: 'native' }).then((opened) => {
+      reopenSettled = true;
+      return opened;
+    });
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const settledBeforeRelease = reopenSettled;
+    releaseDisposal();
+    const [, reopened] = await Promise.all([closing, reopening]);
+
+    expect(settledBeforeRelease).toBe(false);
+    expect(reopened.store).not.toBe(first.store);
+  });
+
   it('closes by canonical key when the close uses a different root spelling', async () => {
     const real = await newRoot();
     const link = path.join(await newRoot(), 'link');

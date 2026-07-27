@@ -751,6 +751,17 @@ describe('native adapter SQLITE_BUSY handling', () => {
     expect(isSqliteBusy(sqliteError('busy snapshot', 5 | (2 << 8)))).toBe(true);
     expect(isSqliteBusy(sqliteError('locked shared cache', 6 | (1 << 8)))).toBe(true);
     expect(isSqliteBusy(sqliteError('fractional', 5.5))).toBe(false);
+    expect(isSqliteBusy(sqliteError('negative busy lookalike', -251))).toBe(false);
+    expect(isSqliteBusy(sqliteError('signed-overflow busy lookalike', 0x8000_0005))).toBe(false);
+    expect(isSqliteBusy(sqliteError('oversized locked lookalike', 0x1_0000_0006))).toBe(false);
+    expect(
+      isSqliteBusy(
+        Object.assign(new Error('bigint code'), {
+          code: 'ERR_SQLITE_ERROR',
+          errcode: 5n,
+        }),
+      ),
+    ).toBe(false);
     expect(
       isSqliteBusy(
         Object.assign(new Error('string code'), {

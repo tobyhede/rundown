@@ -64,7 +64,8 @@ const openStores = new Map<string, StoreEntry>();
 /** One removed entry whose driver is still being disposed. */
 interface ClosingStore {
   readonly key: string;
-  readonly cwd: string;
+  readonly openedCwd: string;
+  readonly closedCwd: string;
   readonly closing: Promise<void>;
 }
 
@@ -190,7 +191,9 @@ function forgetEntry(entry: StoreEntry): void {
  */
 function findClosingStores(key: string, cwd: string): readonly Promise<void>[] {
   return [...closingStores]
-    .filter((closing) => closing.key === key || closing.cwd === cwd)
+    .filter(
+      (closing) => closing.key === key || closing.openedCwd === cwd || closing.closedCwd === cwd,
+    )
     .map(({ closing }) => closing);
 }
 
@@ -199,14 +202,15 @@ function findClosingStores(key: string, cwd: string): readonly Promise<void>[] {
  *
  * @param key - Registry key under which the entry was opened.
  * @param entry - Entry whose driver should be disposed.
+ * @param cwd - Project root spelling used to request this close.
  * @returns A promise that resolves after best-effort disposal finishes.
  */
-function registerStoreClose(key: string, entry: StoreEntry): Promise<void> {
+function registerStoreClose(key: string, entry: StoreEntry, cwd: string): Promise<void> {
   let finishClose!: () => void;
   const closing = new Promise<void>((resolve) => {
     finishClose = resolve;
   });
-  const record: ClosingStore = { key, cwd: entry.cwd, closing };
+  const record: ClosingStore = { key, openedCwd: entry.cwd, closedCwd: cwd, closing };
   closingStores.add(record);
   void (async (): Promise<void> => {
     try {
@@ -300,7 +304,7 @@ export async function closeRunbookStores(): Promise<void> {
   const activeClosings = [...closingStores].map(({ closing }) => closing);
   const entries = [...openStores.entries()];
   openStores.clear();
-  const newClosings = entries.map(([key, entry]) => registerStoreClose(key, entry));
+  const newClosings = entries.map(([key, entry]) => registerStoreClose(key, entry, entry.cwd));
   await Promise.all([...activeClosings, ...newClosings]);
 }
 
@@ -325,5 +329,5 @@ export async function closeRunbookStore(cwd: string): Promise<void> {
   }
   const { key: registeredKey, entry } = registration;
   forgetEntry(entry);
-  await registerStoreClose(registeredKey, entry);
+  await registerStoreClose(registeredKey, entry, cwd);
 }
