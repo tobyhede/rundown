@@ -192,8 +192,10 @@ jobs:
         run: |
           set -uo pipefail
           rm -f reports/mutation/mutation-report.json
-          # An empty testFiles means no file in this shard has a dedicated test;
-          # omit the flag so the jest runner falls back to --findRelatedTests.
+          # An empty testFiles means NOT EVERY file in this shard has a dedicated
+          # test — one such file in a batched shard empties it for the whole group,
+          # because the flag is all-or-nothing per Stryker run. Omit it so the jest
+          # runner falls back to --findRelatedTests.
           if [ -n "${TEST_FILES}" ]; then
             pnpm exec stryker run --incremental --force \
               --mutate "${MUTATE}" --testFiles "${TEST_FILES}"

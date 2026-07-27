@@ -553,9 +553,15 @@ export function toShardEntry(group, shard, shardCount, testScope = 'dedicated') 
     // runner's `--findRelatedTests` off for EVERY mutant in the group, so a shard
     // may only carry it when every file has a dedicated test. Otherwise the
     // dedicated-test-less file would be judged against another file's tests,
-    // inventing no-coverage and survivor results. partitionPrEntries already pools
-    // by test-scope kind so a mixed group should be unreachable; asserting it here
-    // keeps the invariant true however the grouping later evolves.
+    // inventing no-coverage and survivor results.
+    //
+    // This `every` is LOAD-BEARING, not a redundant assertion: partitionPrEntries
+    // pools by package alone, so a group mixing dedicated-test and
+    // dedicated-test-less files is a normal outcome of batching. Weakening it to
+    // `some` — or dropping it as dead defensive code — produces exactly the wrong
+    // verdicts described above. The cost of that safety is real: one
+    // dedicated-test-less file drops its whole group to the ~13x related-tests
+    // tier, which callers report rather than hide.
     testFiles:
       testScope === 'dedicated' && group.every(({ entry }) => entry.testFile)
         ? group.map(({ entry }) => entry.testFile).join(',')
