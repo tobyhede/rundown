@@ -36,7 +36,7 @@ import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
   buildAdvanceInlineParent,
-  buildLinkageCycleDiagnostic,
+  emitLinkageCycleDiagnostic,
   type DrivenRunPropagation,
 } from '../helpers/delegation-completion.js';
 
@@ -482,7 +482,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     sessionService: ctx.sessionService,
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
-    onLinkageCycle: buildLinkageCycleDiagnostic(output),
   });
 
   const outcome = await collectionService.collectDelegationOutcomes({
@@ -497,6 +496,30 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     ...(options.step ? { stepName: scope.stepName } : {}),
     frame: scope.frame,
   });
+
+  // #603: core returns a tripped linkage guard as data on `terminalInlineAdvance`
+  // instead of pushing it through a sink. Render it HERE — immediately after the
+  // operation returns, which is the same point in the output stream the sink
+  // fired from — so the operator still learns which run to prune, in the same
+  // position, before the collect outcome and any execution-loop events. The
+  // fail-closed exit mapping happens later, with the rest of the exit decision.
+  //
+  // The flush is what actually BUYS that position in JSON mode, and it is not
+  // optional: `output.error` only ACCUMULATES into the JSON renderer, whereas
+  // `renderAppliedOutcome` writes the action object through `output.json`, which
+  // bypasses the accumulator and goes straight to the writer. Without a flush
+  // here the trailing flush emits this diagnostic AFTER the action object,
+  // breaking the "action object is the last line" contract
+  // (docs/spec/cli-output.md) that this command's own deferral of the applied
+  // outcome exists to uphold. The three delegation-completion adapters flush at
+  // exactly this point for the same reason.
+  if (
+    outcome.kind === 'collection_applied' &&
+    outcome.terminalInlineAdvance?.kind === 'linkage-cycle'
+  ) {
+    emitLinkageCycleDiagnostic(output, outcome.terminalInlineAdvance.trip);
+    output.flush();
+  }
 
   // The collected outcome may advance the delegating run into execution-loop
   // work (an inline child stage). When it does, the execution loop's
@@ -592,9 +615,16 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     // Drain-terminal inline target: core already advanced the parent. Map its
     // outcome to the same exit contract the CLI post-loop path uses. (loopStopped
     // is false here — the loop did not run.)
+    //
+    // `linkage-cycle` collapses onto the CLI's pre-existing fail-closed 'blocked'
+    // (#602) — the same explicit mapping the three delegation-completion adapters
+    // make. Its trip was already rendered above; only the exit code is decided
+    // here, so `InlinePropagationResult` stays the flat union its five
+    // `=== 'blocked'` consumers already read.
+    const advance = outcome.terminalInlineAdvance;
     const corePropagation: DrivenRunPropagation = {
       kind: 'inline-advanced',
-      result: outcome.terminalInlineAdvance,
+      result: advance.kind === 'linkage-cycle' ? 'blocked' : advance.kind,
     };
     exitWithError =
       shouldExitWithError || inlineAdvanceRequiresFailureExit(corePropagation) || loopStopped;

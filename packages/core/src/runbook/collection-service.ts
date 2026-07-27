@@ -8,7 +8,7 @@ import { resolveCommandIntent } from './command-policy.js';
 import {
   propagateTerminalChildUpward,
   type AdvanceInlineParent,
-  type OnLinkageCycle,
+  type InlineUpwardPropagationResult,
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
@@ -83,13 +83,6 @@ export interface RunbookCollectionServiceDependencies {
    * targets never invoke it (report-only).
    */
   readonly advanceInlineParent: AdvanceInlineParent;
-  /**
-   * Frontend-supplied diagnostic sink invoked when the upward-propagation guard
-   * trips on a corrupt linkage graph (#602). Required for the same reason
-   * `advanceInlineParent` is: the collect path can drive the seam, so it must be
-   * able to name the offending run to the operator.
-   */
-  readonly onLinkageCycle: OnLinkageCycle;
 }
 
 /** Explicit collection target resolved by a frontend adapter or another core service. */
@@ -650,11 +643,18 @@ async function applyCollection(
  * PRECONDITION — it is not the linkage dispatch AC #2 removes, and the shared
  * seam must not impose a claim check on the CLI close path (which never had one).
  *
+ * The delegation arm deliberately has NO linkage-cycle disposition (#603): the
+ * claim gate above is a strictly prior refusal, and `grantAllows`'
+ * `report-delegation-result` arm matches `grant.parentRunId` exactly, so the very
+ * corruption that would trip the guard is what stops the grant matching. Reaching
+ * it needs a forged bearer, not corrupt state — pinned by collection-service.test.ts
+ * → "claim gate refuses a self-linked DELEGATION target BEFORE the #602 guard".
+ *
  * @param input - Collection operation input (services + target).
  * @param terminalState - The reloaded terminal target state.
  * @param claim - Verified claim authorizing the collect.
  * @returns `reportedTerminalOutcome` (true iff a delegation outcome row was
- *   recorded upward) and, for INLINE targets, the collapsed `terminalInlineAdvance`.
+ *   recorded upward) and, for INLINE targets, the narrowed `terminalInlineAdvance`.
  */
 async function propagateCollectTerminalUpward(
   input: CollectDelegationOutcomesOperationInput,
@@ -662,7 +662,7 @@ async function propagateCollectTerminalUpward(
   claim: VerifiedClaim,
 ): Promise<{
   readonly reportedTerminalOutcome: boolean;
-  readonly terminalInlineAdvance?: 'handled' | 'stopped' | 'blocked' | 'not-applicable';
+  readonly terminalInlineAdvance?: InlineUpwardPropagationResult;
 }> {
   const linkage = terminalState.parentLinkage;
   // Delegation reporting requires claim authorization; skip entirely if denied,
@@ -676,27 +676,24 @@ async function propagateCollectTerminalUpward(
       sessionService: input.sessionService,
       completionService: input.completionService,
       advanceInlineParent: input.advanceInlineParent,
-      onLinkageCycle: input.onLinkageCycle,
     },
     terminalState,
     undefined,
   );
   if (linkage?.kind === 'inline') {
-    // Inline seam yields 'handled' | 'stopped' | 'blocked' | 'linkage-cycle' |
-    // 'not-applicable'; narrow away the delegation-only 'reported' / 'duplicate'
-    // without a cast. `terminalInlineAdvance` has no 'linkage-cycle' member (it
-    // feeds the CLI's exit mapping only), so collapse the trip onto 'blocked' —
-    // the deliberate, fail-closed disposition documented on
-    // TerminalUpwardPropagationResult (#602).
-    const inlineOutcome =
-      outcome === 'reported' || outcome === 'duplicate'
-        ? 'not-applicable'
-        : outcome === 'linkage-cycle'
-          ? 'blocked'
-          : outcome;
+    // Inline seam yields the InlineUpwardPropagationResult subset; narrow away the
+    // delegation-only 'reported' / 'duplicate' without a cast. The `linkage-cycle`
+    // arm passes through INTACT (#603) rather than being flattened to 'blocked'
+    // here: core holds no emitter, so the trip has to reach the frontend as data.
+    // The CLI performs the fail-closed collapse — and renders the trip — at its
+    // own boundary, the same way the three delegation-completion adapters do.
+    const inlineOutcome: InlineUpwardPropagationResult =
+      outcome.kind === 'reported' || outcome.kind === 'duplicate'
+        ? { kind: 'not-applicable' }
+        : outcome;
     return { reportedTerminalOutcome: false, terminalInlineAdvance: inlineOutcome };
   }
   // 'recorded' → reported (true); 'duplicate'/'cancelled' → false. Preserves the
   // mutation-pinned 'recorded'-only contract (finding 2).
-  return { reportedTerminalOutcome: outcome === 'reported' };
+  return { reportedTerminalOutcome: outcome.kind === 'reported' };
 }

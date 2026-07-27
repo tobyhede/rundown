@@ -148,8 +148,6 @@ interface Run {
   readonly released: readonly RunId[];
   /** Every `childState.id` passed to recordChildCompletion, in call order. */
   readonly recorded: readonly RunId[];
-  /** Number of times the `onLinkageCycle` sink fired during the walk. */
-  readonly sinkCalls: number;
 }
 
 /**
@@ -188,7 +186,6 @@ async function walk(
   const advanced: RunId[] = [];
   const released: RunId[] = [];
   const recorded: RunId[] = [];
-  let sinkCalls = 0;
   const index = new Map<string, number>(graph.map((_, i) => [nodeRunId(i), i]));
   const deps: PropagateTerminalChildUpwardDeps = {
     manager: {
@@ -213,16 +210,13 @@ async function walk(
       advanced.push(parentRunId);
       return { status };
     },
-    onLinkageCycle: () => {
-      sinkCalls += 1;
-    },
   };
   const result = await propagateTerminalChildUpward(
     deps,
     makeState(nodeRunId(0), graph[0] ?? null, kindAt(kinds, 0)),
     'pass',
   );
-  return { result, advanced, released, recorded, sinkCalls };
+  return { result, advanced, released, recorded };
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +242,7 @@ describe('inline propagation guard — properties (#602)', () => {
           'duplicate',
           'linkage-cycle',
           'not-applicable',
-        ]).toContain(result);
+        ]).toContain(result.kind);
       }),
       { numRuns: 200 },
     );
@@ -265,7 +259,7 @@ describe('inline propagation guard — properties (#602)', () => {
     await fc.assert(
       fc.asyncProperty(cyclicArb, async (graph) => {
         const { result } = await walk(graph, 'done');
-        expect(result).toBe('linkage-cycle');
+        expect(result.kind).toBe('linkage-cycle');
       }),
       { numRuns: 200 },
     );
@@ -336,7 +330,7 @@ describe('inline propagation guard — properties (#602)', () => {
         // If the kind dispatch ran FIRST, the closing node would record report-only
         // and return 'reported', which the severity collapse turns into 'handled' —
         // a corrupt graph reported as success. That is the regression this pins.
-        expect(result).toBe('linkage-cycle');
+        expect(result.kind).toBe('linkage-cycle');
         // The at-most-once claim must hold on the mixed graph exactly as it does
         // on the uniform one.
         expect(new Set(advanced).size).toBe(advanced.length);
@@ -356,25 +350,32 @@ describe('inline propagation guard — properties (#602)', () => {
       fc.asyncProperty(graphArb, async (graph) => {
         const { advanced, result } = await walk(graph, 'done', 'delegation');
         expect(advanced).toEqual([]);
-        expect(result).not.toBe('handled');
+        expect(result.kind).not.toBe('handled');
       }),
       { numRuns: 200 },
     );
   });
 
-  it('the onLinkageCycle sink fires exactly once iff the walk refuses a cycle, and never otherwise', async () => {
-    // The sink is the seam's FOURTH side effect and a required dependency, yet the
-    // other properties assert only advance/release/record — the sink was stubbed to
-    // a no-op and never observed over arbitrary graphs. Its whole justification
-    // (a fail-closed refusal must name the offending run, never a bare 'blocked')
-    // rests on it firing precisely when, and only when, the walk returns
-    // 'linkage-cycle'. This binds that iff over the full graph/status/kind space, so
-    // a regression that dropped, double-fired, or misplaced the sink on some shape
-    // the example tests don't enumerate cannot pass unseen.
+  it('a refusal always names a real run from the walked graph, and its message says so', async () => {
+    // #603 replaces the old sink-fires-exactly-once property. The "exactly once"
+    // and "only on a refusal" halves are now structural — the trip lives ON the
+    // refusal arm, so no other arm can carry one and no arm can carry two — which
+    // leaves the half a type cannot state: that the run named is a REAL node of
+    // the graph just walked, and that the operator-facing message names that same
+    // run. A guard that returned the wrong level's id (the entry child instead of
+    // the run that repeated, say) still type-checks and still fires "once"; it
+    // fails here, on every shape the example tests do not enumerate.
     await fc.assert(
       fc.asyncProperty(graphArb, advanceStatusArb, linkageKindArb, async (graph, status, kind) => {
-        const { result, sinkCalls } = await walk(graph, status, kind);
-        expect(sinkCalls).toBe(result === 'linkage-cycle' ? 1 : 0);
+        const { result } = await walk(graph, status, kind);
+        if (result.kind !== 'linkage-cycle') return;
+        const { trip } = result;
+        const named = trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId;
+        expect(graph.map((_, i) => nodeRunId(i))).toContain(named);
+        expect(trip.code).toBe('INLINE_PARENT_CYCLE');
+        // Message and field cannot drift: the operator is told to prune the run
+        // the typed field names, not some other level of the same walk.
+        expect(trip.message).toContain(named);
       }),
       { numRuns: 300 },
     );
@@ -384,7 +385,7 @@ describe('inline propagation guard — properties (#602)', () => {
     await fc.assert(
       fc.asyncProperty(withinBoundChainArb, async (graph) => {
         const { result, advanced } = await walk(graph);
-        expect(result).not.toBe('linkage-cycle');
+        expect(result.kind).not.toBe('linkage-cycle');
         // Every link in the chain advanced exactly once; the root has no linkage.
         expect(advanced.length).toBe(graph.length - 1);
       }),

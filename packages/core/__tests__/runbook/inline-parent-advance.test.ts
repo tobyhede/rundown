@@ -5,6 +5,7 @@ import {
   type AdvanceInlineParent,
   type LinkageCycleTrip,
   type PropagateTerminalChildUpwardDeps,
+  type TerminalUpwardPropagationResult,
 } from '../../src/runbook/inline-parent-advance.js';
 import {
   assertRunId,
@@ -97,22 +98,36 @@ function makeDeps(
         .mockResolvedValue('recorded'),
     },
     advanceInlineParent: NEVER_ADVANCE,
-    onLinkageCycle: () => {},
     ...overrides,
   };
+}
+
+/**
+ * Narrow a seam result to the refusal arm and hand back its trip.
+ *
+ * The trip is reachable from the RETURN VALUE alone (#603) — there is no sink to
+ * spy on any more — so every diagnostic assertion below starts here. Throwing on
+ * the wrong arm keeps the narrowing honest: a test that stopped reaching the
+ * guard fails loudly instead of silently asserting nothing.
+ */
+function tripOf(result: TerminalUpwardPropagationResult): LinkageCycleTrip {
+  if (result.kind !== 'linkage-cycle') {
+    throw new Error(`expected a linkage-cycle refusal, got '${result.kind}'`);
+  }
+  return result.trip;
 }
 
 describe('propagateTerminalChildUpward — pure decision + delegation arm', () => {
   it('returns not-applicable when the child has no parent linkage', async () => {
     const child = makeState(CHILD, { parentLinkage: undefined });
     const result = await propagateTerminalChildUpward(makeDeps(), child, 'pass');
-    expect(result).toBe('not-applicable');
+    expect(result).toEqual({ kind: 'not-applicable' });
   });
 
   it('returns not-applicable for a non-terminal child (lifecycle inference, no explicit result)', async () => {
     const child = makeState(CHILD, { lifecycle: 'running', parentLinkage: inlineLinkage() });
     const result = await propagateTerminalChildUpward(makeDeps(), child, undefined);
-    expect(result).toBe('not-applicable');
+    expect(result).toEqual({ kind: 'not-applicable' });
   });
 
   it('returns blocked for a command-infrastructure terminal (decided before any callable)', async () => {
@@ -127,7 +142,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
       child,
       undefined,
     );
-    expect(result).toBe('blocked');
+    expect(result).toEqual({ kind: 'blocked' });
     expect(advanceInlineParent).not.toHaveBeenCalled();
   });
 
@@ -141,7 +156,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
       child,
       'pass',
     );
-    expect(result).toBe('reported');
+    expect(result).toEqual({ kind: 'reported' });
     expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
   });
 
@@ -155,7 +170,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
       child,
       'fail',
     );
-    expect(result).toBe('blocked');
+    expect(result).toEqual({ kind: 'blocked' });
   });
 
   it('delegation linkage returns not-applicable when recording finds no linkage', async () => {
@@ -168,7 +183,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
       child,
       'pass',
     );
-    expect(result).toBe('not-applicable');
+    expect(result).toEqual({ kind: 'not-applicable' });
   });
 
   // RD-598 review finding 2: a 'duplicate' (or 'cancelled') record is NOT a fresh
@@ -185,7 +200,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
       child,
       'pass',
     );
-    expect(result).toBe('duplicate');
+    expect(result).toEqual({ kind: 'duplicate' });
   });
 
   it('delegation linkage returns duplicate for an ordinary cancel short-circuit', async () => {
@@ -198,7 +213,7 @@ describe('propagateTerminalChildUpward — pure decision + delegation arm', () =
       child,
       'pass',
     );
-    expect(result).toBe('duplicate');
+    expect(result).toEqual({ kind: 'duplicate' });
   });
 });
 
@@ -214,7 +229,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
     expect(advanceInlineParent).not.toHaveBeenCalled();
   });
 
@@ -229,7 +244,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'fail',
     );
-    expect(result).toBe('blocked');
+    expect(result).toEqual({ kind: 'blocked' });
     expect(advanceInlineParent).not.toHaveBeenCalled();
   });
 
@@ -251,7 +266,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
     expect(advanceInlineParent).toHaveBeenCalledWith({
       parentRunId: PARENT,
       parentFrameKey: buildFrameKey('1'),
@@ -281,7 +296,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'fail',
     );
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ kind: 'stopped' });
     // Release disposition: retain the claim tombstone (matches collect + loop),
     // so a bare second release never destroys it. See RD-598 verification.
     expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
@@ -299,7 +314,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
   });
 
   it('done advance still reloads and recurses when releaseRunbook rejects (RD-102)', async () => {
@@ -325,7 +340,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     // A failed release must not mask the committed upward propagation: the parent
     // is still reloaded (proving the recursion was not skipped) and, being
     // linkage-free, the result is still 'handled'.
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
     expect(load).toHaveBeenCalledWith(PARENT);
   });
 
@@ -352,7 +367,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
     // Callable invoked once for the parent, once for the grandparent.
     expect(advanceInlineParent).toHaveBeenCalledTimes(2);
     expect(advanceInlineParent).toHaveBeenNthCalledWith(
@@ -392,7 +407,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       'pass',
     );
     // 'done' at the inline level + 'reported' at the delegation recursion => handled.
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
     // Callable invoked ONCE (for the parent) — never for the grandparent.
     expect(advanceInlineParent).toHaveBeenCalledTimes(1);
     // The recursion recorded the parent's outcome report-only against the grandparent.
@@ -416,7 +431,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('not-applicable');
+    expect(result).toEqual({ kind: 'not-applicable' });
     expect(advanceInlineParent).not.toHaveBeenCalled();
   });
 
@@ -433,7 +448,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ kind: 'stopped' });
   });
 
   it('stopped advance whose recursion blocks returns blocked', async () => {
@@ -463,7 +478,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'fail',
     );
-    expect(result).toBe('blocked');
+    expect(result).toEqual({ kind: 'blocked' });
   });
 
   it('done advance whose recursion blocks returns blocked', async () => {
@@ -491,7 +506,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('blocked');
+    expect(result).toEqual({ kind: 'blocked' });
   });
 
   it('done advance whose inline→inline recursion stops returns stopped', async () => {
@@ -515,7 +530,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ kind: 'stopped' });
     expect(advanceInlineParent).toHaveBeenCalledTimes(2);
   });
 
@@ -546,7 +561,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
+    expect(result.kind).toBe('linkage-cycle');
     expect(recordChildCompletion).not.toHaveBeenCalled();
     expect(advanceInlineParent).not.toHaveBeenCalled();
     expect(releaseRunbook).not.toHaveBeenCalled();
@@ -578,7 +593,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
+    expect(result.kind).toBe('linkage-cycle');
     // The FIRST level is legitimate and completes; the repeat of A performs nothing.
     expect(advanceInlineParent).toHaveBeenCalledTimes(1);
     expect(advanceInlineParent).toHaveBeenCalledWith(
@@ -607,7 +622,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'fail',
     );
-    expect(result).toBe('linkage-cycle');
+    expect(result.kind).toBe('linkage-cycle');
   });
 
   it('does not call a purely DELEGATION cycle "inline" in the operator message', async () => {
@@ -624,22 +639,22 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     // into that recovery; the message is what a human reads. Only the message
     // has to be true about the linkage kind.
     const child = makeState(CHILD, { parentLinkage: delegationLinkage(CHILD) });
-    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
 
-    const result = await propagateTerminalChildUpward(makeDeps({ onLinkageCycle }), child, 'pass');
+    const result = await propagateTerminalChildUpward(makeDeps(), child, 'pass');
 
-    expect(result).toBe('linkage-cycle');
-    expect(onLinkageCycle).toHaveBeenCalledWith({
-      cause: 'repeat',
-      repeatedRunId: CHILD,
-      code: 'INLINE_PARENT_CYCLE',
-      message: `Parent linkage cycle detected at ${CHILD}`,
+    expect(result).toEqual({
+      kind: 'linkage-cycle',
+      trip: {
+        cause: 'repeat',
+        repeatedRunId: CHILD,
+        code: 'INLINE_PARENT_CYCLE',
+        message: `Parent linkage cycle detected at ${CHILD}`,
+      },
     });
     // The message must not assert a linkage kind the graph does not have. This
     // outlives the exact-string assertion above: a future reword still cannot
     // reintroduce "inline" on a delegation-only graph.
-    const [trip] = onLinkageCycle.mock.calls[0];
-    expect(trip.message).not.toMatch(/inline/i);
+    expect(tripOf(result).message).not.toMatch(/inline/i);
   });
 
   it('a cyclic DELEGATION linkage trips before recording report-only', async () => {
@@ -668,7 +683,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
+    expect(result.kind).toBe('linkage-cycle');
     // Only the child's own record ran (level 1); the cyclic report never did.
     expect(recordChildCompletion).toHaveBeenCalledTimes(1);
     expect(recordChildCompletion).toHaveBeenCalledWith({ childState: child, result: 'pass' });
@@ -700,7 +715,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
+    expect(result.kind).toBe('linkage-cycle');
     // depth starts at 1 (the child) and grows by one per advance; the guard
     // refuses at depth === MAX, so exactly MAX - 1 advances run.
     expect(advanceInlineParent).toHaveBeenCalledTimes(MAX_INLINE_PROPAGATION_CHAIN - 1);
@@ -737,27 +752,28 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       child,
       'pass',
     );
-    expect(result).toBe('handled');
+    expect(result).toEqual({ kind: 'handled' });
     expect(advanceInlineParent).toHaveBeenCalledTimes(MAX_INLINE_PROPAGATION_CHAIN - 1);
   });
 
   // --- #602: the trip's operator diagnostic. A fail-closed 'blocked' with no
-  // named run leaves the operator unable to know which run to prune.
+  // named run leaves the operator unable to know which run to prune. #603 moves
+  // it onto the RETURN VALUE: one fact, one channel, enforced by the compiler.
 
-  it('names the repeated run on the sink when the visited set trips (#602)', async () => {
+  it('returns the repeated run on the trip when the visited set trips (#602)', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage(CHILD) });
-    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
-    const result = await propagateTerminalChildUpward(makeDeps({ onLinkageCycle }), child, 'pass');
-    expect(result).toBe('linkage-cycle');
-    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
+    const result = await propagateTerminalChildUpward(makeDeps(), child, 'pass');
     // Core owns the operator message and code, mirroring the force-terminal
     // precedent (`lifecycle-command-service.ts` builds both for its
     // `INLINE_PARENT_CYCLE`). The frontend renders; it does not compose.
-    expect(onLinkageCycle).toHaveBeenCalledWith({
-      cause: 'repeat',
-      repeatedRunId: CHILD,
-      code: 'INLINE_PARENT_CYCLE',
-      message: `Parent linkage cycle detected at ${CHILD}`,
+    expect(result).toEqual({
+      kind: 'linkage-cycle',
+      trip: {
+        cause: 'repeat',
+        repeatedRunId: CHILD,
+        code: 'INLINE_PARENT_CYCLE',
+        message: `Parent linkage cycle detected at ${CHILD}`,
+      },
     });
   });
 
@@ -775,19 +791,22 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'done' });
-    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      makeDeps({ advanceInlineParent, manager: { load } }),
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
-    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
-    expect(onLinkageCycle).toHaveBeenCalledWith({
-      cause: 'repeat',
-      repeatedRunId: PARENT,
-      code: 'INLINE_PARENT_CYCLE',
-      message: `Parent linkage cycle detected at ${PARENT}`,
+    // The trip found at level 2 rides the return value out THROUGH the severity
+    // collapse: level 1 must bubble the deep arm up unchanged, or the operator is
+    // told to prune the entry child instead of the run that actually repeated.
+    expect(result).toEqual({
+      kind: 'linkage-cycle',
+      trip: {
+        cause: 'repeat',
+        repeatedRunId: PARENT,
+        code: 'INLINE_PARENT_CYCLE',
+        message: `Parent linkage cycle detected at ${PARENT}`,
+      },
     });
   });
 
@@ -805,23 +824,23 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'done' });
-    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      makeDeps({ advanceInlineParent, manager: { load } }),
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
-    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
     // The walk stalls trying to step from level MAX-1 onto level MAX. The depth
     // arm names its OWN field (`deepestRunId`) — a repeat names `repeatedRunId`.
     // One field whose meaning depended on a sibling string was the #602 review's
     // missing-type-structure finding; the union now makes each meaning explicit.
-    expect(onLinkageCycle).toHaveBeenCalledWith({
-      cause: 'depth',
-      deepestRunId: chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1),
-      code: 'INLINE_PARENT_CYCLE',
-      message: `Parent linkage chain from ${chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1)} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
+    expect(result).toEqual({
+      kind: 'linkage-cycle',
+      trip: {
+        cause: 'depth',
+        deepestRunId: chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1),
+        code: 'INLINE_PARENT_CYCLE',
+        message: `Parent linkage chain from ${chainRunId(MAX_INLINE_PROPAGATION_CHAIN - 1)} exceeded the maximum propagation depth of ${String(MAX_INLINE_PROPAGATION_CHAIN)}`,
+      },
     });
   });
 
@@ -850,20 +869,17 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'done' });
-    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      makeDeps({ advanceInlineParent, manager: { load } }),
       child,
       'pass',
     );
-    expect(result).toBe('linkage-cycle');
-    expect(onLinkageCycle).toHaveBeenCalledTimes(1);
-    const [trip] = onLinkageCycle.mock.calls[0];
+    const trip = tripOf(result);
     expect(trip.cause).toBe('depth');
     expect(trip.message).not.toMatch(/inline/i);
   });
 
-  it('never fires the sink on a valid acyclic chain (#602)', async () => {
+  it('carries no trip on a valid acyclic chain (#602)', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
     const parentRoot = makeState(PARENT, { lifecycle: 'completed' });
     const load = jest
@@ -872,13 +888,14 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'done' });
-    const onLinkageCycle = jest.fn<(trip: LinkageCycleTrip) => void>();
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, onLinkageCycle }),
+      makeDeps({ advanceInlineParent, manager: { load } }),
       child,
       'pass',
     );
-    expect(result).toBe('handled');
-    expect(onLinkageCycle).not.toHaveBeenCalled();
+    // `toEqual` on the whole object is the assertion that a trip is ABSENT: there
+    // is no sink left to prove "never called", so the healthy arm's exact shape
+    // is what pins it.
+    expect(result).toEqual({ kind: 'handled' });
   });
 });

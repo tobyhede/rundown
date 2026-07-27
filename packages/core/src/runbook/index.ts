@@ -201,8 +201,8 @@ export {
   type AdvanceInlineParentOutcome,
   type InlineParentAdvanceSessionService,
   type InlineParentAdvanceStateReader,
+  type InlineUpwardPropagationResult,
   type LinkageCycleTrip,
-  type OnLinkageCycle,
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
