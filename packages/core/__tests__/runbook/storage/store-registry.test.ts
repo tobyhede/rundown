@@ -414,6 +414,69 @@ describe('runbook store registry', () => {
     await Promise.all([closingOne, closingAll]);
   });
 
+  it('waits for an overlapping close-reopen-close chain before reopening again', async () => {
+    const cwd = await newRoot();
+    const first = await openRunbookStore(cwd, { runtime: 'native' });
+    const originalFirstDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let enterFirstClose!: () => void;
+    const firstCloseEntered = new Promise<void>((resolve) => {
+      enterFirstClose = resolve;
+    });
+    let releaseFirstClose!: () => void;
+    const firstCloseReleased = new Promise<void>((resolve) => {
+      releaseFirstClose = resolve;
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      enterFirstClose();
+      await firstCloseReleased;
+      await originalFirstDispose();
+    });
+
+    const firstClose = closeRunbookStore(cwd);
+    await firstCloseEntered;
+
+    let enterSecondClose!: () => void;
+    const secondCloseEntered = new Promise<void>((resolve) => {
+      enterSecondClose = resolve;
+    });
+    let releaseSecondClose!: () => void;
+    const secondCloseReleased = new Promise<void>((resolve) => {
+      releaseSecondClose = resolve;
+    });
+    const reopeningForSecondClose = openRunbookStore(cwd, { runtime: 'native' }).then((opened) => {
+      const originalDispose = opened.driver[Symbol.asyncDispose].bind(opened.driver);
+      jest.spyOn(opened.driver, Symbol.asyncDispose).mockImplementation(async () => {
+        enterSecondClose();
+        await secondCloseReleased;
+        await originalDispose();
+      });
+      return opened;
+    });
+    const secondClose = closeRunbookStore(cwd);
+
+    let finalReopenSettled = false;
+    const finalReopen = openRunbookStore(cwd, { runtime: 'native' }).then((opened) => {
+      finalReopenSettled = true;
+      return opened;
+    });
+    releaseFirstClose();
+    await secondCloseEntered;
+    for (let turn = 0; turn < 20; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const settledBeforeSecondClose = finalReopenSettled;
+    releaseSecondClose();
+    const [, reopenedThenClosed, , final] = await Promise.all([
+      firstClose,
+      reopeningForSecondClose,
+      secondClose,
+      finalReopen,
+    ]);
+
+    expect(settledBeforeSecondClose).toBe(false);
+    expect(final.store).not.toBe(reopenedThenClosed.store);
+  });
+
   it('exposes the driver for explicit disposal', async () => {
     const cwd = await newRoot();
     const { driver } = await openRunbookStore(cwd, { runtime: 'native' });

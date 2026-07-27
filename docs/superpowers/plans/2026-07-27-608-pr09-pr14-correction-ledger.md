@@ -164,4 +164,3 @@ PR 10 supplies the atomic initial claim/link primitive; it does not replace PR 1
 ## Required tracking outside the 14-PR chain
 
 File a separate nonblocking issue to make transaction-local delegation liveness checks semantically equivalent to `classifyDelegationLiveness`, including cursor, cancellation, token replacement, frame-entry identity, missing-substep, and terminal cases. This is correctness work, but the current divergence is refusal-biased and does not permit stale mutation authority.
-

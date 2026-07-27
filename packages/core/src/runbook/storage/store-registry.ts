@@ -182,17 +182,16 @@ function forgetEntry(entry: StoreEntry): void {
 }
 
 /**
- * Find an active close by its registered key or original cwd spelling.
+ * Find active closes by their registered key or original cwd spelling.
  *
  * @param key - Canonical database key derived for the current caller.
  * @param cwd - Project root spelling supplied by the current caller.
- * @returns The matching close record, or `undefined` when none is active.
+ * @returns Every matching close promise in registration order.
  */
-function findClosingStore(key: string, cwd: string): ClosingStore | undefined {
-  for (const closing of closingStores) {
-    if (closing.key === key || closing.cwd === cwd) return closing;
-  }
-  return undefined;
+function findClosingStores(key: string, cwd: string): readonly Promise<void>[] {
+  return [...closingStores]
+    .filter((closing) => closing.key === key || closing.cwd === cwd)
+    .map(({ closing }) => closing);
 }
 
 /**
@@ -255,9 +254,9 @@ export function openRunbookStore(
   if (existing !== undefined) {
     return existing.opening;
   }
-  const activeClose = findClosingStore(key, cwd)?.closing;
+  const activeClosings = findClosingStores(key, cwd);
   const opening = (async (): Promise<OpenStore> => {
-    await activeClose;
+    await Promise.all(activeClosings);
     const target = dbPath(cwd);
     await fs.mkdir(path.dirname(target), { recursive: true });
     const driver = await openRunbookDriver(target, options);
@@ -321,7 +320,7 @@ export async function closeRunbookStore(cwd: string): Promise<void> {
   const direct = openStores.get(key);
   const registration = direct === undefined ? findEntryByCwd(cwd) : { key, entry: direct };
   if (registration === undefined) {
-    await findClosingStore(key, cwd)?.closing;
+    await Promise.all(findClosingStores(key, cwd));
     return;
   }
   const { key: registeredKey, entry } = registration;

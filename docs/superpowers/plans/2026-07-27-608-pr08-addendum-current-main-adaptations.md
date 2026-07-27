@@ -89,4 +89,3 @@ Judge the gate on in-scope `Survived` and `NoCoverage` mutants, not on aggregate
 - Native SQLite and sql.js agree on cleanup, validation, and reopen behavior.
 - PR 8 does not change the public `statePath`/output contract or the probe route.
 - No mutation result is accepted from a zero-instrumentation or stale-cache run.
-
