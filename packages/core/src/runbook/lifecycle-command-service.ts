@@ -6,7 +6,7 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { ParentAdvanceGuard } from './storage/runbook-store.js';
+import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
 import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
@@ -2381,10 +2381,16 @@ export class RunbookLifecycleCommandService {
     // committing between the pre-check and here advances the parent past a live
     // delegated child, which is exactly the refusal this path exists to make.
     //
-    // Scoped to the duplicate case deliberately. After a `recorded` result the
-    // decisive write already committed under its own guard, and re-guarding the
-    // follow-on drain would let an unrelated live child abort the drain and strand
-    // a recorded-but-undrained completion — the very state that produces this bug.
+    // The guard arms the drain's FIRST apply only. The drain loops, one committed
+    // transaction per queued completion, and only the first is the decisive write;
+    // `#drainSubstepObservations` owns that rule (see its comment).
+    //
+    // Scoped to the duplicate case deliberately, and the same reason governs both:
+    // after a `recorded` result the decisive write already committed under its own
+    // guard, so there is no decisive write left in the drain to arm — handing the
+    // guard to a follow-on apply would let an unrelated live child abort the drain
+    // and strand a recorded-but-undrained completion, the very state that produces
+    // this bug.
     //
     // Lock ordering is unchanged: this is the same SessionLock -> CompletionLock
     // edge the guarded record above already holds (see #driveSubstepExplicit's
@@ -2394,8 +2400,13 @@ export class RunbookLifecycleCommandService {
       guardOpenChildren && recordResult.status === 'duplicate',
       activeState.id,
       (guard) =>
-        this.#drainSubstepObservations(input, steps, activeState, undefined, (args) =>
-          completionService.drainResolvedCompletions({ ...args, guard }),
+        this.#drainSubstepObservations(
+          input,
+          steps,
+          activeState,
+          undefined,
+          (args) => completionService.drainResolvedCompletions(args),
+          guard,
         ),
       () =>
         this.#drainSubstepObservations(input, steps, activeState, undefined, (args) =>
@@ -2522,12 +2533,22 @@ export class RunbookLifecycleCommandService {
   // status as data and the caller applies #applyTerminalSideEffects — the
   // explicit span must do so only after its CompletionLock scope closes
   // (SessionLock must never nest inside it).
+  //
+  // `guard` arrives as a parameter rather than baked into the `drain` closure
+  // because this loop is what decides which write is decisive. Each iteration
+  // commits its own transaction, so a closure-captured guard would re-arm on
+  // every one of them; only the first iteration is the parent-advancing write
+  // the guard exists to refuse. See the guard comment in
+  // `RunbookCompletionService.drainResolvedCompletionsUnlocked` — the same rule
+  // one level down, which together bound a guarded scope to exactly one guarded
+  // write however the two loops interleave.
   async #drainSubstepObservations(
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
     startState: RunbookState,
     frameOverride: Frame | undefined,
     drain: (args: DrainResolvedCompletionsArgs) => Promise<DrainResolvedCompletionsResult>,
+    guard?: ParentAdvanceGuard,
   ): Promise<SubstepDrainObservation> {
     const drainEvents: TransitionObservationEvent[] = [];
     let drainState: RunbookState = startState;
@@ -2542,6 +2563,7 @@ export class RunbookLifecycleCommandService {
         currentState: drainState,
         maxApplied: 1,
         ...(frameOverride ? { frameOverride } : {}),
+        ...guardOptions(applied === 0 ? guard : undefined),
       });
 
       if (drained.status === 'failed') {

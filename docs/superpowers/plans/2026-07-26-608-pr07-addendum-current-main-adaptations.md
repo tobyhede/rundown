@@ -21,13 +21,13 @@ Compared with PR 6 this is an easy replay: every conflict is a mechanical union,
 | `e21dab179` | `core/__tests__/runbook/lifecycle-command-service.test.ts` | helper import | Union. `HEAD` imports `patchPersistedClaim` from `src/testing/session-fixtures.js` (PR 6's fixture promotion); incoming adds `seedLiveDelegation` to the `claim-test-helpers.js` specifier. Keep both. |
 | `ee650ce7c` | `core/__tests__/runbook/session-service.process.test.ts` | helper block | Additive, not competing. `HEAD` defines `expectOverlap` (the sensitivity witness); the incoming side defines `childExit`, `collect`, and `waitForFile`. Keep all four — the sides collide only because both append at the same offset. |
 
-After resolution: `git diff --name-only --diff-filter=U` empty, `git diff --check` exit 0, and the 13 changed paths are exactly the derived allowlist (`comm -3` prints nothing). `tsc --noEmit` on `@rundown-org/core` is clean with no further edits — PR 4's and PR 6's `SqlReadTransaction` widening problem does not recur here.
+After resolution: `git diff --name-only --diff-filter=U` empty, `git diff --check <recorded-base>` exit 0, and `comm -3` reports exactly one addition against the 13 derived paths — `cspell-dictionary.txt` (Delta 2) — with zero allowlisted-but-unchanged. Name the base in both commands: at this point the cherry-picks are `--no-commit`, so the work is **staged**, and a bare `git diff --check` / `git diff --name-only` inspects unstaged changes only and reports a false clean. `tsc --noEmit` on `@rundown-org/core` is clean with no further edits — PR 4's and PR 6's `SqlReadTransaction` widening problem does not recur here.
 
 ## Delta 2 — `cspell-dictionary.txt` allowlist expansion (stop-and-review)
 
 `verify` fails at `check:spell` on work the replay itself brings in:
 
-```
+```text
 packages/core/__tests__/runbook/lifecycle-command-service.test.ts:2299:42 - Unknown word (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac)
 packages/core/__tests__/runbook/lifecycle-command-service.test.ts:2340:42 - Unknown word (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad)
 ```
@@ -271,7 +271,7 @@ Taken: **M2** (the process test's hand-written structural cast for `advance` rep
 
 I declined the extract-a-helper suggestion on the grounds that a helper cannot force the guarded callback's *body* to use the guard it receives, so it would re-admit the P1 shape. That objection is **empirically false in this repo**, and one probe settles it: neutering the record site's callback to ignore its guard produces
 
-```
+```text
 error  'guard' is defined but never used. Allowed unused args must match /^_/u  @typescript-eslint/no-unused-vars
 ```
 
@@ -343,7 +343,7 @@ Required the same type→value import promotion Delta 1 records for `session-ser
 
 | Gate | Result |
 | --- | --- |
-| Conflicts | 6 hunks / 5 files, exactly as Delta 1 predicted; `--diff-filter=U` empty, `git diff --check` exit 0 |
+| Conflicts | 6 hunks / 5 files, exactly as Delta 1 predicted; `--diff-filter=U` empty, `git diff --check origin/main...HEAD` exit 0 (re-measured post-commit against the base; a bare `git diff --check` on a committed branch sees only unstaged changes and so cannot fail) |
 | `comm -3` vs the 13-path allowlist | four additions, zero allowlisted-but-unchanged: `cspell-dictionary.txt` (Delta 2), this addendum, `packages/core/__tests__/runbook/completion-service.test.ts` (P1 fix), `packages/core/__tests__/runbook/storage/fixtures/child-protocol.ts` (G1) |
 | `tsc --noEmit` on `@rundown-org/core` | exit 0, no output, no adaptation |
 | Plan-named tests (4 suites) | 244 passed |
@@ -353,12 +353,43 @@ Required the same type→value import promotion Delta 1 records for `session-ser
 | Scoped Stryker run 1 | 112 mutants, 17.95 tests/mutant, 99 killed / 12 survived / 0 no-coverage |
 | Scoped Stryker run 2 | 142 mutants, 53.33 tests/mutant, 98 killed / 27 survived, none a gap on changed lines |
 
+## Delta 9 — a guarded scope spanned several writes, not one (second review round)
+
+`runGuardedParentAdvance`'s TSDoc required the callback to "perform only the decisive transition write". The duplicate-path callback installed by the P1 fix does not: `#drainSubstepObservations` loops with `maxApplied: 1`, one committed transaction per queued completion, and the closure re-supplied the same guard on every iteration. `drainResolvedCompletionsUnlocked` has the same shape one level down — its own `for (;;)` is bounded only by an **optional** `maxApplied`, so a guarded caller omitting it reuses the guard across every apply in a single call.
+
+So the P1 fix did not reduce the guarded scope to one write; it **moved** a multi-write guarded scope from the `recorded` path to the `duplicate` path.
+
+State integrity was never at risk — each apply commits or rolls back alone, unapplied rows stay queued, and the drain is resumable. The damage was to reporting: `drainEvents` accumulates in a local, so a later iteration's refusal discarded the prefix and the caller saw a bare `open_delegated_children` with **zero** events while an advance had committed. An agent trusting that envelope retries against a cursor that already moved. Worse, the two paths then enforced opposite invariants for the identical hazard: the `recorded` path's follow-on drain is deliberately unguarded and pinned as such, while the `duplicate` path aborted everything after its first apply.
+
+**Fix.** Each loop arms the guard on its own first write only — `applied.length === 0` in the drain, `applied === 0` in the observation loop — and the guard reaches `#drainSubstepObservations` as a parameter rather than baked into the `drain` closure, because that loop is what decides which write is decisive. The two rules compose to exactly one guarded write per scope however the loops interleave. The `recordResult.status === 'duplicate'` condition is unchanged and its justification generalises: after a `recorded` result the decisive write already committed under its own guard, so there is no decisive write left in the drain to arm.
+
+The contract TSDoc was rewritten to the invariant that is now enforced rather than the stricter one the code could not honour: a callback **may** span several writes; only the first carries the guard.
+
+**Coverage.** Three tests, each verified against the pre-fix code or by hand-mutation: guard-once in the drain call (`completion-service.test.ts`, `maxApplied` deliberately omitted), guard-once across observation-loop iterations (`lifecycle-command-service.test.ts`), and prefix reporting — two applies must yield two `STEP_TRANSITIONED` events, which pins the "zero events" half and dies to a mutation that drops the accumulator. The two rollback assertions missing from `guarded-parent-advance.test.ts` (refusal asserted, non-advance not) were added and proven sensitive on both storage runtimes.
+
+**Composition pin.** `packages/core/__tests__/runbook/guarded-drain-composition.test.ts` runs the whole path for real — a real machine snapshot (`manager.create` + `initializeState`), real applies, a real delegated child claiming between them, and the real store predicate deciding. Nothing is stubbed; the only spy is a passthrough on `sendAndSync` that wraps the real implementation to control *when* the claim lands. It asserts the consequence — outcome `applied`, two `STEP_TRANSITIONED`, both completion rows consumed, cursor on the delegated substep — and never inspects a guard value, so it stays honest if the guarding mechanism is ever reshaped.
+
+Reverting each fix independently shows the two layers are complementary, not redundant:
+
+| Reverted | Composition test | Per-loop unit test |
+| --- | --- | --- |
+| Observation loop (`lifecycle-command-service.ts`) | **fails** — `open_delegated_children` instead of `applied` | fails |
+| Drain loop (`completion-service.ts`) | passes | **fails** |
+
+The drain-loop revert is invisible end-to-end because `#drainSubstepObservations` pins `maxApplied: 1`, so on that path the inner loop never applies twice. Its guard-once rule is defence for any caller that leaves `maxApplied` unbounded — a shape the type still permits — and only the unit test covers it. Neither test subsumes the other.
+
+Earlier reasoning that an end-to-end test would necessarily "fake the store's refusal" was wrong: it holds only at the layers where `drainResolvedCompletions` or `sendAndSync` is mocked. The real harness already existed in `actor-service-compute-commit-equivalence.test.ts` (real `initializeState`, real `APPLY_CURRENT_RESOLVED_COMPLETION`); it just had not been combined with `guarded-parent-advance.test.ts`'s real claim insertion.
+
+**Gates.** `corepack pnpm run verify` exit 0; full core 4,676 passed / 1 skipped / 205 suites (+4 tests). Scoped Stryker over the changed lines only — `completion-service.ts:843-851` and `lifecycle-command-service.ts:2403-2409,2551,2566` against the three touched suites — `Instrumented 2 source file(s) with 4 mutant(s)`, `Ran 18.00 tests per mutant`, 4 killed / 0 survived / 0 no-coverage, 100%. Two process notes worth carrying forward: repeated `--testFiles` flags do **not** accumulate (the last wins, producing the `Ran 0.00 tests per mutant` selection trap PR 6 documented — pass one comma-separated list), and `reports/stryker-incremental.json` must be deleted first or the run prints survivors from lines outside the requested scope.
+
+The `verify` run also emits `A worker process has failed to exit gracefully` from the core suite. Measured against a stashed baseline it appears in 2 of 3 baseline runs and 2 of 2 changed runs — pre-existing, load-dependent, not this change.
+
 ## Trial-replay evidence
 
 On `97c124d98`, after the Delta 1 resolutions and the Delta 2 dictionary entries:
 
-- Conflicts: 6 hunks, 5 files. `git diff --name-only --diff-filter=U` empty; `git diff --check` exit 0.
-- Allowlist: `comm -3` prints nothing against the 13 derived paths. `cspell-dictionary.txt` is the one addition (Delta 2).
+- Conflicts: 6 hunks, 5 files. `git diff --name-only --diff-filter=U` empty; `git diff --check <recorded-base>` exit 0.
+- Allowlist: `comm -3` reports exactly one addition against the 13 derived paths — `cspell-dictionary.txt` (Delta 2) — and zero allowlisted-but-unchanged.
 - `tsc --noEmit` on `@rundown-org/core`: clean.
 - Plan-named tests (`guarded-parent-advance`, `runbook-store`, `state`, `completion-service`): 229 passed, 4 suites.
 - Other touched suites (`lifecycle-command-service`, `session-service`, `session-service.process`): 220 passed, 3 suites.
@@ -368,14 +399,14 @@ On `97c124d98`, after the Delta 1 resolutions and the Delta 2 dictionary entries
 
 - Replacement Stryker command (Delta 3): 3m42s, `Ran 12.93 tests per mutant`, 75 killed / 1 timeout / 22 survived / 5 no-coverage. Survivors enumerated in Delta 5.
 
-Not yet run in trial: the second Stryker pass over the forwarding chain (`state.ts`, `actor-service.ts`, `completion-service.ts`, `lifecycle-command-service.ts`).
+Not run in trial: the second Stryker pass over the forwarding chain (`state.ts`, `actor-service.ts`, `completion-service.ts`, `lifecycle-command-service.ts`). It **was** run at implementation time — see the "Scoped Stryker run 2" row in the implementation gates above and Delta 8's record. Nothing outstanding; this bullet scopes the trial only.
 
 ## Revised step list
 
 1. Branch from freshly fetched `origin/main` after #652 merges; record the SHA.
 2. Cherry-pick `0f896b8b6 03d9144a1 63f469945 e21dab179 ee650ce7c 70a7082ec` with `--no-commit`, resolving the six hunks per Delta 1.
 3. Append the two Delta 2 literals to `cspell-dictionary.txt`. Two more are needed by the end — `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae` from step 5's fixtures and `undrained` from step 5's comments (Delta 8) — so expect to revisit this once `verify` runs, or add all four now.
-4. Confirm `comm -3` reports exactly four paths — `cspell-dictionary.txt` (Delta 2), this addendum, `packages/core/__tests__/runbook/completion-service.test.ts` (the P1 fix, Delta 8), and `packages/core/__tests__/runbook/storage/fixtures/child-protocol.ts` (G1, Delta 8) — and `git diff --check` exit 0. Any fifth is a stop-and-review event. Derive the actual list against the branch's merge base (`git diff HEAD^ --name-only`, or `origin/main...HEAD`); a bare `git diff origin/main` reports paths that `origin/main` changed under you, not paths you changed. (Originally written as "only `cspell-dictionary.txt`"; that went stale when the P1 fix landed.)
+4. Confirm `comm -3` reports exactly four paths — `cspell-dictionary.txt` (Delta 2), this addendum, `packages/core/__tests__/runbook/completion-service.test.ts` (the P1 fix, Delta 8), and `packages/core/__tests__/runbook/storage/fixtures/child-protocol.ts` (G1, Delta 8) — and `git diff --check <recorded-base>` exit 0. Any fifth is a stop-and-review event. Derive the actual list with the **two-dot** form against the base SHA step 1 recorded: `git diff --name-only <recorded-base>`. This step runs before step 9's commit, with the cherry-picks still `--no-commit`, and every other spelling is wrong at that point: `origin/main...HEAD` and any three-dot form compare committed history and so print nothing while the work sits staged; `git diff HEAD^` compares against the immediate parent, which on an unstarted branch is `origin/main`'s own last commit and so attributes that commit's paths to you; and a bare `git diff` / `git diff --check` sees unstaged changes only, missing everything the cherry-pick staged. Switch to `git diff --name-only <recorded-base>...HEAD` once the work is committed. (Originally written as "only `cspell-dictionary.txt`"; that went stale when the P1 fix landed.)
 5. **Close the Delta 5 coverage gap** — six tests over the five named gaps (see Delta 8), terminal-child first, the non-guard rethrow second.
 6. Run the plan's named tests, then both full suites.
 7. Run the Delta 3 replacement Stryker commands; check `Instrumented` and `Ran N tests per mutant` before reading any score.

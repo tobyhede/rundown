@@ -840,7 +840,15 @@ export class RunbookCompletionService {
           completionKey: current.key,
           completion: validated,
         },
-        guardOptions(args.guard),
+        // Only the DECISIVE write carries the guard, and that is the first apply:
+        // it is the one that advances the parent past the point where a live
+        // delegated child matters. Every apply here is its own transaction, so
+        // re-arming the guard on a follow-on apply would let an unrelated child
+        // claiming mid-drain abort it and strand the already-committed first apply
+        // behind a bare refusal. This mirrors the recorded path, where the drain
+        // that follows a committed decisive write runs unguarded for the same
+        // reason (see LifecycleCommandService#driveSubstep).
+        guardOptions(applied.length === 0 ? args.guard : undefined),
       );
       if (!result) {
         return { status: 'continue', state, unresolved, applied };

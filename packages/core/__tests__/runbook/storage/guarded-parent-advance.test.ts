@@ -217,6 +217,7 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
     await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
 
     const guard = parentAdvanceGuard(parent.id);
+    const before = await store.readRunJson(parent.id);
     const error: unknown = await store
       .mutateState(parent.id, (current) => ({ ...current, step: '2' }), { guard })
       .then(
@@ -224,6 +225,11 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
         (reason: unknown) => reason,
       );
     expect(isOpenDelegatedChildrenError(error)).toBe(true);
+    // Refusing is only half the contract: a change that threw AFTER committing the
+    // `step: '2'` update would keep the assertion above green while the parent had
+    // silently advanced past the open child. The sibling case at the top of this
+    // file pins the same thing.
+    expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
   });
 
   it('does not read a delegation-less claim row on the parent as an open child', async () => {
@@ -255,6 +261,7 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
     });
 
     const guard = parentAdvanceGuard(parent.id);
+    const before = await store.readRunJson(parent.id);
     const error: unknown = await store
       .mutateState(parent.id, (current) => ({ ...current, step: '2' }), { guard })
       .then(
@@ -263,6 +270,9 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
       );
     expect(isOpenDelegatedChildrenError(error)).toBe(false);
     expect(getErrorMessage(error)).toContain('carries no persisted delegation linkage');
+    // The inconsistent-database abort rolls the attempted advance back too — the
+    // corrupt row must not cost the caller a half-applied write.
+    expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
   });
 
   it('throws when a parent-advance guard is applied to a write of another run', async () => {

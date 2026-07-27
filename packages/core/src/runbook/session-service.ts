@@ -1007,10 +1007,23 @@ export class SessionService {
    * clean early refusal and better UX); the in-transaction guard supplied to the
    * callback is the authoritative, race-closing refusal.
    *
-   * The `advance` callback MUST perform only the decisive transition write
-   * (e.g. `RunbookCompletionService.recordManualCompletion` or
-   * `RunbookActorService.sendAndSync`), passing the supplied guard into it.
-   * Downstream drain/release steps run afterwards.
+   * The `advance` callback MUST pass the supplied guard into the DECISIVE
+   * transition write (e.g. `RunbookCompletionService.recordManualCompletion` or
+   * `RunbookActorService.sendAndSync`) and into no other write.
+   *
+   * A callback may legitimately span more than one store write: a drain applies
+   * each queued completion in its own transaction. Only the first is decisive —
+   * the write that advances the parent past the point where a live delegated
+   * child matters. Re-arming the guard on a follow-on write would let an
+   * unrelated child claiming mid-callback abort it, stranding the
+   * already-committed decisive write behind a bare `open_delegated_children`
+   * refusal that reports none of the transitions it committed. Both drain loops
+   * enforce this by arming the guard on their first write only
+   * (`RunbookCompletionService.drainResolvedCompletionsUnlocked` and
+   * `LifecycleCommandService#drainSubstepObservations`), which composes to
+   * exactly one guarded write per scope however the two interleave.
+   *
+   * Release steps run after the callback returns.
    *
    * @template T - Result type of the decisive advance write
    * @param parentRunId - Parent runbook whose advance must be guarded

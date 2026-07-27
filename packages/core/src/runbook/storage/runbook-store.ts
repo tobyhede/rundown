@@ -109,11 +109,14 @@ export function parentAdvanceGuard(parentRunId: RunId): ParentAdvanceGuard {
 /**
  * Normalise an optional guard into a write-options object.
  *
- * Exists because `exactOptionalPropertyTypes` distinguishes an absent property
- * from one explicitly set to `undefined`, so every layer that forwards a guard
- * down the chain has to branch. Concentrating that branch here keeps the four
- * forwarding sites (state manager, actor service, completion record and drain)
- * spelling it one way.
+ * Concentrates one branch that every layer forwarding a guard down the chain
+ * would otherwise spell for itself, so the forwarding sites (state manager,
+ * actor service, completion record and both drain loops) read the same way. It
+ * also leaves `guard` genuinely absent rather than present-and-`undefined`, so a
+ * future `'guard' in options` test cannot read an unguarded write as a guarded
+ * one. Note this repo does not enable `exactOptionalPropertyTypes`, so the two
+ * spellings are type-equivalent today — the helper buys consistency, not
+ * type-level enforcement.
  *
  * @param guard - Guard to forward, or `undefined` on an unguarded write.
  * @returns `{}` when there is no guard, otherwise `{ guard }`.

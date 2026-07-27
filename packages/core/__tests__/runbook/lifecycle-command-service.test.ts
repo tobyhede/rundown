@@ -2572,6 +2572,142 @@ describe('RunbookLifecycleCommandService', () => {
       }
     });
 
+    it('guards only the first drain call when the drain loop applies several completions', async () => {
+      // `#drainSubstepObservations` loops, one apply per call, until nothing is
+      // queued — so a guarded scope spans several independently-committing
+      // transactions. Only the first is decisive. Re-arming the guard on a later
+      // iteration lets a child claiming mid-drain abort it, and because the
+      // accumulated `drainEvents` are discarded with the throw, the caller sees a
+      // bare refusal with zero events while the first apply stays committed.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const undrained = buildResolvedCompletion({
+        agentId: 'manual',
+        result: 'pass',
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        completedAt: '2026-06-28T00:00:00.000Z',
+      });
+      // An undrained completion makes the record short-circuit `duplicate`, which
+      // is what moves the decisive write into the drain and arms the guard.
+      const activeState = baseState({
+        id: namedRunId,
+        substep: '1',
+        resolvedCompletions: { [completionKey]: undrained },
+      });
+      await activate(activeState);
+
+      const appliedRow = {
+        key: completionKey,
+        completion: brandCurrentCursorResolvedCompletionForTest({
+          ...undrained,
+          targetSubstep: undrained.targetSubstep ?? '1',
+        }),
+        stateBefore: activeState,
+        stateAfter: activeState,
+        // Snapshot stays active so `deriveTransitionObservation` reports
+        // `continue` and the loop takes another iteration instead of breaking.
+        snapshot: { status: 'active', value: '1' },
+      };
+      let calls = 0;
+      const drainSpy = jest
+        .spyOn(completionService, 'drainResolvedCompletions')
+        .mockImplementation(async () => {
+          calls += 1;
+          // Two applies, then nothing queued — `applied: []` ends the loop.
+          return calls <= 2
+            ? { status: 'continue', state: activeState, unresolved: 1, applied: [appliedRow] }
+            : { status: 'continue', state: activeState, unresolved: 0, applied: [] };
+        });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      // The loop really did iterate — otherwise there is no follow-on call to check
+      // and the assertion below would hold vacuously.
+      expect(drainSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(drainSpy.mock.calls[0]?.[0].guard).toEqual(parentAdvanceGuard(namedRunId));
+      for (const [args] of drainSpy.mock.calls.slice(1)) {
+        expect(args.guard).toBeUndefined();
+      }
+    });
+
+    it('reports the observation events for every completion applied in one drain pass', async () => {
+      // The other half of the guarded-drain defect: `drainEvents` accumulates in a
+      // local across loop iterations, so anything that drops the prefix — an early
+      // exit that discards it, or returning only the last observation — reports a
+      // committed advance as though nothing happened. An agent that trusts an
+      // event-free envelope then retries against a cursor that already moved.
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md'), delegateSubstep('2', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const completionFor = (substep: string) =>
+        brandCurrentCursorResolvedCompletionForTest({
+          ...buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: substep,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-06-28T00:00:00.000Z',
+          }),
+          targetSubstep: substep,
+        });
+      const activeState = baseState({
+        id: namedRunId,
+        substep: '1',
+        resolvedCompletions: { [firstKey]: completionFor('1') },
+      });
+      await activate(activeState);
+
+      // Each pass advances the cursor one substep, so both applies produce a
+      // distinct STEP_TRANSITIONED rather than two views of the same move.
+      const rowFor = (from: string, to: string) => ({
+        key: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), from),
+        completion: completionFor(from),
+        stateBefore: baseState({ id: namedRunId, substep: from }),
+        stateAfter: baseState({ id: namedRunId, substep: to }),
+        snapshot: { status: 'active', value: '1' },
+      });
+      const passes = [rowFor('1', '2'), rowFor('2', '3')] as const;
+      let calls = 0;
+      jest.spyOn(completionService, 'drainResolvedCompletions').mockImplementation(async () => {
+        const index = calls;
+        calls += 1;
+        if (index >= passes.length) {
+          return { status: 'continue', state: activeState, unresolved: 0, applied: [] };
+        }
+        const row = passes[index];
+        return { status: 'continue', state: row.stateAfter, unresolved: 1, applied: [row] };
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // Two applies committed, so two transitions must be observable — not just
+      // the last one.
+      expect(outcome.events.filter((e) => e.type === 'STEP_TRANSITIONED')).toHaveLength(2);
+    });
+
     it('keeps the targeted exemption for run+step over pending outcomes (sanctioned operator recovery)', async () => {
       const substepSteps: ResolvedStep[] = [
         delegateStep('1', [delegateSubstep('1', 'child.md')]),
