@@ -6,6 +6,7 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
+import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
 import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
@@ -2318,7 +2319,7 @@ export class RunbookLifecycleCommandService {
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
-    const { completionService, sessionService } = this.#deps;
+    const { completionService } = this.#deps;
     const cursor: ResolvedCursor = activeCursor(activeState);
     const targetSubstep = cursor.substep;
     if (!targetSubstep) {
@@ -2343,32 +2344,27 @@ export class RunbookLifecycleCommandService {
       };
     }
 
-    const recordManualCompletion = (): ReturnType<
-      RunbookCompletionService['recordManualCompletion']
-    > =>
-      completionService.recordManualCompletion({
-        runbookId: activeState.id,
-        currentState: activeState,
-        targetStep: cursor.step,
-        targetSubstep,
-        ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
-        targetFrame: cursor.frame,
-        result: input.command,
-        agentId: 'manual',
-      });
+    const recordArgs: Parameters<RunbookCompletionService['recordManualCompletion']>[0] = {
+      runbookId: activeState.id,
+      currentState: activeState,
+      targetStep: cursor.step,
+      targetSubstep,
+      ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
+      targetFrame: cursor.frame,
+      result: input.command,
+      agentId: 'manual',
+    };
 
-    let recordResult: Awaited<ReturnType<RunbookCompletionService['recordManualCompletion']>>;
-    if (guardOpenChildren) {
-      const guarded = await sessionService.runGuardedParentAdvance(
-        activeState.id,
-        recordManualCompletion,
-      );
-      const guardResult = this.#guardRefusal(guarded, activeState.id);
-      if (guardResult.kind === 'refusal') return guardResult.outcome;
-      recordResult = guardResult.value;
-    } else {
-      recordResult = await recordManualCompletion();
-    }
+    // Guarded: thread the in-transaction guard into the decisive write. Unguarded
+    // (explicit-target / claim-authorized): no guarded advance, no guard.
+    const record = await this.#runGuardedOrPlain(
+      guardOpenChildren,
+      activeState.id,
+      (guard) => completionService.recordManualCompletion(recordArgs, { guard }),
+      () => completionService.recordManualCompletion(recordArgs),
+    );
+    if (record.kind === 'refusal') return record.outcome;
+    const recordResult = record.value;
 
     const duplicate =
       recordResult.status === 'duplicate'
@@ -2379,13 +2375,46 @@ export class RunbookLifecycleCommandService {
           }
         : undefined;
 
-    const drained = await this.#drainSubstepObservations(
-      input,
-      steps,
-      activeState,
-      undefined,
-      (args) => completionService.drainResolvedCompletions(args),
+    // A `duplicate` record performed NO store write, so the guard threaded into it
+    // above was never evaluated — and the drain below then becomes the decisive
+    // parent-advancing write. Guard the drain in its own right, or a claim
+    // committing between the pre-check and here advances the parent past a live
+    // delegated child, which is exactly the refusal this path exists to make.
+    //
+    // The guard arms the drain's FIRST apply only. The drain loops, one committed
+    // transaction per queued completion, and only the first is the decisive write;
+    // `#drainSubstepObservations` owns that rule (see its comment).
+    //
+    // Scoped to the duplicate case deliberately, and the same reason governs both:
+    // after a `recorded` result the decisive write already committed under its own
+    // guard, so there is no decisive write left in the drain to arm — handing the
+    // guard to a follow-on apply would let an unrelated live child abort the drain
+    // and strand a recorded-but-undrained completion, the very state that produces
+    // this bug.
+    //
+    // Lock ordering is unchanged: this is the same SessionLock -> CompletionLock
+    // edge the guarded record above already holds (see #driveSubstepExplicit's
+    // proof), since `runGuardedParentAdvance` wraps the LOCKING drain from outside
+    // and holds no CompletionLock itself.
+    const drain = await this.#runGuardedOrPlain(
+      guardOpenChildren && recordResult.status === 'duplicate',
+      activeState.id,
+      (guard) =>
+        this.#drainSubstepObservations(
+          input,
+          steps,
+          activeState,
+          undefined,
+          (args) => completionService.drainResolvedCompletions(args),
+          guard,
+        ),
+      () =>
+        this.#drainSubstepObservations(input, steps, activeState, undefined, (args) =>
+          completionService.drainResolvedCompletions(args),
+        ),
     );
+    if (drain.kind === 'refusal') return drain.outcome;
+    const drained = drain.value;
     if (drained.terminalStatus) {
       await this.#applyTerminalSideEffects(input, drained.terminalStatus, activeState.id);
     }
@@ -2504,12 +2533,22 @@ export class RunbookLifecycleCommandService {
   // status as data and the caller applies #applyTerminalSideEffects — the
   // explicit span must do so only after its CompletionLock scope closes
   // (SessionLock must never nest inside it).
+  //
+  // `guard` arrives as a parameter rather than baked into the `drain` closure
+  // because this loop is what decides which write is decisive. Each iteration
+  // commits its own transaction, so a closure-captured guard would re-arm on
+  // every one of them; only the first iteration is the parent-advancing write
+  // the guard exists to refuse. See the guard comment in
+  // `RunbookCompletionService.drainResolvedCompletionsUnlocked` — the same rule
+  // one level down, which together bound a guarded scope to exactly one guarded
+  // write however the two loops interleave.
   async #drainSubstepObservations(
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
     startState: RunbookState,
     frameOverride: Frame | undefined,
     drain: (args: DrainResolvedCompletionsArgs) => Promise<DrainResolvedCompletionsResult>,
+    guard?: ParentAdvanceGuard,
   ): Promise<SubstepDrainObservation> {
     const drainEvents: TransitionObservationEvent[] = [];
     let drainState: RunbookState = startState;
@@ -2524,6 +2563,7 @@ export class RunbookLifecycleCommandService {
         currentState: drainState,
         maxApplied: 1,
         ...(frameOverride ? { frameOverride } : {}),
+        ...guardOptions(applied === 0 ? guard : undefined),
       });
 
       if (drained.status === 'failed') {
@@ -2635,7 +2675,7 @@ export class RunbookLifecycleCommandService {
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, lifecycleService, sessionService } = this.#deps;
+    const { actorService, lifecycleService } = this.#deps;
     const previousState: RunbookState = { ...activeState };
     const currentStep = this.#findStep(steps, previousState.step);
     // Exhaustive map from command to engine event. A `never` fallthrough makes a
@@ -2654,18 +2694,16 @@ export class RunbookLifecycleCommandService {
       }
     })();
 
-    const sendAndSync = (): ReturnType<RunbookActorService['sendAndSync']> =>
-      actorService.sendAndSync(activeState.id, steps, { type: eventType });
-
-    let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
-    if (guardOpenChildren) {
-      const guarded = await sessionService.runGuardedParentAdvance(activeState.id, sendAndSync);
-      const guardResult = this.#guardRefusal(guarded, activeState.id);
-      if (guardResult.kind === 'refusal') return guardResult.outcome;
-      syncResult = guardResult.value;
-    } else {
-      syncResult = await sendAndSync();
-    }
+    // Guarded: thread the in-transaction guard into the decisive write. Unguarded
+    // (explicit-target / claim-authorized): no guarded advance, no guard.
+    const sync = await this.#runGuardedOrPlain(
+      guardOpenChildren,
+      activeState.id,
+      (guard) => actorService.sendAndSync(activeState.id, steps, { type: eventType }, { guard }),
+      () => actorService.sendAndSync(activeState.id, steps, { type: eventType }),
+    );
+    if (sync.kind === 'refusal') return sync.outcome;
+    const syncResult = sync.value;
     if (!syncResult) {
       throw new Error('Failed to dispatch transition to runbook engine');
     }
@@ -2725,6 +2763,40 @@ export class RunbookLifecycleCommandService {
     if (releaseRunbook) {
       await this.#deps.sessionService.releaseRunbook(runId, { retainClaimsAsTerminal: true });
     }
+  }
+
+  // Run a parent-advancing write under the open-delegated-children guard when the
+  // transition is bare, or plainly when it is not. The single place that pairs
+  // `runGuardedParentAdvance` with `#guardRefusal`; every guarded decisive write
+  // in this service goes through it.
+  //
+  // Both callbacks are REQUIRED, so the guarded path cannot be skipped by omission
+  // — a new call site must write the guarded form and then decide, explicitly, what
+  // the unguarded one does. And a `guarded` body that ACCEPTS the guard without
+  // threading it into its store write is an `@typescript-eslint/no-unused-vars`
+  // error (verified: `'guard' is defined but never used`), so the "guard accepted
+  // and silently dropped" shape — which is exactly what the duplicate-drain defect
+  // was — fails `check:lint:typed` instead of shipping.
+  //
+  // What this deliberately does NOT do is recognize a NEW decisive write. A future
+  // parent-advancing write that never calls this helper is exactly as unguarded as
+  // one that never hand-wrote the branch. That was the duplicate-drain defect's
+  // real cause, and no signature prevents it — only noticing that a write advances
+  // the parent does.
+  async #runGuardedOrPlain<T>(
+    guardOpenChildren: boolean,
+    parentRunId: RunId,
+    guarded: (guard: ParentAdvanceGuard) => Promise<T>,
+    unguarded: () => Promise<T>,
+  ): Promise<
+    | { readonly kind: 'advanced'; readonly value: T }
+    | { readonly kind: 'refusal'; readonly outcome: LifecycleTransitionOutcome }
+  > {
+    if (!guardOpenChildren) {
+      return { kind: 'advanced', value: await unguarded() };
+    }
+    const advance = await this.#deps.sessionService.runGuardedParentAdvance(parentRunId, guarded);
+    return this.#guardRefusal(advance, parentRunId);
   }
 
   // Narrow a guarded-advance result to either the typed advanced value or a

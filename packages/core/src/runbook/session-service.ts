@@ -12,7 +12,12 @@
 
 import type { RunbookStateManager, SessionData } from './state.js';
 import type { RunId } from './run-id.js';
-import type { SessionMutationTxn } from './storage/runbook-store.js';
+import {
+  parentAdvanceGuard,
+  isOpenDelegatedChildrenError,
+  type ParentAdvanceGuard,
+  type SessionMutationTxn,
+} from './storage/runbook-store.js';
 import type { SyncWork } from './storage/sql-driver.js';
 import {
   createDelegatedChildGrants,
@@ -36,7 +41,7 @@ import {
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
-import { classifyDelegationLiveness, findSubstepState } from './targeting.js';
+import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -219,26 +224,6 @@ function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
     parentFrameKey: claim.delegation.parentFrameKey,
     parentEntry: claim.delegation.parentEntry,
   };
-}
-
-/**
- * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
- * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
- *
- * @param linkage - Parent linkage stored on the child runbook state (any kind, including non-delegation or absent)
- * @param claim - Claim record whose parent run id, parent step id, and token hash must all match
- * @returns `true` only when `linkage.kind === 'delegation'` and every identifying field matches `claim`; `false` otherwise
- */
-function linkageMatchesClaim(linkage: RunbookState['parentLinkage'], claim: ClaimRecord): boolean {
-  if (!claim.delegation) {
-    return false;
-  }
-  return (
-    linkage?.kind === 'delegation' &&
-    linkage.parentRunId === claim.delegation.parentRunId &&
-    linkage.parentStepId === claim.delegation.parentStepId &&
-    linkage.tokenHash === claim.delegation.tokenHash
-  );
 }
 
 function verifiedClaimFromRecord(record: ClaimRecord): VerifiedClaim {
@@ -1008,41 +993,51 @@ export class SessionService {
    * Run a parent-advancing transition write atomically with the
    * open-delegated-children check.
    *
-   * Re-validates that the parent has no open claimed children, then runs the
-   * supplied decisive advance write.
+   * The check IS atomic with the decisive write: the `advance` callback receives
+   * a {@link ParentAdvanceGuard} it MUST pass into its store write, so the
+   * open-delegated-children predicate is evaluated inside that write's
+   * transaction, immediately before the run `UPDATE`. A claim committing in the
+   * window between this method's cheap pre-check and the decisive write no longer
+   * slips through: the guarded write finds the live child and aborts (rollback),
+   * surfacing here as `open_delegated_children`. This restores the lock-era
+   * invariant — claim-first ⇒ advance refuses, and the claimant's bearer is
+   * preserved — without holding a transaction across the async advance compute.
    *
-   * NOT one atomic critical section, and deliberately so. This previously held the
-   * session file lock across both steps; a transaction cannot replace that,
-   * because `advance` is asynchronous and a transaction must never be held across
-   * an `await`. A concurrent {@link claimRunbook} can therefore now commit between
-   * the check and the write.
+   * The leading `listOpenClaimsForParent` call is a cheap pre-check fast-path (a
+   * clean early refusal and better UX); the in-transaction guard supplied to the
+   * callback is the authoritative, race-closing refusal.
    *
-   * That widened window does not admit a new outcome. The lock-held version
-   * already tolerated the reverse interleaving — advance first, claim second — and
-   * the recovery for it is what still applies here: the late claim records, but it
-   * lands against an already-resolved substep, so
-   * {@link listOpenClaimsForParent} stops counting it as open and it cannot wedge
-   * future bare parent transitions. The check is defence-in-depth over a design
-   * that is already safe against the race, not the thing making it safe.
+   * The `advance` callback MUST pass the supplied guard into the DECISIVE
+   * transition write (e.g. `RunbookCompletionService.recordManualCompletion` or
+   * `RunbookActorService.sendAndSync`) and into no other write.
    *
-   * The `advance` callback MUST perform only the decisive transition write
-   * (e.g. `RunbookCompletionService.recordManualCompletion` or
-   * `RunbookActorService.sendAndSync`). Downstream drain/release steps run
-   * afterwards.
+   * A callback may legitimately span more than one store write: a drain applies
+   * each queued completion in its own transaction. Only the first is decisive —
+   * the write that advances the parent past the point where a live delegated
+   * child matters. Re-arming the guard on a follow-on write would let an
+   * unrelated child claiming mid-callback abort it, stranding the
+   * already-committed decisive write behind a bare `open_delegated_children`
+   * refusal that reports none of the transitions it committed. Both drain loops
+   * enforce this by arming the guard on their first write only
+   * (`RunbookCompletionService.drainResolvedCompletionsUnlocked` and
+   * `LifecycleCommandService#drainSubstepObservations`), which composes to
+   * exactly one guarded write per scope however the two interleave.
+   *
+   * Release steps run after the callback returns.
    *
    * @template T - Result type of the decisive advance write
    * @param parentRunId - Parent runbook whose advance must be guarded
-   * @param advance - Decisive transition write, run under the lock only when no
-   *   open claimed children remain
+   * @param advance - Decisive transition write. Receives the guard to thread into
+   *   its store write; runs only when the pre-check finds no open claimed children.
    * @returns `{ kind: 'advanced', value }` carrying the callback result;
    *   `{ kind: 'delegation_collection_pending', parentRunId, outcomeCompletionKeys, message }`
    *   when a reported delegation outcome is still waiting for collection; or
    *   `{ kind: 'open_delegated_children', claims }` when the advance was refused
-   *   by an open claimed child
+   *   by an open claimed child (pre-check or the in-transaction guard).
    */
   async runGuardedParentAdvance<T>(
     parentRunId: RunId,
-    advance: () => Promise<T>,
+    advance: (guard: ParentAdvanceGuard) => Promise<T>,
   ): Promise<
     | { readonly kind: 'advanced'; readonly value: T }
     | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
@@ -1065,11 +1060,21 @@ export class SessionService {
         };
       }
     }
+    // Cheap pre-check fast-path (defence-in-depth / UX). Authority is the
+    // in-transaction guard threaded into the decisive write below.
     const openClaims = await this.listOpenClaimsForParent(parentRunId);
     if (openClaims.length > 0) {
       return { kind: 'open_delegated_children', claims: openClaims };
     }
-    return { kind: 'advanced', value: await advance() };
+    const guard = parentAdvanceGuard(parentRunId);
+    try {
+      return { kind: 'advanced', value: await advance(guard) };
+    } catch (error: unknown) {
+      if (isOpenDelegatedChildrenError(error)) {
+        return { kind: 'open_delegated_children', claims: [...error.claims] };
+      }
+      throw error; // never mask a non-guard failure
+    }
   }
 
   /**

@@ -5,6 +5,7 @@ import type { ExecutionLifecycleService } from './execution-lifecycle-service.js
 import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
 import { merge } from './state-update-ops.js';
 import type { RunbookStateManager } from './state.js';
+import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import {
   SENTINEL_ENTRY,
   activeFrame,
@@ -278,6 +279,14 @@ export interface DrainResolvedCompletionsArgs {
    * applicable completions.
    */
   readonly maxApplied?: number;
+  /**
+   * Optional parent-advance guard threaded into each applied completion's store
+   * write. Supplied only when the drain IS the decisive parent-advancing write —
+   * that is, when the preceding record short-circuited as a duplicate and so
+   * evaluated no guard of its own. When present, a live delegated child aborts
+   * the write inside its transaction.
+   */
+  readonly guard?: ParentAdvanceGuard;
 }
 
 /** Result of a resolved-completion drain pass. */
@@ -472,12 +481,17 @@ export class RunbookCompletionService {
    * non-reentrant, so re-acquiring here would deadlock.
    *
    * @param args - Manual completion target and result
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
    * @returns Whether a completion was recorded or already existed
    */
-  async recordManualCompletion(args: RecordManualCompletionArgs): Promise<RecordCompletionResult> {
+  async recordManualCompletion(
+    args: RecordManualCompletionArgs,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
+  ): Promise<RecordCompletionResult> {
     const lock = new CompletionLock(this.manager.cwd);
     await using _guard = await lock.scope(args.runbookId);
-    return await this.recordManualCompletionUnlocked(args);
+    return await this.recordManualCompletionUnlocked(args, options);
   }
 
   /**
@@ -490,10 +504,13 @@ export class RunbookCompletionService {
    * the lock must use {@link recordManualCompletion}.
    *
    * @param args - Manual completion target and result
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
    * @returns Whether a completion was recorded or already existed
    */
   async recordManualCompletionUnlocked(
     args: RecordManualCompletionArgs,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RecordCompletionResult> {
     const existingKey = await this.findExistingCompletion(args.runbookId, {
       frame: args.targetFrame,
@@ -548,17 +565,21 @@ export class RunbookCompletionService {
     // `done` substep state, and a concurrent delete between them flips the
     // missing-parent behavior. updateWithState throws if the parent is gone,
     // which is the intended fail-closed semantics for recording a completion.
-    await this.manager.updateWithState(args.runbookId, (freshParent) => {
-      return {
-        resolvedCompletions: merge({ [key]: completion }),
-        substepStates: upsertSubstepState(
-          freshParent.substepStates ?? [],
-          args.targetSubstep,
-          args.targetFrame.frameKey,
-          { status: 'done', result: args.result },
-        ),
-      };
-    });
+    await this.manager.updateWithState(
+      args.runbookId,
+      (freshParent) => {
+        return {
+          resolvedCompletions: merge({ [key]: completion }),
+          substepStates: upsertSubstepState(
+            freshParent.substepStates ?? [],
+            args.targetSubstep,
+            args.targetFrame.frameKey,
+            { status: 'done', result: args.result },
+          ),
+        };
+      },
+      guardOptions(options.guard),
+    );
 
     return { status: 'recorded', key };
   }
@@ -811,11 +832,24 @@ export class RunbookCompletionService {
       const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
       if (!(currentCursorValidatedBrand in validated)) return { ...validated, unresolved, applied };
 
-      const result = await this.actorService.sendAndSync(args.runbookId, args.steps, {
-        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-        completionKey: current.key,
-        completion: validated,
-      });
+      const result = await this.actorService.sendAndSync(
+        args.runbookId,
+        args.steps,
+        {
+          type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+          completionKey: current.key,
+          completion: validated,
+        },
+        // Only the DECISIVE write carries the guard, and that is the first apply:
+        // it is the one that advances the parent past the point where a live
+        // delegated child matters. Every apply here is its own transaction, so
+        // re-arming the guard on a follow-on apply would let an unrelated child
+        // claiming mid-drain abort it and strand the already-committed first apply
+        // behind a bare refusal. This mirrors the recorded path, where the drain
+        // that follows a committed decisive write runs unguarded for the same
+        // reason (see LifecycleCommandService#driveSubstep).
+        guardOptions(applied.length === 0 ? args.guard : undefined),
+      );
       if (!result) {
         return { status: 'continue', state, unresolved, applied };
       }

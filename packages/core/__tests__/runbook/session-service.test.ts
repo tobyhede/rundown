@@ -15,6 +15,7 @@ import {
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  findSubstepState,
 } from '../../src/runbook/targeting.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
@@ -1786,19 +1787,11 @@ describe('SessionService', () => {
       expect(result).toEqual({ kind: 'advanced', value: 'ok' });
     });
 
-    it('does not let a claim that interleaves with the guarded advance wedge the parent', async () => {
-      // REPLACES a test that asserted mutual exclusion: the guarded advance used to
-      // hold the session file lock across its check AND the advance write, so a
-      // concurrent claim provably could not interleave. A transaction cannot span
-      // the advance (it is async, and a transaction must never be held across an
-      // await), so the claim CAN now land in that window.
-      //
-      // The safety argument never rested on the exclusion. The lock-era code already
-      // tolerated the reverse interleaving — advance first, claim second — and this
-      // pins the recovery that made it safe then and still does now: a claim that
-      // lands against an already-resolved substep stops counting as open, so it
-      // cannot wedge future bare parent transitions. If that recovery ever breaks,
-      // the orphaned claim becomes permanent and every later advance is refused.
+    it('refuses the guarded advance when a claim commits inside the window, preserving the bearer', async () => {
+      // REWRITES the former test that asserted the claim was superseded and the advance
+      // succeeded — that was the defect. The check is now atomic with the decisive write:
+      // a claim committing before the write refuses the advance and keeps the bearer, exactly
+      // as the retired session lock did (claim-first ⇒ advance refused).
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -1810,42 +1803,86 @@ describe('SessionService', () => {
 
       // A second SessionService models a second process racing the same database.
       const claimant = new SessionService(new RunbookStateManager(testDir));
-
-      // Claim from inside the advance window — the interleaving the lock forbade.
       const linkage = linkageFor(parent.id, 'a');
-      // Seed the parent's live delegation so the racing claim passes the R2
-      // claim-side latch; the advance below then resolves that same substep.
+      // Seed the parent's live delegation so the racing claim passes the R2 claim-side latch.
       await seedLiveDelegation(manager, linkage);
+
       let claimed:
         | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
         | undefined;
-      const advanceResult = await sessionService.runGuardedParentAdvance(parent.id, async () => {
-        claimed = assertClaimed(await claimant.claimRunbook(child.id, linkage));
-        // The decisive write the guard protects: resolve the delegated substep.
-        await manager.update(parent.id, {
-          substepStates: [
+
+      const advanceResult = await sessionService.runGuardedParentAdvance(
+        parent.id,
+        async (guard) => {
+          // Claim commits INSIDE the window, before the guarded decisive write.
+          claimed = assertClaimed(await claimant.claimRunbook(child.id, linkage));
+          // The decisive write, carrying the guard: resolve the delegated substep.
+          await manager.update(
+            parent.id,
             {
-              id: linkage.parentStepId,
-              frameKey: linkage.parentFrameKey,
-              status: 'done',
-              result: 'pass',
+              substepStates: [
+                {
+                  id: linkage.parentStepId,
+                  frameKey: linkage.parentFrameKey,
+                  status: 'done',
+                  result: 'pass',
+                },
+              ],
             },
-          ],
-        });
-        return 'advanced';
-      });
+            { guard },
+          );
+          return 'advanced';
+        },
+      );
 
-      // The claim did commit — this is a real interleave, not a race that missed.
+      // The claim did commit — a real interleave — and the guard refused the advance.
       expect(claimed?.claim.controlledRunId).toBe(child.id);
-      expect(advanceResult).toEqual({ kind: 'advanced', value: 'advanced' });
+      expect(advanceResult.kind).toBe('open_delegated_children');
+      if (advanceResult.kind === 'open_delegated_children') {
+        expect(advanceResult.claims.map((c) => c.controlledRunId)).toEqual([child.id]);
+      }
 
-      // ...and it is NOT counted as open, because the parent already resolved the
-      // substep it references. This is the whole recovery.
-      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+      // The claimant's bearer is still ACTIVE — not superseded.
+      const verification = await claimant.verifyClaimId(assertClaimId(claimed!.claimId));
+      expect(verification.status).toBe('verified');
 
-      // Therefore the next bare parent advance is not wedged by the orphan.
-      const next = await sessionService.runGuardedParentAdvance(parent.id, async () => 'again');
-      expect(next).toEqual({ kind: 'advanced', value: 'again' });
+      // The parent did NOT advance: the decisive write rolled back. Asserted as the
+      // EXACT post-rollback value, not `not.toBe('done')` — the negative also holds
+      // when the parent fails to load or the substep vanishes, neither of which is
+      // the rollback being proven. `seedLiveDelegation` left this substep 'running'.
+      const parentAfter = await manager.load(parent.id);
+      expect(parentAfter).toBeDefined();
+      expect(
+        findSubstepState(
+          parentAfter?.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+        )?.status,
+      ).toBe('running');
+
+      // The child is intact — still running, not merely "not terminal".
+      const childAfter = await manager.load(child.id);
+      expect(childAfter?.lifecycle).toBe('running');
+    });
+
+    it('propagates a non-guard failure from the advance unchanged', async () => {
+      // The catch narrows on OpenDelegatedChildrenError and rethrows everything else.
+      // Without that narrowing, ANY failure raised inside the decisive write — a
+      // schema rejection on corrupt state, a driver error, a bug in sendAndSync —
+      // would reach the caller as `open_delegated_children`: a refusal naming a cause
+      // that did not occur, against a claim list read off an unrelated error object.
+      // That is the RD-102 masking class, and the failure would be lost entirely.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      const failure = new Error('the decisive write failed');
+      // toBe, not toThrow: the contract is that the SAME error object surfaces, not
+      // merely that something with a matching message does.
+      await expect(
+        sessionService.runGuardedParentAdvance(parent.id, () => Promise.reject(failure)),
+      ).rejects.toBe(failure);
     });
 
     it('refuses the advance when a delegation outcome is waiting for collection', async () => {
