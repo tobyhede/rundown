@@ -1636,6 +1636,80 @@ describe('collect command', () => {
         lifecycle: 'stopped',
       });
     }, 40_000);
+
+    // #602/#603 on the COLLECT path. The other two INLINE_PARENT_CYCLE tests
+    // (complete.test.ts) both run through delegation-completion adapters, which
+    // flush immediately after `emitLinkageCycleDiagnostic`; collect renders the
+    // trip itself and so owns its own flush. Ordering is the whole point of this
+    // test: `output.error` only ACCUMULATES into the JSON renderer, while
+    // `renderAppliedOutcome` writes the action object through `output.json`,
+    // which bypasses the accumulator. Without the flush at the render point the
+    // trailing flush emits the diagnostic AFTER the action object, silently
+    // breaking the "action object is the last line" contract
+    // (docs/spec/cli-output.md) — and doing so only in JSON mode, since
+    // TextRenderer writes on render and its `flush` is a no-op.
+    it('emits the linkage-cycle diagnostic BEFORE the applied action object and fails closed', async () => {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), COLLECTING_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'collecting-gate.runbook.md'), COLLECTING_GATE);
+
+      const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+
+      // Stage 1 passes -> the pipeline CONTINUEs into the inline gate child G.
+      await claimAndReportActiveDelegation('pass');
+      expect(
+        (await runCliInProcess(await withRunTarget(['collect'], workspace), workspace)).exitCode,
+      ).toBe(0);
+      const gate = await getActiveState(workspace);
+      expect(gate!.parentLinkage?.kind).toBe('inline');
+
+      // The back-edge: G's inline parent is now ITSELF. No command sequence can
+      // author this (the linkage graph is a tree by construction) — corrupt
+      // persisted state is exactly what the #602 guard exists for.
+      await patchPersistedRunState(workspace.cwd, gate!.id, (current) => ({
+        ...current,
+        parentLinkage: {
+          ...(current.parentLinkage as Record<string, unknown>),
+          parentRunId: gate!.id,
+        },
+      }));
+
+      // Collecting G drives it terminal, so core's collect terminal branch walks
+      // the linkage upward, trips the guard, and returns the trip as data on
+      // `terminalInlineAdvance` (#603).
+      await claimAndReportActiveDelegation('pass');
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+
+      // Fail closed at the PROCESS boundary: 'linkage-cycle' collapses onto the
+      // CLI's pre-existing 'blocked'.
+      expect(collected.exitCode).not.toBe(0);
+
+      const objects = parseConcatenatedJson(collected.stdout).filter(
+        (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+      );
+      const cycleIndex = objects.findIndex((o) => o.code === 'INLINE_PARENT_CYCLE');
+      const appliedIndex = objects.findIndex((o) => o.kind === 'collect' && o.status === 'applied');
+
+      // The operator must be told WHICH run to prune; an unnamed refusal carries
+      // no recovery path.
+      expect(cycleIndex).toBeGreaterThanOrEqual(0);
+      expect(objects[cycleIndex]).toMatchObject({
+        code: 'INLINE_PARENT_CYCLE',
+        details: { cause: 'repeat', runId: gate!.id },
+      });
+
+      // The ordering pin. Both assertions fail if the flush is dropped.
+      expect(appliedIndex).toBeGreaterThan(cycleIndex);
+      expect(objects.at(-1)).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+      });
+    }, 40_000);
   });
 
   describe('claim-id validation', () => {
