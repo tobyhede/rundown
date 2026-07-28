@@ -75,11 +75,22 @@ const closingStores = new Set<ClosingStore>();
 /**
  * Apply owner-only permissions to the database and any existing sidecars.
  *
+ * A filesystem with no mode concept — FAT volumes, network mounts, container
+ * bridges — either succeeds as a no-op or reports it as one of
+ * `ENOSYS`/`ENOTSUP`/`EOPNOTSUPP`, so the tolerated set costs nothing there.
+ * Everything else, notably `EPERM`/`EACCES`, reaches here only when the file is
+ * genuinely owned by someone else: a real permission anomaly on a file holding
+ * hashed claim secrets, so it fails the open. That is a deliberate divergence
+ * from the best-effort precedent the domain locks use — a lock whose mode cannot
+ * be set still locks, whereas a database that cannot be made owner-only stays
+ * readable by other users for the rest of its life.
+ *
  * @param target - Main SQLite database path.
+ * @throws {Error} When a mode cannot be applied for any reason but the above.
  */
 async function hardenDatabaseFileMode(target: string): Promise<void> {
   await Promise.all(
-    [target, `${target}-wal`, `${target}-shm`].map(async (file, index) => {
+    [target, `${target}-wal`, `${target}-shm`].map(async (file) => {
       try {
         await fs.chmod(file, 0o600);
       } catch (err) {
@@ -89,7 +100,9 @@ async function hardenDatabaseFileMode(target: string): Promise<void> {
         ) {
           return;
         }
-        if (index > 0 && isNodeError(err) && err.code === 'ENOENT') return;
+        // The sidecars exist only while a WAL connection is open; the database
+        // itself was just created by the driver, so its absence is not routine.
+        if (file !== target && isNodeError(err) && err.code === 'ENOENT') return;
         throw err;
       }
     }),

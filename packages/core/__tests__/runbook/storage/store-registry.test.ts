@@ -12,6 +12,20 @@ import {
 } from '../../../src/runbook/storage/store-registry.js';
 
 const roots: string[] = [];
+const pendingDisposalReleases = new Set<() => void>();
+
+/** Track a blocking disposal gate so shared teardown cannot wait on itself. */
+function trackDisposalRelease(resolve: () => void): () => void {
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    pendingDisposalReleases.delete(release);
+    resolve();
+  };
+  pendingDisposalReleases.add(release);
+  return release;
+}
 
 async function newRoot(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-registry-'));
@@ -19,7 +33,26 @@ async function newRoot(): Promise<string> {
   return dir;
 }
 
+/**
+ * Yield the event loop long enough that an UNSERIALIZED reopen would have
+ * settled, so a `settled === false` assertion after this means the reopen is
+ * genuinely waiting rather than merely slow.
+ *
+ * A real reopen costs a recursive `mkdir`, a driver open, and three `chmod`s —
+ * measured at 5-11 turns on this codebase, so 20 is a 2-3x margin. It is not a
+ * race either way: a correctly serialized reopen is blocked on a promise the
+ * test itself resolves, so it stays pending for any number of turns.
+ */
+async function drainTurns(turns = 20): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 afterEach(async () => {
+  for (const release of pendingDisposalReleases) release();
+  pendingDisposalReleases.clear();
+  jest.restoreAllMocks();
   await closeRunbookStores();
   await Promise.all(roots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
@@ -200,7 +233,7 @@ describe('runbook store registry', () => {
     });
     let releaseDisposal!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      releaseDisposal = resolve;
+      releaseDisposal = trackDisposalRelease(resolve);
     });
     const disposeSpy = jest
       .spyOn(first.driver, Symbol.asyncDispose)
@@ -217,9 +250,7 @@ describe('runbook store registry', () => {
       reopenSettled = true;
       return opened;
     });
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     const settledBeforeRelease = reopenSettled;
     releaseDisposal();
     const [, reopened] = await Promise.all([closing, reopening]);
@@ -246,7 +277,7 @@ describe('runbook store registry', () => {
     });
     let releaseDisposal!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      releaseDisposal = resolve;
+      releaseDisposal = trackDisposalRelease(resolve);
     });
     jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
       enterDisposal();
@@ -261,9 +292,7 @@ describe('runbook store registry', () => {
       reopenSettled = true;
       return opened;
     });
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     const settledBeforeRelease = reopenSettled;
     releaseDisposal();
     const [, reopened] = await Promise.all([closing, reopening]);
@@ -284,7 +313,7 @@ describe('runbook store registry', () => {
     });
     let release!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      release = resolve;
+      release = trackDisposalRelease(resolve);
     });
     jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
       entered();
@@ -299,9 +328,7 @@ describe('runbook store registry', () => {
       settled = true;
       return opened;
     });
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     expect(settled).toBe(false);
     release();
     await Promise.all([closing, reopening]);
@@ -327,7 +354,7 @@ describe('runbook store registry', () => {
     });
     let releaseDisposal!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      releaseDisposal = resolve;
+      releaseDisposal = trackDisposalRelease(resolve);
     });
     jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
       enterDisposal();
@@ -348,9 +375,7 @@ describe('runbook store registry', () => {
       reopenSettled = true;
       return opened;
     });
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     const settledBeforeRelease = reopenSettled;
     releaseDisposal();
     const [, reopened] = await Promise.all([closing, reopening]);
@@ -383,7 +408,7 @@ describe('runbook store registry', () => {
     });
     let release!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      release = resolve;
+      release = trackDisposalRelease(resolve);
     });
     jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
       entered();
@@ -411,7 +436,7 @@ describe('runbook store registry', () => {
     });
     let release!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      release = resolve;
+      release = trackDisposalRelease(resolve);
     });
     jest.spyOn(second.driver, Symbol.asyncDispose).mockImplementation(async () => {
       entered();
@@ -426,9 +451,7 @@ describe('runbook store registry', () => {
       settled = true;
       return opened;
     });
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     expect(settled).toBe(false);
     release();
     await Promise.all([closing, reopening]);
@@ -444,7 +467,7 @@ describe('runbook store registry', () => {
     });
     let release!: () => void;
     const disposalReleased = new Promise<void>((resolve) => {
-      release = resolve;
+      release = trackDisposalRelease(resolve);
     });
     jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
       entered();
@@ -458,12 +481,35 @@ describe('runbook store registry', () => {
     const closingAll = closeRunbookStores().then(() => {
       closeAllSettled = true;
     });
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     expect(closeAllSettled).toBe(false);
     release();
     await Promise.all([closingOne, closingAll]);
+  });
+
+  it('shared teardown releases a blocking disposal gate', async () => {
+    const cwd = await newRoot();
+    const first = await openRunbookStore(cwd, { runtime: 'native' });
+    const originalDispose = first.driver[Symbol.asyncDispose].bind(first.driver);
+    let entered!: () => void;
+    const disposalEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const disposalReleased = new Promise<void>((resolve) => {
+      release = trackDisposalRelease(resolve);
+    });
+    jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
+      entered();
+      await disposalReleased;
+      await originalDispose();
+    });
+
+    void closeRunbookStore(cwd);
+    await disposalEntered;
+    // Deliberately leave the gate blocked: this test completes only if afterEach
+    // releases tracked gates before waiting for registry disposal.
+    expect(release).toBeDefined();
   });
 
   it('waits for an overlapping close-reopen-close chain before reopening again', async () => {
@@ -476,7 +522,7 @@ describe('runbook store registry', () => {
     });
     let releaseFirstClose!: () => void;
     const firstCloseReleased = new Promise<void>((resolve) => {
-      releaseFirstClose = resolve;
+      releaseFirstClose = trackDisposalRelease(resolve);
     });
     jest.spyOn(first.driver, Symbol.asyncDispose).mockImplementation(async () => {
       enterFirstClose();
@@ -493,8 +539,11 @@ describe('runbook store registry', () => {
     });
     let releaseSecondClose!: () => void;
     const secondCloseReleased = new Promise<void>((resolve) => {
-      releaseSecondClose = resolve;
+      releaseSecondClose = trackDisposalRelease(resolve);
     });
+    // Attach this continuation before `secondClose`: promise callbacks run in
+    // registration order, so the disposal spy is installed before that close's
+    // `await entry.opening` continuation can dispose the reopened driver.
     const reopeningForSecondClose = openRunbookStore(cwd, { runtime: 'native' }).then((opened) => {
       const originalDispose = opened.driver[Symbol.asyncDispose].bind(opened.driver);
       jest.spyOn(opened.driver, Symbol.asyncDispose).mockImplementation(async () => {
@@ -513,9 +562,7 @@ describe('runbook store registry', () => {
     });
     releaseFirstClose();
     await secondCloseEntered;
-    for (let turn = 0; turn < 20; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await drainTurns();
     const settledBeforeSecondClose = finalReopenSettled;
     releaseSecondClose();
     const [, reopenedThenClosed, , final] = await Promise.all([

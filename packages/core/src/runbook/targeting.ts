@@ -171,24 +171,23 @@ export function buildFrameKey(step: string, iteration?: number): FrameKey {
   return `${step}|${iterationPart}` as FrameKey;
 }
 
-/** Shape every {@link buildFrameKey} result matches: `<step>|<iteration-or-empty>`. */
-const FRAME_KEY_PATTERN = /^[^|]+\|(?:\d+)?$/;
-
 /**
- * Validate a frame key string arriving from an untrusted edge.
+ * Whether a string has the shape every {@link buildFrameKey} result matches:
+ * `<step>|<iteration-or-empty>`.
  *
- * Lives beside {@link buildFrameKey} so the format has one owner: a validator
- * that restated the pattern elsewhere would drift the day the format changes.
+ * Lives beside {@link buildFrameKey} so the format has one owner — a pattern
+ * restated at a consumer would drift the day the format changes. `FrameKeySchema`
+ * in `schemas.ts` is its sole caller, refusing every malformed frame key that
+ * arrives from the untrusted persisted-state edge.
+ *
+ * The step segment is any run of non-pipe characters: what a step may be *named*
+ * is the parser's constraint, not this format's.
  *
  * @param value - Raw frame key string.
- * @returns The validated frame key.
- * @throws {Error} When the value is not in `<step>|<iteration-or-empty>` form.
+ * @returns Whether the value is well-formed.
  */
-export function assertFrameKey(value: string): FrameKey {
-  if (!FRAME_KEY_PATTERN.test(value)) {
-    throw new Error(`Invalid frame key: ${JSON.stringify(value)}`);
-  }
-  return value as FrameKey;
+export function isFrameKey(value: string): boolean {
+  return /^[^|]+\|(?:\d+)?$/.test(value);
 }
 
 /**

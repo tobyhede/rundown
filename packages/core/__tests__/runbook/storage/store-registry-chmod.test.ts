@@ -100,9 +100,9 @@ describe('store registry database-file permission hardening', () => {
   });
 
   it.each([
-    errno('EACCES'),
-    new Error('unexpected chmod failure'),
-  ])('rejects a non-ENOENT sidecar failure: $message', async (failure) => {
+    { label: 'a permission error', failure: errno('EACCES') },
+    { label: 'an untyped error', failure: new Error('unexpected chmod failure') },
+  ])('rejects $label on a sidecar', async ({ failure }) => {
     const cwd = await newRoot();
     chmodMock.mockImplementation(async (file, mode) => {
       if (String(file).endsWith('-wal')) throw failure;

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { isError } from '../../../src/errors.js';
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 
 jest.unstable_mockModule('../../../src/runbook/storage/sqljs-driver.js', () => ({
@@ -35,9 +36,7 @@ describe('openRunbookDriver sql.js startup failure', () => {
 
     expect(rejection).toBeInstanceOf(SqljsUnavailableError);
     expect((rejection as Error).name).toBe('SqljsUnavailableError');
-    expect((rejection as Error).message).toContain(
-      failure instanceof Error ? failure.message : failure,
-    );
+    expect((rejection as Error).message).toContain(isError(failure) ? failure.message : failure);
     expect((rejection as Error).cause).toBe(failure);
     expect(mockedNativeOpen).not.toHaveBeenCalled();
   });

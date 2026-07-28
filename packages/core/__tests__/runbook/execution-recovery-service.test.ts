@@ -313,6 +313,10 @@ describe('ExecutionRecoveryService', () => {
     if (corruption === 'missing') {
       const raw = new DatabaseSync(path.join(dir, 'rundown.db'));
       try {
+        // A second connection to a database the store's driver holds open. It
+        // inherits none of that driver's pragmas, so it would fail instantly on
+        // any contention rather than waiting for it.
+        raw.exec('PRAGMA busy_timeout = 5000');
         raw.exec('PRAGMA foreign_keys = OFF');
         raw
           .prepare('DELETE FROM execution_attempts WHERE run_id = :runId AND exec_epoch = :epoch')

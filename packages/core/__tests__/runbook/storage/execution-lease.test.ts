@@ -361,7 +361,42 @@ describe('PID-aware dead-owner recovery', () => {
 
     const recovered = await lease.recoverDeadOwner(state.id);
 
-    expect(recovered.kind).toBe('missing');
+    // Distinct from `missing`: the run still names an owner, so the obstruction a
+    // waiter is blocked on is fully intact. Reporting absence here is what lets a
+    // caller retry free of charge against a row nothing changed.
+    expect(recovered.kind).toBe('unresolved');
+    const owner = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :id')
+        .get<{ readonly exec_token: string | null }>({ id: state.id }),
+    );
+    expect(owner?.exec_token).not.toBeNull();
+  });
+
+  it('refuses to read an owner whose persisted attempt phase is not a known value', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    // The column CHECK guards the write; this read-edge guard backs it up, so the
+    // narrowed ExecutionPhase names a domain the read actually establishes rather
+    // than one it merely asserts. Only a database corrupted outside this store
+    // reaches it, which is what suspending the constraint reproduces.
+    await store.transaction((txn) => {
+      try {
+        txn.tx.exec('PRAGMA ignore_check_constraints = 1');
+        txn.tx
+          .prepare(
+            "UPDATE execution_attempts SET phase = 'zombie' WHERE run_id = :r AND exec_epoch = :e",
+          )
+          .run({ r: state.id, e: acquired.value.epoch });
+      } finally {
+        txn.tx.exec('PRAGMA ignore_check_constraints = 0');
+      }
+    });
+
+    await expect(lease.recoverDeadOwner(state.id)).rejects.toThrow(
+      'Invalid persisted execution phase: "zombie"',
+    );
   });
 
   it('returns missing for an absent run', async () => {
@@ -520,6 +555,37 @@ describe('default contention policy and finite wait', () => {
     expect(result.kind).toBe('committed');
     expect(progress).toEqual([]);
     expect(clock.sleeps).toEqual([]);
+  });
+
+  it('charges an attempt when recovery cannot resolve the observed dead owner', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await lease.markEffectStarted(acquired.value);
+    await setOwnerPid(state.id, deadPid());
+    // The observed attempt left the recoverable phases WITHOUT releasing the run,
+    // so the exact-tuple CAS matches nothing and changes nothing. Retrying that
+    // free of charge re-runs an identical observation with no exit but the wall
+    // clock — and on virtual time, no exit at all.
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          "UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :r AND exec_epoch = :e",
+        )
+        .run({ r: state.id, e: acquired.value.epoch });
+    });
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+    const { lease: waiting, clock, progress } = instrumentedLease();
+
+    const result = await waiting.acquire(recap.authority, process.pid, {
+      budgetMs: 30,
+      backoff: () => 10,
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect(clock.sleeps).toEqual([10, 10, 10]);
+    expect(progress).toHaveLength(3);
   });
 
   it('retries on a schedule of delays capped to the remaining budget', async () => {

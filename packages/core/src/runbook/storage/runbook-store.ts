@@ -60,8 +60,24 @@ const CLAIM_STATUSES = ['active', 'superseded'] as const;
 /** Persisted claim status: authority, or a retained tombstone. */
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
+const EXECUTION_PHASES = ['claimed', 'effect_started', 'recovery_pending', 'committed'] as const;
+
 /** Execution phases persisted in `execution_attempts.phase`. */
-export type ExecutionPhase = 'claimed' | 'effect_started' | 'recovery_pending' | 'committed';
+export type ExecutionPhase = (typeof EXECUTION_PHASES)[number];
+
+/**
+ * Validate an execution phase string read from the column.
+ *
+ * @param value - Raw phase string.
+ * @returns The validated phase.
+ * @throws {Error} When the value is not a known execution phase.
+ */
+export function assertExecutionPhase(value: string): ExecutionPhase {
+  if (!EXECUTION_PHASES.includes(value as ExecutionPhase)) {
+    throw new Error(`Invalid persisted execution phase: ${JSON.stringify(value)}`);
+  }
+  return value as ExecutionPhase;
+}
 
 /** Attempt budget for an optimistic {@link RunbookStore.mutateState} cycle. */
 const DEFAULT_MUTATE_ATTEMPTS = 8;
@@ -1270,8 +1286,17 @@ export class RunbookStore {
    *
    * Persists the `recoveryRequired` snapshot (lifecycle stays `running`), closes
    * the exact recovery attempt as committed with its reason and finish time, and
-   * clears active ownership atomically. If either exact row was superseded, the
-   * transaction rolls back rather than committing only half of the recovery.
+   * clears active ownership atomically.
+   *
+   * The two guards refuse differently because they mean different things. When the
+   * run no longer names the interrupted epoch, a concurrent recovery already won:
+   * that is ordinary contention, nothing has been written, and it returns a typed
+   * `execution_in_progress`. When the run still names the epoch but its attempt row
+   * has left `recovery_pending`, no writer of `execution_attempts.phase` can have
+   * produced that pairing — both `committed` transitions clear `runs.exec_*` in the
+   * same transaction — so it throws and rolls back the run UPDATE. A typed refusal
+   * there would commit half a recovery: ownership cleared and state advanced, with
+   * the attempt still open.
    *
    * Unlike the three authoritative commit sites, this does not call
    * {@link afterAuthoritativeStateWrite}: restoring an attempt's own snapshot

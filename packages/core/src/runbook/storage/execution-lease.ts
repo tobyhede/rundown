@@ -26,6 +26,7 @@ import {
   selectCommitRow,
   classifyCommitRow,
   assertExactlyOneRow,
+  assertExecutionPhase,
   type ExecutionPhase,
 } from './runbook-store.js';
 import {
@@ -152,12 +153,22 @@ export type AbandonedAttemptOutcome = Extract<
   { readonly kind: 'recovery_required' | 'execution_in_progress' }
 >;
 
-/** Phase-aware dead-owner recovery outcome. */
+/**
+ * Phase-aware dead-owner recovery outcome.
+ *
+ * `missing` and `unresolved` are kept apart because a waiter's retry policy turns
+ * on the difference. `missing` is read-derived — there is no owner tuple at all —
+ * so the next acquisition attempt provably cannot refuse for the same reason.
+ * `unresolved` means the exact-tuple CAS matched nothing and this call changed
+ * nothing, leaving the obstruction fully intact; retrying it without charge would
+ * re-run an identical observation forever.
+ */
 export type DeadOwnerRecovery =
   | { readonly kind: 'reclaimed_pre_effect'; readonly cleared: ClearedAttemptRef }
   | { readonly kind: 'recovery_pending'; readonly runId: RunId; readonly epoch: ExecutionEpoch }
   | { readonly kind: 'alive'; readonly runId: RunId; readonly ownerPid: number }
-  | { readonly kind: 'missing'; readonly runId: RunId };
+  | { readonly kind: 'missing'; readonly runId: RunId }
+  | { readonly kind: 'unresolved'; readonly runId: RunId };
 
 /** Execution ownership operations. */
 export interface ExecutionLeaseService {
@@ -443,7 +454,9 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
    * @param runId - Run needing recovery.
    * @param owner - Observed owner identity.
    * @param epoch - Observed epoch.
-   * @returns The recovery outcome.
+   * @returns `recovery_pending` when the exact-tuple CAS moved the attempt, else
+   *   `unresolved` — the observed attempt has left the recoverable phases while
+   *   the run still names an owner, so nothing was changed here.
    */
   private async markRecoveryPending(
     runId: RunId,
@@ -462,7 +475,12 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
           .run({ runId, epoch, hash: owner.execTokenHash }).changes,
     );
     if (changes !== 1) {
-      return { kind: 'missing', runId };
+      // The observed attempt left the recoverable phases without releasing the
+      // run, so nothing here changed and the run still names an owner. This is
+      // NOT absence: reporting it as such would license a free retry against a
+      // row this call did not touch. Mirrors reclaimPreEffect's CAS miss, which
+      // is likewise conservative rather than optimistic.
+      return { kind: 'unresolved', runId };
     }
     return { kind: 'recovery_pending', runId, epoch };
   }
@@ -503,11 +521,16 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
           message: `Run ${runId} needs recovery before it can be acquired.`,
         };
       }
+      // A free retry is licensed only when THIS iteration provably changed the
+      // obstruction, or provably observed that there is none. Every other outcome
+      // — `alive`, and `unresolved` where the CAS matched nothing — falls through
+      // to the charged path below, because repeating an unchanged observation has
+      // no exit but the wall clock, and none at all on virtual time.
       if (recovery.kind === 'reclaimed_pre_effect') {
         continue; // The dead lease is cleared; retry immediately.
       }
       if (recovery.kind === 'missing') {
-        continue; // Another actor cleared the tuple; retry without waiting.
+        continue; // No owner tuple at all; the next attempt cannot refuse for it.
       }
       attempts += 1;
       const remainingMs = Math.max(0, deadline - this.clock.now());
@@ -611,7 +634,7 @@ function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
       readonly exec_pid: number | null;
       readonly exec_token: string | null;
       readonly exec_epoch: number | null;
-      readonly phase: ExecutionPhase | null;
+      readonly phase: string | null;
     }>({ runId });
   if (row === undefined) {
     return { present: false, execPid: null, execTokenHash: null, execEpoch: null, phase: null };
@@ -621,7 +644,9 @@ function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
     execPid: row.exec_pid,
     execTokenHash: row.exec_token,
     execEpoch: row.exec_epoch,
-    phase: row.phase,
+    // Validated at this edge like every other raw row, so the narrowed union
+    // names a domain the read establishes rather than one it merely asserts.
+    phase: row.phase === null ? null : assertExecutionPhase(row.phase),
   };
 }
 

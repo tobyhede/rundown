@@ -139,9 +139,13 @@ export class ExecutionRecoveryService {
 /**
  * Validate a persisted recovery-reason string.
  *
+ * Exported for unit tests of {@link ExecutionRecoveryService.recover}; not a
+ * public contract.
+ *
  * @param value - Persisted reason, or null.
  * @returns A recognized recovery reason.
  * @throws {InvalidRunbookStateError} When a non-null value is unrecognized.
+ * @internal
  */
 export function validateReason(value: string | null): ExecutionRecoveryReason {
   if (value === null) {
