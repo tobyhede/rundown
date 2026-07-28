@@ -30,7 +30,7 @@ describe('openRunbookDriver sql.js startup failure', () => {
   ])('wraps %p as a typed hard startup refusal without a native fallback', async (failure) => {
     mockedSqljsOpen.mockRejectedValue(failure);
 
-    const rejection = await openRunbookDriver('/tmp/does-not-matter.db', {
+    const rejection = await openRunbookDriver('does-not-matter.db', {
       runtime: 'sqljs',
     }).catch((error: unknown) => error);
 
@@ -66,9 +66,7 @@ describe.each([
       mockedSqljsOpen.mockResolvedValue(driver as Awaited<ReturnType<typeof openSqljsDriver>>);
     }
 
-    await expect(openRunbookDriver('/tmp/does-not-matter.db', { runtime })).rejects.toBe(
-      schemaError,
-    );
+    await expect(openRunbookDriver('does-not-matter.db', { runtime })).rejects.toBe(schemaError);
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
