@@ -509,7 +509,7 @@ describe('runbook store registry', () => {
     await disposalEntered;
     // Deliberately leave the gate blocked: this test completes only if afterEach
     // releases tracked gates before waiting for registry disposal.
-    expect(release).toBeDefined();
+    expect(pendingDisposalReleases.has(release)).toBe(true);
   });
 
   it('waits for an overlapping close-reopen-close chain before reopening again', async () => {

@@ -186,7 +186,7 @@ export function buildFrameKey(step: string, iteration?: number): FrameKey {
  * @param value - Raw frame key string.
  * @returns Whether the value is well-formed.
  */
-export function isFrameKey(value: string): boolean {
+export function isFrameKey(value: string): value is FrameKey {
   return /^[^|]+\|(?:\d+)?$/.test(value);
 }
 

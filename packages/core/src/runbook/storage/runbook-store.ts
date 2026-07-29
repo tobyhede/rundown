@@ -244,7 +244,7 @@ export interface CommitRow {
   /** Active attempt's epoch, or null when unowned. */
   readonly execEpoch: number | null;
   /** Active attempt's phase, or null when unowned. */
-  readonly execPhase: string | null;
+  readonly execPhase: ExecutionPhase | null;
 }
 
 /**
@@ -469,7 +469,7 @@ export function selectCommitRow(
     parentLinkageVersion: raw.parent_linkage_version,
     execToken: raw.exec_token,
     execEpoch: raw.exec_epoch,
-    execPhase: raw.exec_phase,
+    execPhase: raw.exec_phase === null ? null : assertExecutionPhase(raw.exec_phase),
   };
 }
 

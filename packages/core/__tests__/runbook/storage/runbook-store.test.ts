@@ -1448,6 +1448,33 @@ describe('commit-row projection', () => {
     expect(row.claimControlsRun).toBe(false);
     expect(row.claimStatus).toBe('active');
   });
+
+  it('refuses to project an unrecognized persisted execution phase', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const claimKey = assertClaimLookupKey(await mintClaim(state.id, 'b2'.repeat(16)));
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+    // The column CHECK guards the write; this reproduces a database corrupted
+    // outside the store so the commit-row read edge must validate independently.
+    await store.transaction((txn) => {
+      try {
+        txn.tx.exec('PRAGMA ignore_check_constraints = 1');
+        txn.tx
+          .prepare(
+            "UPDATE execution_attempts SET phase = 'zombie' WHERE run_id = :id AND exec_epoch = 1",
+          )
+          .run({ id: state.id });
+      } finally {
+        txn.tx.exec('PRAGMA ignore_check_constraints = 0');
+      }
+    });
+
+    await expect(store.read((txn) => selectCommitRow(txn.tx, state.id, claimKey))).rejects.toThrow(
+      'Invalid persisted execution phase: "zombie"',
+    );
+  });
 });
 
 describe('captureAuthority delegated linkage', () => {

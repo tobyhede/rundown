@@ -18,7 +18,6 @@ import {
   type DelegationClaimLinkage,
 } from './runbook/claim-id.js';
 import { isFrameKey } from './runbook/targeting.js';
-import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonArrayStream, JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
@@ -44,10 +43,7 @@ import { LastActionSchema } from './runbook/last-action.js';
  * corrupt one is refused at the read edge rather than compared — where it would
  * silently match nothing and read as a legitimate absence.
  */
-const FrameKeySchema = z
-  .string()
-  .refine(isFrameKey, { message: 'Invalid frame key' })
-  .transform((v) => v as FrameKey);
+const FrameKeySchema = z.string().refine(isFrameKey, { message: 'Invalid frame key' });
 
 /** Zod schema that parses strings and brands them as {@link RunId}. */
 export const RunIdSchema = z

@@ -12983,25 +12983,30 @@ echo ok
       // them claiming outcomes for substeps the machine now considers pending.
       const machine = compileRunbookToMachine(createRunbook(source));
       const tmp = createActor(machine).start();
-      const baseSnap = tmp.getSnapshot();
+      const baseSnap = tmp.getPersistedSnapshot();
+      const baseContext = tmp.getSnapshot().context;
       tmp.stop();
       const frameKey = buildFrameKey('1');
+      const snapshot = {
+        ...baseSnap,
+        value: 'step::1::2',
+        context: {
+          ...baseContext,
+          substep: '2',
+          substepCompletedCount: 1,
+          deferredResults: ['pass'],
+          activeFrameKey: frameKey,
+          substepStates: [
+            { id: '1', frameKey, status: 'done', result: 'pass' },
+            { id: '2', frameKey, status: 'running' },
+          ],
+        },
+      } satisfies typeof baseSnap & {
+        readonly value: string;
+        readonly context: RunbookContext & Pick<RunbookState, 'activeFrameKey'>;
+      };
       const actor = createActor(machine, {
-        snapshot: {
-          ...baseSnap,
-          value: 'step::1::2',
-          context: {
-            ...baseSnap.context,
-            substep: '2',
-            substepCompletedCount: 1,
-            deferredResults: ['pass'],
-            activeFrameKey: frameKey,
-            substepStates: [
-              { id: '1', frameKey, status: 'done', result: 'pass' },
-              { id: '2', frameKey, status: 'running' },
-            ],
-          },
-        } as never,
+        snapshot,
       }).start();
 
       actor.send({
@@ -13071,14 +13076,19 @@ echo ok
       // leaves it consumed hands the reopened iteration a pre-spent budget.
       const machine = compileRunbookToMachine(createRunbook(forSource));
       const tmp = createActor(machine).start();
-      const baseSnap = tmp.getSnapshot();
+      const baseSnap = tmp.getPersistedSnapshot();
+      const baseContext = tmp.getSnapshot().context;
       tmp.stop();
+      const snapshot = {
+        ...baseSnap,
+        value: 'step::1::1',
+        context: { ...baseContext, iterationRetryCount: 3, retryMax: 3 },
+      } satisfies typeof baseSnap & {
+        readonly value: string;
+        readonly context: RunbookContext;
+      };
       const actor = createActor(machine, {
-        snapshot: {
-          ...baseSnap,
-          value: 'step::1::1',
-          context: { ...baseSnap.context, iterationRetryCount: 3, retryMax: 3 },
-        } as never,
+        snapshot,
       }).start();
       actor.send({
         type: 'EXECUTION_OUTCOME_UNKNOWN',
