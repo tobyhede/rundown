@@ -26,13 +26,13 @@
     "react-dom": "^19.2.7",
     "strip-ansi": "^7.2.0",
     "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4.3.2",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "@tailwindcss/vite": "^4.3.2",
+    "@tailwindcss/vite": "^4.3.3",
     "@webcontainer/snapshot": "^0.1.0",
     "tsx": "^4.23.1"
   }

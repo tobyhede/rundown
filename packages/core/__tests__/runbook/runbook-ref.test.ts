@@ -40,11 +40,10 @@ describe('RunbookRefSchema', () => {
     expect(() => RunbookRefSchema.parse(ref)).toThrow(RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF);
   });
 
-  it.each([
-    'planning/review.md',
-    { path: 'planning/review.md' },
-    { source: 'plugin' },
-  ])('rejects structurally invalid runbook refs %#', (ref) => {
-    expect(() => RunbookRefSchema.parse(ref)).toThrow();
-  });
+  it.each(['planning/review.md', { path: 'planning/review.md' }, { source: 'plugin' }])(
+    'rejects structurally invalid runbook refs %#',
+    (ref) => {
+      expect(() => RunbookRefSchema.parse(ref)).toThrow();
+    },
+  );
 });

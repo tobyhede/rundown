@@ -593,60 +593,64 @@ describe('resolveVariables', () => {
       );
     });
 
-    it.each(
-      RESERVED_IDENTITY_KEY_VARIANTS,
-    )('rejects runtime identity key "%s" from --input', async (name) => {
-      await expect(resolveVariables({ input: [`${name}=shadow`] }, tmpDir)).rejects.toThrow(
-        /reserved runtime variable/i,
-      );
-    });
-
-    it.each(
-      RESERVED_IDENTITY_KEY_VARIANTS,
-    )('rejects runtime identity key "%s" from --input-json', async (name) => {
-      await expect(resolveVariables({ inputJson: [`${name}="shadow"`] }, tmpDir)).rejects.toThrow(
-        /reserved runtime variable/i,
-      );
-    });
-
-    it.each(
-      RESERVED_IDENTITY_KEY_VARIANTS,
-    )('rejects runtime identity key "%s" from --input-file', async (name) => {
-      const varFile = path.join(tmpDir, `${name}.yaml`);
-      await fs.writeFile(varFile, `${name}: shadow\n`);
-
-      await expect(resolveVariables({ inputFile: [`${name}.yaml`] }, tmpDir)).rejects.toThrow(
-        /reserved runtime variable/i,
-      );
-    });
-
-    it.each(
-      RESERVED_IDENTITY_KEY_VARIANTS,
-    )('ignores runtime identity key "%s" from RD_INPUT_*', async (name) => {
-      const envKey = `RD_INPUT_${name}`;
-      const previous = process.env[envKey];
-      process.env[envKey] = 'shadow';
-
-      try {
-        const result = await resolveVariables({}, tmpDir);
-
-        expect(
-          Object.keys(result.vars).some((key) => key.toLowerCase() === name.toLowerCase()),
-        ).toBe(false);
-        expect(
-          Array.from(result.providedKeys).some((key) => key.toLowerCase() === name.toLowerCase()),
-        ).toBe(false);
-        expect(result.warnings.some((w) => w.includes(envKey) && w.includes('reserved'))).toBe(
-          true,
+    it.each(RESERVED_IDENTITY_KEY_VARIANTS)(
+      'rejects runtime identity key "%s" from --input',
+      async (name) => {
+        await expect(resolveVariables({ input: [`${name}=shadow`] }, tmpDir)).rejects.toThrow(
+          /reserved runtime variable/i,
         );
-      } finally {
-        if (previous === undefined) {
-          delete process.env[envKey];
-        } else {
-          process.env[envKey] = previous;
+      },
+    );
+
+    it.each(RESERVED_IDENTITY_KEY_VARIANTS)(
+      'rejects runtime identity key "%s" from --input-json',
+      async (name) => {
+        await expect(resolveVariables({ inputJson: [`${name}="shadow"`] }, tmpDir)).rejects.toThrow(
+          /reserved runtime variable/i,
+        );
+      },
+    );
+
+    it.each(RESERVED_IDENTITY_KEY_VARIANTS)(
+      'rejects runtime identity key "%s" from --input-file',
+      async (name) => {
+        const varFile = path.join(tmpDir, `${name}.yaml`);
+        await fs.writeFile(varFile, `${name}: shadow\n`);
+
+        await expect(resolveVariables({ inputFile: [`${name}.yaml`] }, tmpDir)).rejects.toThrow(
+          /reserved runtime variable/i,
+        );
+      },
+    );
+
+    it.each(RESERVED_IDENTITY_KEY_VARIANTS)(
+      'ignores runtime identity key "%s" from RD_INPUT_*',
+      async (name) => {
+        const envKey = `RD_INPUT_${name}`;
+        const previous = process.env[envKey];
+        process.env[envKey] = 'shadow';
+
+        try {
+          const result = await resolveVariables({}, tmpDir);
+
+          expect(
+            Object.keys(result.vars).some((key) => key.toLowerCase() === name.toLowerCase()),
+          ).toBe(false);
+          expect(
+            Array.from(result.providedKeys).some((key) => key.toLowerCase() === name.toLowerCase()),
+          ).toBe(false);
+          expect(result.warnings.some((w) => w.includes(envKey) && w.includes('reserved'))).toBe(
+            true,
+          );
+        } finally {
+          if (previous === undefined) {
+            delete process.env[envKey];
+          } else {
+            process.env[envKey] = previous;
+          }
         }
-      }
-    });
+      },
+    );
 
     it('reports all reserved key violations in a single error', async () => {
       const error = await resolveVariables({ input: ['Step=a', 'Index=b'] }, tmpDir).catch(
@@ -1636,16 +1640,15 @@ describe('routeExtraVars', () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it.each([
-    '__proto__',
-    'constructor',
-    'prototype',
-  ])('drops poisoned key %s with warning', async (key) => {
-    const result = await routeExtraVars({ [key]: 'injected' }, tmpDir);
-    expect(Object.hasOwn(result.vars, key)).toBe(false);
-    expect(result.warnings.length).toBeGreaterThan(0);
-    expect(result.warnings[0]).toContain('invalid key');
-  });
+  it.each(['__proto__', 'constructor', 'prototype'])(
+    'drops poisoned key %s with warning',
+    async (key) => {
+      const result = await routeExtraVars({ [key]: 'injected' }, tmpDir);
+      expect(Object.hasOwn(result.vars, key)).toBe(false);
+      expect(result.warnings.length).toBeGreaterThan(0);
+      expect(result.warnings[0]).toContain('invalid key');
+    },
+  );
 });
 
 describe('collectCliFlags', () => {

@@ -609,42 +609,42 @@ describe('SessionService', () => {
       }
     });
 
-    it.each([
-      'completed',
-      'stopped',
-    ] as const)('leaves a parked %s child reporting stashed rather than converting it to superseded', async (childLifecycle) => {
-      // The guard inside the stash gate. `reports a parked terminal child as
-      // terminal` below covers the read-only path (`includeStashed: true`), which
-      // skips the gate entirely and therefore never reaches this branch —
-      // mutation testing caught that, with every mutant in the guard surviving.
-      //
-      // A stashed child that is ALSO terminal keeps the outcome it had before
-      // supersession was allowed to outrank the gate: `stashed`. Terminal evidence
-      // is not a closed delegation, and promoting a resolved delegation over it here
-      // would reorder the terminal precedence this change deliberately left alone.
-      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
-        runbookPath: 'parent.md',
-      });
-      const linkage = linkageFor(parent.id, 'a');
-      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
-        runbookPath: 'child.md',
-        parentLinkage: linkage,
-      });
-      const claimed = assertClaimed(
-        await claimLiveDelegation(sessionService, manager, child.id, linkage),
-      );
-      await sessionService.stashRunbook(child.id);
-      await manager.update(child.id, { lifecycle: childLifecycle });
-      // Parent moves on: the delegation now reads closed, and the latch retains the
-      // claim because its controlled child is terminal, so the row stays active.
-      await manager.update(parent.id, { step: '2' });
+    it.each(['completed', 'stopped'] as const)(
+      'leaves a parked %s child reporting stashed rather than converting it to superseded',
+      async (childLifecycle) => {
+        // The guard inside the stash gate. `reports a parked terminal child as
+        // terminal` below covers the read-only path (`includeStashed: true`), which
+        // skips the gate entirely and therefore never reaches this branch —
+        // mutation testing caught that, with every mutant in the guard surviving.
+        //
+        // A stashed child that is ALSO terminal keeps the outcome it had before
+        // supersession was allowed to outrank the gate: `stashed`. Terminal evidence
+        // is not a closed delegation, and promoting a resolved delegation over it here
+        // would reorder the terminal precedence this change deliberately left alone.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'a');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        await sessionService.stashRunbook(child.id);
+        await manager.update(child.id, { lifecycle: childLifecycle });
+        // Parent moves on: the delegation now reads closed, and the latch retains the
+        // claim because its controlled child is terminal, so the row stays active.
+        await manager.update(parent.id, { step: '2' });
 
-      const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
-      expect(resolved.status).toBe('unlinked');
-      if (resolved.status === 'unlinked') {
-        expect(resolved.reason).toBe('stashed');
-      }
-    });
+        const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+        expect(resolved.status).toBe('unlinked');
+        if (resolved.status === 'unlinked') {
+          expect(resolved.reason).toBe('stashed');
+        }
+      },
+    );
 
     it('reports a stashed run-control claim as stashed, with no delegation to classify', async () => {
       // The stash gate's non-delegated early return: `rundown run` mints a
@@ -1109,54 +1109,54 @@ describe('SessionService', () => {
       }
     });
 
-    it.each([
-      'completed',
-      'stopped',
-    ] as const)('claimRunbook reports an existing claim as terminal-child (%s) ahead of the closed delegation', async (childLifecycle) => {
-      // Terminal evidence outlives the parent-side delegation. The parent half
-      // of the latch (`RunbookStore.invalidateClosedDelegatedClaims`) skips a
-      // claim whose child is terminal, so that skip is exactly what leaves this
-      // row active for `claimRunbook` to read — and every terminal child also
-      // reads `closed` on the parent side, so the check order is what decides
-      // which refusal the caller sees. Both terminal lifecycles are driven
-      // because the refusal echoes `lifecycle`, and mutation testing otherwise
-      // leaves the `stopped` half of the guard unpinned.
-      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
-        runbookPath: 'parent.md',
-      });
-      const linkage = linkageFor(parent.id, 'b');
-      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
-        runbookPath: 'child.md',
-        parentLinkage: linkage,
-      });
-      assertClaimed(await claimLiveDelegation(sessionService, manager, child.id, linkage));
+    it.each(['completed', 'stopped'] as const)(
+      'claimRunbook reports an existing claim as terminal-child (%s) ahead of the closed delegation',
+      async (childLifecycle) => {
+        // Terminal evidence outlives the parent-side delegation. The parent half
+        // of the latch (`RunbookStore.invalidateClosedDelegatedClaims`) skips a
+        // claim whose child is terminal, so that skip is exactly what leaves this
+        // row active for `claimRunbook` to read — and every terminal child also
+        // reads `closed` on the parent side, so the check order is what decides
+        // which refusal the caller sees. Both terminal lifecycles are driven
+        // because the refusal echoes `lifecycle`, and mutation testing otherwise
+        // leaves the `stopped` half of the guard unpinned.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'b');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        assertClaimed(await claimLiveDelegation(sessionService, manager, child.id, linkage));
 
-      // The child reaches a terminal lifecycle, then the parent commits the
-      // write that resolves the delegated substep — an authoritative write, so
-      // the parent-side latch runs and skips this claim on its terminal child.
-      await manager.update(child.id, { lifecycle: childLifecycle });
-      await manager.update(parent.id, {
-        substepStates: [
-          {
-            id: linkage.parentStepId,
-            frameKey: linkage.parentFrameKey,
-            status: 'done',
-            result: 'pass',
-          },
-        ],
-      });
-      // Precondition, not decoration: the claim survived the parent commit, so
-      // the re-claim below really does reach the existing-claim arms.
-      await expect(sessionService.findClaimForDelegation(linkage)).resolves.not.toBeNull();
+        // The child reaches a terminal lifecycle, then the parent commits the
+        // write that resolves the delegated substep — an authoritative write, so
+        // the parent-side latch runs and skips this claim on its terminal child.
+        await manager.update(child.id, { lifecycle: childLifecycle });
+        await manager.update(parent.id, {
+          substepStates: [
+            {
+              id: linkage.parentStepId,
+              frameKey: linkage.parentFrameKey,
+              status: 'done',
+              result: 'pass',
+            },
+          ],
+        });
+        // Precondition, not decoration: the claim survived the parent commit, so
+        // the re-claim below really does reach the existing-claim arms.
+        await expect(sessionService.findClaimForDelegation(linkage)).resolves.not.toBeNull();
 
-      const result = await sessionService.claimRunbook(child.id, linkage);
+        const result = await sessionService.claimRunbook(child.id, linkage);
 
-      expect(result.status).toBe('terminal-child');
-      if (result.status === 'terminal-child') {
-        expect(result.childRunId).toBe(child.id);
-        expect(result.lifecycle).toBe(childLifecycle);
-      }
-    });
+        expect(result.status).toBe('terminal-child');
+        if (result.status === 'terminal-child') {
+          expect(result.childRunId).toBe(child.id);
+          expect(result.lifecycle).toBe(childLifecycle);
+        }
+      },
+    );
 
     it('claimRunbook refuses when child has no parent linkage at all', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {

@@ -224,16 +224,19 @@ describe('renderTerminalOutcome', () => {
     ['missing-inline-parent', 'INLINE_PARENT_UNAVAILABLE'],
     ['inline-cycle', 'INLINE_PARENT_CYCLE'],
     ['root-unavailable', 'RUNBOOK_STATE_CHANGED'],
-  ] as const)('renders inline_plan_unavailable (%s) with code %s and exits non-zero', async (reason, code) => {
-    const { exitError, calls } = await render({
-      kind: 'inline_plan_unavailable',
-      reason,
-      message: 'boom',
-      code,
-    });
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe(code);
-  });
+  ] as const)(
+    'renders inline_plan_unavailable (%s) with code %s and exits non-zero',
+    async (reason, code) => {
+      const { exitError, calls } = await render({
+        kind: 'inline_plan_unavailable',
+        reason,
+        message: 'boom',
+        code,
+      });
+      expect(exitError).toBe(true);
+      expect(codeOf(calls, 'error')).toBe(code);
+    },
+  );
 
   it('renders applied_claim completed → metadata + complete, exit 0', async () => {
     const events: TransitionObservationEvent[] = [];

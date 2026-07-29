@@ -301,57 +301,57 @@ describe('ExecutionRecoveryService', () => {
     expect(row?.state_json).not.toContain('exec_token');
   });
 
-  it.each([
-    'missing',
-    'wrong-phase',
-  ] as const)('rolls back the run update when the exact recovery attempt is %s', async (corruption) => {
-    const runId = await intoRecoveryPending();
-    const before = await store.loadRun(runId);
-    if (before === null) throw new Error('missing seeded run');
-    const pending = await store.readPendingRecovery(runId);
-    if (pending === null) throw new Error('missing seeded recovery');
-    if (corruption === 'missing') {
-      const raw = new DatabaseSync(path.join(dir, 'rundown.db'));
-      try {
-        // A second connection to a database the store's driver holds open. It
-        // inherits none of that driver's pragmas, so it would fail instantly on
-        // any contention rather than waiting for it.
-        raw.exec('PRAGMA busy_timeout = 5000');
-        raw.exec('PRAGMA foreign_keys = OFF');
-        raw
-          .prepare('DELETE FROM execution_attempts WHERE run_id = :runId AND exec_epoch = :epoch')
-          .run({ runId, epoch: pending.epoch });
-      } finally {
-        raw.close();
+  it.each(['missing', 'wrong-phase'] as const)(
+    'rolls back the run update when the exact recovery attempt is %s',
+    async (corruption) => {
+      const runId = await intoRecoveryPending();
+      const before = await store.loadRun(runId);
+      if (before === null) throw new Error('missing seeded run');
+      const pending = await store.readPendingRecovery(runId);
+      if (pending === null) throw new Error('missing seeded recovery');
+      if (corruption === 'missing') {
+        const raw = new DatabaseSync(path.join(dir, 'rundown.db'));
+        try {
+          // A second connection to a database the store's driver holds open. It
+          // inherits none of that driver's pragmas, so it would fail instantly on
+          // any contention rather than waiting for it.
+          raw.exec('PRAGMA busy_timeout = 5000');
+          raw.exec('PRAGMA foreign_keys = OFF');
+          raw
+            .prepare('DELETE FROM execution_attempts WHERE run_id = :runId AND exec_epoch = :epoch')
+            .run({ runId, epoch: pending.epoch });
+        } finally {
+          raw.close();
+        }
+      } else {
+        await store.transaction((txn) => {
+          txn.tx
+            .prepare(
+              "UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId AND exec_epoch = :epoch",
+            )
+            .run({ runId, epoch: pending.epoch });
+        });
       }
-    } else {
-      await store.transaction((txn) => {
+      const next = {
+        ...before,
+        snapshot: { deliberately: 'different' },
+        updatedAt: '2026-03-04T00:00:00.000Z',
+      };
+
+      await expect(
+        store.commitRecovery({ epoch: pending.epoch, reason: 'owner_dead', next }),
+      ).rejects.toThrow(/changed 0 rows/);
+
+      const after = await store.loadRun(runId);
+      expect(after?.snapshot).toEqual(before.snapshot);
+      const owner = await store.read((txn) =>
         txn.tx
-          .prepare(
-            "UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId AND exec_epoch = :epoch",
-          )
-          .run({ runId, epoch: pending.epoch });
-      });
-    }
-    const next = {
-      ...before,
-      snapshot: { deliberately: 'different' },
-      updatedAt: '2026-03-04T00:00:00.000Z',
-    };
-
-    await expect(
-      store.commitRecovery({ epoch: pending.epoch, reason: 'owner_dead', next }),
-    ).rejects.toThrow(/changed 0 rows/);
-
-    const after = await store.loadRun(runId);
-    expect(after?.snapshot).toEqual(before.snapshot);
-    const owner = await store.read((txn) =>
-      txn.tx
-        .prepare('SELECT exec_epoch FROM runs WHERE id = :runId')
-        .get<{ readonly exec_epoch: number | null }>({ runId }),
-    );
-    expect(owner?.exec_epoch).toBe(pending.epoch);
-  });
+          .prepare('SELECT exec_epoch FROM runs WHERE id = :runId')
+          .get<{ readonly exec_epoch: number | null }>({ runId }),
+      );
+      expect(owner?.exec_epoch).toBe(pending.epoch);
+    },
+  );
 
   it('returns not_pending for a run without a recovery_pending attempt', async () => {
     const state = await manager.create(

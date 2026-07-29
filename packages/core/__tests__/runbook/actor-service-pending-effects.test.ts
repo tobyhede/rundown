@@ -165,23 +165,28 @@ describe('RunbookActorService pending machine effects', () => {
     ['PASS', { type: 'PASS' as const }, '2'],
     ['FAIL', { type: 'FAIL' as const }, '3'],
     ['GOTO', { type: 'GOTO' as const, target: { step: '4' } }, '4'],
-  ])('sendAndSync waits for a tagged %s effect before persisting', async (_name, event, expectedStep) => {
-    const state = await manager.create({ source: 'project', path: 'pending.md' }, runbook, {
-      runbookPath: 'pending.md',
-      frontmatterOutputs: [],
-    });
-    await service.initializeState(state.id, [...runbook.steps]);
+  ])(
+    'sendAndSync waits for a tagged %s effect before persisting',
+    async (_name, event, expectedStep) => {
+      const state = await manager.create({ source: 'project', path: 'pending.md' }, runbook, {
+        runbookPath: 'pending.md',
+        frontmatterOutputs: [],
+      });
+      await service.initializeState(state.id, [...runbook.steps]);
 
-    const pending = service.sendAndSync(state.id, [...runbook.steps], event);
-    await waitUntil(() => effectStarted === 1);
-    expect((await manager.load(state.id))?.step).toBe('1');
+      const pending = service.sendAndSync(state.id, [...runbook.steps], event);
+      await waitUntil(() => effectStarted === 1);
+      expect((await manager.load(state.id))?.step).toBe('1');
 
-    releaseEffect?.();
-    const synced = await pending;
+      releaseEffect?.();
+      const synced = await pending;
 
-    expect(synced?.state.step).toBe(expectedStep);
-    expect(JSON.stringify(synced?.state.snapshot)).not.toMatch(/passEffect|failEffect|gotoEffect/);
-  });
+      expect(synced?.state.step).toBe(expectedStep);
+      expect(JSON.stringify(synced?.state.snapshot)).not.toMatch(
+        /passEffect|failEffect|gotoEffect/,
+      );
+    },
+  );
 
   it('sendAndSync waits for a tagged command execution effect before persisting', async () => {
     const state = await manager.create({ source: 'project', path: 'pending.md' }, runbook, {

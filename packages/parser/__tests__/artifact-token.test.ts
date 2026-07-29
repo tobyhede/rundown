@@ -119,16 +119,15 @@ describe('parseArtifactDeclaration classifier validation', () => {
     expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toBeNull();
   });
 
-  it.each([
-    '*/plan.json',
-    '*/end-to-end-test-review.json',
-    '*/review-*.json',
-  ])('accepts cross-run shorthand %s', (rawToken) => {
-    expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toEqual({
-      name: 'Plan',
-      rawToken,
-    });
-  });
+  it.each(['*/plan.json', '*/end-to-end-test-review.json', '*/review-*.json'])(
+    'accepts cross-run shorthand %s',
+    (rawToken) => {
+      expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toEqual({
+        name: 'Plan',
+        rawToken,
+      });
+    },
+  );
 });
 
 describe('classifyExpandedArtifactToken', () => {
@@ -171,16 +170,16 @@ describe('classifyExpandedArtifactToken', () => {
     });
   });
 
-  it.each([
-    '/tmp/review-*.json',
-    'C:\\tmp\\review-?.json',
-  ])('rejects expanded absolute glob path %s', (raw) => {
-    expect(classifyExpandedArtifactToken(raw)).toEqual({
-      ok: false,
-      reason: 'invalid-shorthand-key',
-      raw,
-    });
-  });
+  it.each(['/tmp/review-*.json', 'C:\\tmp\\review-?.json'])(
+    'rejects expanded absolute glob path %s',
+    (raw) => {
+      expect(classifyExpandedArtifactToken(raw)).toEqual({
+        ok: false,
+        reason: 'invalid-shorthand-key',
+        raw,
+      });
+    },
+  );
 
   it('classifies an expanded templated rd URI as an rd URI without carrying parsed segments', () => {
     expect(
@@ -199,22 +198,19 @@ describe('classifyExpandedArtifactToken', () => {
 });
 
 describe('SELECTOR_ARTIFACT_KEY_PATTERN', () => {
-  it.each([
-    'plan.json',
-    'review-plan-a.json',
-    'end-to-end-test-review.json',
-  ])('accepts exact key %s', (key) => {
-    expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
-  });
+  it.each(['plan.json', 'review-plan-a.json', 'end-to-end-test-review.json'])(
+    'accepts exact key %s',
+    (key) => {
+      expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
+    },
+  );
 
-  it.each([
-    'plan-*.json',
-    'review-?.json',
-    '*.json',
-    'a*b?c.json',
-  ])('accepts wildcard key %s', (key) => {
-    expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
-  });
+  it.each(['plan-*.json', 'review-?.json', '*.json', 'a*b?c.json'])(
+    'accepts wildcard key %s',
+    (key) => {
+      expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
+    },
+  );
 
   it.each(['.', '..'])('accepts dot-segment key %s', (key) => {
     expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
@@ -223,13 +219,10 @@ describe('SELECTOR_ARTIFACT_KEY_PATTERN', () => {
   // `.` and `..` are intentionally NOT rejected by this pattern — it
   // mirrors EXACT_ARTIFACT_KEY_PATTERN, which also accepts them. Dot-segment
   // safety is the caller's job (`rejectUnsafeArtifactToken` / `assertSafeId`).
-  it.each([
-    '',
-    'nested/plan.json',
-    'with space.json',
-    'plan#.json',
-    '**',
-  ])('rejects unsafe key %s', (key) => {
-    expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(false);
-  });
+  it.each(['', 'nested/plan.json', 'with space.json', 'plan#.json', '**'])(
+    'rejects unsafe key %s',
+    (key) => {
+      expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(false);
+    },
+  );
 });

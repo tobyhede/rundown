@@ -2089,25 +2089,21 @@ describe('commitRecovery', () => {
 });
 
 describe('assertExecutionPhase', () => {
-  it.each([
-    'claimed',
-    'effect_started',
-    'recovery_pending',
-    'committed',
-  ])('returns the recognized phase %s unchanged', (phase) => {
-    expect(assertExecutionPhase(phase)).toBe(phase);
-  });
+  it.each(['claimed', 'effect_started', 'recovery_pending', 'committed'])(
+    'returns the recognized phase %s unchanged',
+    (phase) => {
+      expect(assertExecutionPhase(phase)).toBe(phase);
+    },
+  );
 
-  it.each([
-    '',
-    'zombie',
-    'COMMITTED',
-    'recovery-pending',
-  ])('refuses the unrecognized phase %p rather than narrowing it', (phase) => {
-    expect(() => assertExecutionPhase(phase)).toThrow(
-      `Invalid persisted execution phase: ${JSON.stringify(phase)}`,
-    );
-  });
+  it.each(['', 'zombie', 'COMMITTED', 'recovery-pending'])(
+    'refuses the unrecognized phase %p rather than narrowing it',
+    (phase) => {
+      expect(() => assertExecutionPhase(phase)).toThrow(
+        `Invalid persisted execution phase: ${JSON.stringify(phase)}`,
+      );
+    },
+  );
 });
 
 describe('StoreInvariantError', () => {

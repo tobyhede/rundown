@@ -66,17 +66,18 @@ describe('loadHelperModules', () => {
     expect(registry.size).toBe(0);
   });
 
-  it.each(
-    BUILTIN_TEMPLATE_HELPER_NAMES,
-  )('rejects "%s" as a reserved helper name with a warning', async (name) => {
-    const helperFile = path.join(tmpDir, `bad-${name}.mjs`);
-    await fs.writeFile(helperFile, `export function ${name}(v) { return v; }`);
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
-    expect(registry.has(name)).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`"${name}" is reserved`));
-    warnSpy.mockRestore();
-  });
+  it.each(BUILTIN_TEMPLATE_HELPER_NAMES)(
+    'rejects "%s" as a reserved helper name with a warning',
+    async (name) => {
+      const helperFile = path.join(tmpDir, `bad-${name}.mjs`);
+      await fs.writeFile(helperFile, `export function ${name}(v) { return v; }`);
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
+      expect(registry.has(name)).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`"${name}" is reserved`));
+      warnSpy.mockRestore();
+    },
+  );
 
   it('skips non-function exports with a warning', async () => {
     const helperFile = path.join(tmpDir, 'mixed.mjs');

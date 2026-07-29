@@ -98,11 +98,11 @@
     "node": ">=24.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.3",
+    "@biomejs/biome": "2.5.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.1.1",
     "glob": "^13.0.6",
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "^2.31.1",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/jest-runner": "^9.6.1",
     "@stryker-mutator/typescript-checker": "^9.6.1",
@@ -110,16 +110,16 @@
     "@astrojs/react": "^6.0.1",
     "cspell": "^10.0.1",
     "eslint": "^10.7.0",
-    "eslint-plugin-jsdoc": "^63.0.13",
+    "eslint-plugin-jsdoc": "^63.2.0",
     "globals": "^17.7.0",
     "astro": "^7.0.7",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.8",
+    "lint-staged": "^17.1.0",
     "npm-run-all2": "^9.0.2",
     "prettier": "^3.9.5",
     "tsx": "^4.23.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.63.0",
-    "xstate": "^5.32.4"
+    "typescript-eslint": "^8.64.0",
+    "xstate": "^5.32.5"
   }
 }

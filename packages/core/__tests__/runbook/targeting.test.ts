@@ -671,15 +671,15 @@ describe('targeting helpers', () => {
       expect(classifyDelegationLiveness(null, linkage)).toEqual({ kind: 'parent-unreadable' });
     });
 
-    it.each([
-      'completed',
-      'stopped',
-    ] as const)('closes as parent-ended when the parent is %s', (lifecycle) => {
-      expect(classifyDelegationLiveness(parent({ lifecycle }), linkage)).toEqual({
-        kind: 'closed',
-        reason: 'parent-ended',
-      });
-    });
+    it.each(['completed', 'stopped'] as const)(
+      'closes as parent-ended when the parent is %s',
+      (lifecycle) => {
+        expect(classifyDelegationLiveness(parent({ lifecycle }), linkage)).toEqual({
+          kind: 'closed',
+          reason: 'parent-ended',
+        });
+      },
+    );
 
     it('closes as cursor-advanced when the top-level cursor moved past the step with no done row', () => {
       // #driveTopLevel advances the cursor without writing a `done` substep entry.

@@ -171,17 +171,18 @@ describe('prototype pollution protection', () => {
       expect(() => parseInputOption(`${key}=value`, [])).toThrow(/reserved variable name/i);
     });
 
-    it.each(
-      POISONED_KEYS,
-    )('throws for --input %s (env inherit form) with reserved message', (key) => {
-      process.env[key] = 'injected';
-      try {
-        expect(() => parseInputOption(key, [])).toThrow(InvalidArgumentError);
-        expect(() => parseInputOption(key, [])).toThrow(/reserved variable name/i);
-      } finally {
-        delete process.env[key];
-      }
-    });
+    it.each(POISONED_KEYS)(
+      'throws for --input %s (env inherit form) with reserved message',
+      (key) => {
+        process.env[key] = 'injected';
+        try {
+          expect(() => parseInputOption(key, [])).toThrow(InvalidArgumentError);
+          expect(() => parseInputOption(key, [])).toThrow(/reserved variable name/i);
+        } finally {
+          delete process.env[key];
+        }
+      },
+    );
   });
 
   describe('parseInputJsonOption', () => {
@@ -199,15 +200,14 @@ describe('parseArtifactOption', () => {
     ]);
   });
 
-  it.each([
-    '__proto__',
-    'constructor',
-    'prototype',
-  ])('rejects reserved artifact key %s (prototype-pollution boundary)', (key) => {
-    expect(() => parseArtifactOption(`${key}=rd://artifacts/c/r/${key}`, [])).toThrow(
-      /reserved artifact name/i,
-    );
-  });
+  it.each(['__proto__', 'constructor', 'prototype'])(
+    'rejects reserved artifact key %s (prototype-pollution boundary)',
+    (key) => {
+      expect(() => parseArtifactOption(`${key}=rd://artifacts/c/r/${key}`, [])).toThrow(
+        /reserved artifact name/i,
+      );
+    },
+  );
 
   it('rejects the no-= env-inherit form (env arm disabled for artifacts)', () => {
     process.env.PlanPath = 'leak';

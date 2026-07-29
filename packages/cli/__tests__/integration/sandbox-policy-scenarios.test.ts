@@ -41,30 +41,28 @@ if (!availability.available) {
       await workspace.cleanup();
     });
 
-    it.each([
-      'allow-read',
-      'allow-write',
-      'deny-read',
-      'deny-write',
-    ])('scenario: %s', (scenarioName) => {
-      const result = runCli(
-        ['scenario', 'run', 'sandbox-policy-scenarios.runbook.md', scenarioName],
-        workspace,
-      );
+    it.each(['allow-read', 'allow-write', 'deny-read', 'deny-write'])(
+      'scenario: %s',
+      (scenarioName) => {
+        const result = runCli(
+          ['scenario', 'run', 'sandbox-policy-scenarios.runbook.md', scenarioName],
+          workspace,
+        );
 
-      const output = parseCliJsonObject(result.stdout);
-      if (scenarioName.startsWith('allow-')) {
-        expect(result.exitCode).toBe(0);
-        expect(output).toEqual(
-          expect.objectContaining({ result: true, expected: 'COMPLETE', actual: 'COMPLETE' }),
-        );
-      } else {
-        expect(result.exitCode).toBe(0);
-        expect(output).toEqual(
-          expect.objectContaining({ result: true, expected: 'STOP', actual: 'STOP' }),
-        );
-      }
-    });
+        const output = parseCliJsonObject(result.stdout);
+        if (scenarioName.startsWith('allow-')) {
+          expect(result.exitCode).toBe(0);
+          expect(output).toEqual(
+            expect.objectContaining({ result: true, expected: 'COMPLETE', actual: 'COMPLETE' }),
+          );
+        } else {
+          expect(result.exitCode).toBe(0);
+          expect(output).toEqual(
+            expect.objectContaining({ result: true, expected: 'STOP', actual: 'STOP' }),
+          );
+        }
+      },
+    );
   });
 }
 

@@ -126,19 +126,16 @@ describe('rundown', () => {
       setExecSync(mockExecFileSync(''));
     });
 
-    it.each([
-      ['pass'],
-      ['fail'],
-      ['delegate'],
-      ['goto'],
-      ['collect'],
-    ])('withholds a bare %s mutation instead of spawning the CLI', (command) => {
-      const mockExec = mockExecFileSync('should not run');
-      setExecSync(mockExec);
+    it.each([['pass'], ['fail'], ['delegate'], ['goto'], ['collect']])(
+      'withholds a bare %s mutation instead of spawning the CLI',
+      (command) => {
+        const mockExec = mockExecFileSync('should not run');
+        setExecSync(mockExec);
 
-      expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
-      expect(mockExec).not.toHaveBeenCalled();
-    });
+        expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
+        expect(mockExec).not.toHaveBeenCalled();
+      },
+    );
 
     it('withholds a --step-targeted bare mutation (still direct-CLI trust)', () => {
       const mockExec = mockExecFileSync('should not run');
@@ -148,32 +145,31 @@ describe('rundown', () => {
       expect(mockExec).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ['yes'],
-      ['ok'],
-      ['no'],
-    ])('withholds the bare alias mutation %j (cannot bypass via alias)', (command) => {
-      const mockExec = mockExecFileSync('should not run');
-      setExecSync(mockExec);
+    it.each([['yes'], ['ok'], ['no']])(
+      'withholds the bare alias mutation %j (cannot bypass via alias)',
+      (command) => {
+        const mockExec = mockExecFileSync('should not run');
+        setExecSync(mockExec);
 
-      expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
-      expect(mockExec).not.toHaveBeenCalled();
-    });
+        expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
+        expect(mockExec).not.toHaveBeenCalled();
+      },
+    );
 
-    it.each([
-      [['yes', '--claim-id', 'claim-1']],
-      [['no', '--claim-id=claim-1']],
-    ])('spawns the claim-evidence alias mutation %j', (args) => {
-      const mockExec = mockExecFileSync('ok');
-      setExecSync(mockExec);
+    it.each([[['yes', '--claim-id', 'claim-1']], [['no', '--claim-id=claim-1']]])(
+      'spawns the claim-evidence alias mutation %j',
+      (args) => {
+        const mockExec = mockExecFileSync('ok');
+        setExecSync(mockExec);
 
-      expect(() => rundown(args, '/test')).not.toThrow();
-      expect(mockExec).toHaveBeenCalledWith(
-        'node',
-        [expect.any(String), ...args],
-        expect.any(Object),
-      );
-    });
+        expect(() => rundown(args, '/test')).not.toThrow();
+        expect(mockExec).toHaveBeenCalledWith(
+          'node',
+          [expect.any(String), ...args],
+          expect.any(Object),
+        );
+      },
+    );
 
     it.each([
       [['pass', '--claim-id', 'claim-1']],

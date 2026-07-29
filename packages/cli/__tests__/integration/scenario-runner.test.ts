@@ -503,13 +503,17 @@ describe('scenario runner', () => {
       );
     });
   } else {
-    it.each(allScenarios)('$file / $name', async ({ file, scenario }) => {
-      const workspace = await createTestWorkspace();
-      try {
-        await executeScenario(file, scenario, workspace);
-      } finally {
-        await workspace.cleanup();
-      }
-    }, 15000);
+    it.each(allScenarios)(
+      '$file / $name',
+      async ({ file, scenario }) => {
+        const workspace = await createTestWorkspace();
+        try {
+          await executeScenario(file, scenario, workspace);
+        } finally {
+          await workspace.cleanup();
+        }
+      },
+      15000,
+    );
   }
 });
