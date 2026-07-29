@@ -2267,7 +2267,7 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
       // Neither run moved: the target was never resolved, let alone advanced.
       expect((await manager.load(runA))?.step).toBe('1');
       expect((await manager.load(runB))?.step).toBe('1');
@@ -2286,7 +2286,7 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
       expect((await manager.load(runB))?.step).toBe('1');
     });
 
@@ -2310,7 +2310,7 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
       expect((await manager.load(runB))?.step).toBe('1');
     });
 
@@ -2344,7 +2344,7 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
     });
 
     it('refuses a navigation whose presented bearer names a different claim', async () => {
@@ -2356,7 +2356,7 @@ describe('RunbookLifecycleCommandService', () => {
         targetSelector: { kind: 'claim', claimId: claimB },
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
     });
 
     it('refuses a navigation naming a claim with no bearer evidence at all', async () => {
@@ -2368,7 +2368,7 @@ describe('RunbookLifecycleCommandService', () => {
         targetSelector: { kind: 'claim', claimId: claimB },
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
     });
 
     it('allows a navigation when the presented bearer is the named claim', async () => {
@@ -2395,7 +2395,7 @@ describe('RunbookLifecycleCommandService', () => {
         targetSelector: { kind: 'claim', claimId: claimB },
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
       expect(sendSpy).not.toHaveBeenCalled();
       expect((await manager.load(runB))?.lifecycle).toBe('running');
     });
@@ -2410,7 +2410,7 @@ describe('RunbookLifecycleCommandService', () => {
         targetSelector: { kind: 'claim', claimId: claimB },
       });
 
-      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
       expect(sendSpy).not.toHaveBeenCalled();
       expect((await manager.load(runB))?.lifecycle).toBe('running');
     });

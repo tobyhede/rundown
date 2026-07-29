@@ -30,6 +30,7 @@ import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { emitDelegationCollectionPendingError } from './transitions.js';
 import {
   renderActorContextRequiredRefusal,
+  renderClaimBearerMismatchRefusal,
   renderClaimGrantRequiredRefusal,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
@@ -135,6 +136,8 @@ export async function renderTerminalOutcome(
       return renderStaleClaimRefusal(output, outcome.message, outcome.code);
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, command);
+    case 'claim_bearer_mismatch':
+      return renderClaimBearerMismatchRefusal(output, command);
     case 'claim_grant_required':
       return renderClaimGrantRequiredRefusal(output, command);
     case 'delegation_collection_pending':

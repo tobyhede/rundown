@@ -140,6 +140,22 @@ describe('renderTerminalOutcome', () => {
     expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
   });
 
+  it('renders claim_bearer_mismatch as CLAIM_BEARER_MISMATCH and exits non-zero (#613)', async () => {
+    const { exitError, calls } = await render({
+      kind: 'claim_bearer_mismatch',
+    });
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('CLAIM_BEARER_MISMATCH');
+    const errorCall = calls.find((c) => c.method === 'error');
+    // A terminal is the highest-consequence divergence — forcing and releasing
+    // a run on the target's own authority. It must not reuse the bare-form
+    // advice, which would tell a caller that presented a claim to present one.
+    expect(errorCall?.args[0]).not.toContain('bare');
+    expect(errorCall?.args[0]).toContain('Present the bearer');
+    expect(errorCall?.args[2]).toBeUndefined();
+    expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
+  });
+
   it('renders claim_grant_required as CLAIM_GRANT_REQUIRED and exits non-zero', async () => {
     const { exitError, calls } = await render({
       kind: 'claim_grant_required',

@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
   ActorSyncResult,
+  ClaimId,
   RunbookActorService,
   RunbookState,
   RunbookStateManager,
@@ -20,6 +21,9 @@ import { mockFn } from './typed-mocks.js';
 const DEFAULT_RUNBOOK_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
 const PARENT_RUNBOOK_ID = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
 const CLAIMED_RUNBOOK_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
+// Branded by cast rather than assertClaimId: core is mocked in this suite, so
+// the real validator is unavailable and only the value's identity matters here.
+const CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as unknown as ClaimId;
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -47,6 +51,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // through the factory rather than leaking the real module.
   assertClaimId: jest.fn((s: string) => s),
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
+  // Statically imported by refusal-renderers.js, which goto-workflow.js pulls in
+  // for renderNavigationRefusal. Only the terminal-claim renderers call it, and
+  // navigation has no such arm — but the ESM link check needs the name present.
+  redactClaimId: jest.fn((claimId: string) => claimId),
   ...mockErrorHelpers,
 }));
 
@@ -88,6 +96,7 @@ const {
   executeGoto,
   resolveTerminalReleaseModeForRunbook,
   gotoResultRequiresFailureExit,
+  renderNavigationRefusal,
 } = await import('../../src/helpers/goto-workflow.js');
 
 const DEFAULT_TRANSITIONS: Transitions = {
@@ -167,6 +176,136 @@ beforeEach(() => {
     at: target.step,
   }));
   jest.mocked(runExecutionLoop).mockResolvedValue('done');
+});
+
+describe('renderNavigationRefusal', () => {
+  /** Recording OutputEmitter double capturing the rendered envelope. */
+  function refusalEmitter(): {
+    output: OutputEmitter;
+    errors: readonly unknown[][];
+    noActive: readonly unknown[][];
+  } {
+    const errors: unknown[][] = [];
+    const noActive: unknown[][] = [];
+    const output = {
+      error: (...args: unknown[]) => errors.push(args),
+      noActiveRunbook: (...args: unknown[]) => noActive.push(args),
+    } as unknown as OutputEmitter;
+    return { output, errors, noActive };
+  }
+
+  it('reports `none` as a no-op, not a failure', () => {
+    const { output, errors, noActive } = refusalEmitter();
+
+    // The empty-stack case is the one non-`ready` result that exits 0 — the
+    // caller maps this polarity to process.exitCode.
+    expect(renderNavigationRefusal(output, { kind: 'none' })).toBe(false);
+    expect(noActive).toEqual([['goto']]);
+    expect(errors).toEqual([]);
+  });
+
+  it('renders stale_claim under the code core assigned to the refusal', () => {
+    const { output, errors } = refusalEmitter();
+
+    const exitError = renderNavigationRefusal(output, {
+      kind: 'stale_claim',
+      claimId: CLAIM_ID,
+      message: 'superseded by the parent',
+      code: 'DELEGATION_SUPERSEDED',
+    });
+
+    expect(exitError).toBe(true);
+    // The code travels with the refusal — it is not hard-coded per arm.
+    expect(errors).toEqual([['superseded by the parent', 'DELEGATION_SUPERSEDED']]);
+  });
+
+  it('renders terminal_claim as CLAIMED_RUNBOOK_UNAVAILABLE', () => {
+    const { output, errors } = refusalEmitter();
+
+    const exitError = renderNavigationRefusal(output, {
+      kind: 'terminal_claim',
+      claimId: CLAIM_ID,
+      lifecycle: 'completed',
+      message: 'child already completed',
+    });
+
+    expect(exitError).toBe(true);
+    expect(errors).toEqual([['child already completed', 'CLAIMED_RUNBOOK_UNAVAILABLE']]);
+  });
+
+  it('renders unknown_run as RUN_TARGET_UNAVAILABLE', () => {
+    const { output, errors } = refusalEmitter();
+
+    const exitError = renderNavigationRefusal(output, {
+      kind: 'unknown_run',
+      runId: DEFAULT_RUNBOOK_ID,
+      message: 'not a member of this session stack',
+    });
+
+    expect(exitError).toBe(true);
+    expect(errors).toEqual([['not a member of this session stack', 'RUN_TARGET_UNAVAILABLE']]);
+  });
+
+  it('renders actor_context_required naming goto and echoing no run id', () => {
+    const { output, errors } = refusalEmitter();
+
+    const exitError = renderNavigationRefusal(output, { kind: 'actor_context_required' });
+
+    expect(exitError).toBe(true);
+    expect(errors[0]?.[1]).toBe('ACTOR_CONTEXT_REQUIRED');
+    expect(errors[0]?.[0]).toContain('rundown goto');
+    expect(errors[0]?.[0]).toContain('--claim-id');
+    // Accident barrier: no details object, and no run id anywhere.
+    expect(errors[0]?.[2]).toBeUndefined();
+    expect(JSON.stringify(errors[0])).not.toContain(DEFAULT_RUNBOOK_ID);
+  });
+
+  it('renders claim_bearer_mismatch under its own code, naming goto (#613)', () => {
+    const { output, errors } = refusalEmitter();
+
+    const exitError = renderNavigationRefusal(output, { kind: 'claim_bearer_mismatch' });
+
+    expect(exitError).toBe(true);
+    expect(errors[0]?.[1]).toBe('CLAIM_BEARER_MISMATCH');
+    expect(errors[0]?.[1]).not.toBe('ACTOR_CONTEXT_REQUIRED');
+    // Names this command, so the message cannot be command-agnostic boilerplate.
+    expect(errors[0]?.[0]).toContain('rundown goto');
+    // The caller DID present a claim id, so the bare-form advice would misdiagnose.
+    expect(errors[0]?.[0]).not.toContain('bare');
+    expect(errors[0]?.[2]).toBeUndefined();
+  });
+
+  it('fails closed on an unrecognized kind rather than exiting zero', () => {
+    const { output, errors, noActive } = refusalEmitter();
+
+    // Unreachable through the typed API — the union is exhausted above. Reachable
+    // from an untyped frontend, or from a core version that adds a refusal this
+    // build does not know. The exhaustiveness guard's runtime consequence is what
+    // matters: the caller must still exit non-zero. A guard that fell through
+    // would return undefined and silently succeed, turning an unknown refusal
+    // into a successful goto.
+    const exitError = renderNavigationRefusal(output, {
+      kind: 'unrecognized_future_refusal',
+    } as unknown as Parameters<typeof renderNavigationRefusal>[1]);
+
+    expect(exitError).toBeTruthy();
+    // Nothing is rendered for a kind we cannot describe — no guessed envelope.
+    expect(errors).toEqual([]);
+    expect(noActive).toEqual([]);
+  });
+
+  it('distinguishes the two claim-authority refusals from each other', () => {
+    const bare = refusalEmitter();
+    const mismatch = refusalEmitter();
+
+    renderNavigationRefusal(bare.output, { kind: 'actor_context_required' });
+    renderNavigationRefusal(mismatch.output, { kind: 'claim_bearer_mismatch' });
+
+    // Same command, same exit polarity, different diagnosis — the whole point
+    // of splitting the code rather than reusing ACTOR_CONTEXT_REQUIRED (#613).
+    expect(bare.errors[0]?.[1]).not.toBe(mismatch.errors[0]?.[1]);
+    expect(bare.errors[0]?.[0]).not.toBe(mismatch.errors[0]?.[0]);
+  });
 });
 
 describe('validateGotoTarget', () => {

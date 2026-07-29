@@ -412,6 +412,22 @@ export type LifecycleLoopDirective =
   | { readonly kind: 'none' }
   | { readonly kind: 'run'; readonly prompted: boolean };
 
+/**
+ * Refusal: the caller named a claim-shaped target without presenting that
+ * claim's bearer (#613).
+ *
+ * Distinct from `actor_context_required`, which means "no authority was named
+ * at all" and whose remediation is to supply `--claim-id`. Here the caller
+ * supplied one; it just is not the bearer for the claim it targeted, so
+ * repeating that advice would misdiagnose the refusal.
+ *
+ * Carries no payload. The seams refuse this BEFORE resolving either claim, so
+ * there is no verified claim record to name — no `claimKey` to redact down to,
+ * and echoing either raw `claimId` would put a bearer secret in output. The
+ * caller already holds both values it supplied, so it needs no echo to act.
+ */
+export type ClaimBearerMismatchRefusal = { readonly kind: 'claim_bearer_mismatch' };
+
 /** Input to {@link RunbookLifecycleCommandService.runTransition}. */
 export interface LifecycleTransitionInput {
   /**
@@ -424,7 +440,7 @@ export interface LifecycleTransitionInput {
   /**
    * Typed caller evidence mapped to an actor context by core. A `claim` target
    * selector is the same fact as `claim_bearer` evidence naming that id, so the
-   * seam refuses `actor_context_required` when the two disagree rather than
+   * seam refuses `claim_bearer_mismatch` when the two disagree rather than
    * authorizing as the target (#613).
    */
   readonly callerEvidence: CallerEvidence;
@@ -486,6 +502,7 @@ export type LifecycleTransitionOutcome =
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     }
   | { readonly kind: 'actor_context_required' }
+  | ClaimBearerMismatchRefusal
   | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
   | UnknownRunRefusal
   | {
@@ -550,7 +567,7 @@ export interface LifecycleTerminalInput {
   /**
    * Typed caller evidence mapped to an actor context by core. As on the
    * transition seam, a `claim` target selector must name the same bearer this
-   * evidence presents; a divergence refuses `actor_context_required` (#613).
+   * evidence presents; a divergence refuses `claim_bearer_mismatch` (#613).
    */
   readonly callerEvidence: CallerEvidence;
   /**
@@ -586,6 +603,8 @@ export type LifecycleTerminalOutcome =
   | StaleClaimRefusal
   /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
   | { readonly kind: 'actor_context_required' }
+  /** The caller did not present the bearer naming its claim-shaped terminal target. */
+  | ClaimBearerMismatchRefusal
   /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
   | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
   | UnknownRunRefusal
@@ -659,7 +678,7 @@ export interface LifecycleNavigationInput {
   /**
    * Typed caller evidence mapped to an actor context by core. As on the
    * mutating seams, a `claim` target selector must name the same bearer this
-   * evidence presents; a divergence refuses `actor_context_required` (#613).
+   * evidence presents; a divergence refuses `claim_bearer_mismatch` (#613).
    */
   readonly callerEvidence: CallerEvidence;
   /**
@@ -699,6 +718,8 @@ export type LifecycleNavigationOutcome =
    * run id (accident barrier — see the resolver member's rationale).
    */
   | { readonly kind: 'actor_context_required' }
+  /** The caller did not present the bearer naming its claim-shaped goto target. */
+  | ClaimBearerMismatchRefusal
   | {
       /** Navigation is allowed against the resolved run. */
       readonly kind: 'allowed';
@@ -1466,7 +1487,7 @@ export class RunbookLifecycleCommandService {
    *   as an input.
    * @returns A typed refusal or an `applied` outcome carrying observation events
    *   and a loop-continuation directive. A claim-shaped target that the caller
-   *   did not present refuses `actor_context_required` before anything resolves.
+   *   did not present refuses `claim_bearer_mismatch` before anything resolves.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
    *   a persisted completion does not match the active cursor, or an explicit
    *   `--step` / `--index` target cannot be satisfied by the locked re-read —
@@ -1490,7 +1511,7 @@ export class RunbookLifecycleCommandService {
     // the caller presented (#613).
     const claimTarget = input.targetSelector.kind === 'claim' ? input.targetSelector : undefined;
     if (claimTarget !== undefined && !presentsClaimTarget(input.callerEvidence, claimTarget)) {
-      return { kind: 'actor_context_required' };
+      return { kind: 'claim_bearer_mismatch' };
     }
     const claimId = claimTarget?.claimId;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
@@ -1626,7 +1647,7 @@ export class RunbookLifecycleCommandService {
    *   optional message.
    * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome. A
    *   claim-shaped target that the caller did not present refuses
-   *   `actor_context_required` before the claim is resolved.
+   *   `claim_bearer_mismatch` before the claim is resolved.
    * @throws {Error} When an `explicit-step` selector is supplied (complete/stop
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
@@ -1654,7 +1675,7 @@ export class RunbookLifecycleCommandService {
       case 'claim':
         return presentsClaimTarget(input.callerEvidence, input.targetSelector)
           ? this.#driveTerminalClaim(input, input.targetSelector.claimId)
-          : { kind: 'actor_context_required' };
+          : { kind: 'claim_bearer_mismatch' };
       case 'default':
         return this.#driveTerminalBare(input);
       case 'run':
@@ -1724,7 +1745,7 @@ export class RunbookLifecycleCommandService {
    * @param input - Command, caller evidence, and target selector.
    * @returns A typed refusal or an `allowed` outcome carrying the resolved
    *   run, its steps, and the terminal release mode. A claim-shaped target that
-   *   the caller did not present refuses `actor_context_required`.
+   *   the caller did not present refuses `claim_bearer_mismatch`.
    * @throws {Error} When an `explicit-step` selector is supplied (the
    *   navigation target is goto's positional argument, not a selector).
    */
@@ -1740,7 +1761,7 @@ export class RunbookLifecycleCommandService {
     // presenter and satisfies the run-navigation role gate (#613).
     const claimTarget = selector.kind === 'claim' ? selector : undefined;
     if (claimTarget !== undefined && !presentsClaimTarget(input.callerEvidence, claimTarget)) {
-      return { kind: 'actor_context_required' };
+      return { kind: 'claim_bearer_mismatch' };
     }
 
     const resolution = await resolveCommandTarget(this.#deps.sessionService, {

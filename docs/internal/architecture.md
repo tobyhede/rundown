@@ -529,6 +529,33 @@ mutation; a bearer claim must accompany it on a delegation-exposed run. See
 [Claude Code Plugin Trust Model](./plugin-trust-model.md) for the plugin's other
 trust boundaries.
 
+### A claim-shaped target is the same fact as its bearer
+
+`runTransition`, `runTerminal`, and `resolveRunNavigation` each take caller
+evidence and a target selector as separate inputs. When the selector is
+claim-shaped these are **not** independent: a claim id carries its own live
+secret segment, so naming one is an act of presentation, not merely of
+selection. The only consistent combination is "the caller presented the bearer
+it named".
+
+Each seam reconciles the two at entry, before resolving anything from the claim,
+and refuses `CLAIM_BEARER_MISMATCH` otherwise. Without that gate the seams
+derived their actor context from the **target's** verified claim and so acted as
+the target while the caller's evidence said something else — authorizing on
+authority the caller never demonstrated it held.
+
+The refusal is deliberately separate from `ACTOR_CONTEXT_REQUIRED`. That code
+means no authority was named at all and its remediation is to supply
+`--claim-id`; here the caller supplied one, so reusing it would tell the caller
+to do the thing it already did. The envelope names neither claim — the refusal
+precedes resolution, so there is no verified claim record to reduce to a
+non-secret `claimKey`, and echoing a raw `claimId` would write a bearer secret
+to output.
+
+No CLI path can provoke it: `--claim-id` populates both fields at all three call
+sites. It is a seam contract for programmatic frontends, and it is fail-closed
+by construction rather than by convention.
+
 ### Refusal messages never echo the target run id
 
 The `ACTOR_CONTEXT_REQUIRED` refusal tells the caller to pass

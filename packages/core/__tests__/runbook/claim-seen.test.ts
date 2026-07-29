@@ -568,7 +568,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       targetSelector: { kind: 'claim', claimId: claimB },
       terminalPolicy: releasePolicy,
     });
-    expect(outcome).toEqual({ kind: 'actor_context_required' });
+    expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
 
     const session = await manager.loadSession();
     expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
@@ -646,7 +646,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // #613: navigation reconciles evidence against a claim-shaped target before
     // resolving it, so the divergence refuses instead of deriving a verified
     // context from B. Liveness attribution agrees and records neither bearer.
-    expect(outcome).toEqual({ kind: 'actor_context_required' });
+    expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
     const session = await manager.loadSession();
     expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
     expect(session.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
@@ -705,7 +705,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
 
     // The terminal seam reconciles before it resolves the claim, so the child is
     // neither forced nor released, and neither holder's liveness is written.
-    expect(outcome).toEqual({ kind: 'actor_context_required' });
+    expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
     expect((await manager.load(child.id))?.lifecycle).toBe('running');
     const after = await manager.loadSession();
     expect(after.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
