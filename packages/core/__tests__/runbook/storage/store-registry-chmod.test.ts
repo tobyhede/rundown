@@ -58,22 +58,22 @@ afterEach(async () => {
 });
 
 describe('store registry database-file permission hardening', () => {
-  it.each([
-    'EACCES',
-    'EPERM',
-  ])('rejects %s on the database file, disposes, and retries with a fresh open', async (code) => {
-    const cwd = await newRoot();
-    chmodMock.mockImplementation(async (file, mode) => {
-      if (String(file).endsWith('rundown.db')) throw errno(code);
-      return actualFsp.chmod(file, mode);
-    });
+  it.each(['EACCES', 'EPERM'])(
+    'rejects %s on the database file, disposes, and retries with a fresh open',
+    async (code) => {
+      const cwd = await newRoot();
+      chmodMock.mockImplementation(async (file, mode) => {
+        if (String(file).endsWith('rundown.db')) throw errno(code);
+        return actualFsp.chmod(file, mode);
+      });
 
-    await expect(getRunbookStore(cwd, { runtime: 'native' })).rejects.toThrow(code);
-    expect(disposals[0]).toHaveBeenCalledTimes(1);
-    chmodMock.mockImplementation(actualFsp.chmod);
-    await expect(getRunbookStore(cwd, { runtime: 'native' })).resolves.toBeDefined();
-    expect(openDriverMock).toHaveBeenCalledTimes(2);
-  });
+      await expect(getRunbookStore(cwd, { runtime: 'native' })).rejects.toThrow(code);
+      expect(disposals[0]).toHaveBeenCalledTimes(1);
+      chmodMock.mockImplementation(actualFsp.chmod);
+      await expect(getRunbookStore(cwd, { runtime: 'native' })).resolves.toBeDefined();
+      expect(openDriverMock).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('tolerates ENOENT only for optional WAL/SHM sidecars', async () => {
     const cwd = await newRoot();
@@ -113,13 +113,12 @@ describe('store registry database-file permission hardening', () => {
     expect(disposals[0]).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    'ENOSYS',
-    'ENOTSUP',
-    'EOPNOTSUPP',
-  ])('tolerates unsupported filesystem mode error %s', async (code) => {
-    const cwd = await newRoot();
-    chmodMock.mockRejectedValue(errno(code));
-    await expect(getRunbookStore(cwd, { runtime: 'native' })).resolves.toBeDefined();
-  });
+  it.each(['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'])(
+    'tolerates unsupported filesystem mode error %s',
+    async (code) => {
+      const cwd = await newRoot();
+      chmodMock.mockRejectedValue(errno(code));
+      await expect(getRunbookStore(cwd, { runtime: 'native' })).resolves.toBeDefined();
+    },
+  );
 });
