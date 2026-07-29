@@ -81,23 +81,22 @@ describe('report-then-collect (single delegation level)', () => {
     return parseConcatenatedJson(stdout).map((o) => (o as { code?: string }).code);
   }
 
-  it.each([
-    'pass',
-    'fail',
-    'delegate',
-  ])('refuses run-targeted bare-shaped rd %s while a reported outcome is uncollected', async (intent) => {
-    await pendingParent();
-    // Post-R1 a fully bare mutation is refused earlier by the role gate
-    // (ACTOR_CONTEXT_REQUIRED); the collection-pending guard is pinned on the
-    // named-authority form (bare-shaped: no --step/--claim-id).
-    const bare = await runCliInProcess(intent, workspace);
-    expect(bare.exitCode).toBe(1);
-    expect(emittedCodes(bare.stdout)).toContain('ACTOR_CONTEXT_REQUIRED');
+  it.each(['pass', 'fail', 'delegate'])(
+    'refuses run-targeted bare-shaped rd %s while a reported outcome is uncollected',
+    async (intent) => {
+      await pendingParent();
+      // Post-R1 a fully bare mutation is refused earlier by the role gate
+      // (ACTOR_CONTEXT_REQUIRED); the collection-pending guard is pinned on the
+      // named-authority form (bare-shaped: no --step/--claim-id).
+      const bare = await runCliInProcess(intent, workspace);
+      expect(bare.exitCode).toBe(1);
+      expect(emittedCodes(bare.stdout)).toContain('ACTOR_CONTEXT_REQUIRED');
 
-    const blocked = await runCliInProcess(await withRunTarget([intent], workspace), workspace);
-    expect(blocked.exitCode).toBe(1);
-    expect(emittedCodes(blocked.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
-  });
+      const blocked = await runCliInProcess(await withRunTarget([intent], workspace), workspace);
+      expect(blocked.exitCode).toBe(1);
+      expect(emittedCodes(blocked.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
+    },
+  );
 
   it('an explicit rd collect releases the pending state and advancing resumes', async () => {
     await pendingParent();

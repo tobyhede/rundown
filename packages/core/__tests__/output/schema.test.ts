@@ -291,22 +291,21 @@ describe('ErrorCodeSchema code registry', () => {
     expect(CLIErrorCodes.DELEGATION_COLLECTION_PENDING).toBe('DELEGATION_COLLECTION_PENDING');
   });
 
-  it.each([
-    'ACTOR_CONTEXT_REQUIRED',
-    'CLAIM_GRANT_REQUIRED',
-    'RUN_TARGET_MISMATCH',
-  ] as const)('accepts %s for command policy rendering', (code) => {
-    expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
-    expect(
-      ErrorResponseSchema.safeParse({
-        kind: 'error',
-        error: `command policy refused with ${code}`,
-        code,
-        details: { source: 'command-policy' },
-      }).success,
-    ).toBe(true);
-    expect(CLIErrorCodes[code]).toBe(code);
-  });
+  it.each(['ACTOR_CONTEXT_REQUIRED', 'CLAIM_GRANT_REQUIRED', 'RUN_TARGET_MISMATCH'] as const)(
+    'accepts %s for command policy rendering',
+    (code) => {
+      expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+      expect(
+        ErrorResponseSchema.safeParse({
+          kind: 'error',
+          error: `command policy refused with ${code}`,
+          code,
+          details: { source: 'command-policy' },
+        }).success,
+      ).toBe(true);
+      expect(CLIErrorCodes[code]).toBe(code);
+    },
+  );
 
   it('accepts collection-operation output codes', () => {
     for (const code of ['COLLECT_ALREADY_APPLIED', 'COLLECT_OPERATION_FAILED'] as const) {

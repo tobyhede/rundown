@@ -64,35 +64,9 @@ describe('DelegationLinkage extended fields', () => {
     expect(result.success).toBe(false);
   });
 
-  it.each([
-    'parentStep',
-    'parentFrameKey',
-    'parentEntry',
-  ])('schema rejects delegation linkage missing %s', (field) => {
-    const parentLinkage: Record<string, unknown> = {
-      kind: 'delegation',
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '1',
-      tokenHash: `sha256:${'b'.repeat(64)}`,
-      parentStep: '1',
-      parentFrameKey: '1|',
-      parentEntry: 1,
-    };
-    delete parentLinkage[field];
-
-    const result = RunbookStateSchema.safeParse(makeSchemaState(parentLinkage));
-
-    expect(result.success).toBe(false);
-  });
-
-  it.each([
-    'parentStep',
-    'parentFrameKey',
-    'parentEntry',
-  ])('state load rejects delegation linkage missing %s', async (field) => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'parent-linkage-load-'));
-    try {
-      const manager = new RunbookStateManager(tmpDir);
+  it.each(['parentStep', 'parentFrameKey', 'parentEntry'])(
+    'schema rejects delegation linkage missing %s',
+    (field) => {
       const parentLinkage: Record<string, unknown> = {
         kind: 'delegation',
         parentRunId: PARENT_RUN_ID,
@@ -103,19 +77,43 @@ describe('DelegationLinkage extended fields', () => {
         parentEntry: 1,
       };
       delete parentLinkage[field];
-      const state = {
-        ...makeSchemaState(parentLinkage),
-        schemaVersion: 1,
-        lifecycle: 'running',
-        frontmatterOutputs: [],
-      };
-      await seedRawRunState(tmpDir, state);
 
-      await expect(manager.load(CHILD_RUN_ID)).rejects.toThrow(/schema validation failed/);
-    } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
-    }
-  });
+      const result = RunbookStateSchema.safeParse(makeSchemaState(parentLinkage));
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it.each(['parentStep', 'parentFrameKey', 'parentEntry'])(
+    'state load rejects delegation linkage missing %s',
+    async (field) => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'parent-linkage-load-'));
+      try {
+        const manager = new RunbookStateManager(tmpDir);
+        const parentLinkage: Record<string, unknown> = {
+          kind: 'delegation',
+          parentRunId: PARENT_RUN_ID,
+          parentStepId: '1',
+          tokenHash: `sha256:${'b'.repeat(64)}`,
+          parentStep: '1',
+          parentFrameKey: '1|',
+          parentEntry: 1,
+        };
+        delete parentLinkage[field];
+        const state = {
+          ...makeSchemaState(parentLinkage),
+          schemaVersion: 1,
+          lifecycle: 'running',
+          frontmatterOutputs: [],
+        };
+        await seedRawRunState(tmpDir, state);
+
+        await expect(manager.load(CHILD_RUN_ID)).rejects.toThrow(/schema validation failed/);
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('schema rejects non-positive parentEntry', () => {
     const state = makeSchemaState({
@@ -216,25 +214,24 @@ describe('parentLinkage discriminated union schema', () => {
     }
   });
 
-  it.each([
-    'parentStep',
-    'parentFrameKey',
-    'parentEntry',
-  ])('schema rejects inline linkage missing %s', (field) => {
-    const parentLinkage: Record<string, unknown> = {
-      kind: 'inline',
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '2',
-      parentStep: '1',
-      parentFrameKey: '1|',
-      parentEntry: 1,
-    };
-    delete parentLinkage[field];
+  it.each(['parentStep', 'parentFrameKey', 'parentEntry'])(
+    'schema rejects inline linkage missing %s',
+    (field) => {
+      const parentLinkage: Record<string, unknown> = {
+        kind: 'inline',
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '2',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+      };
+      delete parentLinkage[field];
 
-    const result = RunbookStateSchema.safeParse(makeBaseState({ parentLinkage }));
+      const result = RunbookStateSchema.safeParse(makeBaseState({ parentLinkage }));
 
-    expect(result.success).toBe(false);
-  });
+      expect(result.success).toBe(false);
+    },
+  );
 
   it('rejects parentLinkage with unknown kind', () => {
     const state = makeBaseState({

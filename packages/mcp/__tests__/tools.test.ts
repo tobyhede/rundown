@@ -95,44 +95,41 @@ describe('buildRundownCommand', () => {
       { step: '5', index: 2, claimId: 'claim-1' },
       ['collect', '--step', '5', '--index', '2', '--claim-id', 'claim-1'],
     ],
-  ] satisfies Array<
-    [RundownToolName, Record<string, unknown>, string[]]
-  >)('%s builds the matching CLI argv', (tool, input, expected) => {
-    expect(buildRundownCommand(tool, input)).toEqual(expected);
-  });
+  ] satisfies Array<[RundownToolName, Record<string, unknown>, string[]]>)(
+    '%s builds the matching CLI argv',
+    (tool, input, expected) => {
+      expect(buildRundownCommand(tool, input)).toEqual(expected);
+    },
+  );
 
   it.each([
     ['validate', {}, 'validate.file must be a string'],
     ['goto', {}, 'goto.step must be a string'],
     ['claim', {}, 'claim.token must be a string'],
-  ] satisfies Array<
-    [RundownToolName, Record<string, unknown>, string]
-  >)('%s rejects missing required string inputs', (tool, input, message) => {
-    expect(() => buildRundownCommand(tool, input)).toThrow(message);
-  });
+  ] satisfies Array<[RundownToolName, Record<string, unknown>, string]>)(
+    '%s rejects missing required string inputs',
+    (tool, input, message) => {
+      expect(() => buildRundownCommand(tool, input)).toThrow(message);
+    },
+  );
 
   it('maps bare pass/fail to CLI argv without a frontend-specific guard', () => {
     expect(buildRundownCommand('pass', {})).toEqual(['pass']);
     expect(buildRundownCommand('fail', {})).toEqual(['fail']);
   });
 
-  it.each([
-    'pass',
-    'fail',
-    'goto',
-    'complete',
-    'stop',
-    'delegate',
-    'collect',
-  ] as const)('%s rejects claimId + runId before building CLI argv', (tool) => {
-    expect(() =>
-      buildRundownCommand(tool, {
-        step: '3.1',
-        claimId: 'claim-1',
-        runId: `rd_${'a'.repeat(32)}`,
-      }),
-    ).toThrow(/runId cannot be combined with claimId/);
-  });
+  it.each(['pass', 'fail', 'goto', 'complete', 'stop', 'delegate', 'collect'] as const)(
+    '%s rejects claimId + runId before building CLI argv',
+    (tool) => {
+      expect(() =>
+        buildRundownCommand(tool, {
+          step: '3.1',
+          claimId: 'claim-1',
+          runId: `rd_${'a'.repeat(32)}`,
+        }),
+      ).toThrow(/runId cannot be combined with claimId/);
+    },
+  );
 
   it('renders CLI data as MCP text without interpreting runbook state', () => {
     expect(createMcpTextResponse({ data: { action: 'PASS', to: '2' } })).toEqual({
@@ -376,73 +373,66 @@ describe('registerRundownTools', () => {
     });
   });
 
-  it.each([
-    'run',
-    'pass',
-    'fail',
-    'delegate',
-    'collect',
-  ] as const)('%s handler rejects index without step before invoking the CLI', async (tool) => {
-    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
-    const fakeServer = {
-      registerTool: jest.fn(
-        (
-          name: string,
-          _config: unknown,
-          handler: (args: Record<string, unknown>) => Promise<unknown>,
-        ) => {
-          handlers.set(name, handler);
-        },
-      ),
-    };
-    const runCli = jest.fn<RunCli>();
-    registerRundownTools(fakeServer, runCli);
+  it.each(['run', 'pass', 'fail', 'delegate', 'collect'] as const)(
+    '%s handler rejects index without step before invoking the CLI',
+    async (tool) => {
+      const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+      const fakeServer = {
+        registerTool: jest.fn(
+          (
+            name: string,
+            _config: unknown,
+            handler: (args: Record<string, unknown>) => Promise<unknown>,
+          ) => {
+            handlers.set(name, handler);
+          },
+        ),
+      };
+      const runCli = jest.fn<RunCli>();
+      registerRundownTools(fakeServer, runCli);
 
-    await expect(handlers.get(tool)?.({ index: 3 })).resolves.toMatchObject({
-      content: [
-        {
-          type: 'text',
-          text: expect.stringMatching(/index: index requires step/),
-        },
-      ],
-    });
-    expect(runCli).not.toHaveBeenCalled();
-  });
+      await expect(handlers.get(tool)?.({ index: 3 })).resolves.toMatchObject({
+        content: [
+          {
+            type: 'text',
+            text: expect.stringMatching(/index: index requires step/),
+          },
+        ],
+      });
+      expect(runCli).not.toHaveBeenCalled();
+    },
+  );
 
-  it.each([
-    'pass',
-    'fail',
-    'goto',
-    'complete',
-    'stop',
-    'delegate',
-    'collect',
-  ] as const)('%s handler rejects claimId + runId together before invoking the CLI', async (tool) => {
-    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
-    const fakeServer = {
-      registerTool: jest.fn(
-        (
-          name: string,
-          _config: unknown,
-          handler: (args: Record<string, unknown>) => Promise<unknown>,
-        ) => {
-          handlers.set(name, handler);
-        },
-      ),
-    };
-    const runCli = jest.fn<RunCli>();
-    registerRundownTools(fakeServer, runCli);
+  it.each(['pass', 'fail', 'goto', 'complete', 'stop', 'delegate', 'collect'] as const)(
+    '%s handler rejects claimId + runId together before invoking the CLI',
+    async (tool) => {
+      const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+      const fakeServer = {
+        registerTool: jest.fn(
+          (
+            name: string,
+            _config: unknown,
+            handler: (args: Record<string, unknown>) => Promise<unknown>,
+          ) => {
+            handlers.set(name, handler);
+          },
+        ),
+      };
+      const runCli = jest.fn<RunCli>();
+      registerRundownTools(fakeServer, runCli);
 
-    const res = await handlers.get(tool)?.({
-      step: '3.1',
-      claimId: 'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      runId: `rd_${'a'.repeat(32)}`,
-    });
-    expect(parseToolResponse(res)).toEqual({
-      error: expect.stringContaining('runId cannot be combined with claimId'),
-    });
-    expect(runCli).not.toHaveBeenCalled();
-  });
+      const res = await handlers.get(tool)?.({
+        step: '3.1',
+        claimId:
+          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        runId: `rd_${'a'.repeat(32)}`,
+      });
+      expect(parseToolResponse(res)).toEqual({
+        error: expect.stringContaining('runId cannot be combined with claimId'),
+      });
+      expect(runCli).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('subprocess trust boundary', () => {
@@ -473,24 +463,22 @@ describe('subprocess trust boundary', () => {
     expect(description).toMatch(/rundown delegate/);
   });
 
-  it.each([
-    ['pass'],
-    ['fail'],
-    ['delegate'],
-    ['collect'],
-  ] as const)('withholds a bare %s mutation without spawning the CLI', async (tool) => {
-    const runCli = jest.fn<RunCli>();
-    const handlers = registerWithHandlers(runCli);
+  it.each([['pass'], ['fail'], ['delegate'], ['collect']] as const)(
+    'withholds a bare %s mutation without spawning the CLI',
+    async (tool) => {
+      const runCli = jest.fn<RunCli>();
+      const handlers = registerWithHandlers(runCli);
 
-    // A bare (no claim evidence) role-specific mutation spawned from the MCP
-    // server would silently inherit direct-CLI trust. The handler must refuse
-    // it with a structured `{ error }` envelope and never reach runCli.
-    const res = await handlers.get(tool)?.({});
-    expect(parseToolResponse(res)).toEqual({
-      error: expect.stringContaining('subprocess front end'),
-    });
-    expect(runCli).not.toHaveBeenCalled();
-  });
+      // A bare (no claim evidence) role-specific mutation spawned from the MCP
+      // server would silently inherit direct-CLI trust. The handler must refuse
+      // it with a structured `{ error }` envelope and never reach runCli.
+      const res = await handlers.get(tool)?.({});
+      expect(parseToolResponse(res)).toEqual({
+        error: expect.stringContaining('subprocess front end'),
+      });
+      expect(runCli).not.toHaveBeenCalled();
+    },
+  );
 
   it('withholds a --step-targeted bare pass (still direct-CLI trust)', async () => {
     const runCli = jest.fn<RunCli>();
@@ -516,40 +504,35 @@ describe('subprocess trust boundary', () => {
     expect(runCli).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['pass'],
-    ['fail'],
-    ['delegate'],
-    ['collect'],
-  ] as const)('spawns a %s --claim-id claim-evidence mutation through the boundary', async (tool) => {
-    const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
-    const handlers = registerWithHandlers(runCli);
+  it.each([['pass'], ['fail'], ['delegate'], ['collect']] as const)(
+    'spawns a %s --claim-id claim-evidence mutation through the boundary',
+    async (tool) => {
+      const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+      const handlers = registerWithHandlers(runCli);
 
-    const res = await handlers.get(tool)?.({ claimId: 'claim-1' });
-    expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
-    // The pass-through path surfaces the CLI's data payload to the MCP client.
-    expect(parseToolResponse(res)).toEqual({ ok: true });
-  });
+      const res = await handlers.get(tool)?.({ claimId: 'claim-1' });
+      expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
+      // The pass-through path surfaces the CLI's data payload to the MCP client.
+      expect(parseToolResponse(res)).toEqual({ ok: true });
+    },
+  );
 
   describe('explicit runId targeting', () => {
     const runId = `rd_${'a'.repeat(32)}`;
 
-    it.each([
-      ['pass'],
-      ['fail'],
-      ['complete'],
-      ['stop'],
-      ['collect'],
-    ] as const)('withholds runId-only %s because runId is target selection', async (tool) => {
-      const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
-      const handlers = registerWithHandlers(runCli);
+    it.each([['pass'], ['fail'], ['complete'], ['stop'], ['collect']] as const)(
+      'withholds runId-only %s because runId is target selection',
+      async (tool) => {
+        const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+        const handlers = registerWithHandlers(runCli);
 
-      const res = await handlers.get(tool)?.({ runId });
-      expect(parseToolResponse(res)).toEqual({
-        error: expect.stringContaining('subprocess front end'),
-      });
-      expect(runCli).not.toHaveBeenCalled();
-    });
+        const res = await handlers.get(tool)?.({ runId });
+        expect(parseToolResponse(res)).toEqual({
+          error: expect.stringContaining('subprocess front end'),
+        });
+        expect(runCli).not.toHaveBeenCalled();
+      },
+    );
 
     it('withholds runId-only goto because runId is target selection', async () => {
       const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });

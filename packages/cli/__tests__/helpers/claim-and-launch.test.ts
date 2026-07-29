@@ -665,21 +665,20 @@ describe('claimAndLaunch', () => {
     expect(core.hashDelegationToken).not.toHaveBeenCalled();
   });
 
-  it.each([
-    'rdtk_ABC',
-    'rdtk_invalid@#$%',
-    'bad-token',
-  ])('rejects invalid token %s before hashing', async (token) => {
-    const ctx = makeCtx();
+  it.each(['rdtk_ABC', 'rdtk_invalid@#$%', 'bad-token'])(
+    'rejects invalid token %s before hashing',
+    async (token) => {
+      const ctx = makeCtx();
 
-    const result = await claimAndLaunch(ctx, token, {});
+      const result = await claimAndLaunch(ctx, token, {});
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'invalid-token');
-    }
-    expect(core.hashDelegationToken).not.toHaveBeenCalled();
-  });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        assertVariant(result, 'reason', 'invalid-token');
+      }
+      expect(core.hashDelegationToken).not.toHaveBeenCalled();
+    },
+  );
 
   it('returns TOKEN_NOT_FOUND when scan finds no match', async () => {
     const ctx = makeCtx();
@@ -1374,55 +1373,55 @@ describe('claimAndLaunch', () => {
     }
   });
 
-  it.each([
-    'completed',
-    'stopped',
-  ] as const)('returns parent-ended when parent is %s after lock', async (lifecycle) => {
-    const ctx = makeCtx();
-    const parentState = {
-      id: `run-${lifecycle}`,
-      lifecycle: 'running',
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: MOCK_TOKEN_HASH,
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            childRunId: null,
-            cancelledAt: null,
-            contextSnapshot: { vars: {}, ancestors: [] },
-            createdAt: '2026-02-27T10:00:00.000Z',
+  it.each(['completed', 'stopped'] as const)(
+    'returns parent-ended when parent is %s after lock',
+    async (lifecycle) => {
+      const ctx = makeCtx();
+      const parentState = {
+        id: `run-${lifecycle}`,
+        lifecycle: 'running',
+        substepStates: [
+          {
+            id: '1',
+            status: 'pending',
+            delegation: {
+              tokenHash: MOCK_TOKEN_HASH,
+              childRunbookPath: 'child.md',
+              childRunbookRef: { source: 'project', path: 'child.md' },
+              childRunId: null,
+              cancelledAt: null,
+              contextSnapshot: { vars: {}, ancestors: [] },
+              createdAt: '2026-02-27T10:00:00.000Z',
+            },
           },
-        },
-      ],
-    };
+        ],
+      };
 
-    mockScanService(
-      scanResult({
-        parentState,
-        stepId: '1',
-        substepId: '1',
-        delegation: parentState.substepStates[0].delegation,
-      }),
-    );
-    mockHappyDelegationLock();
-    jest.mocked(ctx.manager).load.mockResolvedValue({
-      ...parentState,
-      lifecycle,
-    } as unknown as RunbookState);
+      mockScanService(
+        scanResult({
+          parentState,
+          stepId: '1',
+          substepId: '1',
+          delegation: parentState.substepStates[0].delegation,
+        }),
+      );
+      mockHappyDelegationLock();
+      jest.mocked(ctx.manager).load.mockResolvedValue({
+        ...parentState,
+        lifecycle,
+      } as unknown as RunbookState);
 
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+      // cspell:disable-next-line
+      const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'parent-ended');
-      expect(result.parentRunId).toBe(`run-${lifecycle}`);
-      expect(result.lifecycle).toBe(lifecycle);
-    }
-  });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        assertVariant(result, 'reason', 'parent-ended');
+        expect(result.parentRunId).toBe(`run-${lifecycle}`);
+        expect(result.lifecycle).toBe(lifecycle);
+      }
+    },
+  );
 
   it('returns TOKEN_NOT_FOUND when delegation disappears after lock', async () => {
     const ctx = makeCtx();

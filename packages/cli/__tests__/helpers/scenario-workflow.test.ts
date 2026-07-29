@@ -861,29 +861,29 @@ describe('executeScenario', () => {
     expect(chmodSync).not.toHaveBeenCalled();
   });
 
-  it.each([
-    'EACCES',
-    'EPERM',
-  ])('tolerates %s when restoring the cli executable bit', async (code) => {
-    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
-    jest.mocked(statSync).mockReturnValue({ mode: 0o644 } as ReturnType<typeof statSync>);
-    jest.mocked(chmodSync).mockImplementation(() => {
-      throw Object.assign(new Error(`${code}: permission denied`), { code });
-    });
+  it.each(['EACCES', 'EPERM'])(
+    'tolerates %s when restoring the cli executable bit',
+    async (code) => {
+      jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+      jest.mocked(statSync).mockReturnValue({ mode: 0o644 } as ReturnType<typeof statSync>);
+      jest.mocked(chmodSync).mockImplementation(() => {
+        throw Object.assign(new Error(`${code}: permission denied`), { code });
+      });
 
-    // Read-only / global installs may reject chmod even though cli.js is
-    // already runnable — the scenario run must still proceed.
-    const result = await executeScenario(
-      makeLoadedRunbook(),
-      'happy',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
+      // Read-only / global installs may reject chmod even though cli.js is
+      // already runnable — the scenario run must still proceed.
+      const result = await executeScenario(
+        makeLoadedRunbook(),
+        'happy',
+        true,
+        mockOutput,
+        '/cli/dist/cli.js',
+      );
 
-    expect(result.passed).toBe(true);
-    expect(chmodSync).toHaveBeenCalledWith('/cli/dist/cli.js', 0o755);
-  });
+      expect(result.passed).toBe(true);
+      expect(chmodSync).toHaveBeenCalledWith('/cli/dist/cli.js', 0o755);
+    },
+  );
 
   it('rethrows non-permission errors from chmod', async () => {
     jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());

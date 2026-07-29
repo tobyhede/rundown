@@ -31,16 +31,15 @@ describe('parseArtifactDeclaration', () => {
     });
   });
 
-  it.each([
-    '*/plan.json',
-    '*/end-to-end-test-review.json',
-    '*/review-*.json',
-  ])('accepts the cross-run shorthand %s', (token) => {
-    expect(parseArtifactDeclaration(`Plan "${token}"`)).toEqual({
-      name: 'Plan',
-      rawToken: token,
-    });
-  });
+  it.each(['*/plan.json', '*/end-to-end-test-review.json', '*/review-*.json'])(
+    'accepts the cross-run shorthand %s',
+    (token) => {
+      expect(parseArtifactDeclaration(`Plan "${token}"`)).toEqual({
+        name: 'Plan',
+        rawToken: token,
+      });
+    },
+  );
 
   it.each(['*/dir/plan.json', 'dir/*.json'])('rejects a non-shorthand glob path %s', (token) => {
     expect(parseArtifactDeclaration(`Plan "${token}"`)).toBeNull();

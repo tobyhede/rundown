@@ -230,23 +230,26 @@ describe('RunbookCollectionService', () => {
     ['plugin', { kind: 'plugin', agentId: 'subagent-1' }],
     ['mcp', { kind: 'mcp', toolName: 'collect' }],
     ['unknown', { kind: 'unknown' }],
-  ])('refuses collection with actor_context_required for %s caller evidence (no minted trust)', async (_kind, callerEvidence) => {
-    await manager.save(state());
+  ])(
+    'refuses collection with actor_context_required for %s caller evidence (no minted trust)',
+    async (_kind, callerEvidence) => {
+      await manager.save(state());
 
-    // The seam maps evidence to trust in core: plugin/mcp/unknown evidence maps
-    // to UNKNOWN_ACTOR_CONTEXT regardless of metadata, so the existing policy
-    // gate refuses before inspecting any outcome state.
-    await expect(
-      collectionService.collectDelegationOutcomes({
-        targetState: state(),
-        steps,
-        callerEvidence,
-      }),
-    ).resolves.toEqual({
-      kind: 'actor_context_required',
-      intent: 'delegation-collection',
-    });
-  });
+      // The seam maps evidence to trust in core: plugin/mcp/unknown evidence maps
+      // to UNKNOWN_ACTOR_CONTEXT regardless of metadata, so the existing policy
+      // gate refuses before inspecting any outcome state.
+      await expect(
+        collectionService.collectDelegationOutcomes({
+          targetState: state(),
+          steps,
+          callerEvidence,
+        }),
+      ).resolves.toEqual({
+        kind: 'actor_context_required',
+        intent: 'delegation-collection',
+      });
+    },
+  );
 
   it('refuses bare direct-CLI collection on a delegating target — ambient trust removed (#460)', async () => {
     // The collection target authors DELEGATE substeps, so it classifies

@@ -51,9 +51,12 @@ describe('bareRoleSpecificMutation', () => {
     [['pass', '--step', '--claim-id', 'foo'], 'pass'],
     // Same option-value misread for `--index`.
     [['fail', '--index', '--claim-id=foo'], 'fail'],
-  ])('withholds %j because the --claim-id token is a consumed option value, not evidence', (argv, expected) => {
-    expect(bareRoleSpecificMutation(argv)).toBe(expected);
-  });
+  ])(
+    'withholds %j because the --claim-id token is a consumed option value, not evidence',
+    (argv, expected) => {
+      expect(bareRoleSpecificMutation(argv)).toBe(expected);
+    },
+  );
 
   it.each([
     [['delegate', '--claim-id', 'claim-1']],
@@ -79,9 +82,12 @@ describe('bareRoleSpecificMutation', () => {
     [['delegate', 'child.md', '--artifacts-json', '--claim-id=foo']],
     // Interleaved with a real artifact value slot, still no flag-position claim.
     [['delegate', 'child.md', '--artifacts', 'Plan=rd://a', '--artifacts', '--claim-id=foo']],
-  ])('still withholds delegate when --claim-id is smuggled through an artifact value %j', (argv) => {
-    expect(bareRoleSpecificMutation(argv)).toBe('delegate');
-  });
+  ])(
+    'still withholds delegate when --claim-id is smuggled through an artifact value %j',
+    (argv) => {
+      expect(bareRoleSpecificMutation(argv)).toBe('delegate');
+    },
+  );
 
   it.each([
     // Counter-cases: the artifact option consumes its OWN value and a separate
@@ -274,29 +280,19 @@ describe('bareRoleSpecificMutation', () => {
 describe('bareRoleSpecificMutation: explicit --run targeting', () => {
   const runId = `rd_${'a'.repeat(32)}`;
 
-  it.each([
-    'pass',
-    'fail',
-    'complete',
-    'stop',
-    'collect',
-    'delegate',
-    'goto',
-  ])('withholds a --run-targeted %s without claim authority', (command) => {
-    expect(bareRoleSpecificMutation([command, '--run', runId])).toBe(command);
-  });
+  it.each(['pass', 'fail', 'complete', 'stop', 'collect', 'delegate', 'goto'])(
+    'withholds a --run-targeted %s without claim authority',
+    (command) => {
+      expect(bareRoleSpecificMutation([command, '--run', runId])).toBe(command);
+    },
+  );
 
-  it.each([
-    'pass',
-    'fail',
-    'complete',
-    'stop',
-    'collect',
-    'delegate',
-    'goto',
-  ])('withholds the inline --run= form of %s without claim authority', (command) => {
-    expect(bareRoleSpecificMutation([command, `--run=${runId}`])).toBe(command);
-  });
+  it.each(['pass', 'fail', 'complete', 'stop', 'collect', 'delegate', 'goto'])(
+    'withholds the inline --run= form of %s without claim authority',
+    (command) => {
+      expect(bareRoleSpecificMutation([command, `--run=${runId}`])).toBe(command);
+    },
+  );
 
   it('withholds when --run sits in a value slot (smuggling)', () => {
     expect(bareRoleSpecificMutation(['pass', '--step', '--run'])).toBe('pass');

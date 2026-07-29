@@ -8,14 +8,12 @@ describe('assertSafeRelativeArtifactPath', () => {
     }).not.toThrow();
   });
 
-  it.each([
-    '../schema.json',
-    'schemas/../review.schema.json',
-    './schema.json',
-    'schemas//x.json',
-  ])('rejects unsafe path segments in %s', (ref) => {
-    expect(() => {
-      assertSafeRelativeArtifactPath(ref, 'unsafe');
-    }).toThrow('unsafe');
-  });
+  it.each(['../schema.json', 'schemas/../review.schema.json', './schema.json', 'schemas//x.json'])(
+    'rejects unsafe path segments in %s',
+    (ref) => {
+      expect(() => {
+        assertSafeRelativeArtifactPath(ref, 'unsafe');
+      }).toThrow('unsafe');
+    },
+  );
 });

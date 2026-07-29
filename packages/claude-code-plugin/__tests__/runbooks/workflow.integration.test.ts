@@ -191,47 +191,44 @@ describe('Built-in Runbook Workflow Integration', () => {
         key: 'review-plan-structural-integrity.json',
         args: ['--input', 'PlanPath=/tmp/plan.json'],
       },
-    ])('resolves ARTIFACTS for bundled runbook $file', async ({
-      file,
-      step,
-      artifactName,
-      key,
-      args,
-    }) => {
-      const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
-      try {
-        const entered = await runPromptedUntilStep(join(runbooksDir, ...file), step, args);
-        const artifacts = entered.artifacts as
-          | Record<string, { key?: unknown; uri?: unknown; path?: unknown }>
-          | undefined;
-        const artifact = artifacts?.[artifactName];
+    ])(
+      'resolves ARTIFACTS for bundled runbook $file',
+      async ({ file, step, artifactName, key, args }) => {
+        const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+        process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+        try {
+          const entered = await runPromptedUntilStep(join(runbooksDir, ...file), step, args);
+          const artifacts = entered.artifacts as
+            | Record<string, { key?: unknown; uri?: unknown; path?: unknown }>
+            | undefined;
+          const artifact = artifacts?.[artifactName];
 
-        expect(artifact?.key).toBe(key);
-        if (typeof artifact?.uri !== 'string') {
-          throw new Error(`Expected ${artifactName}.uri to be a string`);
+          expect(artifact?.key).toBe(key);
+          if (typeof artifact?.uri !== 'string') {
+            throw new Error(`Expected ${artifactName}.uri to be a string`);
+          }
+          expect(artifact.uri).toEqual(
+            expect.stringMatching(
+              new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`),
+            ),
+          );
+          if (typeof artifact.path !== 'string') {
+            throw new Error(`Expected ${artifactName}.path to be a string`);
+          }
+          expect(artifact.path).toEqual(
+            expect.stringMatching(new RegExp(`/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`)),
+          );
+          // Bare artifact alias now renders the local path, not the rd:// URI.
+          expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.path);
+        } finally {
+          if (previousPluginRoot === undefined) {
+            delete process.env.CLAUDE_PLUGIN_ROOT;
+          } else {
+            process.env.CLAUDE_PLUGIN_ROOT = previousPluginRoot;
+          }
         }
-        expect(artifact.uri).toEqual(
-          expect.stringMatching(
-            new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`),
-          ),
-        );
-        if (typeof artifact.path !== 'string') {
-          throw new Error(`Expected ${artifactName}.path to be a string`);
-        }
-        expect(artifact.path).toEqual(
-          expect.stringMatching(new RegExp(`/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`)),
-        );
-        // Bare artifact alias now renders the local path, not the rd:// URI.
-        expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.path);
-      } finally {
-        if (previousPluginRoot === undefined) {
-          delete process.env.CLAUDE_PLUGIN_ROOT;
-        } else {
-          process.env.CLAUDE_PLUGIN_ROOT = previousPluginRoot;
-        }
-      }
-    });
+      },
+    );
 
     it('passes PlanPath from automatic write-plan launch into review-plan launch', async () => {
       const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;

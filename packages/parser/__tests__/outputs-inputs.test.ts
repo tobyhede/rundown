@@ -344,15 +344,10 @@ name: no-inputs
     expect(frontmatter?.inputs).toBeUndefined();
   });
 
-  it.each([
-    'Context',
-    'context',
-    'Step',
-    'Index',
-    'RunId',
-    'RunbookRef',
-  ])('rejects reserved name "%s" in frontmatter required', (name) => {
-    const md = `---
+  it.each(['Context', 'context', 'Step', 'Index', 'RunId', 'RunbookRef'])(
+    'rejects reserved name "%s" in frontmatter required',
+    (name) => {
+      const md = `---
 name: bad-required
 required:
   - ${name}
@@ -360,17 +355,18 @@ required:
 ## 1. Step
 - PASS COMPLETE
 `;
-    const { frontmatter, diagnostics } = parseRunbookDocument(md);
-    expect(frontmatter?.required).toBeUndefined();
-    expect(diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: 'error',
-          message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
-        }),
-      ]),
-    );
-  });
+      const { frontmatter, diagnostics } = parseRunbookDocument(md);
+      expect(frontmatter?.required).toBeUndefined();
+      expect(diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            severity: 'error',
+            message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
+          }),
+        ]),
+      );
+    },
+  );
 });
 
 describe('parseRunbookDocument INPUTS directive — reserved-name guard (removed)', () => {
@@ -378,24 +374,19 @@ describe('parseRunbookDocument INPUTS directive — reserved-name guard (removed
   // the generic "INPUTS step directive has been removed" error rather than specific
   // reserved-name errors. Tests verify the directive produces a removal error.
 
-  it.each([
-    'context',
-    'Context',
-    'CONTEXT',
-    'step',
-    'Step',
-    'index',
-    'Index',
-  ])('emits removal diagnostic when step-level INPUTS contains "%s"', (name) => {
-    const md = `## 1. Step
+  it.each(['context', 'Context', 'CONTEXT', 'step', 'Step', 'index', 'Index'])(
+    'emits removal diagnostic when step-level INPUTS contains "%s"',
+    (name) => {
+      const md = `## 1. Step
 - INPUTS
   - ${name}
 `;
-    const result = parseRunbookDocument(md);
-    const errors = result.diagnostics.filter((d) => d.severity === 'error');
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
-  });
+      const result = parseRunbookDocument(md);
+      const errors = result.diagnostics.filter((d) => d.severity === 'error');
+      expect(errors.length).toBeGreaterThanOrEqual(1);
+      expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
+    },
+  );
 
   it('emits removal diagnostic when substep-level INPUTS contains "context"', () => {
     const md = `## 1. Parent
@@ -454,21 +445,17 @@ PASS CONTINUE
 });
 
 describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () => {
-  it.each([
-    'context',
-    'Context',
-    'STEP',
-    'Index',
-    'RunId',
-    'RunbookRef',
-  ])('throws RunbookSyntaxError when OUTPUTS uses reserved name "%s"', (name) => {
-    const md = `## 1. Step
+  it.each(['context', 'Context', 'STEP', 'Index', 'RunId', 'RunbookRef'])(
+    'throws RunbookSyntaxError when OUTPUTS uses reserved name "%s"',
+    (name) => {
+      const md = `## 1. Step
 - OUTPUTS
   - ${name}
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
-    expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
-  });
+      expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+      expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
+    },
+  );
 
   it('throws when substep-level OUTPUTS uses reserved "context"', () => {
     const md = `## 1. Parent

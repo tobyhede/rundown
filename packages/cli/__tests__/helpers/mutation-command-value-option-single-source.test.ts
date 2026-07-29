@@ -76,14 +76,15 @@ describe('scanned mutation command value-taking option single source of truth', 
   // Security direction: a value-taking option the boundary does not know about is
   // an open claim-id smuggling slot. Asserted per command so a failure names the
   // offending command and option rather than diffing two anonymous arrays.
-  it.each(
-    SCANNED_COMMANDS,
-  )('registers only boundary-known value-taking options on `%s`', (_command, register) => {
-    const unknown = registeredValueTakingOptionLongs(register).filter(
-      (long) => !SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS.has(long),
-    );
-    expect(unknown).toEqual([]);
-  });
+  it.each(SCANNED_COMMANDS)(
+    'registers only boundary-known value-taking options on `%s`',
+    (_command, register) => {
+      const unknown = registeredValueTakingOptionLongs(register).filter(
+        (long) => !SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS.has(long),
+      );
+      expect(unknown).toEqual([]);
+    },
+  );
 
   // Rot direction: an entry no scanned command registers means the set has drifted
   // from the surface it claims to describe. Harmless to the scanner (over-skipping

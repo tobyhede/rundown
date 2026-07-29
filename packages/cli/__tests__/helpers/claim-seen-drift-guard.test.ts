@@ -397,31 +397,29 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
     }
   });
 
-  it.each(
-    Object.entries(RECORDING_COMMANDS),
-  )('records claim liveness when %s presents bearer authority', async (_name, {
-    arrange,
-    driveInvocation,
-  }) => {
-    const arranged = await arrange();
-    try {
-      await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
+  it.each(Object.entries(RECORDING_COMMANDS))(
+    'records claim liveness when %s presents bearer authority',
+    async (_name, { arrange, driveInvocation }) => {
+      const arranged = await arrange();
+      try {
+        await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
 
-      await driveInvocation(arranged);
+        await driveInvocation(arranged);
 
-      // The rule: every command that presents the claim as its holder's authority
-      // records that holder as seen. Terminal commands record too; the eventual
-      // run outcome does not change what authorization already proved.
-      const after = (await readSession(arranged.workspace)).claims[arranged.claimKey].lastSeenAt;
-      expect(Date.parse(after)).toBeGreaterThan(Date.parse(EPOCH));
-    } finally {
-      // Each case owns a whole workspace, so each case must tear one down. The
-      // suite has no `beforeEach`/`afterEach` pair to do it: the arrangements
-      // differ per command, so the workspace cannot be built before the case
-      // knows which one it is.
-      await arranged.workspace.cleanup();
-    }
-  });
+        // The rule: every command that presents the claim as its holder's authority
+        // records that holder as seen. Terminal commands record too; the eventual
+        // run outcome does not change what authorization already proved.
+        const after = (await readSession(arranged.workspace)).claims[arranged.claimKey].lastSeenAt;
+        expect(Date.parse(after)).toBeGreaterThan(Date.parse(EPOCH));
+      } finally {
+        // Each case owns a whole workspace, so each case must tear one down. The
+        // suite has no `beforeEach`/`afterEach` pair to do it: the arrangements
+        // differ per command, so the workspace cannot be built before the case
+        // knows which one it is.
+        await arranged.workspace.cleanup();
+      }
+    },
+  );
 
   it('records claim liveness on delegate --retry, the distinct retry issuance site (#519)', async () => {
     // The RECORDING_COMMANDS it.each drives `delegate` through its FRESH issuance
@@ -461,39 +459,36 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
     }
   });
 
-  it.each(
-    Object.entries(NON_RECORDING_CLAIM_COMMANDS),
-  )('does NOT record claim liveness when %s uses a target selector', async (name, {
-    reason,
-    arrange,
-    driveInvocation,
-  }) => {
-    const arranged = await arrange();
-    try {
-      await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
-
-      // Drives the command to a successful invocation (exit 0) — a refusal would
-      // leave the mark unchanged for the wrong reason and pass vacuously.
-      await driveInvocation(arranged);
-
-      // The mark must not move. `reason` documents WHY at the failure site: a
-      // reader who broke this needs the anti-fooling argument, not just a diff.
-      //
-      // Jest's `expect` takes ONE argument — `expect(actual, reason)` is Vitest
-      // syntax and does not compile here, so the reason is carried by wrapping
-      // the failure instead.
-      const after = (await readSession(arranged.workspace)).claims[arranged.claimKey].lastSeenAt;
+  it.each(Object.entries(NON_RECORDING_CLAIM_COMMANDS))(
+    'does NOT record claim liveness when %s uses a target selector',
+    async (name, { reason, arrange, driveInvocation }) => {
+      const arranged = await arrange();
       try {
-        expect(after).toBe(EPOCH);
-      } catch (error) {
-        throw new Error(
-          `${name} moved lastSeenAt but must not record.\nWhy it must not: ${reason}\n\n${getErrorMessage(error)}`,
-        );
+        await backdateClaimSeen(arranged.workspace, arranged.claimKey, EPOCH);
+
+        // Drives the command to a successful invocation (exit 0) — a refusal would
+        // leave the mark unchanged for the wrong reason and pass vacuously.
+        await driveInvocation(arranged);
+
+        // The mark must not move. `reason` documents WHY at the failure site: a
+        // reader who broke this needs the anti-fooling argument, not just a diff.
+        //
+        // Jest's `expect` takes ONE argument — `expect(actual, reason)` is Vitest
+        // syntax and does not compile here, so the reason is carried by wrapping
+        // the failure instead.
+        const after = (await readSession(arranged.workspace)).claims[arranged.claimKey].lastSeenAt;
+        try {
+          expect(after).toBe(EPOCH);
+        } catch (error) {
+          throw new Error(
+            `${name} moved lastSeenAt but must not record.\nWhy it must not: ${reason}\n\n${getErrorMessage(error)}`,
+          );
+        }
+      } finally {
+        await arranged.workspace.cleanup();
       }
-    } finally {
-      await arranged.workspace.cleanup();
-    }
-  });
+    },
+  );
 
   it('collect records ONLY the presented orchestrator claim, never a child (AC5)', async () => {
     // DOCUMENTS AC5 AT THIS SEAM — it does NOT guard it, and the difference was

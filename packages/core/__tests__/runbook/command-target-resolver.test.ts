@@ -442,43 +442,43 @@ describe('resolveMutationAuthority', () => {
 });
 
 describe('resolveTransitionTarget', () => {
-  it.each([
-    'pass',
-    'fail',
-  ] as const)('refuses claim-targeted %s when the bearer lacks mutate-run grant', async (command) => {
-    const result = await resolveTransitionTarget(
-      fakeReader({
-        claimResolution: {
-          status: 'claimed',
-          claimId,
-          claim: verifiedClaimWithoutMutateGrant,
-          record: claimWithoutMutateGrant,
-          state: child,
-        },
-        claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
-        expectedIncludeStashed: false,
-      }),
-      { command, claimId },
-    );
+  it.each(['pass', 'fail'] as const)(
+    'refuses claim-targeted %s when the bearer lacks mutate-run grant',
+    async (command) => {
+      const result = await resolveTransitionTarget(
+        fakeReader({
+          claimResolution: {
+            status: 'claimed',
+            claimId,
+            claim: verifiedClaimWithoutMutateGrant,
+            record: claimWithoutMutateGrant,
+            state: child,
+          },
+          claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+          expectedIncludeStashed: false,
+        }),
+        { command, claimId },
+      );
 
-    expect(result).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
-  });
+      expect(result).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
+    },
+  );
 
-  it.each([
-    'pass',
-    'fail',
-  ] as const)('refuses a bare %s against a default parent with open delegated child claims', async (command) => {
-    await expect(
-      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
-        command,
-        actorContext: verifiedRunContext(parent.id),
-      }),
-    ).resolves.toEqual({
-      kind: 'open_delegated_children',
-      parentRunId: parent.id,
-      claims: [claim],
-    });
-  });
+  it.each(['pass', 'fail'] as const)(
+    'refuses a bare %s against a default parent with open delegated child claims',
+    async (command) => {
+      await expect(
+        resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
+          command,
+          actorContext: verifiedRunContext(parent.id),
+        }),
+      ).resolves.toEqual({
+        kind: 'open_delegated_children',
+        parentRunId: parent.id,
+        claims: [claim],
+      });
+    },
+  );
 
   it('resolves default active runbook when there are no open delegated child claims', async () => {
     await expect(
@@ -676,27 +676,28 @@ describe('resolveTransitionTarget', () => {
     { reason: 'cursor-advanced' as const },
     { reason: 'resolved' as const },
     { reason: 'token-reissued' as const },
-  ])('reports a $reason supersession as DELEGATION_SUPERSEDED with no-retry guidance', async ({
-    reason,
-  }) => {
-    const result = await resolveTransitionTarget(
-      fakeReader({
-        claimResolution: { status: 'superseded', claimId, reason },
-        expectedIncludeStashed: false,
-      }),
-      { command: 'pass', claimId },
-    );
+  ])(
+    'reports a $reason supersession as DELEGATION_SUPERSEDED with no-retry guidance',
+    async ({ reason }) => {
+      const result = await resolveTransitionTarget(
+        fakeReader({
+          claimResolution: { status: 'superseded', claimId, reason },
+          expectedIncludeStashed: false,
+        }),
+        { command: 'pass', claimId },
+      );
 
-    // RD-825 and not the generic unavailable code: this is the fact the bearer
-    // holder acts on. Reporting a real supersession as "does not exist" reads
-    // as a mistyped id and invites the retry the code exists to prevent.
-    expect(result).toEqual({
-      kind: 'stale_claim',
-      claimId,
-      message: `Claim id ${claimKeyFromBearer(claimId)} is superseded: the parent has moved past this delegation (${reason}). Do not retry the token; report the superseded delegation to the orchestrator.`,
-      code: 'DELEGATION_SUPERSEDED',
-    });
-  });
+      // RD-825 and not the generic unavailable code: this is the fact the bearer
+      // holder acts on. Reporting a real supersession as "does not exist" reads
+      // as a mistyped id and invites the retry the code exists to prevent.
+      expect(result).toEqual({
+        kind: 'stale_claim',
+        claimId,
+        message: `Claim id ${claimKeyFromBearer(claimId)} is superseded: the parent has moved past this delegation (${reason}). Do not retry the token; report the superseded delegation to the orchestrator.`,
+        code: 'DELEGATION_SUPERSEDED',
+      });
+    },
+  );
 
   it.each([
     {
@@ -709,27 +710,27 @@ describe('resolveTransitionTarget', () => {
       reason: 'parent-unreadable' as const,
       expectedMessage: `Claim id ${claimKeyFromBearer(claimId)} is superseded and its parent run no longer exists. Recover with \`rundown prune\` and restart from source.`,
     },
-  ])('does not borrow the superseded code for a $label claim', async ({
-    reason,
-    expectedMessage,
-  }) => {
-    // Neither is "the parent moved past this delegation", so neither carries
-    // RD-825's no-retry instruction — the token was never the problem.
-    const result = await resolveTransitionTarget(
-      fakeReader({
-        claimResolution: { status: 'superseded', claimId, reason },
-        expectedIncludeStashed: false,
-      }),
-      { command: 'pass', claimId },
-    );
+  ])(
+    'does not borrow the superseded code for a $label claim',
+    async ({ reason, expectedMessage }) => {
+      // Neither is "the parent moved past this delegation", so neither carries
+      // RD-825's no-retry instruction — the token was never the problem.
+      const result = await resolveTransitionTarget(
+        fakeReader({
+          claimResolution: { status: 'superseded', claimId, reason },
+          expectedIncludeStashed: false,
+        }),
+        { command: 'pass', claimId },
+      );
 
-    expect(result).toEqual({
-      kind: 'stale_claim',
-      claimId,
-      message: expectedMessage,
-      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-    });
-  });
+      expect(result).toEqual({
+        kind: 'stale_claim',
+        claimId,
+        message: expectedMessage,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      });
+    },
+  );
 
   it.each([
     {
@@ -953,26 +954,26 @@ describe('resolveTerminalTarget', () => {
     expect(res.kind).toBe('claim');
   });
 
-  it.each([
-    'complete',
-    'stop',
-  ] as const)('refuses claim-targeted %s when the bearer lacks mutate-run grant', async (command) => {
-    const reader = fakeReader({
-      claimResolution: {
-        status: 'claimed',
-        claimId,
-        claim: verifiedClaimWithoutMutateGrant,
-        record: claimWithoutMutateGrant,
-        state: child,
-      },
-      claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
-      expectedIncludeStashed: false,
-    });
+  it.each(['complete', 'stop'] as const)(
+    'refuses claim-targeted %s when the bearer lacks mutate-run grant',
+    async (command) => {
+      const reader = fakeReader({
+        claimResolution: {
+          status: 'claimed',
+          claimId,
+          claim: verifiedClaimWithoutMutateGrant,
+          record: claimWithoutMutateGrant,
+          state: child,
+        },
+        claimVerification: { status: 'verified', claim: verifiedClaimWithoutMutateGrant },
+        expectedIncludeStashed: false,
+      });
 
-    const res = await resolveTerminalTarget(reader, { command, claimId });
+      const res = await resolveTerminalTarget(reader, { command, claimId });
 
-    expect(res).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
-  });
+      expect(res).toEqual({ kind: 'claim_grant_required', claimId, runId: child.id });
+    },
+  );
 
   it('passes through a stale (missing) claim unchanged', async () => {
     const reader = fakeReader({

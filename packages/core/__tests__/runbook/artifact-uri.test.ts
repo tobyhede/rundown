@@ -283,14 +283,14 @@ describe('artifact URI utilities', () => {
     );
   });
 
-  it.each([
-    '../outside',
-    path.resolve('/outside'),
-  ])('rejects work paths that escape cwd: %s', (workPath) => {
-    expect(() => artifactUriToPath(EXACT_URI, { cwd: '/repo', workPath })).toThrow(
-      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
-    );
-  });
+  it.each(['../outside', path.resolve('/outside')])(
+    'rejects work paths that escape cwd: %s',
+    (workPath) => {
+      expect(() => artifactUriToPath(EXACT_URI, { cwd: '/repo', workPath })).toThrow(
+        ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
+      );
+    },
+  );
 
   it('rejects symlinked work path segments', async () => {
     const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'artifact-uri-'));

@@ -163,32 +163,32 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
   // substep-`done` skip is the LAST test in the predicate's filter chain, so a
   // resolved substep short-circuits every earlier skip — which is exactly why the
   // test above, despite its name, never reaches the child's lifecycle.
-  it.each([
-    'completed',
-    'stopped',
-  ] as const)('commits a guarded write when the delegated child is already %s', async (lifecycle) => {
-    // R2 terminal retention keeps a finished child's claim ACTIVE — that row is the
-    // terminal evidence `rd pass`/`rd fail --claim-id` resolve against. This skip is
-    // therefore the only thing standing between a completed child and a parent that
-    // can never advance again.
-    const parent = await seedRun(store, {
-      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
-    });
-    const child = await seedRun(store, {
-      parentLinkage: delegationLinkage(parent.id),
-      lifecycle,
-    });
-    await insertActiveDelegatedClaim(store, {
-      parentRunId: parent.id,
-      controlledRunId: child.id,
-    });
+  it.each(['completed', 'stopped'] as const)(
+    'commits a guarded write when the delegated child is already %s',
+    async (lifecycle) => {
+      // R2 terminal retention keeps a finished child's claim ACTIVE — that row is the
+      // terminal evidence `rd pass`/`rd fail --claim-id` resolve against. This skip is
+      // therefore the only thing standing between a completed child and a parent that
+      // can never advance again.
+      const parent = await seedRun(store, {
+        substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+      });
+      const child = await seedRun(store, {
+        parentLinkage: delegationLinkage(parent.id),
+        lifecycle,
+      });
+      await insertActiveDelegatedClaim(store, {
+        parentRunId: parent.id,
+        controlledRunId: child.id,
+      });
 
-    const guard = parentAdvanceGuard(parent.id);
-    const result = await store.mutateState(parent.id, (current) => ({ ...current, step: '2' }), {
-      guard,
-    });
-    expect(result.kind).toBe('committed');
-  });
+      const guard = parentAdvanceGuard(parent.id);
+      const result = await store.mutateState(parent.id, (current) => ({ ...current, step: '2' }), {
+        guard,
+      });
+      expect(result.kind).toBe('committed');
+    },
+  );
 
   it('commits a guarded write when the child no longer carries the claim linkage', async () => {
     // Token replacement: the child's persisted linkage names a different delegation
