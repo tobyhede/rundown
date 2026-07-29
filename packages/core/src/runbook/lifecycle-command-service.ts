@@ -421,9 +421,18 @@ export interface LifecycleTransitionInput {
    * second field that could silently disagree with it.
    */
   readonly command: TransitionCommandName;
-  /** Typed caller evidence mapped to an actor context by core. */
+  /**
+   * Typed caller evidence mapped to an actor context by core. A `claim` target
+   * selector is the same fact as `claim_bearer` evidence naming that id, so the
+   * seam refuses `actor_context_required` when the two disagree rather than
+   * authorizing as the target (#613).
+   */
   readonly callerEvidence: CallerEvidence;
-  /** Discriminated target selector (default / claim / explicit-step). */
+  /**
+   * Discriminated target selector (default / claim / run / explicit-step). A
+   * `claim` selector names its run by the bearer itself, so it is only valid
+   * alongside `claim_bearer` evidence carrying that same claim id.
+   */
   readonly targetSelector: CommandTargetSelector;
   /** Terminal side-effect policy shared with execution-loop transitions. */
   readonly terminalPolicy: LifecycleTerminalReleasePolicy;
@@ -538,11 +547,17 @@ export interface LifecycleTerminalInput {
    * derived delegation outcome (via lifecycleToDelegationOutcome), never a literal.
    */
   readonly command: TerminalCommandName;
-  /** Typed caller evidence mapped to an actor context by core. */
+  /**
+   * Typed caller evidence mapped to an actor context by core. As on the
+   * transition seam, a `claim` target selector must name the same bearer this
+   * evidence presents; a divergence refuses `actor_context_required` (#613).
+   */
   readonly callerEvidence: CallerEvidence;
   /**
-   * Target selector — only `default` (bare cascade) or `claim` are valid for a
-   * terminal command; an `explicit-step` selector is rejected by `runTerminal`.
+   * Target selector — only `default` (bare cascade), `run`, or `claim` are
+   * valid for a terminal command; an `explicit-step` selector is rejected by
+   * `runTerminal`. A `claim` selector is only valid alongside `claim_bearer`
+   * evidence carrying that same claim id.
    */
   readonly targetSelector: CommandTargetSelector;
   /** Optional terminal message forwarded to the machine (`FORCE_*.message`). */
@@ -641,13 +656,18 @@ export type LifecycleTerminalOutcome =
 export interface LifecycleNavigationInput {
   /** The navigation command being run (currently only `goto`). */
   readonly command: 'goto';
-  /** Typed caller evidence mapped to an actor context by core. */
+  /**
+   * Typed caller evidence mapped to an actor context by core. As on the
+   * mutating seams, a `claim` target selector must name the same bearer this
+   * evidence presents; a divergence refuses `actor_context_required` (#613).
+   */
   readonly callerEvidence: CallerEvidence;
   /**
    * Target selector — `default`, `claim`, or `run`. An `explicit-step`
    * selector is rejected by `resolveRunNavigation`: the navigation target
    * (which step to jump to) is the command's positional argument, not a
-   * run selector.
+   * run selector. A `claim` selector is only valid alongside `claim_bearer`
+   * evidence carrying that same claim id.
    */
   readonly targetSelector: CommandTargetSelector;
 }
@@ -803,6 +823,36 @@ function terminalForceEvent(command: TerminalCommandName): 'FORCE_COMPLETE' | 'F
       throw new Error(`Unsupported terminal command: ${String(_exhaustive)}`);
     }
   }
+}
+
+/** A target selector narrowed to its claim-shaped variant. */
+type ClaimTargetSelector = Extract<CommandTargetSelector, { readonly kind: 'claim' }>;
+
+/**
+ * Whether the caller presented the very bearer that names a claim-shaped target.
+ *
+ * A `claim` selector names its target BY THE BEARER ITSELF — the claim id
+ * carries the live secret segment — so naming one is an act of presentation,
+ * not merely of selection. Caller evidence and a claim-shaped target are
+ * therefore one fact rather than two independent fields, and the only
+ * consistent combination is "the caller presented the bearer it named".
+ * Anything else — a different bearer, or no bearer at all — is a divergence the
+ * seams refuse, instead of deriving authority from the TARGET's own claim and
+ * so acting as the target while the caller's evidence said something else
+ * (#613).
+ *
+ * Authority keys on the DECLARED evidence kind, never on the mere presence of a
+ * `claimId` property: `CallerEvidence` has no non-bearer variant carrying one,
+ * and an untyped frontend must not be able to smuggle authority through a stray
+ * field.
+ *
+ * @param evidence - Typed caller evidence supplied by the frontend.
+ * @param selector - The command's target selector, already narrowed to its
+ *   claim-shaped variant by the caller.
+ * @returns True when the evidence is bearer evidence for exactly this claim.
+ */
+function presentsClaimTarget(evidence: CallerEvidence, selector: ClaimTargetSelector): boolean {
+  return evidence.kind === 'claim_bearer' && evidence.claimId === selector.claimId;
 }
 
 /**
@@ -1415,7 +1465,8 @@ export class RunbookLifecycleCommandService {
    *   Steps are derived in-seam via the injected `loadSteps` dependency, not taken
    *   as an input.
    * @returns A typed refusal or an `applied` outcome carrying observation events
-   *   and a loop-continuation directive.
+   *   and a loop-continuation directive. A claim-shaped target that the caller
+   *   did not present refuses `actor_context_required` before anything resolves.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
    *   a persisted completion does not match the active cursor, or an explicit
    *   `--step` / `--index` target cannot be satisfied by the locked re-read —
@@ -1434,8 +1485,14 @@ export class RunbookLifecycleCommandService {
     // collection guards) while a bare-shaped advance with only target selection
     // is not and stays guarded.
     const targeted = input.explicitTarget !== undefined;
-    const claimId =
-      input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
+    // A claim-shaped target is reconciled against the caller's evidence before
+    // anything is resolved from it, so the claim id below is always the bearer
+    // the caller presented (#613).
+    const claimTarget = input.targetSelector.kind === 'claim' ? input.targetSelector : undefined;
+    if (claimTarget !== undefined && !presentsClaimTarget(input.callerEvidence, claimTarget)) {
+      return { kind: 'actor_context_required' };
+    }
+    const claimId = claimTarget?.claimId;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
@@ -1448,6 +1505,9 @@ export class RunbookLifecycleCommandService {
       switch (target.kind) {
         case 'claim':
         case 'terminal_claim': {
+          // Sound because the entry reconciliation already refused any
+          // divergence: `target.claimId` IS the presented bearer, so this
+          // context is the caller's own verified claim, not the target's.
           actorContext = verifiedClaimContext({
             authority: {
               kind: 'bearer',
@@ -1564,7 +1624,9 @@ export class RunbookLifecycleCommandService {
    *
    * @param input - Command, caller evidence, target selector (default/claim), and
    *   optional message.
-   * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome.
+   * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome. A
+   *   claim-shaped target that the caller did not present refuses
+   *   `actor_context_required` before the claim is resolved.
    * @throws {Error} When an `explicit-step` selector is supplied (complete/stop
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
@@ -1586,8 +1648,13 @@ export class RunbookLifecycleCommandService {
       }
     }
     switch (input.targetSelector.kind) {
+      // Same entry reconciliation as the transition seam: the forced claim is
+      // the bearer the caller presented, never a divergent selector value that
+      // would force (and release) a run on the target's own authority.
       case 'claim':
-        return this.#driveTerminalClaim(input, input.targetSelector.claimId);
+        return presentsClaimTarget(input.callerEvidence, input.targetSelector)
+          ? this.#driveTerminalClaim(input, input.targetSelector.claimId)
+          : { kind: 'actor_context_required' };
       case 'default':
         return this.#driveTerminalBare(input);
       case 'run':
@@ -1656,7 +1723,8 @@ export class RunbookLifecycleCommandService {
    *
    * @param input - Command, caller evidence, and target selector.
    * @returns A typed refusal or an `allowed` outcome carrying the resolved
-   *   run, its steps, and the terminal release mode.
+   *   run, its steps, and the terminal release mode. A claim-shaped target that
+   *   the caller did not present refuses `actor_context_required`.
    * @throws {Error} When an `explicit-step` selector is supplied (the
    *   navigation target is goto's positional argument, not a selector).
    */
@@ -1666,8 +1734,17 @@ export class RunbookLifecycleCommandService {
       throw new Error('goto does not support --step run targeting');
     }
 
+    // Same entry reconciliation as the mutating seams. Navigation needs it just
+    // as much: without it a claim-shaped target derives a verified actor
+    // context from the TARGET's claim, which both authorizes a divergent
+    // presenter and satisfies the run-navigation role gate (#613).
+    const claimTarget = selector.kind === 'claim' ? selector : undefined;
+    if (claimTarget !== undefined && !presentsClaimTarget(input.callerEvidence, claimTarget)) {
+      return { kind: 'actor_context_required' };
+    }
+
     const resolution = await resolveCommandTarget(this.#deps.sessionService, {
-      ...(selector.kind === 'claim' ? { claimId: selector.claimId } : {}),
+      ...(claimTarget ? { claimId: claimTarget.claimId } : {}),
       ...(selector.kind === 'run' ? { runId: selector.runId } : {}),
     });
 

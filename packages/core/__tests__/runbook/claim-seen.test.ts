@@ -544,11 +544,11 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     ).toBe(true);
   });
 
-  it('records neither claim when the presenter lacks a grant for another claim target (AC5)', async () => {
-    // Transition authorization remains target-derived here, so this continues to
-    // apply until #613 tightens the mutation itself. Liveness is stricter: claim A
-    // presented the bearer but has no mutate-run grant for B, while claim B was
-    // selected rather than presented. Neither holder has established liveness.
+  it('records neither claim when the presenter targets another claim (AC5, #613)', async () => {
+    // Claim A presented the bearer but has no mutate-run grant for B, while
+    // claim B was selected rather than presented. #613 refuses that divergence
+    // outright, and liveness agrees: neither holder has established it — A was
+    // never authorized for the run it named, and B never presented anything.
     const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
       runbookPath: 'other.md',
     });
@@ -568,7 +568,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       targetSelector: { kind: 'claim', claimId: claimB },
       terminalPolicy: releasePolicy,
     });
-    expect(outcome.kind).toBe('applied');
+    expect(outcome).toEqual({ kind: 'actor_context_required' });
 
     const session = await manager.loadSession();
     expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
@@ -627,7 +627,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(recordSpy).not.toHaveBeenCalled();
   });
 
-  it('records neither claim when navigation presenter lacks a grant for another claim target', async () => {
+  it('records neither claim when navigation presenter targets another claim (#613)', async () => {
     const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
       runbookPath: 'other.md',
     });
@@ -643,16 +643,49 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       targetSelector: { kind: 'claim', claimId: claimB },
     });
 
-    // Navigation policy remains target-derived until #613, so the command is
-    // still allowed. Liveness attribution independently requires presenter A's
-    // authority for B and therefore records neither bearer.
-    expect(outcome.kind).toBe('allowed');
+    // #613: navigation reconciles evidence against a claim-shaped target before
+    // resolving it, so the divergence refuses instead of deriving a verified
+    // context from B. Liveness attribution agrees and records neither bearer.
+    expect(outcome).toEqual({ kind: 'actor_context_required' });
     const session = await manager.loadSession();
     expect(session.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
     expect(session.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
   });
 
-  it('attributes terminal liveness to caller A rather than selected claim B (AC5)', async () => {
+  it('attributes terminal liveness to the presented bearer (AC5)', async () => {
+    // Presenter and target are the same bearer — the only shape #613 leaves
+    // representable — so the recorded holder is unambiguously the one that
+    // authorized the force. Claim A is minted and left alone as the control:
+    // an unrelated live claim must not be swept up by the child's terminal.
+    const linkage = linkageFor(runId, 'a');
+    const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+      runbookPath: 'child.md',
+      parentLinkage: linkage,
+    });
+    const { claim: recordA } = await sessionService.issueRunControlClaim(runId);
+    const { claimId: claimB, claim: recordB } = assertClaimed(
+      await claimLiveDelegation(sessionService, manager, child.id, linkage),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const outcome = await seam.runTerminal({
+      command: 'complete',
+      callerEvidence: { kind: 'claim_bearer', claimId: claimB },
+      targetSelector: { kind: 'claim', claimId: claimB },
+    });
+
+    expect(outcome.kind).toBe('applied_claim');
+    const after = await manager.loadSession();
+    // Completing the child resolves its parent delegation, but the R2 latch
+    // retains a claim whose controlled child is terminal: B survives as terminal
+    // evidence, with the refreshed mark the force recorded.
+    expect(Date.parse(after.claims[recordB.claimKey].lastSeenAt)).toBeGreaterThan(
+      Date.parse(recordB.lastSeenAt),
+    );
+    expect(after.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
+  });
+
+  it('refuses a terminal whose caller and target bearers diverge, recording neither (#613)', async () => {
     const linkage = linkageFor(runId, 'a');
     const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
       runbookPath: 'child.md',
@@ -670,16 +703,12 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       targetSelector: { kind: 'claim', claimId: claimB },
     });
 
-    expect(outcome.kind).toBe('applied_claim');
+    // The terminal seam reconciles before it resolves the claim, so the child is
+    // neither forced nor released, and neither holder's liveness is written.
+    expect(outcome).toEqual({ kind: 'actor_context_required' });
+    expect((await manager.load(child.id))?.lifecycle).toBe('running');
     const after = await manager.loadSession();
-    expect(Date.parse(after.claims[recordA.claimKey].lastSeenAt)).toBeGreaterThan(
-      Date.parse(recordA.lastSeenAt),
-    );
-    // Caller A's liveness was recorded, target B's was not. Completing the child
-    // resolves its parent delegation, but the R2 latch retains a claim whose
-    // controlled child is terminal: B survives as terminal evidence with its mark
-    // untouched. Asserting B is absent would pin the pre-correction latch, and
-    // would pass just as well if B had been refreshed and then dropped.
+    expect(after.claims[recordA.claimKey].lastSeenAt).toBe(recordA.lastSeenAt);
     expect(after.claims[recordB.claimKey].lastSeenAt).toBe(recordB.lastSeenAt);
   });
 });

@@ -2216,6 +2216,206 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  // #613: a `claim` target selector names its run BY the bearer, so it is the
+  // same fact as `claim_bearer` evidence carrying that id. Every seam that
+  // accepts the two as separate fields reconciles them at entry; a divergence
+  // refuses rather than deriving authority from the TARGET's own claim, which
+  // would silently authorize as the target while the caller's evidence said
+  // something else.
+  describe('claim-target reconciliation (#613)', () => {
+    const runA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    const runB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+    // A claim id that parses and is shaped like a bearer but names no session
+    // claim: presenting it proves the reconciliation runs BEFORE resolution.
+    const unresolvableClaimId = assertClaimId(
+      'rdclm_00000000000000000000000000000000_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
+    );
+
+    const twoSteps: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    /**
+     * Stand up runs A and B, each with its own run-control claim.
+     *
+     * B is pushed FIRST so A ends up stack-top: every case below targets B's
+     * claim, so a seam that lost the claim selector would fall back to A rather
+     * than coincidentally landing on the same run these cases assert about.
+     */
+    async function activateTwoClaimedRuns(): Promise<{ claimA: ClaimId; claimB: ClaimId }> {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: runB, runbookPath: 'b.md' }));
+      await activate(baseState({ id: runA, runbookPath: 'a.md' }));
+      return { claimA: claimFor(runA), claimB: claimFor(runB) };
+    }
+
+    /** The run-control claim minted for a run by `activate`. */
+    function claimFor(id: RunbookState['id']): ClaimId {
+      const claimId = issuedRunControlClaims.get(id);
+      if (claimId === undefined) throw new Error(`expected run-control claim for ${id}`);
+      return claimId;
+    }
+
+    it('refuses a transition whose presented bearer names a different claim', async () => {
+      const { claimA, claimB } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+        targetSelector: { kind: 'claim', claimId: claimB },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      // Neither run moved: the target was never resolved, let alone advanced.
+      expect((await manager.load(runA))?.step).toBe('1');
+      expect((await manager.load(runB))?.step).toBe('1');
+    });
+
+    it('refuses a transition naming a claim with no bearer evidence at all', async () => {
+      // The complementary hole: a claim selector carries the live secret, so
+      // treating it as authority without the caller declaring it would let an
+      // ambient `direct_cli` command mutate a claimed run.
+      const { claimB } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'claim', claimId: claimB },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect((await manager.load(runB))?.step).toBe('1');
+    });
+
+    it('refuses non-bearer evidence that smuggles a matching claimId field', async () => {
+      // Authority keys on the DECLARED evidence kind, never on the presence of a
+      // `claimId` property. `CallerEvidence` has no non-bearer variant carrying
+      // one, so this shape is only reachable from an untyped frontend — which is
+      // exactly the boundary the discriminant check has to hold at. Without the
+      // kind check the field alone would authorize.
+      const { claimB } = await activateTwoClaimedRuns();
+      const smuggled = {
+        kind: 'plugin',
+        agentId: 'a',
+        claimId: claimB,
+      } as unknown as CallerEvidence;
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: smuggled,
+        targetSelector: { kind: 'claim', claimId: claimB },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect((await manager.load(runB))?.step).toBe('1');
+    });
+
+    it('applies a transition when the presented bearer is the named claim', async () => {
+      // The positive control: reconciliation must not over-refuse the one shape
+      // every frontend actually produces.
+      const { claimB } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimB },
+        targetSelector: { kind: 'claim', claimId: claimB },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect((await manager.load(runB))?.step).toBe('2');
+      expect((await manager.load(runA))?.step).toBe('1');
+    });
+
+    it('reconciles before resolving, so a divergence outranks a stale target claim', async () => {
+      // Presenting A against an unresolvable target refuses on the divergence,
+      // NOT `stale_claim` — the ordering proof that nothing is read from a
+      // claim the caller never presented.
+      const { claimA } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+        targetSelector: { kind: 'claim', claimId: unresolvableClaimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+    });
+
+    it('refuses a navigation whose presented bearer names a different claim', async () => {
+      const { claimA, claimB } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+        targetSelector: { kind: 'claim', claimId: claimB },
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+    });
+
+    it('refuses a navigation naming a claim with no bearer evidence at all', async () => {
+      const { claimB } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'claim', claimId: claimB },
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+    });
+
+    it('allows a navigation when the presented bearer is the named claim', async () => {
+      const { claimB } = await activateTwoClaimedRuns();
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimB },
+        targetSelector: { kind: 'claim', claimId: claimB },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.runId).toBe(runB);
+    });
+
+    it('refuses a terminal whose presented bearer names a different claim', async () => {
+      const { claimA, claimB } = await activateTwoClaimedRuns();
+      const sendSpy = jest.spyOn(actorService, 'sendAndSync');
+
+      const outcome = await seam.runTerminal({
+        command: 'complete',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimA },
+        targetSelector: { kind: 'claim', claimId: claimB },
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect((await manager.load(runB))?.lifecycle).toBe('running');
+    });
+
+    it('refuses a terminal naming a claim with no bearer evidence at all', async () => {
+      const { claimB } = await activateTwoClaimedRuns();
+      const sendSpy = jest.spyOn(actorService, 'sendAndSync');
+
+      const outcome = await seam.runTerminal({
+        command: 'complete',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'claim', claimId: claimB },
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect((await manager.load(runB))?.lifecycle).toBe('running');
+    });
+  });
+
   describe('explicit --run targeting', () => {
     const namedRunId = assertRunId('rd_77777777777777777777777777777777');
     const topRunId = assertRunId('rd_88888888888888888888888888888888');
@@ -2966,9 +3166,12 @@ describe('RunbookLifecycleCommandService', () => {
         await claimLiveDelegation(sessionService, manager, childRunId, linkageFor(runId, 'a')),
       );
 
+      // The claim is presented as evidence AND named as the target — the single
+      // shape a `--claim-id` goto produces, and the only one #613 leaves
+      // representable on a claim-shaped selector.
       const outcome = await seam.resolveRunNavigation({
         command: 'goto',
-        callerEvidence: runControlEvidence(runId),
+        callerEvidence: { kind: 'claim_bearer', claimId: claimed.claimId },
         targetSelector: { kind: 'claim', claimId: claimed.claimId },
       });
 
@@ -4262,6 +4465,20 @@ describe('RunbookLifecycleCommandService', () => {
         return claimed.claimId;
       }
 
+      /**
+       * Caller evidence for a claim-targeted terminal.
+       *
+       * A `--claim-id` target is named BY its bearer, so the frontend presents
+       * that same bearer as evidence — the only shape #613 leaves representable
+       * on a claim-shaped selector, and exactly what `runSeamTerminal` builds.
+       *
+       * @param claimId - The bearer naming the claim-shaped target.
+       * @returns Bearer caller evidence for that claim.
+       */
+      function presentedBy(claimId: ClaimId): CallerEvidence {
+        return { kind: 'claim_bearer', claimId };
+      }
+
       it('forwards a stale_claim for a non-existent claim without dispatching', async () => {
         // A claim id that was never claimed resolves as `missing` in the resolver,
         // which the seam forwards as `stale_claim`. Pins the wiring branch and that
@@ -4272,7 +4489,7 @@ describe('RunbookLifecycleCommandService', () => {
         const sendSpy = jest.spyOn(actorService, 'sendAndSync');
         const out = await seam.runTerminal({
           command: 'complete',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(missingClaimId),
           targetSelector: { kind: 'claim', claimId: missingClaimId },
         });
         expect(out).toMatchObject({ kind: 'stale_claim', claimId: missingClaimId });
@@ -4284,7 +4501,7 @@ describe('RunbookLifecycleCommandService', () => {
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
         const out = await seam.runTerminal({
           command: 'complete',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
         expect(out.kind).toBe('terminal_claim_confirmed');
@@ -4298,7 +4515,7 @@ describe('RunbookLifecycleCommandService', () => {
         const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
         const out = await seam.runTerminal({
           command: 'complete',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
         expect(out.kind).toBe('terminal_claim_conflict');
@@ -4336,7 +4553,7 @@ describe('RunbookLifecycleCommandService', () => {
           });
         const out = await seam.runTerminal({
           command: 'stop',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
         expect(out).toMatchObject({ kind: 'applied_claim', status: 'stopped' });
@@ -4378,7 +4595,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const out = await seam.runTerminal({
           command: 'stop',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
 
@@ -4409,7 +4626,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const out = await seam.runTerminal({
           command: 'complete',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
           message: 'wrap up',
         });
@@ -4458,7 +4675,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const out = await seam.runTerminal({
           command: 'stop',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
 
@@ -4486,7 +4703,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const out = await seam.runTerminal({
           command: 'complete',
-          callerEvidence: DIRECT_CLI,
+          callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
 
