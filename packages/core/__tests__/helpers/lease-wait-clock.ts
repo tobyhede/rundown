@@ -137,14 +137,35 @@ export interface DriverCallRecorder {
  * transaction types this helper exists to preserve.
  *
  * @param driver - Driver to instrument, normally the per-test instance.
+ * @param options - Runaway cap for the recorded call count.
  * @returns The recorder.
+ * @throws {Error} When recorded calls exceed the runaway cap.
  */
-export function recordDriverCalls(driver: SqlDriver): DriverCallRecorder {
+export function recordDriverCalls(
+  driver: SqlDriver,
+  options: { readonly maxCalls?: number } = {},
+): DriverCallRecorder {
+  const maxCalls = options.maxCalls ?? 256;
   const calls: ('read' | 'immediate')[] = [];
   const realRead = driver.read.bind(driver);
   const realImmediate = driver.immediate.bind(driver);
   const readHooks = new Map<number, () => void | Promise<void>>();
   let reads = 0;
+
+  // The counterpart to FakeWaitClock's `maxSleeps`, and the half that guard
+  // cannot cover: a retry path that neither sleeps nor mutates spins without
+  // ever calling `sleep`, so only the driver traffic grows. Without this cap
+  // such a loop hangs the suite instead of naming itself.
+  const guardRunaway = (kind: 'read' | 'immediate'): void => {
+    calls.push(kind);
+    if (calls.length > maxCalls) {
+      throw new Error(
+        `DriverCallRecorder: runaway wait loop — ${String(calls.length)} driver calls exceeds ` +
+          `the ${String(maxCalls)} cap. A retry that neither advances virtual time nor changes ` +
+          'the row it retries on never reaches its deadline.',
+      );
+    }
+  };
 
   const patched = driver as {
     read: SqlDriver['read'];
@@ -152,7 +173,7 @@ export function recordDriverCalls(driver: SqlDriver): DriverCallRecorder {
   };
 
   patched.read = async <T>(work: (tx: SqlReadTransaction) => SyncWork<T>): Promise<T> => {
-    calls.push('read');
+    guardRunaway('read');
     // Pin this call's ordinal before awaiting: `reads` is shared, so a read
     // that starts while this one is in flight would otherwise redirect both
     // continuations to the later ordinal.
@@ -167,7 +188,7 @@ export function recordDriverCalls(driver: SqlDriver): DriverCallRecorder {
   };
 
   patched.immediate = <T>(work: (tx: SqlTransaction) => SyncWork<T>): Promise<T> => {
-    calls.push('immediate');
+    guardRunaway('immediate');
     return realImmediate(work);
   };
 

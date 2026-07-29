@@ -12,6 +12,7 @@ import {
   type ValidatedRunbookState,
 } from '../src/schemas.js';
 import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
+import { buildFrameKey } from '../src/runbook/targeting.js';
 
 const VALID_RUN_ID = `rd_${'a'.repeat(32)}`;
 
@@ -1033,6 +1034,42 @@ describe('makeRunbookStateSchema resolvedCompletions finalVars — JsonArrayStre
   });
 });
 
+describe('frame-key validation in persisted state', () => {
+  const MALFORMED = [
+    ['no iteration separator', 'no-iteration-separator'],
+    ['a non-numeric iteration', '1|abc'],
+    ['an extra separator', 'a|b|3'],
+    ['an empty step segment', '|1'],
+    ['a negative iteration', '1|-1'],
+    ['nothing at all', ''],
+  ] as const;
+
+  it.each(MALFORMED)('rejects an activeFrameKey with %s', (_reason, frameKey) => {
+    const result = RunbookStateSchema.safeParse(createValidState({ activeFrameKey: frameKey }));
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each(MALFORMED)('rejects a substepStates frameKey with %s', (_reason, frameKey) => {
+    const result = RunbookStateSchema.safeParse(
+      createValidState({ substepStates: [{ id: 'sub1', frameKey, status: 'pending' }] }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    ['a bare step', buildFrameKey('1')],
+    ['a named step', buildFrameKey('ErrorHandler')],
+    ['an underscore-prefixed step', buildFrameKey('_internal', 1)],
+    ['a multi-digit iteration', buildFrameKey('1', 12)],
+  ])('accepts %s minted by buildFrameKey', (_reason, frameKey) => {
+    const result = RunbookStateSchema.safeParse(createValidState({ activeFrameKey: frameKey }));
+
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () => {
   const escaping = { kind: 'json-array-stream', path: '/etc/passwd' };
   const safe = { kind: 'json-array-stream', path: '/project/data.jsonl' };
@@ -1043,7 +1080,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
       substepStates: [
         {
           id: 'sub1',
-          frameKey: 'frame-1',
+          frameKey: '1|',
           status: 'done',
           result: 'pass',
           delegation: {
@@ -1071,7 +1108,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
       substepStates: [
         {
           id: 'sub1',
-          frameKey: 'frame-1',
+          frameKey: '1|',
           status: 'done',
           result: 'pass',
           delegation: {
@@ -1099,7 +1136,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
       substepStates: [
         {
           id: 'sub1',
-          frameKey: 'frame-1',
+          frameKey: '1|',
           status: 'done',
           result: 'pass',
           delegation: {

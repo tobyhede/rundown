@@ -2438,6 +2438,48 @@ echo ok
       );
     });
 
+    async function seedRecoveryRequiredState(): Promise<string> {
+      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const actor = await actorService.createActor(created.id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      const snapshot = actor.getPersistedSnapshot();
+      actor.stop();
+      expect(stateValueAsString((snapshot as unknown as { value: unknown }).value)).toBe(
+        'recoveryRequired',
+      );
+      await manager.update(created.id, { snapshot, lifecycle: 'running' });
+      return created.id;
+    }
+
+    it('hydrates a persisted recoveryRequired run and reconciles via GOTO', async () => {
+      const id = await seedRecoveryRequiredState();
+      const actor = await actorService.createActor(id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(stateValueAsString(actor.getSnapshot().value)).toBe('recoveryRequired');
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+      expect(stateValueAsString(actor.getSnapshot().value)).toMatch(/^step::1/);
+      expect(actor.getSnapshot().context.interruptedEpoch).toBeUndefined();
+      actor.stop();
+    });
+
+    it('hydrates a persisted recoveryRequired run and accepts FORCE_STOP', async () => {
+      const id = await seedRecoveryRequiredState();
+      const actor = await actorService.createActor(id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      actor.send({ type: 'FORCE_STOP' });
+      expect(stateValueAsString(actor.getSnapshot().value)).toBe('STOPPED');
+      actor.stop();
+    });
+
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

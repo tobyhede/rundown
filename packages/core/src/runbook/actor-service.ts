@@ -44,6 +44,7 @@ import {
   isCompoundLeafValue,
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
+  RECOVERY_REQUIRED_STATE_NAME,
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
@@ -719,6 +720,7 @@ export class RunbookActorService {
       );
     }
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
+    if (stateValue === RECOVERY_REQUIRED_STATE_NAME) return;
 
     // Defense-in-depth (Issue 6): the machine-internal `__parent-entry::*`
     // sibling resolves entry-time artifacts BEFORE routing into the real

@@ -131,7 +131,7 @@ export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as cons
 export const RECOVERY_TAG = 'recovery' as const;
 
 /** Name of the top-level non-final recoveryRequired state. */
-const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
+export const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -2464,18 +2464,50 @@ function buildRecoveryReconcileTransitions(
       firstByStep.set(state.stepName, state);
     }
   }
-  return [...firstByStep.values()].map((first) => ({
-    guard: ({ event }: { event: RunbookEvent }) =>
-      event.type === 'GOTO' && event.target.step === first.stepName,
-    target: routeThroughParentArtifactsIfNeeded(first.id, steps),
-    actions: runbookSetup.assign({
-      interruptedEpoch: undefined,
-      interruptedReason: undefined,
-      interruptedStepId: undefined,
-      retryCount: 0,
-      lastAction: buildGotoLastActionFromEvent(first.substepId),
-    }),
-  }));
+  return [...firstByStep.values()].map((first) => {
+    // The two targets need opposite repairs, so the same lookup selects both.
+    //
+    // A target WITH substeps has its FOR frame rebuilt by the leaf entry assign
+    // (initForStack/initIterationResults), which preserves a live same-step frame
+    // so the interrupted iteration replays exactly once — assigning the frame here
+    // too would fight that. What it does NOT do is rewrite the mirrored substep
+    // rows, so the cursor would rewind while the rows still claim outcomes.
+    //
+    // A target WITHOUT substeps has no entry assign and no rows to rewind, so the
+    // uncleared FOR frame is the whole problem: left alone it survives the
+    // reconcile and derives a bogus activeFrameKey for the rest of the run.
+    const substepTarget = getStepForSubstep(first.id, steps)?.step;
+    const targetPatch =
+      substepTarget === undefined
+        ? { forStack: EMPTY_FOR_STACK, iterationResults: undefined }
+        : {
+            substepStates: buildSubstepGotoResetAssignValue(
+              substepTarget,
+              first.stepName,
+              first.substepId,
+            ),
+          };
+    return {
+      guard: ({ event }: { event: RunbookEvent }) =>
+        event.type === 'GOTO' && event.target.step === first.stepName,
+      target: routeThroughParentArtifactsIfNeeded(first.id, steps),
+      actions: runbookSetup.assign({
+        interruptedEpoch: undefined,
+        interruptedReason: undefined,
+        interruptedStepId: undefined,
+        retryCount: 0,
+        // Every canonical GOTO zeroes the iteration budget and the displayed max;
+        // a reconcile that kept them would reopen the iteration pre-spent.
+        iterationRetryCount: 0,
+        retryMax: undefined,
+        substep: first.substepId,
+        substepCompletedCount: 0,
+        deferredResults: EMPTY_RESULTS,
+        ...targetPatch,
+        lastAction: buildGotoLastActionFromEvent(first.substepId),
+      }),
+    };
+  });
 }
 
 /**

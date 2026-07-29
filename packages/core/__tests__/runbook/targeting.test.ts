@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  isFrameKey,
   SENTINEL_ENTRY,
   activeFrame,
   buildCompletionKey,
@@ -67,6 +68,37 @@ describe('targeting helpers', () => {
 
     it('builds loop frame key', () => {
       expect(buildFrameKey('1', 2)).toBe('1|2');
+    });
+  });
+
+  describe('isFrameKey', () => {
+    // The pattern is the format's owner, so it is pinned here rather than only
+    // through FrameKeySchema: a mutation that widens it must fail in the module
+    // that defines it, not just in the consumer that happens to import it.
+    it.each([
+      ['a bare step', buildFrameKey('1')],
+      ['a named step', buildFrameKey('ErrorHandler')],
+      ['an underscore-prefixed step', buildFrameKey('_internal')],
+      ['a single-digit iteration', buildFrameKey('1', 2)],
+      ['a multi-digit iteration', buildFrameKey('1', 12)],
+    ])('matches %s minted by buildFrameKey', (_reason, frameKey) => {
+      expect(isFrameKey(frameKey)).toBe(true);
+    });
+
+    it.each([
+      ['no separator at all', '1'],
+      ['a non-numeric iteration', '1|abc'],
+      ['a trailing second separator', 'a|b|3'],
+      ['an empty step segment', '|1'],
+      ['a pipe inside the step segment', 'a|b|'],
+      ['a negative iteration', '1|-1'],
+      ['a fractional iteration', '1|1.5'],
+      // The step segment is deliberately any run of non-pipe characters — what a
+      // step may be named is the parser's constraint, not this pattern's.
+      ['a trailing newline', '1|\n'],
+      ['nothing at all', ''],
+    ])('rejects %s', (_reason, candidate) => {
+      expect(isFrameKey(candidate)).toBe(false);
     });
   });
 

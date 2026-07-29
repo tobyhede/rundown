@@ -22,6 +22,7 @@ import type { RunId } from './run-id.js';
 import type { RunbookState, ExecutionRecoveryReason, ExecutionRecoveryEvent } from './types.js';
 import type { RunbookStore } from './storage/runbook-store.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
+import { InvalidRunbookStateError } from './state.js';
 
 /**
  * Minimal machine-actor surface the recovery service drives. Rehydrated at the
@@ -136,15 +137,27 @@ export class ExecutionRecoveryService {
 }
 
 /**
- * Validate a persisted recovery-reason string, falling back to the default.
+ * Validate a persisted recovery-reason string.
+ *
+ * Exported for unit tests of {@link ExecutionRecoveryService.recover}; not a
+ * public contract.
  *
  * @param value - Persisted reason, or null.
  * @returns A recognized recovery reason.
+ * @throws {InvalidRunbookStateError} When a non-null value is unrecognized.
+ * @internal
  */
-function validateReason(value: string | null): ExecutionRecoveryReason {
-  return value !== null && (RECOVERY_REASONS as readonly string[]).includes(value)
-    ? (value as ExecutionRecoveryReason)
-    : DEFAULT_REASON;
+export function validateReason(value: string | null): ExecutionRecoveryReason {
+  if (value === null) {
+    return DEFAULT_REASON;
+  }
+  if ((RECOVERY_REASONS as readonly string[]).includes(value)) {
+    return value as ExecutionRecoveryReason;
+  }
+  throw new InvalidRunbookStateError(
+    `Unrecognized persisted recovery reason ${JSON.stringify(value)}. This run's state is stale ` +
+      'or corrupt and cannot be recovered; stop, prune, or restart it.',
+  );
 }
 
 /**

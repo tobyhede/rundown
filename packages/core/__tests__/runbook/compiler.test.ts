@@ -12915,4 +12915,223 @@ echo ok
       actor.stop();
     });
   });
+
+  describe('recoveryRequired GOTO reconcile', () => {
+    const source = `## 1. Review
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Next
+- PASS COMPLETE
+`;
+
+    it('resets the target step to its first substep with no stale cursor', () => {
+      const machine = compileRunbookToMachine(createRunbook(source));
+      const fresh = createActor(machine).start();
+      const firstSubstep = fresh.getSnapshot().context.substep;
+      fresh.stop();
+      const actor = createActor(machine).start();
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.substep).not.toBe(firstSubstep);
+      expect(actor.getSnapshot().context.substepCompletedCount).toBeGreaterThan(0);
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+
+      const context = actor.getSnapshot().context;
+      expect(context.substep).toBe(firstSubstep);
+      expect(context.substepCompletedCount).toBe(0);
+      expect(context.deferredResults ?? []).toEqual([]);
+      expect(context.interruptedEpoch).toBeUndefined();
+      expect(context.interruptedReason).toBeUndefined();
+      expect(context.interruptedStepId).toBeUndefined();
+      actor.stop();
+    });
+
+    it('stays in recoveryRequired until a GOTO names a step', () => {
+      // The reconcile transitions are `always` entries, re-evaluated on entry and
+      // after every microstep. Only a GOTO may leave, and the guard must say so by
+      // testing the event type FIRST: every other event reaches it without a
+      // `target`, so a guard that skipped that check would fault on the entry
+      // event itself and take the actor down rather than merely mis-transition.
+      const actor = createActor(compileRunbookToMachine(createRunbook(source))).start();
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      expect(actor.getSnapshot().value).toBe('recoveryRequired');
+      expect(actor.getSnapshot().status).toBe('active');
+
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'FAIL' });
+
+      expect(actor.getSnapshot().value).toBe('recoveryRequired');
+      expect(actor.getSnapshot().status).toBe('active');
+      expect(actor.getSnapshot().context.interruptedStepId).toBe('1');
+
+      // Still reconcilable: the blocked state is a waiting room, not a dead end.
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+      expect(JSON.stringify(actor.getSnapshot().value)).toContain('step::1');
+      actor.stop();
+    });
+
+    it('resets substepStates rows for the reopened frame', () => {
+      // The machine mirrors RunbookState.substepStates rather than deriving them,
+      // so a reconcile that rewinds the cursor without rewriting the rows leaves
+      // them claiming outcomes for substeps the machine now considers pending.
+      const machine = compileRunbookToMachine(createRunbook(source));
+      const tmp = createActor(machine).start();
+      const baseSnap = tmp.getPersistedSnapshot();
+      const baseContext = tmp.getSnapshot().context;
+      tmp.stop();
+      const frameKey = buildFrameKey('1');
+      const snapshot = {
+        ...baseSnap,
+        value: 'step::1::2',
+        context: {
+          ...baseContext,
+          substep: '2',
+          substepCompletedCount: 1,
+          deferredResults: ['pass'],
+          activeFrameKey: frameKey,
+          substepStates: [
+            { id: '1', frameKey, status: 'done', result: 'pass' },
+            { id: '2', frameKey, status: 'running' },
+          ],
+        },
+      } satisfies typeof baseSnap & {
+        readonly value: string;
+        readonly context: RunbookContext & Pick<RunbookState, 'activeFrameKey'>;
+      };
+      const actor = createActor(machine, {
+        snapshot,
+      }).start();
+
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+
+      expect(actor.getSnapshot().context.substepStates).toEqual([
+        { id: '1', frameKey, status: 'pending' },
+        { id: '2', frameKey, status: 'pending' },
+      ]);
+      actor.stop();
+    });
+
+    const forSource = `## 1. Loop
+- FOR i IN 3
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 One
+- PASS DEFER
+- FAIL DEFER
+
+### 1.2 Two
+- PASS DEFER
+- FAIL DEFER
+
+## 2. Done
+- PASS COMPLETE
+- FAIL COMPLETE
+`;
+
+    /** Drive into iteration 2 of the FOR step, then interrupt it. */
+    function interruptedInSecondIteration(): ReturnType<typeof createActor> {
+      const actor = createActor(compileRunbookToMachine(createRunbook(forSource))).start();
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+      return actor;
+    }
+
+    it('clears the FOR frame when reconciling onto a step without substeps', () => {
+      // A target with substeps has its FOR frame rebuilt by the leaf entry assign.
+      // A target without substeps has no such entry action, so an uncleared frame
+      // survives and derives a bogus activeFrameKey for the rest of the run.
+      const actor = interruptedInSecondIteration();
+
+      actor.send({ type: 'GOTO', target: { step: '2' } });
+
+      const context = actor.getSnapshot().context;
+      expect(context.forStack).toEqual([]);
+      expect(context.iterationResults).toBeUndefined();
+      actor.stop();
+    });
+
+    it('clears the iteration retry budget on reconcile', () => {
+      // Every canonical GOTO zeroes the iteration retry budget. A reconcile that
+      // leaves it consumed hands the reopened iteration a pre-spent budget.
+      const machine = compileRunbookToMachine(createRunbook(forSource));
+      const tmp = createActor(machine).start();
+      const baseSnap = tmp.getPersistedSnapshot();
+      const baseContext = tmp.getSnapshot().context;
+      tmp.stop();
+      const snapshot = {
+        ...baseSnap,
+        value: 'step::1::1',
+        context: { ...baseContext, iterationRetryCount: 3, retryMax: 3 },
+      } satisfies typeof baseSnap & {
+        readonly value: string;
+        readonly context: RunbookContext;
+      };
+      const actor = createActor(machine, {
+        snapshot,
+      }).start();
+      actor.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'owner_dead',
+        interruptedStepId: '1',
+      });
+
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
+      expect(actor.getSnapshot().context.retryMax).toBeUndefined();
+      actor.stop();
+    });
+
+    it('replays the interrupted FOR iteration exactly once', () => {
+      // Pins the semantic that makes preserving the FOR frame correct: the
+      // reconcile re-runs the interrupted iteration, it does not restart the loop.
+      // Rebuilding forStack from the clause start here would duplicate results.
+      const baseline = createActor(compileRunbookToMachine(createRunbook(forSource))).start();
+      for (let send = 0; send < 6; send += 1) baseline.send({ type: 'PASS' });
+      const uninterrupted = baseline.getSnapshot().context.iterationResults;
+      baseline.stop();
+
+      const actor = interruptedInSecondIteration();
+      actor.send({ type: 'GOTO', target: { step: '1' } });
+      for (let send = 0; send < 4; send += 1) actor.send({ type: 'PASS' });
+
+      expect(actor.getSnapshot().context.iterationResults).toEqual(uninterrupted);
+      expect(uninterrupted).toEqual(['pass', 'pass', 'pass']);
+      actor.stop();
+    });
+  });
 });

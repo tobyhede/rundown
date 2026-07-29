@@ -747,6 +747,26 @@ describe('native adapter SQLITE_BUSY handling', () => {
     expect(isSqliteBusy(undefined)).toBe(false);
   });
 
+  it('classifies extended busy codes by their primary code', () => {
+    expect(isSqliteBusy(sqliteError('busy snapshot', 5 | (2 << 8)))).toBe(true);
+    expect(isSqliteBusy(sqliteError('locked shared cache', 6 | (1 << 8)))).toBe(true);
+  });
+
+  it.each([
+    ['a fractional code', 5.5],
+    ['a negative code', -251],
+    ['a signed-overflow code', 0x8000_0005],
+    ['an oversized code', 0x1_0000_0006],
+    ['a bigint code', 5n],
+    ['a string code', '5'],
+  ])('rejects %s', (_label, errcode) => {
+    const err = Object.assign(new Error('malformed SQLite code'), {
+      code: 'ERR_SQLITE_ERROR',
+      errcode,
+    });
+    expect(isSqliteBusy(err)).toBe(false);
+  });
+
   it('retries a contended BEGIN IMMEDIATE exactly maxBusyRetries times, backing off further each attempt', async () => {
     const db = new RecordingDatabase(() => true);
     await using driver = new NativeSqlDriver(recordingConnection(db), {
