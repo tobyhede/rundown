@@ -69,6 +69,19 @@ export class NativeSqliteUnavailableError extends Error {
   }
 }
 
+/** Raised when the selected sql.js adapter cannot be initialized. */
+export class SqljsUnavailableError extends Error {
+  /**
+   * Construct a typed sql.js startup error.
+   *
+   * @param cause - The underlying initialization failure.
+   */
+  constructor(cause: unknown) {
+    super(`sql.js is unavailable: ${getErrorMessage(cause)}.`, { cause });
+    this.name = 'SqljsUnavailableError';
+  }
+}
+
 /**
  * Raised when sql.js is explicitly forced onto a host that is not WebContainer.
  *
@@ -164,6 +177,7 @@ export interface OpenRunbookDriverOptions {
  * @returns An opened driver with schema version ensured.
  * @throws {NativeSqliteUnavailableError} When the native driver cannot open on a
  *   multi-process host.
+ * @throws {SqljsUnavailableError} When the selected sql.js adapter cannot open.
  * @throws {import('./schema.js').IncompatibleSchemaError} When the database
  *   carries an unusable schema version.
  */
@@ -218,7 +232,11 @@ async function openDriver(
   options: OpenRunbookDriverOptions,
 ): Promise<SqlDriver> {
   if (runtime === 'sqljs') {
-    return openSqljsDriver(dbPath, options.sqljs);
+    try {
+      return await openSqljsDriver(dbPath, options.sqljs);
+    } catch (err) {
+      throw new SqljsUnavailableError(err);
+    }
   }
   try {
     return openNativeDriver(dbPath, options.native);

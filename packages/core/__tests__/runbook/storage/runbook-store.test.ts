@@ -9,6 +9,7 @@ import {
   classifyCommitRow,
   selectCommitRow,
   assertExactlyOneRow,
+  assertExecutionPhase,
   StoreInvariantError,
   type CommitRow,
 } from '../../../src/runbook/storage/runbook-store.js';
@@ -1447,6 +1448,33 @@ describe('commit-row projection', () => {
     expect(row.claimControlsRun).toBe(false);
     expect(row.claimStatus).toBe('active');
   });
+
+  it('refuses to project an unrecognized persisted execution phase', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const claimKey = assertClaimLookupKey(await mintClaim(state.id, 'b2'.repeat(16)));
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id);
+    });
+    // The column CHECK guards the write; this reproduces a database corrupted
+    // outside the store so the commit-row read edge must validate independently.
+    await store.transaction((txn) => {
+      try {
+        txn.tx.exec('PRAGMA ignore_check_constraints = 1');
+        txn.tx
+          .prepare(
+            "UPDATE execution_attempts SET phase = 'zombie' WHERE run_id = :id AND exec_epoch = 1",
+          )
+          .run({ id: state.id });
+      } finally {
+        txn.tx.exec('PRAGMA ignore_check_constraints = 0');
+      }
+    });
+
+    await expect(store.read((txn) => selectCommitRow(txn.tx, state.id, claimKey))).rejects.toThrow(
+      'Invalid persisted execution phase: "zombie"',
+    );
+  });
 });
 
 describe('captureAuthority delegated linkage', () => {
@@ -1941,6 +1969,25 @@ describe('session reconstruction', () => {
     await expect(store.loadSession()).rejects.toThrow(/^Invalid persisted delegation linkage:/);
   });
 
+  it('refuses to hydrate a claim whose parent frame key is empty', async () => {
+    // buildFrameKey always emits the separator, so no writer can ever have
+    // stored an empty key: it is impossible to produce, not canonical.
+    await corruptDelegationBlob('e3'.repeat(16), { parentFrameKey: '' });
+    await expect(store.loadSession()).rejects.toThrow(
+      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+    );
+  });
+
+  it('rejects zero parentEntry through the canonical positive-entry schema', async () => {
+    await corruptDelegationBlob('e9'.repeat(16), { parentEntry: 0 });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+  });
+
+  it('rejects unknown delegation-linkage fields through the canonical strict schema', async () => {
+    await corruptDelegationBlob('e2'.repeat(16), { unexpected: true });
+    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+  });
+
   it('refuses to hydrate a claim whose persisted delegation token hash is not a hash', async () => {
     await corruptDelegationBlob('e4'.repeat(16), { tokenHash: 'not-a-delegation-token-hash' });
     await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
@@ -1962,19 +2009,25 @@ describe('session reconstruction', () => {
 
   it('refuses to hydrate a claim whose parent frame key has no iteration separator', async () => {
     await corruptDelegationBlob('e5'.repeat(16), { parentFrameKey: 'no-iteration-separator' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+    await expect(store.loadSession()).rejects.toThrow(
+      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+    );
   });
 
   it('refuses to hydrate a claim whose parent frame key has a non-numeric iteration', async () => {
     await corruptDelegationBlob('e7'.repeat(16), { parentFrameKey: '2|abc' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+    await expect(store.loadSession()).rejects.toThrow(
+      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+    );
   });
 
   it('refuses to hydrate a claim whose parent frame key carries an extra separator', async () => {
     // The step segment is anchored, so a key with a second separator is not
     // rescued by a suffix that happens to look well-formed.
-    await corruptDelegationBlob('e9'.repeat(16), { parentFrameKey: 'a|b|3' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid frame key/);
+    await corruptDelegationBlob('e1'.repeat(16), { parentFrameKey: 'a|b|3' });
+    await expect(store.loadSession()).rejects.toThrow(
+      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+    );
   });
 
   it('hydrates a claim whose parent frame key carries a multi-digit iteration', async () => {
@@ -1982,6 +2035,78 @@ describe('session reconstruction', () => {
     const session = await store.loadSession();
     const claimKey = assertClaimLookupKey(`rdclk_${'ea'.repeat(16)}`);
     expect(session.claims[claimKey].delegation?.parentFrameKey).toBe('2|12');
+  });
+});
+
+describe('commitRecovery', () => {
+  it('closes the exact recovery attempt as committed with its reason and finish time', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const epoch = assertExecutionEpoch(1);
+    const hash = hashExecutionToken(generateExecutionToken());
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          `INSERT INTO execution_attempts
+             (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+           VALUES (:runId, :epoch, :hash, 'recovery_pending', :pid, :now)`,
+        )
+        .run({ runId: state.id, epoch, hash, pid: process.pid, now: '2026-03-01T00:00:00.000Z' });
+      txn.tx
+        .prepare(
+          'UPDATE runs SET exec_pid = :pid, exec_token = :hash, exec_epoch = :epoch WHERE id = :id',
+        )
+        .run({ id: state.id, pid: process.pid, hash, epoch });
+    });
+
+    const result = await store.commitRecovery({
+      epoch,
+      reason: 'owner_dead',
+      next: { ...state, updatedAt: '2026-03-03T00:00:00.000Z' },
+    });
+
+    expect(result.kind).toBe('committed');
+    // Closing the attempt is what makes recovery non-repeatable: an attempt left
+    // `recovery_pending` would be re-recovered, replaying a durable effect.
+    const attempt = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at, reason FROM execution_attempts
+             WHERE run_id = :runId AND exec_epoch = :epoch`,
+        )
+        .get<{
+          readonly phase: string;
+          readonly finished_at: string | null;
+          readonly reason: string | null;
+        }>({ runId: state.id, epoch }),
+    );
+    expect(attempt).toEqual({
+      phase: 'committed',
+      finished_at: '2026-03-03T00:00:00.000Z',
+      reason: 'owner_dead',
+    });
+  });
+});
+
+describe('assertExecutionPhase', () => {
+  it.each([
+    'claimed',
+    'effect_started',
+    'recovery_pending',
+    'committed',
+  ])('returns the recognized phase %s unchanged', (phase) => {
+    expect(assertExecutionPhase(phase)).toBe(phase);
+  });
+
+  it.each([
+    '',
+    'zombie',
+    'COMMITTED',
+    'recovery-pending',
+  ])('refuses the unrecognized phase %p rather than narrowing it', (phase) => {
+    expect(() => assertExecutionPhase(phase)).toThrow(
+      `Invalid persisted execution phase: ${JSON.stringify(phase)}`,
+    );
   });
 });
 

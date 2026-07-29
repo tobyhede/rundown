@@ -17,7 +17,7 @@ import {
   type ClaimSecretHash,
   type DelegationClaimLinkage,
 } from './runbook/claim-id.js';
-import type { FrameKey } from './runbook/targeting.js';
+import { isFrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonArrayStream, JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
@@ -34,8 +34,16 @@ import { RunbookRefSchema } from './runbook/runbook-ref.js';
 import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
 import { LastActionSchema } from './runbook/last-action.js';
 
-/** Zod schema that parses strings and brands them as {@link FrameKey}. */
-const FrameKeySchema = z.string().transform((v) => v as FrameKey);
+/**
+ * Zod schema that parses strings and brands them as {@link FrameKey}.
+ *
+ * Defers to {@link isFrameKey}, which lives beside `buildFrameKey` so the format
+ * keeps one owner: a pattern restated here would drift the day the format
+ * changes. Every persisted frame key reaches the model through this schema, so a
+ * corrupt one is refused at the read edge rather than compared — where it would
+ * silently match nothing and read as a legitimate absence.
+ */
+const FrameKeySchema = z.string().refine(isFrameKey, { message: 'Invalid frame key' });
 
 /** Zod schema that parses strings and brands them as {@link RunId}. */
 export const RunIdSchema = z
@@ -587,7 +595,8 @@ const ClaimGrantSchema: z.ZodType<ClaimGrant> = z.discriminatedUnion('action', [
   ReportDelegationResultGrantSchema,
 ]);
 
-const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
+/** Canonical schema shared by in-memory claims and persisted linkage rows. */
+export const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
   .object({
     childRunId: RunIdSchema,
     tokenHash: DelegationTokenHashSchema,

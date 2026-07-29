@@ -350,8 +350,8 @@ export const ErrorCodes = {
       `A freshly launched delegated child failed write-side claim validation. ` +
       `The child was just created with the same delegation linkage now being ` +
       `rejected — indicates internal inconsistency between manager.create() ` +
-      `and SessionService.claimRunbook(). State may be corrupted; inspect ` +
-      `.rundown/runs/<childRunId>.json and the parent's substep delegation.`,
+      `and SessionService.claimRunbook(). State may be corrupted; inspect the ` +
+      `child run by ID and the parent's substep delegation.`,
     docSlug: 'claim-invariant-violated',
   },
   DELEGATION_INVARIANT_VIOLATED: {
