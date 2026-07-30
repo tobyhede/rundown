@@ -432,7 +432,17 @@ describe('stash command', () => {
     expect(session.active).not.toBe(childRunId);
   });
 
-  it('refuses a rotated run-control bearer and leaves the stash slot empty', async () => {
+  // This pins the refusal envelope and the untouched stash slot — not the
+  // #666 race itself. Rotating the bearer before invoking `stash` is already
+  // caught by the pre-existing resolver staleness check (the read that feeds
+  // `resolveCommandTarget`/`stashForClaimId` is fresh, so it sees the
+  // rotation regardless of which code path handles it). The actual #666
+  // race — rotation landing inside one command's own resolve-to-commit
+  // window — cannot be observed from a sequential, in-process CLI test; the
+  // regression evidence for that lives at the core layer in
+  // `'refuses a bearer rotated after resolution and leaves the stash slot
+  // untouched'` (packages/core/__tests__/runbook/session-service.test.ts).
+  it('refuses a rotated run-control bearer with the documented JSON envelope', async () => {
     const runbookPath = 'solo.runbook.md';
     await writeFile(
       join(workspace.cwd, runbookPath),
