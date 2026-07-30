@@ -222,10 +222,13 @@ export function unwrapSessionMutation<T>(result: SessionMutationResult<T>): T {
  *
  * The run is pushed onto the default stack (and claimed, unless disabled) before
  * being stashed, because `stashRunbook` refuses a run nothing targets. It is the
- * stack push alone that satisfies that refusal here — production never reaches
- * the claim half of it either, since `stashRunbook`'s only production caller is
- * the bare CLI stash path, which passes `getActive()`, i.e. the stack top by
- * construction. `stash --claim-id` goes through `stashForClaimId` instead.
+ * stack push alone that satisfies that refusal here.
+ *
+ * `stashRunbook` has **no** production caller: `rundown stash` resolves and
+ * parks in one transaction through `SessionService.stash`, and
+ * `stash --claim-id` verifies its bearer in that same transaction through
+ * `stashForClaimId` (#666). This fixture is one of the reasons the bearer-blind
+ * method still exists — see its TSDoc before reaching for it anywhere else.
  *
  * @param cwd - Project root whose store receives the run.
  * @param options - Run identity, content, and claim minting.

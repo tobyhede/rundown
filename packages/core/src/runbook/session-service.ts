@@ -1845,6 +1845,29 @@ export class SessionService {
   /**
    * Stash a specific runbook id from any session targeting structure.
    *
+   * **This method has no production caller, and a new command must not become
+   * one.** It authorizes on the run id alone: it asks only whether *some* claim
+   * controls the run or whether the run is stack resident, and never whether the
+   * caller holds the bearer for it. That is the shape of the #666 defect —
+   * `stash --claim-id` used to resolve a target through an unlocked read and
+   * commit through here, so a bearer rotated in between still parked the run.
+   *
+   * Both production paths were rewired away from it: `rundown stash` calls
+   * {@link stash}, which resolves the active run and writes the slot in one
+   * transaction, and `rundown stash --claim-id` calls {@link stashForClaimId},
+   * which verifies the presented bearer inside that same transaction. Anything
+   * new belongs on one of those two.
+   *
+   * It survives only because it is the sole way to park a **delegated child that
+   * is not on the default stack** without also asserting that the child's bearer
+   * is live: `stash()` cannot name an off-stack run, and `stashForClaimId`
+   * refuses a closed delegation. Several fixtures need exactly that — notably
+   * `unstashForClaimId distinguishes terminal child and ended parent`, which
+   * parks a child whose parent has already stopped, and `seedStashedRun` in
+   * `testing/session-fixtures.ts`. Migrating them would silently reroute the
+   * assertion onto a different branch, so the footgun is documented rather than
+   * removed.
+   *
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    *   Refused `execution_in_progress` or `recovery_required` instead when the
