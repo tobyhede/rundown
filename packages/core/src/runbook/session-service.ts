@@ -1805,7 +1805,7 @@ export class SessionService {
    * Stash a claimed runbook by explicit claim id, atomically.
    *
    * The presented bearer is verified inside the same transaction that writes the
-   * stash slot. `stashRunbook` authorises on the run id alone — it asks only
+   * stash slot. `stashRunbook` authorizes on the run id alone — it asks only
    * whether *some* claim controls the run — so a bearer rotated between an
    * unlocked resolve and the commit still succeeded (#666). Resolving and
    * committing in one `mutateSessionGuarded` cycle removes that window by

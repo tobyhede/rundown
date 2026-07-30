@@ -1606,7 +1606,7 @@ describe('SessionService', () => {
       it('refuses a bearer rotated after resolution and leaves the stash slot untouched', async () => {
         // The #666 interleave: resolve with the old bearer, mint a replacement
         // for the same run, then stash with the old bearer. Before this method
-        // existed the stash committed, because `stashRunbook` authorised on the
+        // existed the stash committed, because `stashRunbook` authorized on the
         // run id alone and `mintRunControlClaim` keeps the run claim-targeted.
         const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
           runbookPath: 'solo.md',
@@ -1674,6 +1674,33 @@ describe('SessionService', () => {
         expect(session.claims[claimed.claim.claimKey]).toEqual(before);
       });
 
+      it('refuses a delegated child whose persisted linkage no longer matches its claim record', async () => {
+        // `claimRunbook` requires the incoming linkage to match the child's
+        // persisted linkage at claim time, so the only way to produce a
+        // divergence is a later mutation of the child's `parentLinkage` — the
+        // same fixture shape as the `getActiveForClaimId` unlinked/linkage-
+        // mismatch case (`session-service.test.ts:827-852`), here reusing
+        // `linkageFor`'s varying `fill` to build the diverged linkage.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'c');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+
+        await manager.update(child.id, { parentLinkage: linkageFor(parent.id, 'd') });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result.status).toBe('child-linkage-mismatch');
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
       it('refuses a delegated child whose parent moved past the delegation', async () => {
         const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
           runbookPath: 'parent.md',
@@ -1726,6 +1753,25 @@ describe('SessionService', () => {
         const result = unwrapSessionMutation(await sessionService.stashForClaimId(unknown));
 
         expect(result).toEqual({ status: 'missing-claim', claimId: unknown });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a tampered secret on an otherwise active claim without touching the slot', async () => {
+        // Distinct from the unknown-bearer case above: the claim key IS active
+        // in the session, but the presented secret does not verify against it —
+        // the in-transaction check that makes this method safer than
+        // `stashRunbook` on the common path (#666).
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        const tampered = assertClaimId(claimId.replace(/.$/, claimId.endsWith('A') ? 'B' : 'A'));
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(tampered));
+
+        expect(result).toEqual({ status: 'missing-claim', claimId: tampered });
         expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
       });
 
