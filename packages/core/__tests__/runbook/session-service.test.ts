@@ -232,9 +232,11 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(state.id);
 
-      const stashedId = unwrapSessionMutation(await sessionService.stash());
+      const stashed = unwrapSessionMutation(await sessionService.stash());
 
-      expect(stashedId).toBe(state.id);
+      expect(stashed.status).toBe('stashed');
+      if (stashed.status !== 'stashed') return;
+      expect(stashed.state.id).toBe(state.id);
       expect(await sessionService.getActive()).toBeNull();
       expect(await sessionService.getStashedRunbookId()).toBe(state.id);
     });
@@ -282,10 +284,53 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(s2.id);
       const second = unwrapSessionMutation(await sessionService.stash());
 
-      expect(first).toBe(s1.id);
-      expect(second).toBeNull();
+      expect(first.status).toBe('stashed');
+      expect(second).toEqual({ status: 'slot-occupied', stashedRunbookId: s1.id });
       expect(await sessionService.getStashedRunbookId()).toBe(s1.id);
       expect((await sessionService.getActive())?.id).toBe(s2.id);
+    });
+
+    it('stash reports no-active-runbook on an empty stack without touching the slot', async () => {
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result).toEqual({ status: 'no-active-runbook' });
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
+    });
+
+    it('stash reports no-active-runbook before slot-occupied when the stack is empty', async () => {
+      // Ordering, not redundancy: the two-step caller resolved the active run
+      // first and returned its warning before ever reaching the slot write, so
+      // an empty stack must still out-rank an occupied slot now that both
+      // questions are answered in one transaction.
+      const parked = await manager.create({ source: 'project', path: 'parked.md' }, mockRunbook, {
+        runbookPath: 'parked.md',
+      });
+      await sessionService.pushRunbook(parked.id);
+      unwrapSessionMutation(await sessionService.stash());
+
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result).toEqual({ status: 'no-active-runbook' });
+      expect(await sessionService.getStashedRunbookId()).toBe(parked.id);
+    });
+
+    it('stash reports an idle session for a stack top whose run row is gone', async () => {
+      // The other half of what `getActive` collapsed into `null`. Not a typed
+      // corruption arm, because `session_stack.run_id` cascades on delete:
+      // removing the run removes the stack entry, so the stack top is gone too
+      // and the outcome is the plain idle one. This pins that the cascade —
+      // not a branch in `stash` — is what makes the case indistinguishable.
+      const state = await manager.create({ source: 'project', path: 'gone.md' }, mockRunbook, {
+        runbookPath: 'gone.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      await manager.delete(state.id);
+
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result).toEqual({ status: 'no-active-runbook' });
+      expect(await manager.loadSession()).toMatchObject({ defaultStack: [] });
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
   });
 

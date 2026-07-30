@@ -380,6 +380,47 @@ export type StashForClaimIdResult =
     };
 
 /**
+ * Result of stashing whatever runbook is currently active.
+ *
+ * The bare (unclaimed) counterpart of {@link StashForClaimIdResult}, and
+ * discriminated for the same reason: collapsing every outcome into
+ * `RunId | null` forced the caller to read the session *before* the mutation to
+ * tell "nothing is active" (a warning) from "the slot is taken" (an error) —
+ * the check-then-act window #666 closed on the claim path.
+ *
+ * The arms are returned in the order the caller's questions were previously
+ * asked (active first, slot second), so the outcome for a given session is
+ * unchanged by the move into one transaction.
+ */
+export type StashActiveResult =
+  | {
+      /** The active run moved into the stash slot. */
+      readonly status: 'stashed';
+      /** State of the run that was stashed, read under the same transaction. */
+      readonly state: RunbookState;
+    }
+  | {
+      /**
+       * Nothing is active: the session stack is empty.
+       *
+       * Reproduces every `null` {@link SessionService.getActive} returns, which
+       * is what the two-step caller branched on. There is deliberately no
+       * separate "stack top with no readable state" arm: `session_stack.run_id`
+       * is a `ON DELETE CASCADE` foreign key onto `runs`, enforced by both
+       * drivers, so a stack top whose run row is gone is not a state the
+       * database can hold. Deleting the run takes the stack entry with it, and
+       * the arm would be unreachable — and untestable — rather than defensive.
+       */
+      readonly status: 'no-active-runbook';
+    }
+  | {
+      /** The single stash slot already holds a run; the caller must pop first. */
+      readonly status: 'slot-occupied';
+      /** Run currently occupying the slot. */
+      readonly stashedRunbookId: RunId;
+    };
+
+/**
  * Command-facing spelling of a session ownership refusal.
  *
  * An alias, not a translation: the storage refusal arms already discriminate on
@@ -1748,28 +1789,44 @@ export class SessionService {
   /**
    * Stash the currently active runbook to allow temporarily switching contexts.
    *
-   * Removes the active runbook from the stack and stores its ID
-   * in the session's stashed slot. Only one runbook can be stashed at a time.
+   * Resolves the active run and writes the stash slot in one guarded
+   * transaction. The caller must not pre-read the active run: an unlocked
+   * `getActive` followed by a separate stash write is the #666 check-then-act
+   * shape, where a concurrent push means the run that gets parked is no longer
+   * the one the caller resolved. Everything the caller needs to render the
+   * outcome — including the stashed run's state — comes back on the result.
    *
-   * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
+   * The active run is resolved before the slot is inspected, matching the order
+   * the two-step caller asked its questions in: it resolved the active run
+   * first and returned `no-active-runbook` without ever reaching the slot.
+   *
+   * @returns Discriminated stash result describing success or the refusal reason.
    *   Refused `execution_in_progress` or `recovery_required` instead when the
    *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async stash(): Promise<SessionMutationResult<RunId | null>> {
-    return this.mutateGuarded(topOfStack, (ctx) => {
+  async stash(): Promise<SessionMutationResult<StashActiveResult>> {
+    return this.mutateGuarded(topOfStack, (ctx): StashActiveResult => {
       const { session } = ctx;
-
-      // Refuse to overwrite an existing stash — caller must unstash first
-      if (session.stashedRunbookId) return null;
-
       const stack = session.defaultStack;
-      if (stack.length === 0) return null;
-      const activeId = stack.pop();
+      if (stack.length === 0) return { status: 'no-active-runbook' };
+      const activeId = stack[stack.length - 1];
 
-      if (!activeId) return null;
+      // Read through the transaction, never `manager.load`: the state returned
+      // to the caller must be the one the slot write lands on. A null here is
+      // the state the `session_stack` foreign key forbids (see
+      // StashActiveResult), and reports as the same idle outcome `getActive`
+      // gave it rather than inventing an unreachable arm.
+      const state = ctx.readState(activeId);
+      if (state === null) return { status: 'no-active-runbook' };
 
+      // Refuse to overwrite an existing stash — caller must unstash first.
+      if (session.stashedRunbookId !== undefined) {
+        return { status: 'slot-occupied', stashedRunbookId: session.stashedRunbookId };
+      }
+
+      stack.pop();
       session.stashedRunbookId = activeId;
-      return activeId;
+      return { status: 'stashed', state };
     });
   }
 

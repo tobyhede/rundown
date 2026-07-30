@@ -114,26 +114,38 @@ export function registerStashCommand(program: Command): void {
             }
             state = stashed.state;
           } else {
-            const active = await sessionService.getActive();
-            if (!active) {
-              output.noActiveRunbook();
-              output.flush();
-              return;
-            }
-            const stashResult = await sessionService.stashRunbook(active.id);
+            // One transaction, for the same reason the claim path uses one:
+            // `getActive()` followed by a separate stash write resolves the
+            // target in an unlocked read, so a concurrent push parks a run the
+            // caller never resolved. Core returns the state to render with.
+            const stashResult = await sessionService.stash();
             if (stashResult.kind !== 'committed') {
               renderSessionMutationRefusal(output, stashResult);
               output.flush();
               process.exitCode = 1;
               return;
             }
-            if (stashResult.value === null) {
-              output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
-              output.flush();
-              process.exitCode = 1;
-              return;
+            const stashed = stashResult.value;
+            switch (stashed.status) {
+              case 'stashed':
+                state = stashed.state;
+                break;
+              case 'no-active-runbook':
+                // A warning, not an error: exit 0, matching what the separate
+                // `getActive()` read produced.
+                output.noActiveRunbook();
+                output.flush();
+                return;
+              case 'slot-occupied':
+                output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              default: {
+                const _exhaustive: never = stashed;
+                return _exhaustive;
+              }
             }
-            state = active;
           }
 
           const totalSteps = await getStepTotal(cwd, state.runbook);

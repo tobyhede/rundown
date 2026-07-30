@@ -688,7 +688,7 @@ Do the thing.
       await sessionService.pushRunbook(stashedId);
       await expect(sessionService.stash()).resolves.toEqual({
         kind: 'committed',
-        value: stashedId,
+        value: { status: 'stashed', state: expect.objectContaining({ id: stashedId }) },
       });
 
       const result = await runCliInProcess('prune --all', workspace);
