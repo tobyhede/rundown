@@ -6,6 +6,7 @@ import {
   createRunbook,
   runCliInProcess,
   findActionOutput,
+  parseConcatenatedJson,
   readSession,
   readRunbookState,
   getActiveState,
@@ -14,6 +15,7 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
+  issueRunControlClaimFor,
   patchPersistedRunState,
   seedRawRunState,
 } from '@rundown-org/core/testing/session-fixtures';
@@ -428,6 +430,76 @@ describe('stash command', () => {
     const session = await readSession(workspace);
     expect(session.stashed).toBe(childRunId);
     expect(session.active).not.toBe(childRunId);
+  });
+
+  it('refuses a rotated run-control bearer and leaves the stash slot empty', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const oldBearer = startedEvent?.claim_id;
+    if (typeof oldBearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    // Rotate: mint a replacement run-control claim for the same run. The old
+    // bearer is now dead authority.
+    await issueRunControlClaimFor(workspace.cwd, assertRunId(runId));
+
+    const result = await runCliInProcess(['stash', '--claim-id', oldBearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        command: 'stash',
+      }),
+    );
+    // The decisive assertion: the slot did not move.
+    expect((await readSession(workspace)).stashed).toBeNull();
+    // The bearer secret must never reach the transcript. `split('_')` is not a
+    // safe extraction — the base64url secret segment can itself contain `_`,
+    // so use the same parsed-secret helper the rest of this file relies on.
+    expect(result.stdout).not.toContain(parseClaimBearer(assertClaimId(oldBearer)).secret);
+  });
+
+  it('stashes with a valid run-control bearer', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+
+    const result = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(runId);
+    expect(session.active).toBeNull();
   });
 });
 
