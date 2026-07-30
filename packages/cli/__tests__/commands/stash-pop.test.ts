@@ -681,6 +681,73 @@ describe('stash command', () => {
     );
     expect((await readSession(workspace)).stashed).toBeNull();
   });
+
+  // Pins the promise docs/reference/cli.md makes for `stash --claim-id`
+  // (§"rundown stash", and the RD-825 list under Delegation semantics): once
+  // the parent has moved past the delegation, `stash` reports
+  // DELEGATION_SUPERSEDED *with the no-retry instruction*, not a generic
+  // unavailable envelope. The rotation test above covers `claim-rotated` →
+  // CLAIMED_RUNBOOK_UNAVAILABLE, which is a different arm and carries no
+  // no-retry signal, so nothing else at the CLI boundary pins this one.
+  it('refuses stash --claim-id with DELEGATION_SUPERSEDED once the parent has moved on', async () => {
+    const parent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
+        },
+      ],
+    });
+    const child = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    expect(parentState).not.toBeNull();
+
+    const token = await getAutoIssuedToken();
+    result = await runCliInProcess(`claim ${token}`, workspace);
+    expect(result.exitCode).toBe(0);
+    const output = findActionOutput(result.stdout);
+    const claimId = String(output?.claim_id);
+    expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
+
+    // The parent ends, closing the delegation. The child is never stashed, so
+    // the slot is empty and any write by the refused command would be visible.
+    await patchPersistedRunState(workspace.cwd, parentState!.id, { lifecycle: 'completed' });
+
+    result = await runCliInProcess(['stash', '--claim-id', claimId], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'DELEGATION_SUPERSEDED',
+        command: 'stash',
+        error: expect.stringContaining(
+          'moved past this delegation (parent-ended). Do not retry the token; report the superseded delegation to the orchestrator.',
+        ),
+      }),
+    );
+    expect(result.stdout).toContain(claimKeyFromBearer(assertClaimId(claimId)));
+    expect(result.stdout).not.toContain(parseClaimBearer(assertClaimId(claimId)).secret);
+    // The decisive assertion: the refusal wrote nothing.
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
 });
 
 describe('pop command', () => {
