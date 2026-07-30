@@ -33,6 +33,7 @@ import { closeRunbookStores } from '../../../../src/runbook/storage/store-regist
 import { assertClaimId } from '../../../../src/runbook/claim-id.js';
 import { assertRunId } from '../../../../src/runbook/run-id.js';
 import { getErrorMessage } from '../../../../src/errors.js';
+import { unwrapSessionMutation } from '../../../../src/testing/session-fixtures.js';
 import type { ChildOp, ChildResult } from './child-protocol.js';
 
 /** Upper bound on any barrier wait, so a lost signal fails loudly, not silently. */
@@ -67,18 +68,25 @@ const op = JSON.parse(opJson) as ChildOp;
  */
 async function run(service: SessionService): Promise<unknown> {
   switch (op.kind) {
+    // The four ownership-guarded mutations are unwrapped here so the wire carries
+    // the DOMAIN result the parent asserts on, not the storage envelope around it.
+    // No child in this fixture holds an execution lease, so a refusal would be a
+    // genuine surprise — `unwrapSessionMutation` throws it into the `ok: false`
+    // arm with its message intact rather than letting it read as a bare success.
     case 'issueRunControlClaim':
-      return service.issueRunControlClaim(assertRunId(op.runId));
+      return unwrapSessionMutation(await service.issueRunControlClaim(assertRunId(op.runId)));
     case 'claimRunbook':
-      return service.claimRunbook(assertRunId(op.childRunId), op.linkage);
+      return unwrapSessionMutation(
+        await service.claimRunbook(assertRunId(op.childRunId), op.linkage),
+      );
     case 'pushRunbook':
       return service.pushRunbook(assertRunId(op.runId));
     case 'recordClaimSeen':
       return service.recordClaimSeen(assertClaimId(op.claimId));
     case 'releaseRunbook':
-      return service.releaseRunbook(assertRunId(op.runId));
+      return unwrapSessionMutation(await service.releaseRunbook(assertRunId(op.runId)));
     case 'popRunbook':
-      return service.popRunbook();
+      return unwrapSessionMutation(await service.popRunbook());
     case 'guardedParentAdvance': {
       const parentRunId = assertRunId(op.parentRunId);
       // Second-stage barrier INSIDE the advance callback: signal that the fast

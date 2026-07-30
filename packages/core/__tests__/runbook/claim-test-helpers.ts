@@ -4,6 +4,7 @@ import type { SessionService } from '../../src/runbook/session-service.js';
 import type { RunbookStateManager } from '../../src/runbook/state.js';
 import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 import type { DelegationLinkage, RunId, SubstepState } from '../../src/runbook/types.js';
+import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { makeStepDelegation } from '../helpers/step-factories.js';
 
 /**
@@ -89,7 +90,7 @@ export async function claimLiveDelegation(
   linkage: DelegationLinkage,
 ): Promise<ClaimRunbookResult> {
   await seedLiveDelegation(manager, linkage);
-  return sessionService.claimRunbook(childRunId, linkage);
+  return unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage));
 }
 
 const isClaimed = <T extends { status: string }>(

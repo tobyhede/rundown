@@ -19,6 +19,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 
 function claimPopRefusal(
   claimId: ClaimId,
@@ -80,16 +81,30 @@ export function registerPopCommand(program: Command): void {
           let state: RunbookState | null;
           if (claimTarget.claimId !== undefined) {
             const restoreResult = await sessionService.unstashForClaimId(claimTarget.claimId);
-            if (restoreResult.status !== 'restored') {
-              const refusal = claimPopRefusal(claimTarget.claimId, restoreResult);
+            if (restoreResult.kind !== 'committed') {
+              renderSessionMutationRefusal(output, restoreResult);
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            const restored = restoreResult.value;
+            if (restored.status !== 'restored') {
+              const refusal = claimPopRefusal(claimTarget.claimId, restored);
               output.error(refusal.message, refusal.code);
               output.flush();
               process.exitCode = 1;
               return;
             }
-            state = restoreResult.state;
+            state = restored.state;
           } else {
-            state = await sessionService.unstash();
+            const restoreResult = await sessionService.unstash();
+            if (restoreResult.kind !== 'committed') {
+              renderSessionMutationRefusal(output, restoreResult);
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            state = restoreResult.value;
           }
 
           if (!state) {

@@ -25,6 +25,7 @@ import {
   getActiveState,
   findActionOutput,
   parseConcatenatedJson,
+  seedExecutionOwnership,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
@@ -666,7 +667,10 @@ Do the thing.
       const stashedId = await createStateFile(manager, { lifecycle: 'stopped' });
       await sessionService.pushRunbook(stackedId);
       await sessionService.pushRunbook(stashedId);
-      await expect(sessionService.stash()).resolves.toBe(stashedId);
+      await expect(sessionService.stash()).resolves.toEqual({
+        kind: 'committed',
+        value: stashedId,
+      });
 
       const result = await runCliInProcess('prune --all', workspace);
       expect(result.exitCode).toBe(0);
@@ -737,6 +741,35 @@ Do the thing.
       const session = await readSession(workspace);
       expect(session.defaultStack).not.toContain(invalidId);
       expect(await readRunbookState(workspace, invalidId)).toBeNull();
+    });
+
+    it('refuses EXECUTION_IN_PROGRESS and prunes nothing while a run is owned (#608)', async () => {
+      // The end-to-end path for the typed session refusal: core's guarded session
+      // mutation refuses, the CLI renders the registered symbolic code, and the
+      // command exits non-zero having deleted nothing.
+      const manager = new RunbookStateManager(workspace.cwd);
+      const sessionService = new SessionService(manager);
+      const ownedId = await createStateFile(manager, { lifecycle: 'completed' });
+      await sessionService.pushRunbook(ownedId);
+      seedExecutionOwnership(workspace, ownedId);
+
+      const result = await runCliInProcess('prune', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const [envelope] = parseConcatenatedJson(result.stdout) as {
+        kind?: string;
+        code?: string;
+        error?: string;
+      }[];
+      expect(envelope).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+        error: `Run ${ownedId} has an execution in progress.`,
+      });
+      // Nothing was pruned: the run is still targeted and its state survives.
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toContain(ownedId);
+      expect(await readRunbookState(workspace, ownedId)).not.toBeNull();
     });
 
     describe('interrupted prune convergence (#534 review)', () => {

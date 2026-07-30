@@ -25,7 +25,7 @@ import {
 import type { Runbook, RunId, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { linkageFor, assertClaimed, claimLiveDelegation } from './claim-test-helpers.js';
-import { patchPersistedClaim } from '../../src/testing/session-fixtures.js';
+import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = {
@@ -106,7 +106,7 @@ describe('SessionService.recordClaimSeen (#519)', () => {
       '2026-07-17T12:00:00.000Z', // mint
       '2026-07-17T12:00:05.000Z', // observation
     ]);
-    const { claimId, claim } = await service.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(await service.issueRunControlClaim(runId));
     const before = claim.lastSeenAt;
 
     const result = await service.recordClaimSeen(claimId);
@@ -129,7 +129,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
   });
 
   it('leaves updatedAt untouched', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
 
     await sessionService.recordClaimSeen(claimId);
 
@@ -144,8 +146,12 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
       runbookPath: 'other.md',
     });
-    const { claimId: claimA } = await sessionService.issueRunControlClaim(runId);
-    const { claim: recordB } = await sessionService.issueRunControlClaim(stateB.id);
+    const { claimId: claimA } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
+    const { claim: recordB } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(stateB.id),
+    );
     const beforeB = recordB.lastSeenAt;
 
     await sessionService.recordClaimSeen(claimA);
@@ -156,7 +162,7 @@ describe('SessionService.recordClaimSeen (#519)', () => {
   });
 
   it('records nothing for a bearer whose secret does not verify', async () => {
-    const { claim } = await sessionService.issueRunControlClaim(runId);
+    const { claim } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
     const before = claim.lastSeenAt;
     const forged = forgeBearerWithWrongSecret(claim.claimKey);
 
@@ -168,8 +174,8 @@ describe('SessionService.recordClaimSeen (#519)', () => {
   });
 
   it('records nothing for a claim key that is not in the session', async () => {
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
-    await sessionService.releaseRunbook(runId);
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
+    unwrapSessionMutation(await sessionService.releaseRunbook(runId));
 
     const result = await sessionService.recordClaimSeen(claimId);
 
@@ -177,7 +183,7 @@ describe('SessionService.recordClaimSeen (#519)', () => {
   });
 
   it('never throws when the session write fails — it returns record-failed (AC7)', async () => {
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
     // The OUTER path: the `try` wraps the whole `mutateSession` call, not just its
     // callback. Under the store, opening the transaction, reading the session, and
     // committing all live outside the callback, so a failure at any of them lands
@@ -211,7 +217,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     // other test here would still pass — and the failure would surface as RD-824 on
     // a healthy claim, i.e. a live child libelled as corrupt, only once a surface
     // existed to see it on.
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const result = await sessionService.recordClaimSeen(claimId);
     expect(result.kind).toBe('recorded');
 
@@ -227,7 +235,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
     // directly, but production never calls it directly — `mintRunControlClaim` and
     // `claimRunbook` are its only call sites. A record built correctly by a function
     // nobody calls that way satisfies nothing.
-    const { claim: runControl } = await sessionService.issueRunControlClaim(runId);
+    const { claim: runControl } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     expect(runControl.lastSeenAt).toBe(runControl.issuedAt);
 
     const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
@@ -320,7 +330,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('records liveness on an authorized claim-authenticated pass (AC3)', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -340,7 +352,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // `status --claim-id` names another agent's claim as a target. Verification
     // alone cannot attribute the invocation to that claim's holder: a parent
     // reading a child must not vouch for the child's liveness (AC5).
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -354,7 +368,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   it('records liveness when an authorized claim-authenticated mutation is refused (AC3)', async () => {
     // The verified bearer and authorized grant prove the holder is alive before
     // the terminal-state refusal decides that the run cannot advance.
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     // Drive the claim's run terminal so a further transition is refused.
     await manager.updateWithState(runId, () => ({ lifecycle: 'completed' as const }));
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
@@ -373,7 +389,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('records liveness when open delegated children refuse an authorized transition', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
       runbookPath: 'child.md',
       parentLinkage: linkageFor(runId, 'a'),
@@ -397,7 +415,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('records liveness before a post-authorization mutation dispatch throws', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
     jest.spyOn(actorService, 'sendAndSync').mockRejectedValueOnce(new Error('dispatch exploded'));
@@ -416,7 +436,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('does not record when the presented bearer lacks a grant for the target run', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
       runbookPath: 'foreign.md',
     });
@@ -454,8 +476,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('does not attempt recording when a valid bearer has no default target', async () => {
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
-    await sessionService.popRunbook();
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
+    unwrapSessionMutation(await sessionService.popRunbook());
     const recordSpy = jest.spyOn(sessionService, 'recordClaimSeen');
 
     const outcome = await seam.runTransition({
@@ -470,7 +492,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('a failed progress write neither fails nor masks the committed mutation (AC7, RD-102)', async () => {
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
     const saveSpy = jest
       .spyOn(manager, 'saveSession')
       .mockRejectedValue(new Error('session write exploded'));
@@ -491,7 +513,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('adoption self-heals: a fresh session mutating with the bearer clears idle (AC11)', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     // Backdate the mark far past the threshold — the claim reads idle. Written
     // through the claim columns directly: `saveSession` leaves an existing
     // claim untouched, so editing the session snapshot would not persist.
@@ -528,7 +552,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   it('adoption does NOT self-heal via `status --claim-id` (AC11)', async () => {
     // Status names the claim as another agent's target; it cannot establish that
     // the claim's own holder is alive.
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     await patchPersistedClaim(testDir, claim.claimKey, {
       lastSeenAt: '2020-01-01T00:00:00.000Z',
     });
@@ -556,9 +582,11 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     // `claim.controlledRunId` -> `manager.load`, never the session stack. Pushing
     // would make B the active runbook and give this case a second, irrelevant
     // reason to pass.
-    const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
-    const { claimId: claimB, claim: recordB } = await sessionService.issueRunControlClaim(
-      stateB.id,
+    const { claimId: claimA, claim: recordA } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
+    const { claimId: claimB, claim: recordB } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(stateB.id),
     );
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -576,7 +604,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('records liveness for an authorized claim-authenticated navigation', async () => {
-    const { claimId, claim } = await sessionService.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const before = claim.lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -592,7 +622,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('does not record navigation liveness for stale, missing, or policy-refused targets', async () => {
-    const { claimId } = await sessionService.issueRunControlClaim(runId);
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
     const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
       runbookPath: 'foreign.md',
     });
@@ -616,8 +646,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     });
     expect(stale.kind).toBe('stale_claim');
 
-    await sessionService.popRunbook();
-    await sessionService.popRunbook();
+    unwrapSessionMutation(await sessionService.popRunbook());
+    unwrapSessionMutation(await sessionService.popRunbook());
     const none = await seam.resolveRunNavigation({
       command: 'goto',
       callerEvidence: { kind: 'claim_bearer', claimId },
@@ -631,9 +661,11 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     const stateB = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
       runbookPath: 'other.md',
     });
-    const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
-    const { claimId: claimB, claim: recordB } = await sessionService.issueRunControlClaim(
-      stateB.id,
+    const { claimId: claimA, claim: recordA } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
+    const { claimId: claimB, claim: recordB } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(stateB.id),
     );
     await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -662,7 +694,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       runbookPath: 'child.md',
       parentLinkage: linkage,
     });
-    const { claim: recordA } = await sessionService.issueRunControlClaim(runId);
+    const { claim: recordA } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const { claimId: claimB, claim: recordB } = assertClaimed(
       await claimLiveDelegation(sessionService, manager, child.id, linkage),
     );
@@ -691,7 +725,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       runbookPath: 'child.md',
       parentLinkage: linkage,
     });
-    const { claimId: claimA, claim: recordA } = await sessionService.issueRunControlClaim(runId);
+    const { claimId: claimA, claim: recordA } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(runId),
+    );
     const { claimId: claimB, claim: recordB } = assertClaimed(
       await claimLiveDelegation(sessionService, manager, child.id, linkage),
     );
@@ -745,7 +781,7 @@ describe('recordClaimSeen under backward wall-clock movement (#611 review)', () 
       '2026-07-17T12:00:30.000Z', // observation, forward
       '2026-07-17T10:00:05.000Z', // observation, AFTER the clock steps back 2h
     ]);
-    const { claimId, claim } = await service.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(await service.issueRunControlClaim(runId));
 
     await service.recordClaimSeen(claimId);
     const result = await service.recordClaimSeen(claimId);
@@ -781,7 +817,7 @@ describe('recordClaimSeen under backward wall-clock movement (#611 review)', () 
       '2026-07-17T12:00:30.000Z', // observation, pre-jump
       '2026-07-17T10:00:05.000Z', // observation, post-jump — then the child dies
     ]);
-    const { claimId, claim } = await service.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(await service.issueRunControlClaim(runId));
     await service.recordClaimSeen(claimId);
     await service.recordClaimSeen(claimId);
 
@@ -807,7 +843,7 @@ describe('recordClaimSeen under backward wall-clock movement (#611 review)', () 
       '2026-07-17T12:00:00.000Z', // mint
       '2026-07-17T10:00:05.000Z', // observation, post-jump
     ]);
-    const { claimId, claim } = await service.issueRunControlClaim(runId);
+    const { claimId, claim } = unwrapSessionMutation(await service.issueRunControlClaim(runId));
     await service.recordClaimSeen(claimId);
 
     const session = await manager.loadSession();
@@ -832,7 +868,7 @@ describe('recordClaimSeen under backward wall-clock movement (#611 review)', () 
         const mint = new Date(mintAt).toISOString();
         const observation = new Date(seenAt).toISOString();
         const service = serviceWithClock(manager, [mint, observation]);
-        const { claimId, claim } = await service.issueRunControlClaim(runId);
+        const { claimId, claim } = unwrapSessionMutation(await service.issueRunControlClaim(runId));
 
         const result = await service.recordClaimSeen(claimId);
 

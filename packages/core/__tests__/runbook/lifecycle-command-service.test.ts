@@ -39,6 +39,7 @@ import {
   type ResolveChildRunbook,
   type RunbookLifecycleCommandServiceDependencies,
   type RunbookState,
+  type RunId,
   type SubstepState,
 } from '../../src/runbook/index.js';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
@@ -46,6 +47,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
+import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import {
   assertClaimed,
@@ -53,7 +55,8 @@ import {
   claimLiveDelegation,
   seedLiveDelegation,
 } from './claim-test-helpers.js';
-import { patchPersistedClaim } from '../../src/testing/session-fixtures.js';
+import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
@@ -223,7 +226,7 @@ describe('RunbookLifecycleCommandService', () => {
   }
 
   async function issueRunControlClaimFor(id: RunbookState['id']): Promise<void> {
-    const { claimId } = await sessionService.issueRunControlClaim(id);
+    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(id));
     issuedRunControlClaims.set(id, claimId);
   }
 
@@ -299,6 +302,34 @@ describe('RunbookLifecycleCommandService', () => {
    * DELEGATE substep `1.1` targeting `child.md`, then build a fresh seam wired
    * to issuance deps.
    */
+  /**
+   * Give a run active execution ownership, as another process holding it would.
+   *
+   * Written straight to the columns because acquiring a real lease needs the
+   * driver; the ownership guards key on `runs.exec_token IS NOT NULL` alone.
+   *
+   * @param cwd - Project root whose store holds the run.
+   * @param ownedRunId - Run to mark as owned.
+   */
+  async function ownRunForTest(cwd: string, ownedRunId: RunId): Promise<void> {
+    const store = await getRunbookStore(cwd);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          `INSERT INTO execution_attempts
+             (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+           VALUES (:runId, 1, 'sha256:owned', 'claimed', :pid, :now)`,
+        )
+        .run({ runId: ownedRunId, pid: process.pid, now: new Date().toISOString() });
+      txn.tx
+        .prepare(
+          `UPDATE runs SET exec_epoch = 1, exec_pid = :pid, exec_token = 'sha256:owned'
+            WHERE id = :runId`,
+        )
+        .run({ runId: ownedRunId, pid: process.pid });
+    });
+  }
+
   async function startSeamOnDelegateStep(): Promise<ReturnType<typeof buildIssuanceSeam>> {
     const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
     const state = baseState();
@@ -2039,6 +2070,39 @@ describe('RunbookLifecycleCommandService', () => {
       await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
     });
 
+    it('refuses and leaves the linked child intact when the child is under execution (#608)', async () => {
+      // Release runs BEFORE deleteRun precisely so an ownership refusal is
+      // decisive: no run deleted, no completion recorded, nothing superseded.
+      // Under the old delete-then-release order the child would already be gone
+      // by the time the release refused.
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const childRunId = assertRunId('rd_ab0d0000000000000000000000000000');
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: linkageFor(state.id, '1'),
+        }),
+      );
+      await ownRunForTest(tmp, childRunId);
+      const deleteSpy = jest.spyOn(deps, 'deleteRun');
+
+      const result = await localSeam.cleanupForceAbortedLinkedChild({
+        parentState: state,
+        childRunId,
+        frameKey: buildFrameKey('1'),
+        substepId: '1',
+      });
+
+      expect(result).toEqual({
+        kind: 'execution_in_progress',
+        runId: childRunId,
+        message: `Run ${childRunId} has an execution in progress.`,
+      });
+      expect(deleteSpy).not.toHaveBeenCalled();
+      await expect(mgr.load(childRunId)).resolves.not.toBeNull();
+    });
+
     it('force-abort cleanup supersedes stale outcome for missing linked child', async () => {
       const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
       const childRunId = assertRunId('rd_ab0c0000000000000000000000000000');
@@ -2603,14 +2667,14 @@ describe('RunbookLifecycleCommandService', () => {
 
       const claimant = new SessionService(new RunbookStateManager(tmp));
       const realSendAndSync = actorService.sendAndSync.bind(actorService);
-      let claimed:
-        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
-        | undefined;
+      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
       jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (...args) => {
         // Inject on the FIRST call only: the claim must land inside the first
         // guarded window, and re-claiming on later calls would mask a guard that
         // refused for the wrong reason.
-        claimed ??= assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+        claimed ??= assertClaimed(
+          unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
+        );
         return realSendAndSync(...args);
       });
 
@@ -2650,14 +2714,14 @@ describe('RunbookLifecycleCommandService', () => {
 
       const claimant = new SessionService(new RunbookStateManager(tmp));
       const realRecord = completionService.recordManualCompletion.bind(completionService);
-      let claimed:
-        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
-        | undefined;
+      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
       jest
         .spyOn(completionService, 'recordManualCompletion')
         .mockImplementation(async (...args) => {
           // First call only — see the sendAndSync spy above.
-          claimed ??= assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+          claimed ??= assertClaimed(
+            unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
+          );
           return realRecord(...args);
         });
 
@@ -2741,14 +2805,14 @@ describe('RunbookLifecycleCommandService', () => {
 
       const claimant = new SessionService(new RunbookStateManager(tmp));
       const realRecord = completionService.recordManualCompletion.bind(completionService);
-      let claimed:
-        | Extract<Awaited<ReturnType<SessionService['claimRunbook']>>, { status: 'claimed' }>
-        | undefined;
+      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
       jest
         .spyOn(completionService, 'recordManualCompletion')
         .mockImplementation(async (...args) => {
           // First call only — see the sendAndSync spy above.
-          claimed ??= assertClaimed(await claimant.claimRunbook(childRunId, linkage));
+          claimed ??= assertClaimed(
+            unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
+          );
           return realRecord(...args);
         });
 
@@ -4103,7 +4167,11 @@ describe('RunbookLifecycleCommandService', () => {
       // reentrant and terminal release cannot move back inside the span.
       const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
+      // Two spies because the two writes now take different manager methods: the
+      // liveness mark is an unguarded `mutateSession`, terminal release is the
+      // ownership-guarded variant. The ordering property is unchanged.
       const sessionAcquireSpy = jest.spyOn(manager, 'mutateSession');
+      const guardedSessionAcquireSpy = jest.spyOn(manager, 'mutateSessionGuarded');
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
 
       const outcome = await explicitPass(localSeam, '1.1');
@@ -4117,7 +4185,7 @@ describe('RunbookLifecycleCommandService', () => {
       const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
       const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
       const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
-      const releaseSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder.at(-1);
+      const releaseSessionAcquire = guardedSessionAcquireSpy.mock.invocationCallOrder.at(-1);
       expect(completionAcquire).toBeDefined();
       expect(completionRelease).toBeDefined();
       expect(recordingSessionAcquire).toBeDefined();
@@ -4641,10 +4709,13 @@ describe('RunbookLifecycleCommandService', () => {
           .mockImplementation(async () => {
             order.push('release');
             return {
-              status: 'released',
-              runbookId: claimChildRunId,
-              removedFromDefaultStack: false,
-              nextDefaultRunbookId: null,
+              kind: 'committed',
+              value: {
+                status: 'released',
+                runbookId: claimChildRunId,
+                removedFromDefaultStack: false,
+                nextDefaultRunbookId: null,
+              },
             };
           });
         const out = await seam.runTerminal({
@@ -4714,10 +4785,13 @@ describe('RunbookLifecycleCommandService', () => {
           .spyOn(actorService, 'sendAndSync')
           .mockImplementation(async (id, steps, ev) => realSend(id, steps, ev));
         jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
-          status: 'released',
-          runbookId: claimChildRunId,
-          removedFromDefaultStack: false,
-          nextDefaultRunbookId: null,
+          kind: 'committed',
+          value: {
+            status: 'released',
+            runbookId: claimChildRunId,
+            removedFromDefaultStack: false,
+            nextDefaultRunbookId: null,
+          },
         });
 
         const out = await seam.runTerminal({
@@ -4763,10 +4837,13 @@ describe('RunbookLifecycleCommandService', () => {
           .spyOn(completionService, 'recordChildCompletion')
           .mockResolvedValue('recorded');
         jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
-          status: 'released',
-          runbookId: claimChildRunId,
-          removedFromDefaultStack: false,
-          nextDefaultRunbookId: null,
+          kind: 'committed',
+          value: {
+            status: 'released',
+            runbookId: claimChildRunId,
+            removedFromDefaultStack: false,
+            nextDefaultRunbookId: null,
+          },
         });
 
         const out = await seam.runTerminal({
@@ -4995,17 +5072,23 @@ describe('RunbookLifecycleCommandService', () => {
           .spyOn(sessionService, 'releaseRunbooks')
           .mockImplementation(async () => {
             order.push('release-descendants');
-            return { releasedRunIds: [CHILD], nextDefaultRunbookId: null };
+            return {
+              kind: 'committed',
+              value: { releasedRunIds: [CHILD], nextDefaultRunbookId: null },
+            };
           });
         const releaseRootSpy = jest
           .spyOn(sessionService, 'releaseRunbook')
           .mockImplementation(async () => {
             order.push('release-root');
             return {
-              status: 'released',
-              runbookId: ROOT,
-              removedFromDefaultStack: false,
-              nextDefaultRunbookId: null,
+              kind: 'committed',
+              value: {
+                status: 'released',
+                runbookId: ROOT,
+                removedFromDefaultStack: false,
+                nextDefaultRunbookId: null,
+              },
             };
           });
 

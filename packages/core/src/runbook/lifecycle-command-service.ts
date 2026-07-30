@@ -50,7 +50,7 @@ import {
   type ExplicitTransitionTarget,
 } from './manual-completion-cursor.js';
 import type { CompletionLockLike } from './completion-lock.js';
-import type { SessionService } from './session-service.js';
+import type { SessionMutationRefusalOutcome, SessionService } from './session-service.js';
 import type {
   DrainResolvedCompletionsArgs,
   DrainResolvedCompletionsResult,
@@ -376,14 +376,18 @@ export type DelegationIssuanceOutcome =
   | { readonly kind: 'invalid_index'; readonly message: string }
   | { readonly kind: 'retry_target_required' }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
-  | { readonly kind: 'error'; readonly error: RundownError };
+  | { readonly kind: 'error'; readonly error: RundownError }
+  /** Refusal: releasing the retried delegation's linked child hit execution ownership. */
+  | SessionMutationRefusalOutcome;
 
 /** Result of cleaning up a force-aborted linked child delegation. */
 export type ForceAbortLinkedChildCleanupResult =
   | { readonly kind: 'none' }
   | { readonly kind: 'active_child_failed'; readonly childRunId: RunId }
   | { readonly kind: 'terminal_child_cleaned'; readonly childRunId: RunId }
-  | { readonly kind: 'missing_child_cleaned'; readonly childRunId: RunId };
+  | { readonly kind: 'missing_child_cleaned'; readonly childRunId: RunId }
+  /** Refusal: releasing the linked child hit execution ownership; nothing was cleaned up. */
+  | SessionMutationRefusalOutcome;
 
 /**
  * Terminal side-effect policy applied when a transition reaches a terminal state.
@@ -477,6 +481,8 @@ export interface LifecycleTransitionInput {
 export type LifecycleTransitionOutcome =
   | { readonly kind: 'none' }
   | StaleClaimRefusal
+  /** Refusal: the terminal release this transition owes hit execution ownership. */
+  | SessionMutationRefusalOutcome
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
@@ -599,6 +605,8 @@ export type TerminalReportOutcome = Awaited<
 export type LifecycleTerminalOutcome =
   /** No active runbook (bare path) to complete/stop. */
   | { readonly kind: 'none' }
+  /** Refusal: a release this terminal owes hit execution ownership on the named run. */
+  | SessionMutationRefusalOutcome
   /** The targeted claim id does not resolve to a live claimed child. */
   | StaleClaimRefusal
   /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
@@ -1418,7 +1426,8 @@ export class RunbookLifecycleCommandService {
 
     await this.#supersedePendingOutcome(freshState.id, frameKey, substepId);
     if (linkedChildRunId && allowLinkedChildRun) {
-      await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
+      const release = await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
+      if (release.kind !== 'committed') return release;
     }
     await this.#persistIssuedSubstep(
       freshState.id,
@@ -1465,8 +1474,13 @@ export class RunbookLifecycleCommandService {
       childState?.lifecycle === 'completed' || childState?.lifecycle === 'stopped';
 
     if (childIsActive) {
+      // Release BEFORE deleting: an ownership refusal must leave the child
+      // intact, and deleting first would make the refusal a partial cleanup.
+      // The committed order is unobservable — a deleted run's claims cascade
+      // away, so either sequence converges on the same session state.
+      const release = await this.#deps.sessionService.releaseRunbook(args.childRunId);
+      if (release.kind !== 'committed') return release;
       await this.#deps.deleteRun(args.childRunId);
-      await this.#deps.sessionService.releaseRunbook(args.childRunId);
       await this.#deps.completionService.recordChildCompletionUnlocked({
         childState,
         result: 'fail',
@@ -1475,7 +1489,8 @@ export class RunbookLifecycleCommandService {
       return { kind: 'active_child_failed', childRunId: args.childRunId };
     }
 
-    await this.#deps.sessionService.releaseRunbook(args.childRunId);
+    const release = await this.#deps.sessionService.releaseRunbook(args.childRunId);
+    if (release.kind !== 'committed') return release;
     await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
       runbookId: args.parentState.id,
       frameKey: args.frameKey,
@@ -1898,7 +1913,7 @@ export class RunbookLifecycleCommandService {
           message: resolution.message,
           code: resolution.code,
         };
-      case 'terminal_claim_confirmed':
+      case 'terminal_claim_confirmed': {
         // Idempotent no-op: child already terminal. Still release with retain so a
         // later --claim-id can confirm/conflict again (item 4, second site).
         // The resolver verified and authorized the bearer before confirming the
@@ -1906,20 +1921,27 @@ export class RunbookLifecycleCommandService {
         if (input.callerEvidence.kind === 'claim_bearer') {
           await sessionService.recordClaimSeen(input.callerEvidence.claimId);
         }
-        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        const release = await sessionService.releaseRunbook(resolution.state.id, {
+          retainClaimsAsTerminal: true,
+        });
+        if (release.kind !== 'committed') return release;
         return {
           kind: 'terminal_claim_confirmed',
           claimId: resolution.claimId,
           lifecycle: resolution.lifecycle,
           command: resolution.command,
         };
-      case 'terminal_claim_conflict':
+      }
+      case 'terminal_claim_conflict': {
         // A confirmed terminal conflict is also post-authorization evidence from
         // the claim's holder, despite refusing the requested terminal result.
         if (input.callerEvidence.kind === 'claim_bearer') {
           await sessionService.recordClaimSeen(input.callerEvidence.claimId);
         }
-        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        const release = await sessionService.releaseRunbook(resolution.state.id, {
+          retainClaimsAsTerminal: true,
+        });
+        if (release.kind !== 'committed') return release;
         return {
           kind: 'terminal_claim_conflict',
           claimId: resolution.claimId,
@@ -1927,6 +1949,7 @@ export class RunbookLifecycleCommandService {
           expectedCommand: resolution.expectedCommand,
           requestedCommand: resolution.requestedCommand,
         };
+      }
       case 'claim_grant_required':
         return {
           kind: 'claim_grant_required',
@@ -1977,7 +2000,10 @@ export class RunbookLifecycleCommandService {
       // (the child is already gone), so it stays command-success and propagates
       // nothing to the parent. (A bare-path race is handled distinctly in
       // #driveTerminalBare as `root-unavailable`, which exits non-zero for retry.)
-      await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+      const raceRelease = await sessionService.releaseRunbook(state.id, {
+        retainClaimsAsTerminal: true,
+      });
+      if (raceRelease.kind !== 'committed') return raceRelease;
       return {
         kind: 'applied_claim',
         runId: state.id,
@@ -2006,7 +2032,10 @@ export class RunbookLifecycleCommandService {
         })
       : 'not-applicable';
 
-    await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+    const release = await sessionService.releaseRunbook(state.id, {
+      retainClaimsAsTerminal: true,
+    });
+    if (release.kind !== 'committed') return release;
 
     return {
       kind: 'applied_claim',
@@ -2096,7 +2125,8 @@ export class RunbookLifecycleCommandService {
       // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
       // bearer receives the same outcome without mutating the resolved chain.
       if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
-        await sessionService.releaseRunbooks(plan.releaseRunIds);
+        const release = await sessionService.releaseRunbooks(plan.releaseRunIds);
+        if (release.kind !== 'committed') return release;
       }
       return {
         kind: 'already_terminal',
@@ -2222,9 +2252,13 @@ export class RunbookLifecycleCommandService {
     // decision #3). Descendant ids are the chain minus the root.
     const descendantReleaseIds = plan.releaseRunIds.filter((id) => id !== plan.targetState.id);
     if (descendantReleaseIds.length > 0) {
-      await sessionService.releaseRunbooks(descendantReleaseIds);
+      const descendantsRelease = await sessionService.releaseRunbooks(descendantReleaseIds);
+      if (descendantsRelease.kind !== 'committed') return descendantsRelease;
     }
-    await sessionService.releaseRunbook(plan.targetState.id, { retainClaimsAsTerminal: true });
+    const rootRelease = await sessionService.releaseRunbook(plan.targetState.id, {
+      retainClaimsAsTerminal: true,
+    });
+    if (rootRelease.kind !== 'committed') return rootRelease;
 
     return {
       kind: 'applied_bare',
@@ -2521,7 +2555,12 @@ export class RunbookLifecycleCommandService {
     if (drain.kind === 'refusal') return drain.outcome;
     const drained = drain.value;
     if (drained.terminalStatus) {
-      await this.#applyTerminalSideEffects(input, drained.terminalStatus, activeState.id);
+      const refusal = await this.#applyTerminalSideEffects(
+        input,
+        drained.terminalStatus,
+        activeState.id,
+      );
+      if (refusal) return refusal;
     }
     return this.#substepOutcome(activeState.id, terminalReleaseMode, drained, duplicate);
   }
@@ -2626,7 +2665,12 @@ export class RunbookLifecycleCommandService {
     // before any terminal side effect can take the SessionLock (see the
     // lock-ordering proof in the method comment).
     if (drained.terminalStatus) {
-      await this.#applyTerminalSideEffects(input, drained.terminalStatus, activeState.id);
+      const refusal = await this.#applyTerminalSideEffects(
+        input,
+        drained.terminalStatus,
+        activeState.id,
+      );
+      if (refusal) return refusal;
     }
     return this.#substepOutcome(activeState.id, terminalReleaseMode, drained, duplicate);
   }
@@ -2831,7 +2875,12 @@ export class RunbookLifecycleCommandService {
     });
 
     if (observation.status === 'done' || observation.status === 'stopped') {
-      await this.#applyTerminalSideEffects(input, observation.status, activeState.id);
+      const refusal = await this.#applyTerminalSideEffects(
+        input,
+        observation.status,
+        activeState.id,
+      );
+      if (refusal) return refusal;
       return {
         kind: 'applied',
         runId: activeState.id,
@@ -2856,18 +2905,24 @@ export class RunbookLifecycleCommandService {
   }
 
   // Apply terminal release per policy when a transition reaches a terminal state.
+  // Returns the refusal when the release was refused for execution ownership, so
+  // the caller reports it instead of an `applied` outcome it did not fully apply.
   async #applyTerminalSideEffects(
     input: LifecycleTransitionInput,
     status: 'done' | 'stopped',
     runId: RunId,
-  ): Promise<void> {
+  ): Promise<SessionMutationRefusalOutcome | null> {
     const releaseRunbook =
       status === 'done'
         ? input.terminalPolicy.onComplete.releaseRunbook
         : input.terminalPolicy.onStopped.releaseRunbook;
     if (releaseRunbook) {
-      await this.#deps.sessionService.releaseRunbook(runId, { retainClaimsAsTerminal: true });
+      const release = await this.#deps.sessionService.releaseRunbook(runId, {
+        retainClaimsAsTerminal: true,
+      });
+      if (release.kind !== 'committed') return release;
     }
+    return null;
   }
 
   // Run a parent-advancing write under the open-delegated-children guard when the

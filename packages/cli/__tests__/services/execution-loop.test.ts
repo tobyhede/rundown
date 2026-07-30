@@ -27,11 +27,17 @@ const mockActorService = {
   >() as any,
 };
 
+/** A committed session mutation carrying `value`, matching core's guarded API. */
+const committed = <T>(value: T): { readonly kind: 'committed'; readonly value: T } => ({
+  kind: 'committed',
+  value,
+});
+
 const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
   pushRunbook: mockFn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
-  popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
-  releaseRunbook: mockFn<(id: string) => Promise<void>>() as any,
+  popRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue(committed(null)),
+  releaseRunbook: mockFn<(id: string) => Promise<unknown>>() as any,
 };
 
 const ensureActiveEntryFn =
@@ -400,7 +406,9 @@ describe('runExecutionLoop', () => {
     mockSessionService.pushRunbook.mockReset();
     mockSessionService.pushRunbook.mockResolvedValue(undefined);
     mockSessionService.releaseRunbook.mockReset();
-    mockSessionService.releaseRunbook.mockResolvedValue(undefined);
+    mockSessionService.releaseRunbook.mockResolvedValue(committed(null));
+    mockSessionService.popRunbook.mockReset();
+    mockSessionService.popRunbook.mockResolvedValue(committed(null));
 
     // Default evaluate behavior. ConditionResult requires `action`; the test
     // bodies only check the `message` field so we cast through `unknown` to
@@ -1153,6 +1161,111 @@ describe('runExecutionLoop', () => {
       retainClaimsAsTerminal: true,
     });
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+  });
+
+  describe('terminal release refused for execution ownership (#608)', () => {
+    /** Drive the loop to a COMPLETE terminal so the release is the only variable. */
+    function seedCompletingRun(): void {
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'done',
+          variables: {},
+          runbookPath: '/tmp/test.md',
+        },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
+        },
+        effects: [commandCompletedEffect('pass')],
+      });
+    }
+
+    it.each([
+      {
+        label: 'execution_in_progress',
+        refusal: {
+          kind: 'execution_in_progress' as const,
+          runId: runbookId,
+          message: `Run ${runbookId} has an execution in progress.`,
+        },
+        code: 'EXECUTION_IN_PROGRESS',
+      },
+      {
+        label: 'recovery_required',
+        refusal: {
+          kind: 'recovery_required' as const,
+          runId: runbookId,
+          epoch: 4,
+          message: `Run ${runbookId} ended execution with an unknown outcome at epoch 4; run recovery before continuing.`,
+        },
+        code: 'RECOVERY_REQUIRED',
+      },
+    ])('reports $label and returns stopped instead of done', async ({ refusal, code }) => {
+      // The run completed, but the release the loop owed did not commit. Returning
+      // 'done' would report a clean finish for a run still on the session stack,
+      // so the loop downgrades to 'stopped' and emits the refusal under its
+      // registered symbolic code.
+      seedCompletingRun();
+      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code },
+      });
+    });
+
+    it('reports a refused stack pop and downgrades an already-completed run', async () => {
+      // The stack-pop disposition of the same release. The run is already
+      // terminal at loop entry, so the pop is the loop's only session write —
+      // and a refused pop must not report `done`.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'done',
+            value: 'COMPLETE',
+            context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+          },
+        }),
+      );
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.popRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+      });
+    });
   });
 
   describe("terminalReleaseMode 'defer-to-caller' (#598)", () => {

@@ -15,6 +15,7 @@ import {
   type DelegationLinkage,
   type InlineLinkage,
   type ReleaseRunbookResult,
+  type SessionMutationResult,
 } from '../../src/runbook/index.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
@@ -84,9 +85,9 @@ function makeDeps(
           (
             id: RunId,
             o?: { readonly retainClaimsAsTerminal?: boolean },
-          ) => Promise<ReleaseRunbookResult>
+          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
         >()
-        .mockResolvedValue({} as ReleaseRunbookResult),
+        .mockResolvedValue({ kind: 'committed', value: {} as ReleaseRunbookResult }),
     },
     completionService: {
       recordChildCompletion: jest
@@ -258,9 +259,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockResolvedValue({ kind: 'committed', value: {} as ReleaseRunbookResult });
     const result = await propagateTerminalChildUpward(
       makeDeps({ advanceInlineParent, sessionService: { releaseRunbook } }),
       child,
@@ -288,9 +289,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockResolvedValue({ kind: 'committed', value: {} as ReleaseRunbookResult });
     const result = await propagateTerminalChildUpward(
       makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
       child,
@@ -329,7 +330,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
       .mockRejectedValue(new Error('release boom'));
     const result = await propagateTerminalChildUpward(
@@ -549,9 +550,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockResolvedValue({ kind: 'committed', value: {} as ReleaseRunbookResult });
     const result = await propagateTerminalChildUpward(
       makeDeps({
         advanceInlineParent,
@@ -585,9 +586,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockResolvedValue({ kind: 'committed', value: {} as ReleaseRunbookResult });
     const result = await propagateTerminalChildUpward(
       makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
       child,

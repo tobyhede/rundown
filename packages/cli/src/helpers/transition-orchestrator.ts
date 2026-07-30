@@ -7,10 +7,12 @@ import {
   type RunbookState,
   type RunbookStoppedPayload,
   type RunId,
+  type SessionMutationRefusalOutcome,
   type SessionService,
   type ResolvedStep,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
+import { sessionMutationRefusalCode } from './session-mutation-result.js';
 
 /** Side-effect policy applied when a runbook reaches a terminal state. */
 export interface TerminalSideEffectsPolicy {
@@ -108,11 +110,21 @@ export type OrchestrateTransitionResult =
   | { status: 'done'; action: string; from: string; at: string; message?: string }
   | { status: 'stopped'; action: string; from: string; at: string; message?: string };
 
+/**
+ * Apply the transition's terminal release, reporting an ownership refusal.
+ *
+ * @param sessionService - Session service performing the release.
+ * @param policy - Terminal side-effect policy for the reached terminal.
+ * @param runbookId - Run whose session targeting is being released.
+ * @param sink - Transition event sink receiving the refusal event.
+ * @returns The refusal when the release was refused, else null.
+ */
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
   runbookId: RunId,
-): Promise<void> {
+  sink: TransitionEventSink,
+): Promise<SessionMutationRefusalOutcome | null> {
   if (policy.releaseRunbook) {
     // This is the natural pass/fail transition path (explicit teardown —
     // abort/stop/complete — releases claims directly elsewhere). When a claimed
@@ -120,8 +132,18 @@ async function applyTerminalSideEffects(
     // `rd pass/fail --claim-id` can confirm-or-conflict against the outcome.
     // For an unclaimed top-level runbook there is no matching claim, so this is
     // a no-op. Mirrors `applyExecutionTerminalRelease` in execution.ts.
-    await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
+    const released = await sessionService.releaseRunbook(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
+    if (released.kind !== 'committed') {
+      sink.onErrorOccurred?.({
+        message: released.message,
+        code: sessionMutationRefusalCode(released),
+      });
+      return released;
+    }
   }
+  return null;
 }
 
 /**
@@ -173,24 +195,36 @@ export async function orchestrateTransition(
   }
 
   if (observation.status === 'done') {
-    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
+    // A refused release means the terminal side effect this transition owed did
+    // not happen, so the transition reports `stopped` rather than a clean `done`.
+    const refusal = await applyTerminalSideEffects(
+      sessionService,
+      policy.onComplete,
+      runbookId,
+      sink,
+    );
     return {
-      status: 'done',
+      status: refusal ? 'stopped' : 'done',
       action: observation.action,
       from: observation.from,
       at: observation.at,
-      message: observation.message,
+      message: refusal ? refusal.message : observation.message,
     };
   }
 
   if (observation.status === 'stopped') {
-    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
+    const refusal = await applyTerminalSideEffects(
+      sessionService,
+      policy.onStopped,
+      runbookId,
+      sink,
+    );
     return {
       status: 'stopped',
       action: observation.action,
       from: observation.from,
       at: observation.at,
-      message: observation.message,
+      message: refusal ? refusal.message : observation.message,
     };
   }
 

@@ -4,7 +4,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.js';
-import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
+import type { SqlDriver, SqlTransaction } from '../../../src/runbook/storage/sql-driver.js';
+import { getErrorMessage, isError } from '../../../src/errors.js';
 import {
   RunbookStore,
   classifyCommitRow,
@@ -22,11 +23,15 @@ import {
   hashExecutionToken,
   type CapturedAuthority,
 } from '../../../src/runbook/storage/mutation-result.js';
+import {
+  SqliteExecutionLeaseService,
+  type ExecutionAttempt,
+} from '../../../src/runbook/storage/execution-lease.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { brandStoredOutputsForTest } from '../../../src/testing/effective-vars.js';
-import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
-import { assertRunId } from '../../../src/runbook/run-id.js';
+import { assertClaimLookupKey, type ClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
@@ -38,6 +43,7 @@ let dir: string;
 let driver: SqlDriver;
 let store: RunbookStore;
 let manager: RunbookStateManager;
+let lease: SqliteExecutionLeaseService;
 let seq = 0;
 
 beforeEach(async () => {
@@ -45,6 +51,7 @@ beforeEach(async () => {
   driver = await openRunbookDriver(path.join(dir, 'rundown.db'), { runtime: 'native' });
   store = new RunbookStore(driver, dir);
   manager = new RunbookStateManager(dir);
+  lease = new SqliteExecutionLeaseService(driver);
 });
 
 afterEach(async () => {
@@ -453,5 +460,255 @@ describe('classifier totality and single-row invariant', () => {
       }),
       { numRuns: 40 },
     );
+  });
+});
+
+describe('mutateSessionGuarded ownership refusals', () => {
+  /**
+   * Seed a run with an active claim controlling it.
+   *
+   * @returns The run id and the controlling claim's lookup key.
+   */
+  async function seedControlledRun(): Promise<{
+    readonly runId: RunId;
+    readonly claimKey: ClaimLookupKey;
+  }> {
+    const state = await baseState();
+    await store.createRun(state);
+    const claimKey = assertClaimLookupKey(nextClaimKey());
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({ claimKey, controlledRunId: state.id }),
+        assertClaimGeneration(0),
+      );
+    });
+    return { runId: state.id, claimKey };
+  }
+
+  /**
+   * Take execution ownership of a run through the real lease service.
+   *
+   * @param runId - Run to own.
+   * @param claimKey - Claim controlling that run.
+   * @returns The acquired attempt.
+   */
+  async function own(runId: RunId, claimKey: ClaimLookupKey): Promise<ExecutionAttempt> {
+    const captured = await store.captureAuthority(runId, claimKey);
+    if (captured.kind !== 'captured') throw new Error(`capture failed: ${captured.kind}`);
+    const acquired = await lease.acquire(captured.authority, process.pid);
+    if (acquired.kind !== 'committed') throw new Error(`acquire failed: ${acquired.kind}`);
+    return acquired.value;
+  }
+
+  it('commits and returns the domain value when no affected run is owned', async () => {
+    const { runId } = await seedControlledRun();
+
+    const result = await store.mutateSessionGuarded([runId], (ctx) => {
+      ctx.session.defaultStack.push(runId);
+      return 'domain-value';
+    });
+
+    expect(result).toEqual({ kind: 'committed', value: 'domain-value' });
+    expect(await store.read((txn) => txn.stack())).toEqual([runId]);
+  });
+
+  it('refuses execution_in_progress without writing when an affected run is owned', async () => {
+    const { runId, claimKey } = await seedControlledRun();
+    await own(runId, claimKey);
+
+    let ran = false;
+    const result = await store.mutateSessionGuarded([runId], (ctx) => {
+      ran = true;
+      ctx.session.defaultStack.push(runId);
+      return null;
+    });
+
+    // The refusal is a preflight: the mutation callback never runs, so nothing
+    // it would have written is even attempted.
+    expect(ran).toBe(false);
+    expect(result).toEqual({
+      kind: 'execution_in_progress',
+      runId,
+      message: `Run ${runId} has an execution in progress.`,
+    });
+    expect(await store.read((txn) => txn.stack())).toEqual([]);
+  });
+
+  it('refuses recovery_required, naming the epoch, when an affected run needs recovery', async () => {
+    const { runId, claimKey } = await seedControlledRun();
+    const attempt = await own(runId, claimKey);
+    const started = await lease.markEffectStarted(attempt);
+    if (started.kind !== 'committed') throw new Error('markEffectStarted failed');
+    const abandoned = await lease.abandonToRecovery(started.value, 'effect_boundary_crossed');
+    expect(abandoned.kind).toBe('recovery_required');
+
+    const result = await store.mutateSessionGuarded([runId], (ctx) => {
+      ctx.session.defaultStack.push(runId);
+      return null;
+    });
+
+    // Recovery is checked BEFORE ownership, and abandonToRecovery deliberately
+    // leaves the run owned — so without that ordering this same run would refuse
+    // `execution_in_progress` and hide the fact that recovery is what unblocks it.
+    expect(result).toEqual({
+      kind: 'recovery_required',
+      runId,
+      epoch: attempt.epoch,
+      message: `Run ${runId} ended execution with an unknown outcome at epoch ${String(attempt.epoch)}; run recovery before continuing.`,
+    });
+    expect(await store.read((txn) => txn.stack())).toEqual([]);
+  });
+
+  it('refuses on the first affected run in caller-supplied order', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.boolean(), async (ownedFirst) => {
+        const clean = await seedControlledRun();
+        const owned = await seedControlledRun();
+        await own(owned.runId, owned.claimKey);
+        const order = ownedFirst
+          ? [owned.runId, clean.runId]
+          : [clean.runId, owned.runId, owned.runId];
+
+        const result = await store.mutateSessionGuarded(order, () => null);
+
+        // Order is the caller's, and a clean run never masks a later owned one:
+        // the refusal always names the owned run whichever position it holds.
+        expect(result).toEqual({
+          kind: 'execution_in_progress',
+          runId: owned.runId,
+          message: `Run ${owned.runId} has an execution in progress.`,
+        });
+      }),
+      { numRuns: 10 },
+    );
+  });
+
+  it('resolves the affected runs from the session snapshot when given a selector', async () => {
+    const { runId, claimKey } = await seedControlledRun();
+    await store.mutateSession((ctx) => {
+      ctx.session.defaultStack.push(runId);
+    });
+    await own(runId, claimKey);
+
+    const result = await store.mutateSessionGuarded(
+      (session) => session.defaultStack,
+      () => null,
+    );
+
+    expect(result).toEqual({
+      kind: 'execution_in_progress',
+      runId,
+      message: `Run ${runId} has an execution in progress.`,
+    });
+  });
+
+  /**
+   * Take execution ownership inside an already-open transaction.
+   *
+   * Ownership acquired mid-mutation is the only way past the pre-check, which is
+   * what makes the trigger-abort normalization reachable at all.
+   *
+   * @param tx - The open write transaction.
+   * @param ownedRunId - Run to mark as owned.
+   */
+  function ownRunInTransaction(tx: SqlTransaction, ownedRunId: RunId): void {
+    tx.prepare(
+      `INSERT INTO execution_attempts
+         (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+       VALUES (:id, 99, 'sha256:live', 'claimed', :pid, :now)`,
+    ).run({ id: ownedRunId, pid: process.pid, now: new Date().toISOString() });
+    tx.prepare(
+      `UPDATE runs SET exec_epoch = 99, exec_pid = :pid, exec_token = 'sha256:live'
+        WHERE id = :id`,
+    ).run({ id: ownedRunId, pid: process.pid });
+  }
+
+  it('normalizes an ownership trigger abort into the same typed refusal', async () => {
+    const { runId, claimKey } = await seedControlledRun();
+
+    // Ownership is taken INSIDE the mutation, after the preflight has already
+    // passed, so the guard triggers — not the preflight — are what refuse the
+    // subsequent claim write. This is the only way past the preflight, and it is
+    // exactly the path Delta 5's driver-contract case pins the message shape for.
+    const result = await store.mutateSessionGuarded([runId], (ctx) => {
+      ownRunInTransaction(ctx.tx, runId);
+      // Reconciling this claim out of the snapshot makes applySession tombstone
+      // it, which the now-armed claims_guard_update aborts.
+      delete ctx.session.claims[claimKey];
+      return null;
+    });
+
+    expect(result).toEqual({
+      kind: 'execution_in_progress',
+      runId,
+      message: `Run ${runId} has an execution in progress.`,
+    });
+    // Rolled back: the claim is still active and the mid-mutation ownership write
+    // is gone, so a normalized refusal leaves no partial mutation behind.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :k')
+          .get<{ readonly status: string }>({ k: claimKey })?.status,
+    );
+    expect(status).toBe('active');
+    const owned = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT exec_token FROM runs WHERE id = :id')
+          .get<{ readonly exec_token: string | null }>({ id: runId })?.exec_token,
+    );
+    expect(owned).toBeNull();
+  });
+
+  it('rethrows an ownership abort that names no affected run', async () => {
+    const target = await seedControlledRun();
+    const bystander = await seedControlledRun();
+
+    // The abort is real, but it belongs to a run the caller did not declare
+    // affected — `applySession` reconciles every claim in the snapshot, not just
+    // the guarded run's. Normalizing it would attribute the refusal to a run
+    // that is not owned (or to no run at all), so it must surface unchanged.
+    const failure = await store
+      .mutateSessionGuarded([target.runId], (ctx) => {
+        ownRunInTransaction(ctx.tx, bystander.runId);
+        delete ctx.session.claims[bystander.claimKey];
+        return null;
+      })
+      .then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+
+    expect(failure.ok).toBe(false);
+    if (failure.ok) throw new Error('expected the abort to surface');
+    expect(isError(failure.error)).toBe(true);
+    expect(getErrorMessage(failure.error)).toBe('execution_in_progress');
+    expect(failure.error).not.toBeInstanceOf(StoreInvariantError);
+  });
+
+  it('rethrows a non-ownership failure even when an affected run is owned', async () => {
+    const { runId } = await seedControlledRun();
+    const boom = new Error('unrelated boom');
+
+    // Ownership alone must not capture an unrelated failure: classification is
+    // by EXACT abort message, not by "something failed while a run was owned".
+    await expect(
+      store.mutateSessionGuarded([runId], (ctx) => {
+        ownRunInTransaction(ctx.tx, runId);
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
+  });
+
+  it('rethrows any non-ownership failure raised by the mutation', async () => {
+    const { runId } = await seedControlledRun();
+    const boom = new Error('mutation boom');
+
+    await expect(
+      store.mutateSessionGuarded([runId], () => {
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
   });
 });

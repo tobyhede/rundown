@@ -25,6 +25,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
+import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { createRunbook } from './fixtures.js';
 import { assertClaimed, linkageFor, seedLiveDelegation } from './claim-test-helpers.js';
 
@@ -149,7 +150,9 @@ describe('guarded drain composition (real store, real predicate)', () => {
     );
     await actorService.initializeState(created.id, steps);
     await sessionService.pushRunbook(created.id);
-    const { claimId: runControl } = await sessionService.issueRunControlClaim(created.id);
+    const { claimId: runControl } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(created.id),
+    );
     const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: runControl };
 
     // Two undrained completions: the state a process leaves by dying between the
@@ -180,7 +183,9 @@ describe('guarded drain composition (real store, real predicate)', () => {
         const result = await realSendAndSync(...args);
         applies += 1;
         if (applies === 1) {
-          claimedId = assertClaimed(await sessionService.claimRunbook(childRunId, linkage)).claimId;
+          claimedId = assertClaimed(
+            unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage)),
+          ).claimId;
         }
         return result;
       });

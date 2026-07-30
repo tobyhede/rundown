@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import type { RunbookState, SessionService } from '@rundown-org/core';
+import type { RunbookState, RunId, SessionService } from '@rundown-org/core';
 import { orchestrateTransition } from '../../src/helpers/transition-orchestrator.js';
 
 const baseState = {
@@ -144,5 +144,103 @@ describe('orchestrateTransition', () => {
       at: '2',
       result: 'PASS',
     });
+  });
+
+  it.each([
+    {
+      label: 'execution_in_progress',
+      refusal: {
+        kind: 'execution_in_progress' as const,
+        runId: baseState.id,
+        message: `Run ${baseState.id} has an execution in progress.`,
+      },
+      code: 'EXECUTION_IN_PROGRESS',
+    },
+    {
+      label: 'recovery_required',
+      refusal: {
+        kind: 'recovery_required' as const,
+        runId: baseState.id,
+        epoch: 7,
+        message: `Run ${baseState.id} ended execution with an unknown outcome at epoch 7; run recovery before continuing.`,
+      },
+      code: 'RECOVERY_REQUIRED',
+    },
+  ])(
+    'downgrades a completed transition to stopped when the terminal release refuses $label',
+    async ({ refusal, code }) => {
+      // The transition reached `done`, but the terminal release it owed did not
+      // commit. Reporting `done` here would tell the caller the run was released
+      // when it was not, so the refusal must both surface and change the status.
+      const releaseRunbook = jest.fn(async (_id: RunId, _o?: unknown) => refusal);
+      const sessionService = { releaseRunbook } as unknown as SessionService;
+      const sink = {
+        onErrorOccurred: jest.fn(),
+        onStepTransitioned: jest.fn(),
+        onRunbookCompleted: jest.fn(),
+        onRunbookStopped: jest.fn(),
+      };
+
+      const result = await orchestrateTransition({
+        sessionService,
+        sink,
+        runbookId: baseState.id,
+        steps,
+        currentStep: steps[0],
+        previousState: baseState,
+        updatedState: { ...baseState, lifecycle: 'completed' },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+        },
+        result: 'pass',
+        policy: {
+          onComplete: { releaseRunbook: true },
+          onStopped: { releaseRunbook: true },
+        },
+      });
+
+      expect(releaseRunbook).toHaveBeenCalledWith(baseState.id, { retainClaimsAsTerminal: true });
+      expect(sink.onErrorOccurred).toHaveBeenCalledWith({ message: refusal.message, code });
+      expect(result).toEqual(
+        expect.objectContaining({ status: 'stopped', message: refusal.message }),
+      );
+    },
+  );
+
+  it('reports done and no refusal event when the terminal release commits', async () => {
+    const releaseRunbook = jest.fn(async () => ({ kind: 'committed', value: null }));
+    const sessionService = { releaseRunbook } as unknown as SessionService;
+    const sink = {
+      onErrorOccurred: jest.fn(),
+      onStepTransitioned: jest.fn(),
+      onRunbookCompleted: jest.fn(),
+      onRunbookStopped: jest.fn(),
+    };
+
+    const result = await orchestrateTransition({
+      sessionService,
+      sink,
+      runbookId: baseState.id,
+      steps,
+      currentStep: steps[0],
+      previousState: baseState,
+      updatedState: { ...baseState, lifecycle: 'completed' },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+      },
+      result: 'pass',
+      policy: {
+        onComplete: { releaseRunbook: true },
+        onStopped: { releaseRunbook: true },
+      },
+    });
+
+    expect(releaseRunbook).toHaveBeenCalledTimes(1);
+    expect(sink.onErrorOccurred).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ status: 'done' }));
   });
 });

@@ -62,6 +62,8 @@ export const CLISymbolicErrorCodeValues = [
   'ACTOR_CONTEXT_REQUIRED',
   'CLAIM_GRANT_REQUIRED',
   'CLAIM_BEARER_MISMATCH',
+  'EXECUTION_IN_PROGRESS',
+  'RECOVERY_REQUIRED',
   'RUN_TARGET_UNAVAILABLE',
   'RUN_TARGET_MISMATCH',
   'COLLECT_ALREADY_APPLIED',
@@ -137,6 +139,10 @@ export const CLIErrorCodes = {
   CLAIM_GRANT_REQUIRED: 'CLAIM_GRANT_REQUIRED',
   /** The presented bearer claim is not the claim the command targeted (#613) */
   CLAIM_BEARER_MISMATCH: 'CLAIM_BEARER_MISMATCH',
+  /** A session mutation was refused: another process is executing the named run (#608) */
+  EXECUTION_IN_PROGRESS: 'EXECUTION_IN_PROGRESS',
+  /** A session mutation was refused: the named run's execution outcome is unknown (#608) */
+  RECOVERY_REQUIRED: 'RECOVERY_REQUIRED',
   /** The explicit --run target is not a running member of this session's stack */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
   /** The explicit --run target does not own the delegation retry token (delegate --retry) */

@@ -24,6 +24,7 @@ import {
   type DelegationLinkage,
   type ParentLinkage,
   type ClaimId,
+  type SessionMutationRefusalOutcome,
   RUNS_DIR,
   classifyDelegationLiveness,
   DelegationScanService,
@@ -174,6 +175,21 @@ export interface RunbookStartFailure {
   details: { runbookName: string };
 }
 
+/**
+ * Refusal arm shared by launch and claim: a session mutation the pipeline needed
+ * was refused for execution ownership.
+ *
+ * The core refusal is carried whole rather than spread into sibling fields, so
+ * the run id, epoch, and operator text reach the renderer exactly as core wrote
+ * them and no front end re-synthesizes any of the three.
+ */
+export interface SessionRefusedFailure {
+  readonly ok: false;
+  readonly reason: 'session-refused';
+  /** The typed ownership refusal, forwarded verbatim to the CLI renderer. */
+  readonly refusal: SessionMutationRefusalOutcome;
+}
+
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
   | {
@@ -182,12 +198,14 @@ export type RunbookStartResult =
       stateId: RunId;
       claimId?: ClaimId;
     }
-  | RunbookStartFailure;
+  | RunbookStartFailure
+  | SessionRefusedFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
 
 /** Failure variants from claiming and launching a delegated child runbook. */
 export type ClaimFailure =
+  | Omit<SessionRefusedFailure, 'ok'>
   | { readonly reason: 'invalid-token'; readonly token: string }
   | { readonly reason: 'token-not-found'; readonly token: string }
   | { readonly reason: 'parent-missing'; readonly parentRunId: string }
@@ -943,6 +961,10 @@ async function launchRunbook(
   let sessionActivated = false;
   let afterCreateAttempted = false;
   let issuedRunControlClaimId: ClaimId | undefined;
+  // Set when session activation is refused for execution ownership. The refusal
+  // is raised as a throw so the shared cleanup path runs exactly as it does for
+  // any other init failure, then replaces the generic launch-failed envelope.
+  let activationRefusal: SessionMutationRefusalOutcome | undefined;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
     if (afterCreateAttempted && options.afterCreateRollback) {
@@ -954,7 +976,19 @@ async function launchRunbook(
     }
     if (sessionActivated) {
       try {
-        await sessionService.releaseRunbook(stateId);
+        const release = await sessionService.releaseRunbook(stateId);
+        // A refusal here is the same class of event as the swallowed rejection:
+        // cleanup is best effort and must not replace the launch error.
+        switch (release.kind) {
+          case 'committed':
+          case 'execution_in_progress':
+          case 'recovery_required':
+            break;
+          default: {
+            const _exhaustive: never = release;
+            return _exhaustive;
+          }
+        }
       } catch {
         // Preserve the launch error; cleanup is best effort.
       }
@@ -1004,8 +1038,12 @@ async function launchRunbook(
         // single session-lock cycle instead of two (removing the double-cycle
         // contention that made run-start flaky under heavy parallel load).
         const activation = await sessionService.pushRunbookWithRunControlClaim(state.id);
+        if (activation.kind !== 'committed') {
+          activationRefusal = activation;
+          throw new Error(activation.message);
+        }
         sessionActivated = true;
-        issuedRunControlClaimId = activation.claimId;
+        issuedRunControlClaimId = activation.value.claimId;
         break;
       }
       case 'none':
@@ -1029,6 +1067,9 @@ async function launchRunbook(
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
     await cleanupCreatedRun();
+    if (activationRefusal !== undefined) {
+      return { ok: false, reason: 'session-refused', refusal: activationRefusal };
+    }
     return {
       ok: false,
       reason: 'launch-failed',
@@ -1186,7 +1227,9 @@ type ClaimChildResult =
   // The parent vanished between the 4a re-read and the claim transaction. Named
   // by the parent, not the child: no child fact explains it, and the existing
   // `parent-missing` envelope already says exactly this.
-  | { readonly ok: false; readonly reason: 'parent-missing'; readonly parentRunId: RunId };
+  | { readonly ok: false; readonly reason: 'parent-missing'; readonly parentRunId: RunId }
+  // The claim transaction was refused: some run it touches is under execution.
+  | SessionRefusedFailure;
 
 /**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
@@ -1208,7 +1251,11 @@ async function claimChildForPipeline(
   childRunId: RunId,
   linkage: DelegationLinkage,
 ): Promise<ClaimChildResult> {
-  const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
+  const result = await ctx.sessionService.claimRunbook(childRunId, linkage);
+  if (result.kind !== 'committed') {
+    return { ok: false, reason: 'session-refused', refusal: result };
+  }
+  const claim = result.value;
   switch (claim.status) {
     case 'claimed':
       return {
@@ -1256,9 +1303,9 @@ async function claimChildForPipeline(
  * @returns A run id with enough context to identify what failed.
  */
 function describeClaimFailureTarget(result: Extract<ClaimChildResult, { ok: false }>): string {
-  return result.reason === 'parent-missing'
-    ? `(parent ${result.parentRunId} missing)`
-    : result.childRunId;
+  if (result.reason === 'parent-missing') return `(parent ${result.parentRunId} missing)`;
+  if (result.reason === 'session-refused') return result.refusal.runId;
+  return result.childRunId;
 }
 
 /**
@@ -1279,6 +1326,11 @@ function claimResultToFailure(
     // Carries no child or step: the parent is what is missing, and the envelope
     // for that fact takes only the parent run id.
     return { ok: false, reason: 'parent-missing', parentRunId: result.parentRunId };
+  }
+  if (result.reason === 'session-refused') {
+    // The refusal already names its own run; parent/step context would add a
+    // second, possibly different run id to a single-run fact.
+    return result;
   }
   return {
     ok: false,
@@ -1764,7 +1816,19 @@ export async function claimAndLaunch(
         capturedChildRunId = claimResult.childRunId;
       },
       afterCreateRollback: async (childStateId) => {
-        await ctx.sessionService.releaseRunbook(childStateId);
+        const release = await ctx.sessionService.releaseRunbook(childStateId);
+        // Rollback is best effort and must not replace the launch error, but the
+        // arms are narrowed so a new refusal cannot inherit silence by default.
+        switch (release.kind) {
+          case 'committed':
+          case 'execution_in_progress':
+          case 'recovery_required':
+            break;
+          default: {
+            const _exhaustive: never = release;
+            return _exhaustive;
+          }
+        }
         await updateStepDelegationChildRunId(
           manager,
           freshParent.id,
@@ -1801,6 +1865,11 @@ export async function claimAndLaunch(
       if (invariantViolation.reason === 'parent-missing') {
         return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
       }
+      // An ownership refusal is likewise a race, not a broken invariant: the
+      // claim transaction refused before writing anything.
+      if (invariantViolation.reason === 'session-refused') {
+        return invariantViolation;
+      }
       return {
         ok: false,
         reason: 'launch-failed',
@@ -1815,6 +1884,7 @@ export async function claimAndLaunch(
     }
 
     if (!launchResult.ok) {
+      if (launchResult.reason === 'session-refused') return launchResult;
       return {
         ok: false,
         reason: 'launch-failed',

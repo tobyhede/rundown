@@ -96,6 +96,35 @@ export type StateMutationResult =
   | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
 
 /**
+ * The ownership refusal arms an ownership-sensitive session mutation can return.
+ *
+ * Derived from {@link GuardedMutationResult} rather than re-declared, so the two
+ * spellings of `execution_in_progress` / `recovery_required` cannot drift apart.
+ * Neither arm mentions the committed value's type, so this is usable as a member
+ * of any command-facing outcome union without threading a type parameter.
+ */
+export type SessionMutationRefusal = Extract<
+  GuardedMutationResult<never>,
+  { readonly kind: 'execution_in_progress' | 'recovery_required' }
+>;
+
+/**
+ * Exhaustive outcome of an ownership-sensitive session mutation.
+ *
+ * Domain-specific results stay nested in the `committed` arm so an ownership
+ * refusal cannot be confused with a domain-level `null` or status. A session
+ * mutation refuses only on execution ownership — the CAS refusals
+ * (`claim_superseded`, `concurrent_modification`) and `missing` belong to
+ * guarded run-state writes, not to the session tables — so the alias narrows
+ * {@link GuardedMutationResult} rather than widening a new union alongside it.
+ *
+ * @template T - Domain value returned after the session transaction commits.
+ */
+export type SessionMutationResult<T> =
+  | Extract<GuardedMutationResult<T>, { readonly kind: 'committed' }>
+  | SessionMutationRefusal;
+
+/**
  * Marker instructing a guarded run-state write to refuse — inside the same
  * transaction, before the run `UPDATE` — when the run named by `parentRunId`
  * still has a live delegated child. Supplied only by
@@ -182,6 +211,46 @@ export class StoreInvariantError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'StoreInvariantError';
+  }
+}
+
+/**
+ * Build the execution-ownership refusal for a session mutation.
+ *
+ * One wording for one condition: the preflight arm and the normalized
+ * trigger-abort arm of {@link RunbookStore.mutateSessionGuarded} describe the
+ * same fact, and a caller must not be able to tell which one refused it.
+ *
+ * @param runId - Run whose active execution ownership blocked the mutation.
+ * @returns The typed `execution_in_progress` refusal.
+ */
+function executionInProgressRefusal(runId: RunId): SessionMutationRefusal {
+  return {
+    kind: 'execution_in_progress',
+    runId,
+    message: `Run ${runId} has an execution in progress.`,
+  };
+}
+
+/**
+ * Internal rollback marker for an ownership abort classified in-transaction.
+ *
+ * The `claims_guard_*` / `stash_guard_*` triggers `RAISE(ABORT)` on a statement,
+ * which SQLite rolls back without ending the transaction — so the classifying
+ * read still runs, but the transaction must not commit the partial mutation.
+ * Throwing this rolls it back; it is caught at exactly one boundary
+ * ({@link RunbookStore.mutateSessionGuarded}) and becomes the typed refusal.
+ * Never escapes the store.
+ */
+class SessionExecutionInProgressError extends Error {
+  /**
+   * Construct the marker for the owned run that blocked the session write.
+   *
+   * @param runId - Run whose active execution ownership aborted the statement.
+   */
+  constructor(readonly runId: RunId) {
+    super('execution_in_progress');
+    this.name = 'SessionExecutionInProgressError';
   }
 }
 
@@ -671,6 +740,16 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
    * that another writer terminalizes before the session write lands.
    */
   readState(runId: RunId): RunbookState | null;
+  /**
+   * Read the run's latest recovery-pending epoch, or null when none is pending.
+   *
+   * Read inside the mutating transaction: a run whose execution outcome is
+   * unknown must not have its session targeting rewritten under it, and the
+   * check is only meaningful against the same snapshot the write lands on.
+   */
+  pendingRecovery(runId: RunId): { readonly epoch: ExecutionEpoch } | null;
+  /** Whether the run currently has active execution ownership (`exec_token`). */
+  executionOwned(runId: RunId): boolean;
 }
 
 /** Typed operations available inside a {@link RunbookStore.mutateSession} cycle. */
@@ -1080,6 +1159,78 @@ export class RunbookStore {
   }
 
   /**
+   * {@link mutateSession} with the execution-ownership refusals made typed.
+   *
+   * The schema triggers already enforce ownership — a claim or stash write while
+   * `exec_token` is set aborts the statement. This method adds classification,
+   * not enforcement: it pre-checks each affected run inside the same transaction
+   * (so a refusal is decided against the snapshot the write would land on), and
+   * normalizes a trigger abort that slips past the preflight into the same typed
+   * refusal instead of an opaque `Error`.
+   *
+   * Recovery is checked before ownership, and runs are checked in caller-supplied
+   * order, so a fixed set of affected runs always refuses with the same reason on
+   * the same run.
+   *
+   * Normalization is by EXACT message equality against `execution_in_progress`,
+   * the text the guard triggers raise (pinned for both drivers by the
+   * driver-contract "surfaces a RAISE(ABORT) message verbatim" case). Any other
+   * error — and an `execution_in_progress` abort naming no affected run — is
+   * rethrown unchanged rather than mislabelled.
+   *
+   * @template T - Value the mutation returns to its caller.
+   * @param runIds - Affected runs in deterministic refusal order, or a selector
+   *   reading them off the session snapshot when they are not known in advance.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The committed value, or the first ownership refusal.
+   * @throws {Error} Any non-ownership failure raised by `work` or the write.
+   */
+  async mutateSessionGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): Promise<SessionMutationResult<T>> {
+    try {
+      return await this.transaction((txn) => {
+        const session = this.readSession(txn.tx);
+        const affected = typeof runIds === 'function' ? runIds(session) : runIds;
+        for (const runId of affected) {
+          const pending = txn.pendingRecovery(runId);
+          if (pending !== null) {
+            return {
+              kind: 'recovery_required',
+              runId,
+              epoch: pending.epoch,
+              message: `Run ${runId} ended execution with an unknown outcome at epoch ${String(pending.epoch)}; run recovery before continuing.`,
+            } satisfies SessionMutationResult<T>;
+          }
+          if (txn.executionOwned(runId)) {
+            return executionInProgressRefusal(runId) satisfies SessionMutationResult<T>;
+          }
+        }
+        try {
+          const value = work({ ...txn, session });
+          this.applySession(txn, session);
+          return { kind: 'committed', value } satisfies SessionMutationResult<T>;
+        } catch (error: unknown) {
+          if (getErrorMessage(error) === 'execution_in_progress') {
+            const owned = affected.find((candidate) => txn.executionOwned(candidate));
+            if (owned !== undefined) {
+              throw new SessionExecutionInProgressError(owned);
+            }
+          }
+          throw error;
+        }
+      });
+    } catch (error: unknown) {
+      // Same-realm marker class, so `instanceof` is the correct (allow-listed) check.
+      if (!(error instanceof SessionExecutionInProgressError)) {
+        throw error;
+      }
+      return executionInProgressRefusal(error.runId);
+    }
+  }
+
+  /**
    * Reconcile a session snapshot into the session tables.
    *
    * @param txn - Open store transaction.
@@ -1435,6 +1586,23 @@ export class RunbookStore {
       },
       readState(runId) {
         return store.readRun(tx, runId);
+      },
+      pendingRecovery(runId) {
+        const row = tx
+          .prepare(
+            `SELECT exec_epoch AS epoch FROM execution_attempts
+              WHERE run_id = :runId AND phase = 'recovery_pending'
+              ORDER BY exec_epoch DESC LIMIT 1`,
+          )
+          .get<{ readonly epoch: number }>({ runId });
+        return row === undefined ? null : { epoch: assertExecutionEpoch(row.epoch) };
+      },
+      executionOwned(runId) {
+        return (
+          tx
+            .prepare('SELECT 1 AS owned FROM runs WHERE id = :runId AND exec_token IS NOT NULL')
+            .get<{ readonly owned: 1 }>({ runId }) !== undefined
+        );
       },
     };
   }

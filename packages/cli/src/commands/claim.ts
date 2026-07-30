@@ -23,8 +23,9 @@ import {
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 
-function claimFailureToEnvelope(failure: ClaimFailure): {
+function claimFailureToEnvelope(failure: Exclude<ClaimFailure, { reason: 'session-refused' }>): {
   readonly code: string;
   readonly message: string;
   readonly details?: Record<string, unknown>;
@@ -234,8 +235,12 @@ export function registerClaimCommand(program: Command): void {
             const result = await claimAndLaunch(ctx, token, inputOpts);
 
             if (!result.ok) {
-              const envelope = claimFailureToEnvelope(result);
-              output.error(envelope.message, envelope.code, envelope.details);
+              if (result.reason === 'session-refused') {
+                renderSessionMutationRefusal(output, result.refusal);
+              } else {
+                const envelope = claimFailureToEnvelope(result);
+                output.error(envelope.message, envelope.code, envelope.details);
+              }
               output.flush();
               process.exitCode = 1;
               return;
