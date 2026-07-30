@@ -548,6 +548,15 @@ export type CaptureResult =
   | { readonly kind: 'missing'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'claim_superseded'; readonly runId: RunId; readonly message: string };
 
+/** Authority capture paired with the exact run state read in the same transaction. */
+export type CapturedRunStateResult =
+  | {
+      readonly kind: 'captured';
+      readonly authority: CapturedAuthority;
+      readonly state: RunbookState;
+    }
+  | Exclude<CaptureResult, { readonly kind: 'captured' }>;
+
 /**
  * Capture the complete authority predicate for a run + presented claim.
  *
@@ -880,6 +889,37 @@ export class RunbookStore {
           : { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
       }
       return captureAuthority(tx, runId, claimKey);
+    });
+  }
+
+  /**
+   * Capture bare-run authority and its state from one read transaction.
+   *
+   * @param runId - Target run.
+   * @returns Captured authority plus the exact state it describes, or a typed refusal.
+   * @throws {Error} When persisted run state fails schema validation. Invalid state is rejected,
+   *   never adapted; typed refusals are returned only for valid persisted state.
+   */
+  captureRunAuthorityState(runId: RunId): Promise<CapturedRunStateResult> {
+    return this.driver.read((tx) => {
+      const claimKey = resolveControllingClaim(tx, runId);
+      if (claimKey === null) {
+        const state = this.readRun(tx, runId);
+        return state === null
+          ? { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` }
+          : {
+              kind: 'claim_superseded' as const,
+              runId,
+              message: `Run ${runId} has no active controlling claim.`,
+            };
+      }
+      const captured = captureAuthority(tx, runId, claimKey);
+      if (captured.kind !== 'captured') return captured;
+      const state = this.readRun(tx, runId);
+      if (state === null) {
+        return { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
+      }
+      return { ...captured, state };
     });
   }
 

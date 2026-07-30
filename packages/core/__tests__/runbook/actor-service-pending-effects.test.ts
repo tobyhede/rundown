@@ -33,6 +33,9 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
   PENDING_MACHINE_EFFECT_TAG: pendingTag,
   PENDING_COMMAND_EXECUTION_TAG: pendingCommandTag,
   RECOVERY_REQUIRED_STATE_NAME: 'recoveryRequired',
+  DelegationChildLinkPreparationError: class DelegationChildLinkPreparationError extends Error {},
+  deriveDelegationChildLinkedSubsteps: (substepStates: unknown) => substepStates,
+  deriveDelegationChildUnlinkedSubsteps: (substepStates: unknown) => substepStates,
   isCompoundLeafValue: (value: unknown) =>
     value === 'idle' ||
     value === '__capture' ||

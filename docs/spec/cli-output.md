@@ -1228,6 +1228,35 @@ Code: RECOVERY_REQUIRED
 }
 ```
 
+### Concurrent modification
+
+The parent run changed after Rundown derived the delegated child link but before
+the transaction could persist that link with the initial claim. The transaction
+refuses atomically: neither the claim nor the parent link is written.
+
+**Text:**
+
+```text
+Error: The parent changed while the delegated child claim was being committed. Retry.
+Code: CONCURRENT_MODIFICATION
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "The parent changed while the delegated child claim was being committed. Retry.",
+  "code": "CONCURRENT_MODIFICATION",
+  "command": "claim",
+  "details": {
+    "parentRunId": "rd_11111111111111111111111111111111",
+    "stepId": "1.1",
+    "childRunId": "rd_22222222222222222222222222222222"
+  }
+}
+```
+
 ### Run target unavailable
 
 The `--run` id supplied is not a running member of this session's active stack.

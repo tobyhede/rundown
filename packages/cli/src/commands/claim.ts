@@ -122,6 +122,16 @@ function claimFailureToEnvelope(failure: Exclude<ClaimFailure, { reason: 'sessio
           ...(failure.childRunId !== undefined ? { childRunId: failure.childRunId } : {}),
         },
       };
+    case 'concurrent-modification':
+      return {
+        code: 'CONCURRENT_MODIFICATION',
+        message: 'The parent changed while the delegated child claim was being committed. Retry.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
     case 'lock-timeout':
       return {
         code: 'DELEGATION_LOCK_TIMEOUT',

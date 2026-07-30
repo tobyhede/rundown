@@ -24,6 +24,7 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandEffectiveVarsForTest,
@@ -33,6 +34,7 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
+import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The
@@ -1770,6 +1772,184 @@ echo ok
       });
       const persisted = await manager.load(state.id);
       expect(persisted?.lastResult).toBeUndefined();
+    });
+  });
+
+  describe('prepared delegated-child link mutation', () => {
+    it('derives a serializable exact-link snapshot without persisting or retaining runtime refs', async () => {
+      const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+      const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
+      const otherChildRunId = assertRunId(`rd_${'e'.repeat(32)}`);
+      const frameKey = buildFrameKey('1');
+      const steps = createRunbook(`## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+        },
+      );
+      const target = makeDelegatedSubstepState({
+        id: '1.1',
+        frameKey,
+        delegation: { tokenHash },
+      });
+      const sibling = makeDelegatedSubstepState({
+        id: '1.2',
+        frameKey,
+        delegation: { tokenHash },
+      });
+      await manager.update(state.id, {
+        substepStates: [target, sibling],
+        activeFrameKey: frameKey,
+        activeEntry: 1,
+        frameEntryCounts: replace({ [frameKey]: 1 }),
+      });
+      const before = await manager.load(state.id);
+      if (!before) throw new Error('expected persisted parent state');
+
+      const runtimeResolver = async () => null;
+      const service = new RunbookActorService(manager, {
+        resolveDelegationRunbook: runtimeResolver,
+      });
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: state.id,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: frameKey,
+        parentEntry: 1,
+        tokenHash,
+      };
+      const result = await service.prepareDelegationChildLink(before, steps, childRunId, linkage);
+      expect(result.kind).toBe('prepared');
+      if (result.kind !== 'prepared') throw new Error(`Expected prepared, got ${result.kind}`);
+      const prepared = result.prepared.mutation;
+
+      expect(prepared.nextState.substepStates).toEqual([
+        { ...target, delegation: { ...target.delegation, childRunId } },
+        sibling,
+      ]);
+      expect((await manager.load(state.id))?.substepStates).toEqual([target, sibling]);
+
+      const persistedContext = (prepared.snapshot as { readonly context?: unknown }).context;
+      const seen = new Set<unknown>();
+      const assertDataOnly = (value: unknown): void => {
+        expect(typeof value).not.toBe('function');
+        expect(value).not.toBe(manager);
+        expect(value).not.toBe(service);
+        expect(value).not.toBe(runtimeResolver);
+        if (!value || typeof value !== 'object' || seen.has(value)) return;
+        seen.add(value);
+        for (const nested of Object.values(value)) assertDataOnly(nested);
+      };
+      assertDataOnly(persistedContext);
+      const serialized = JSON.stringify(prepared.snapshot);
+      expect(serialized).toContain(childRunId);
+      expect(serialized).not.toContain(manager.cwd);
+      expect(() => JSON.parse(serialized)).not.toThrow();
+
+      const unlink = await service.prepareDelegationChildUnlink(
+        prepared.nextState,
+        steps,
+        childRunId,
+        linkage,
+      );
+      expect(unlink.kind).toBe('prepared');
+      if (unlink.kind !== 'prepared') throw new Error(`Expected prepared, got ${unlink.kind}`);
+      expect(unlink.prepared.mutation.nextState.substepStates).toEqual([target, sibling]);
+
+      await expect(
+        service.prepareDelegationChildLink(prepared.nextState, steps, otherChildRunId, linkage),
+      ).resolves.toEqual({
+        kind: 'concurrent_modification',
+        runId: state.id,
+        message: 'Delegation 1.1 is already linked to another child',
+      });
+      await expect(
+        service.prepareDelegationChildUnlink(prepared.nextState, steps, otherChildRunId, linkage),
+      ).resolves.toEqual({
+        kind: 'concurrent_modification',
+        runId: state.id,
+        message: 'Delegation 1.1 is linked to a newer child',
+      });
+
+      await expect(
+        service.prepareDelegationChildLink(before, steps, childRunId, {
+          ...linkage,
+          parentEntry: 2,
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+      );
+
+      const fallbackEntryState = {
+        ...before,
+        activeFrameKey: undefined,
+        activeEntry: undefined,
+      };
+      await expect(
+        service.prepareDelegationChildLink(fallbackEntryState, steps, childRunId, linkage),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+      await expect(
+        service.prepareDelegationChildLink(
+          { ...fallbackEntryState, frameEntryCounts: undefined },
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+      await expect(
+        service.prepareDelegationChildLink(before, steps, childRunId, {
+          ...linkage,
+          tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
+      await expect(
+        service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
+          ...linkage,
+          parentEntry: 2,
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
+      await expect(
+        service.prepareDelegationChildUnlink(
+          { ...prepared.nextState, activeFrameKey: undefined, activeEntry: undefined },
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+      await expect(
+        service.prepareDelegationChildUnlink(
+          {
+            ...prepared.nextState,
+            activeFrameKey: undefined,
+            activeEntry: undefined,
+            frameEntryCounts: undefined,
+          },
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+      await expect(
+        service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
+          ...linkage,
+          tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
     });
   });
 

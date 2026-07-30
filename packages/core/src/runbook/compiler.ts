@@ -25,6 +25,7 @@ import {
 } from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
+import type { DelegationTokenHash } from './delegation-token.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
 import type { NakedOutput, OutputScope, PreparedChannel } from './output-channels.js';
 import {
@@ -159,6 +160,114 @@ interface SetInlineLaunchFailedParams {
 }
 
 type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
+type DelegationChildLinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_LINKED' }>;
+type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_UNLINKED' }>;
+
+/** Typed refusal raised while deriving an exact delegated-child link transition. */
+export class DelegationChildLinkPreparationError extends Error {
+  /**
+   * Create a typed preparation refusal.
+   *
+   * @param reason - Stable refusal class for the caller.
+   * @param message - Diagnostic text.
+   */
+  constructor(
+    readonly reason: 'delegation_superseded' | 'concurrent_modification',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DelegationChildLinkPreparationError';
+  }
+}
+
+/**
+ * Derive the delegated child link for one exact step/frame/entry/token coordinate.
+ *
+ * @param substepStates - Current machine-owned substep state.
+ * @param event - Typed link event.
+ * @returns Updated substep state, or the original array for an idempotent replay.
+ * @throws {DelegationChildLinkPreparationError} When the delegation was superseded or occupied.
+ */
+export function deriveDelegationChildLinkedSubsteps(
+  substepStates: readonly SubstepState[] | undefined,
+  event: DelegationChildLinkedEvent,
+): readonly SubstepState[] | undefined {
+  if (substepStates === undefined) {
+    throw new DelegationChildLinkPreparationError(
+      'delegation_superseded',
+      `Delegation ${event.parentStepId} no longer names the captured frame entry`,
+    );
+  }
+
+  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
+  if (target?.delegation?.tokenHash !== event.tokenHash) {
+    throw new DelegationChildLinkPreparationError(
+      'delegation_superseded',
+      `Delegation ${event.parentStepId} no longer matches the presented token`,
+    );
+  }
+  if (target.delegation.childRunId !== null) {
+    if (target.delegation.childRunId === event.childRunId) return substepStates;
+    throw new DelegationChildLinkPreparationError(
+      'concurrent_modification',
+      `Delegation ${event.parentStepId} is already linked to another child`,
+    );
+  }
+
+  const { token: _plaintextToken, ...persistedDelegation } = target.delegation;
+  return substepStates.map((substepState) =>
+    substepState === target
+      ? {
+          ...substepState,
+          delegation: { ...persistedDelegation, childRunId: event.childRunId },
+        }
+      : substepState,
+  );
+}
+
+/**
+ * Derive removal of an exact delegated-child link from machine-owned substep state.
+ *
+ * @param substepStates - Current machine-owned substep state.
+ * @param event - Typed unlink event.
+ * @returns Updated substep state, or the original array for an idempotent replay.
+ * @throws {DelegationChildLinkPreparationError} When the delegation was superseded or replaced.
+ */
+export function deriveDelegationChildUnlinkedSubsteps(
+  substepStates: readonly SubstepState[] | undefined,
+  event: DelegationChildUnlinkedEvent,
+): readonly SubstepState[] | undefined {
+  if (substepStates === undefined) {
+    throw new DelegationChildLinkPreparationError(
+      'delegation_superseded',
+      `Delegation ${event.parentStepId} no longer names the captured frame entry`,
+    );
+  }
+  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
+  const delegation = target?.delegation;
+  if (delegation?.tokenHash !== event.tokenHash) {
+    throw new DelegationChildLinkPreparationError(
+      'delegation_superseded',
+      `Delegation ${event.parentStepId} no longer matches the rollback token`,
+    );
+  }
+  if (delegation.childRunId === null) return substepStates;
+  if (delegation.childRunId !== event.childRunId) {
+    throw new DelegationChildLinkPreparationError(
+      'concurrent_modification',
+      `Delegation ${event.parentStepId} is linked to a newer child`,
+    );
+  }
+  const { token: _plaintextToken, ...persistedDelegation } = delegation;
+  return substepStates.map((substepState) =>
+    substepState === target
+      ? {
+          ...substepState,
+          delegation: { ...persistedDelegation, childRunId: null },
+        }
+      : substepState,
+  );
+}
 
 function updateInlineStarted(
   substepStates: readonly SubstepState[] | undefined,
@@ -325,6 +434,16 @@ const baseRunbookSetup = setup({
     storeInlineChildStarted: assign({
       substepStates: ({ context }, params: InlineChildStartedEvent) =>
         updateInlineStarted(context.substepStates, params),
+    }),
+    /** Link a claimed delegated child on the exact authored substep/frame. */
+    storeDelegationChildLinked: assign({
+      substepStates: ({ context }, params: DelegationChildLinkedEvent) =>
+        deriveDelegationChildLinkedSubsteps(context.substepStates, params),
+    }),
+    /** Clear the exact delegated child link during launch rollback. */
+    storeDelegationChildUnlinked: assign({
+      substepStates: ({ context }, params: DelegationChildUnlinkedEvent) =>
+        deriveDelegationChildUnlinkedSubsteps(context.substepStates, params),
     }),
     /** Mark inline launch preparation failure before routing to STOPPED. */
     setInlineLaunchFailed: assign({
@@ -785,6 +904,22 @@ export type RunbookEvent =
       parentFrameKey: FrameKey;
       childRunId: RunId;
       startedAt: string;
+    }
+  | {
+      type: 'DELEGATION_CHILD_LINKED';
+      parentStepId: string;
+      parentFrameKey: FrameKey;
+      parentEntry: number;
+      tokenHash: DelegationTokenHash;
+      childRunId: RunId;
+    }
+  | {
+      type: 'DELEGATION_CHILD_UNLINKED';
+      parentStepId: string;
+      parentFrameKey: FrameKey;
+      parentEntry: number;
+      tokenHash: DelegationTokenHash;
+      childRunId: RunId;
     }
   | {
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
@@ -4514,6 +4649,18 @@ export function compileRunbookToMachine(
       INLINE_CHILD_STARTED: {
         actions: {
           type: 'storeInlineChildStarted',
+          params: ({ event }) => event,
+        },
+      },
+      DELEGATION_CHILD_LINKED: {
+        actions: {
+          type: 'storeDelegationChildLinked',
+          params: ({ event }) => event,
+        },
+      },
+      DELEGATION_CHILD_UNLINKED: {
+        actions: {
+          type: 'storeDelegationChildUnlinked',
           params: ({ event }) => event,
         },
       },

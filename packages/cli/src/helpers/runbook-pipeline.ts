@@ -271,6 +271,17 @@ export type ClaimFailure =
       readonly stepId: string;
       readonly childRunId?: string;
     }
+  | {
+      /**
+       * The parent changed between deriving and committing the delegated-child
+       * link. Nothing was written, so the claim is safe to retry. Rendered as
+       * `CONCURRENT_MODIFICATION`.
+       */
+      readonly reason: 'concurrent-modification';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
   | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
       readonly reason: 'prepare-failed';
@@ -925,6 +936,7 @@ async function prepareLoadedRunbook(
  * @param options.afterCreate - Optional callback invoked after state creation and before initialization
  * @param options.afterCreateRollback - Optional best-effort rollback for afterCreate side effects
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterInitRollback - Optional best-effort rollback for afterInit side effects
  * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  */
@@ -940,6 +952,7 @@ async function launchRunbook(
     afterCreate?: (stateId: RunId) => Promise<void>;
     afterCreateRollback?: (stateId: RunId) => Promise<void>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterInitRollback?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -960,6 +973,7 @@ async function launchRunbook(
   };
   let sessionActivated = false;
   let afterCreateAttempted = false;
+  let afterInitAttempted = false;
   let issuedRunControlClaimId: ClaimId | undefined;
   // Set when session activation is refused for execution ownership. The refusal
   // is raised as a throw so the shared cleanup path runs exactly as it does for
@@ -967,6 +981,13 @@ async function launchRunbook(
   let activationRefusal: SessionMutationRefusalOutcome | undefined;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
+    if (afterInitAttempted && options.afterInitRollback) {
+      try {
+        await options.afterInitRollback(stateId);
+      } catch {
+        // Preserve the launch error; exact-coordinate rollback is best effort.
+      }
+    }
     if (afterCreateAttempted && options.afterCreateRollback) {
       try {
         await options.afterCreateRollback(stateId);
@@ -1027,6 +1048,7 @@ async function launchRunbook(
 
     // Optional post-init hook (e.g., linking delegation childRunId)
     if (options.afterInit) {
+      afterInitAttempted = true;
       await options.afterInit(state.id);
     }
 
@@ -1170,47 +1192,6 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
   return 1;
 }
 
-/**
- * Update a parent step/substep delegation's childRunId after the child run is created.
- *
- * Loads the parent state, locates the delegation on the specified substep, and
- * patches the `childRunId` field to link parent and child runs.
- * Uses tokenHash for precise matching when available (unique per delegation).
- *
- * @param manager - State manager for loading and persisting runbook state
- * @param runId - Parent run ID whose delegation to update
- * @param substepId - Substep ID (or bare step ID) that owns the delegation
- * @param childRunId - The child run ID to set, or `null` to clear the link
- * @param tokenHash - Optional token hash for precise matching
- * @throws {Error} if the parent run is not found
- */
-async function updateStepDelegationChildRunId(
-  manager: RunbookStateManager,
-  runId: RunId,
-  substepId: string,
-  childRunId: RunId | null,
-  tokenHash?: string,
-): Promise<void> {
-  const state = await manager.load(runId);
-  if (!state) throw new Error(`Parent run ${runId} not found`);
-
-  const substepStates = state.substepStates ?? [];
-  const updated = substepStates.map((ss) => {
-    if (ss.id === substepId && ss.delegation) {
-      // When tokenHash is provided, match precisely; otherwise fall back to id match
-      if (tokenHash && ss.delegation.tokenHash !== tokenHash) return ss;
-      const { token: _claimedToken, ...claimedDelegation } = ss.delegation;
-      return {
-        ...ss,
-        delegation: { ...claimedDelegation, childRunId },
-      };
-    }
-    return ss;
-  });
-
-  await manager.update(runId, { substepStates: updated });
-}
-
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
@@ -1221,6 +1202,7 @@ type ClaimChildResult =
         | 'delegation-resolved'
         | 'delegation-already-claimed'
         | 'delegation-superseded'
+        | 'concurrent-modification'
         | 'linkage-mismatch';
       readonly childRunId: RunId;
     }
@@ -1230,6 +1212,21 @@ type ClaimChildResult =
   | { readonly ok: false; readonly reason: 'parent-missing'; readonly parentRunId: RunId }
   // The claim transaction was refused: some run it touches is under execution.
   | SessionRefusedFailure;
+
+/**
+ * Load resolved steps for a persisted run state without eagerly importing the loader.
+ *
+ * @param state - Persisted run state naming the source runbook.
+ * @param cwd - Project working directory used to resolve the source.
+ * @returns Resolved steps for machine preparation.
+ */
+async function loadRunbookSteps(
+  state: RunbookState,
+  cwd: string,
+): Promise<readonly ResolvedStep[]> {
+  const { getRunbookFromState } = await import('./runbook-loader.js');
+  return getRunbookFromState(state, cwd);
+}
 
 /**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
@@ -1244,16 +1241,65 @@ type ClaimChildResult =
  * @param ctx - Run pipeline context carrying the session service
  * @param childRunId - Child run id linked from the delegation or orphan scan
  * @param linkage - Fresh linkage rebuilt from token-validated parent state
+ * @param initialLink - Whether to atomically establish the parent link with the claim
  * @returns Claim id and child id on success, or a mapped failure variant
  */
 async function claimChildForPipeline(
   ctx: RunPipelineContext,
   childRunId: RunId,
   linkage: DelegationLinkage,
+  initialLink = false,
 ): Promise<ClaimChildResult> {
-  const result = await ctx.sessionService.claimRunbook(childRunId, linkage);
+  let result:
+    | Awaited<ReturnType<SessionService['claimRunbook']>>
+    | Awaited<ReturnType<SessionService['claimAndInitialLink']>>;
+  if (initialLink) {
+    const captured = await ctx.manager.captureRunAuthorityState(linkage.parentRunId);
+    if (captured.kind === 'missing') {
+      return { ok: false, reason: 'parent-missing', parentRunId: linkage.parentRunId };
+    }
+    if (captured.kind === 'claim_superseded') {
+      return { ok: false, reason: 'delegation-superseded', childRunId };
+    }
+    const prepared = await ctx.actorService.prepareDelegationChildLink(
+      captured.state,
+      await loadRunbookSteps(captured.state, ctx.cwd),
+      childRunId,
+      linkage,
+    );
+    if (prepared.kind === 'delegation_superseded') {
+      return { ok: false, reason: 'delegation-superseded', childRunId };
+    }
+    if (prepared.kind === 'concurrent_modification') {
+      return { ok: false, reason: 'concurrent-modification', childRunId };
+    }
+    result = await ctx.sessionService.claimAndInitialLink({
+      childRunId,
+      linkage,
+      capturedParent: captured.authority,
+      preparedParent: prepared.prepared,
+    });
+  } else {
+    result = await ctx.sessionService.claimRunbook(childRunId, linkage);
+  }
   if (result.kind !== 'committed') {
-    return { ok: false, reason: 'session-refused', refusal: result };
+    switch (result.kind) {
+      case 'execution_in_progress':
+      case 'recovery_required':
+        return { ok: false, reason: 'session-refused', refusal: result };
+      case 'missing':
+        return result.runId === linkage.parentRunId
+          ? { ok: false, reason: 'parent-missing', parentRunId: linkage.parentRunId }
+          : { ok: false, reason: 'child-missing', childRunId };
+      case 'claim_superseded':
+        return { ok: false, reason: 'delegation-superseded', childRunId };
+      case 'concurrent_modification':
+        return { ok: false, reason: 'concurrent-modification', childRunId };
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
+    }
   }
   const claim = result.value;
   switch (claim.status) {
@@ -1623,20 +1669,11 @@ export async function claimAndLaunch(
         parentFrameKey: freshSubstep.frameKey,
         parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
       };
-      const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
+      const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage, true);
       if (!claimResult.ok) {
         return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
       const adoptedChildRunId = claimResult.childRunId;
-      // Adopt the orphan only after claim validation confirms its persisted
-      // child linkage belongs to this delegation.
-      await updateStepDelegationChildRunId(
-        manager,
-        freshParent.id,
-        substepId ?? stepId,
-        adoptedChildRunId,
-        tokenHash,
-      );
       return emitClaimedSuccess({
         output,
         truncatedToken,
@@ -1689,17 +1726,11 @@ export async function claimAndLaunch(
         ctx,
         existingClaim.controlledRunId,
         delegationLinkage,
+        true,
       );
       if (!claimResult.ok) {
         return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
       }
-      await updateStepDelegationChildRunId(
-        manager,
-        freshParent.id,
-        substepId ?? stepId,
-        claimResult.childRunId,
-        tokenHash,
-      );
       return emitClaimedSuccess({
         output,
         truncatedToken,
@@ -1782,7 +1813,8 @@ export async function claimAndLaunch(
     // 4g. Launch child runbook
     let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
-    // Captures a write-side claim invariant violation in `afterCreate` so we
+    let initialLinkCommitted = false;
+    // Captures a write-side claim invariant violation in `afterInit` so we
     // can surface it as a structured launch-failed result instead of an
     // anonymous thrown Error. Should never trigger in practice — the child
     // was just created with the same delegationLinkage being validated.
@@ -1793,9 +1825,8 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
-      afterCreate: async (childStateId) => {
-        // Set childRunId on parent delegation (tokenHash for precise matching)
-        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
+      afterInit: async (childStateId) => {
+        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage, true);
         if (!claimResult.ok) {
           // Capture and bail; the outer block translates this into a typed
           // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
@@ -1805,39 +1836,46 @@ export async function claimAndLaunch(
             `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
           );
         }
-        await updateStepDelegationChildRunId(
-          manager,
-          freshParent.id,
-          substepId ?? stepId,
-          claimResult.childRunId,
-          tokenHash,
-        );
         capturedClaimId = 'claimId' in claimResult ? claimResult.claimId : undefined;
         capturedChildRunId = claimResult.childRunId;
+        initialLinkCommitted = true;
       },
-      afterCreateRollback: async (childStateId) => {
-        const release = await ctx.sessionService.releaseRunbook(childStateId);
-        // Rollback is best effort and must not replace the launch error, but the
-        // arms are narrowed so a new refusal cannot inherit silence by default.
-        switch (release.kind) {
-          case 'committed':
-          case 'execution_in_progress':
-          case 'recovery_required':
-            break;
-          default: {
-            const _exhaustive: never = release;
-            return _exhaustive;
-          }
+      afterInitRollback: async (childStateId) => {
+        if (!initialLinkCommitted) return;
+        const captured = await manager.captureRunAuthorityState(delegationLinkage.parentRunId);
+        if (captured.kind !== 'captured') {
+          output.warning(
+            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${captured.message}`,
+          );
+          return;
         }
-        await updateStepDelegationChildRunId(
-          manager,
-          freshParent.id,
-          substepId ?? stepId,
-          null,
-          tokenHash,
+        const prepared = await ctx.actorService.prepareDelegationChildUnlink(
+          captured.state,
+          await loadRunbookSteps(captured.state, ctx.cwd),
+          childStateId,
+          delegationLinkage,
         );
+        if (prepared.kind !== 'prepared') {
+          output.warning(
+            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${prepared.message}`,
+          );
+          return;
+        }
+        const rollback = await ctx.sessionService.rollbackInitialLink({
+          childRunId: childStateId,
+          linkage: delegationLinkage,
+          capturedParent: captured.authority,
+          preparedParent: prepared.prepared,
+        });
+        if (rollback.kind !== 'committed') {
+          output.warning(
+            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${rollback.message}`,
+          );
+          return;
+        }
         capturedClaimId = undefined;
         capturedChildRunId = undefined;
+        initialLinkCommitted = false;
       },
     });
 
@@ -1848,7 +1886,7 @@ export async function claimAndLaunch(
       // and this claim legitimately refuses here. Reporting that as
       // CLAIM_INVARIANT_VIOLATED blames Rundown for a real supersession and
       // drops the no-retry signal the bearer holder needs. The child created
-      // moments ago has already been rolled back by afterCreateRollback.
+      // moments ago is removed by launch cleanup; the atomic transaction wrote nothing.
       if (invariantViolation.reason === 'delegation-superseded') {
         return {
           ok: false,
@@ -1909,7 +1947,7 @@ export async function claimAndLaunch(
         },
       };
     }
-    // capturedClaimId and capturedChildRunId are assigned together in afterCreate
+    // capturedClaimId and capturedChildRunId are assigned together in afterInit
     // (see the launch-result handler above); a defined claim id implies a defined
     // child run id. The defensive check below preserves the invariant explicitly.
     if (capturedChildRunId === undefined) {

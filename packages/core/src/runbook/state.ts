@@ -41,6 +41,7 @@ import { getRunbookStore } from './storage/store-registry.js';
 import {
   guardOptions,
   type ParentAdvanceGuard,
+  type CapturedRunStateResult,
   type PresentedClaim,
   type RunbookStore,
   type SessionMutationResult,
@@ -909,6 +910,17 @@ export class RunbookStateManager {
   async loadClaim(key: ClaimLookupKey): Promise<PresentedClaim | null> {
     const store = await this.store();
     return store.loadClaim(key);
+  }
+
+  /**
+   * Capture a run's current authority counters and state atomically.
+   *
+   * @param runId - Run whose bare controlling authority is required.
+   * @returns Captured authority plus the exact state read with it, or a typed refusal.
+   */
+  async captureRunAuthorityState(runId: RunId): Promise<CapturedRunStateResult> {
+    const store = await this.store();
+    return store.captureRunAuthorityState(runId);
   }
 
   /**

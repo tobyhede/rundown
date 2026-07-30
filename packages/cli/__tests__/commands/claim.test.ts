@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
   createTestWorkspace,
   createRunbook,
@@ -23,7 +23,7 @@ import {
 } from '@rundown-org/core/testing/session-fixtures';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { ErrorResponseSchema } from '@rundown-org/core';
+import { ErrorResponseSchema, SessionService } from '@rundown-org/core';
 import { Command } from 'commander';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -292,6 +292,81 @@ describe('claim command', () => {
       expect(claimOutput.token).not.toMatch(/^rdtk_[A-Za-z0-9_-]{32}$/);
       // Emitted output must conform to the published claim schema.
       expect(validateCommandOutput('claim', claimOutput)).toEqual({ valid: true, errors: [] });
+    });
+
+    it('renders a concurrent atomic claim modification as a retryable error envelope', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      const started = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(started.exitCode).toBe(0);
+      const parent = (await getActiveState(workspace))!;
+      const token = await getAutoIssuedToken();
+      const delegatedParent = (await readRunbookState(workspace, parent.id))!;
+      const delegatedSubstep = delegatedParent.substepStates?.find(
+        (substep) => substep.delegation?.token === token,
+      );
+      if (!delegatedSubstep?.delegation) {
+        throw new Error('Expected the parent to contain the delegated token.');
+      }
+      const delegation = delegatedSubstep.delegation;
+
+      const childStarted = await runCliInProcess(
+        'run --prompted child.runbook.md --text',
+        workspace,
+      );
+      expect(childStarted.exitCode).toBe(0);
+      const orphan = (await getActiveState(workspace))!;
+      await patchPersistedRunState(workspace.cwd, orphan.id, {
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: parent.id,
+          parentStepId: delegatedSubstep.id,
+          tokenHash: delegation.tokenHash,
+          parentStep: delegatedParent.step,
+          parentFrameKey: delegatedSubstep.frameKey,
+          parentEntry:
+            delegatedParent.activeEntry ??
+            delegatedParent.frameEntryCounts?.[delegatedSubstep.frameKey] ??
+            1,
+        },
+      });
+      const sessionBeforeClaim = await readSession(workspace);
+      const parentClaims = Object.fromEntries(
+        Object.entries(sessionBeforeClaim.claims).filter(
+          ([, claim]) => claim.controlledRunId === parent.id,
+        ),
+      );
+      await writeSession(workspace, { defaultStack: [parent.id], claims: parentClaims });
+      const claimAndInitialLink = jest
+        .spyOn(SessionService.prototype, 'claimAndInitialLink')
+        .mockImplementation(async (input) => ({
+          kind: 'concurrent_modification',
+          runId: input.capturedParent.runId,
+          message: 'parent changed during the atomic claim commit',
+        }));
+
+      try {
+        const result = await runCliInProcess(`claim ${token}`, workspace);
+
+        expect(result.exitCode).toBe(1);
+        expect(claimAndInitialLink).toHaveBeenCalledTimes(1);
+        const envelope = parseCliJsonObject(result.stdout || result.stderr);
+        expect(envelope).toEqual({
+          kind: 'error',
+          code: 'CONCURRENT_MODIFICATION',
+          command: 'claim',
+          error: 'The parent changed while the delegated child claim was being committed. Retry.',
+          details: {
+            parentRunId: parent.id,
+            stepId: delegatedSubstep.id,
+            childRunId: orphan.id,
+          },
+        });
+        expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+      } finally {
+        claimAndInitialLink.mockRestore();
+      }
     });
 
     it('records a claim id and leaves anonymous active runbook on the parent', async () => {
@@ -863,10 +938,19 @@ rd echo --result fail
           tokenHash: delegation!.tokenHash,
           parentStep: delegatedParent!.step,
           parentFrameKey: delegatedSubstep!.frameKey,
-          parentEntry: delegatedParent!.activeEntry,
+          parentEntry:
+            delegatedParent!.activeEntry ??
+            delegatedParent!.frameEntryCounts?.[delegatedSubstep!.frameKey] ??
+            1,
         },
       });
-      await writeSession(workspace, { defaultStack: [parent!.id], claims: {} });
+      const sessionBeforeAdoption = await readSession(workspace);
+      const parentClaims = Object.fromEntries(
+        Object.entries(sessionBeforeAdoption.claims).filter(
+          ([, claim]) => claim.controlledRunId === parent!.id,
+        ),
+      );
+      await writeSession(workspace, { defaultStack: [parent!.id], claims: parentClaims });
 
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);

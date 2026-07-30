@@ -101,6 +101,8 @@ export {
 export {
   SessionService,
   type ActiveInlineForceTerminalPlan,
+  type ClaimAndInitialLinkInput,
+  type ClaimAndInitialLinkResult,
   type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
   type ReleaseRunbookResult,
@@ -331,6 +333,8 @@ export {
   RunbookActorService,
   type ActorSyncResult,
   type AnyActorRef,
+  type PreparedDelegationChildLink,
+  type PrepareDelegationChildLinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';
