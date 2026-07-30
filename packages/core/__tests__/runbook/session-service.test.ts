@@ -1602,6 +1602,179 @@ describe('SessionService', () => {
       }
     });
 
+    describe('stashForClaimId', () => {
+      it('refuses a bearer rotated after resolution and leaves the stash slot untouched', async () => {
+        // The #666 interleave: resolve with the old bearer, mint a replacement
+        // for the same run, then stash with the old bearer. Before this method
+        // existed the stash committed, because `stashRunbook` authorised on the
+        // run id alone and `mintRunControlClaim` keeps the run claim-targeted.
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId: oldBearer } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+
+        expect((await sessionService.getActiveForClaimId(oldBearer)).status).toBe('claimed');
+
+        unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(oldBearer));
+
+        expect(result).toEqual({
+          status: 'superseded',
+          claimId: oldBearer,
+          reason: 'claim-rotated',
+        });
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBeUndefined();
+        expect(session.defaultStack).toEqual([run.id]);
+      });
+
+      it('stashes a run-control claim and takes its run off the default stack', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+        expect(result.status).toBe('stashed');
+        if (result.status === 'stashed') {
+          expect(result.state.id).toBe(run.id);
+          expect(result.claim.controlledRunId).toBe(run.id);
+        }
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBe(run.id);
+        expect(session.defaultStack).toEqual([]);
+      });
+
+      it('stashes a delegated child and preserves its claim record unchanged', async () => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'a');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        const before = (await manager.loadSession()).claims[claimed.claim.claimKey];
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result.status).toBe('stashed');
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBe(child.id);
+        // `stash --claim-id` preserves the claim record (#519 non-recording).
+        expect(session.claims[claimed.claim.claimKey]).toEqual(before);
+      });
+
+      it('refuses a delegated child whose parent moved past the delegation', async () => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'b');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        // The child is not execution-owned, so the parent-side latch tombstones
+        // the claim as the parent's cursor advances. The bearer then lands on the
+        // tombstone arm and must be named superseded, not unknown.
+        await manager.update(parent.id, { step: '2' });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result).toEqual({
+          status: 'superseded',
+          claimId: claimed.claimId,
+          reason: 'cursor-advanced',
+        });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses an execution-owned run before deciding anything about the bearer', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        holdExecutionLease(run.id);
+
+        const outcome = await sessionService.stashForClaimId(claimId);
+
+        expect(outcome.kind).toBe('execution_in_progress');
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('reports an unknown bearer as missing-claim without touching the slot', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        unwrapSessionMutation(await sessionService.pushRunbookWithRunControlClaim(run.id));
+
+        const unknown = assertClaimId(`rdclm_${'0'.repeat(32)}_${'A'.repeat(43)}` satisfies string);
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(unknown));
+
+        expect(result).toEqual({ status: 'missing-claim', claimId: unknown });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('separates re-stashing the same claim from a slot held by another run', async () => {
+        const first = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+          runbookPath: 'a.md',
+        });
+        const second = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+          runbookPath: 'b.md',
+        });
+        const { claimId: firstClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(first.id),
+        );
+        const { claimId: secondClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(second.id),
+        );
+
+        unwrapSessionMutation(await sessionService.stashForClaimId(firstClaim));
+
+        const again = unwrapSessionMutation(await sessionService.stashForClaimId(firstClaim));
+        expect(again.status).toBe('already-stashed');
+
+        const blocked = unwrapSessionMutation(await sessionService.stashForClaimId(secondClaim));
+        expect(blocked.status).toBe('slot-occupied');
+        if (blocked.status === 'slot-occupied') {
+          expect(blocked.stashedRunbookId).toBe(first.id);
+        }
+        expect((await manager.loadSession()).stashedRunbookId).toBe(first.id);
+      });
+
+      it('refuses a terminal child', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        await manager.update(run.id, { lifecycle: 'completed' });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+        expect(result.status).toBe('terminal-child');
+        if (result.status === 'terminal-child') {
+          expect(result.lifecycle).toBe('completed');
+        }
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+    });
+
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
