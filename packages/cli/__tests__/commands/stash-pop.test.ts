@@ -10,6 +10,7 @@ import {
   readSession,
   readRunbookState,
   getActiveState,
+  seedExecutionOwnership,
   writeSession,
   requireFrontierToken,
   type TestWorkspace,
@@ -609,6 +610,76 @@ describe('stash command', () => {
     );
     const session = await readSession(workspace);
     expect(session.stashed).toBe(otherRunId);
+  });
+
+  // Pins the `stashResult.kind !== 'committed'` guards on both the bare and
+  // `--claim-id` paths: a session mutation that core refuses because the run
+  // is execution-owned must be rendered as EXECUTION_IN_PROGRESS and must
+  // leave the stash slot untouched. `seedExecutionOwnership` writes the same
+  // `runs.exec_token` state a real in-flight `rd pass`/`rd fail` execution
+  // lease would hold — no raw SQL hand-rolled here.
+  it('refuses bare stash with EXECUTION_IN_PROGRESS while the active run is execution-owned', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    seedExecutionOwnership(workspace, assertRunId(runId));
+
+    const result = await runCliInProcess(['stash'], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+        command: 'stash',
+        error: `Run ${runId} has an execution in progress.`,
+      }),
+    );
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
+
+  it('refuses stash --claim-id with EXECUTION_IN_PROGRESS while the claimed run is execution-owned', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    seedExecutionOwnership(workspace, assertRunId(runId));
+
+    const result = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+        command: 'stash',
+        error: `Run ${runId} has an execution in progress.`,
+      }),
+    );
+    expect((await readSession(workspace)).stashed).toBeNull();
   });
 });
 
