@@ -21,7 +21,7 @@
 import type { RunId } from './run-id.js';
 import type { RunbookState, ExecutionRecoveryReason, ExecutionRecoveryEvent } from './types.js';
 import type { RunbookStore } from './storage/runbook-store.js';
-import type { GuardedMutationResult } from './storage/mutation-result.js';
+import type { ExecutionEpoch, GuardedMutationResult } from './storage/mutation-result.js';
 import { InvalidRunbookStateError } from './state.js';
 
 /**
@@ -56,7 +56,7 @@ export type RecoveryActorFactory = (state: RunbookState) => RecoveryActor;
 
 /** Outcome of a recovery attempt. */
 export type RecoveryOutcome =
-  | { readonly kind: 'recovered'; readonly runId: RunId; readonly epoch: number }
+  | { readonly kind: 'recovered'; readonly runId: RunId; readonly epoch: ExecutionEpoch }
   | { readonly kind: 'missing'; readonly runId: RunId }
   | { readonly kind: 'not_pending'; readonly runId: RunId }
   | {
@@ -170,15 +170,17 @@ export function validateReason(value: string | null): ExecutionRecoveryReason {
  */
 function toOutcome(
   runId: RunId,
-  epoch: number,
+  epoch: ExecutionEpoch,
   result: GuardedMutationResult<RunbookState>,
 ): RecoveryOutcome {
   if (result.kind === 'committed') {
     return { kind: 'recovered', runId, epoch };
   }
+  // Every refusal variant of GuardedMutationResult declares an operator-facing
+  // `message`, so there is nothing to synthesize here.
   return {
     kind: 'superseded',
     runId,
-    message: 'message' in result ? result.message : `Recovery of run ${runId} was superseded.`,
+    message: result.message,
   };
 }
