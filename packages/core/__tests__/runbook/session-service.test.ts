@@ -298,13 +298,14 @@ describe('SessionService', () => {
       const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
       raw.exec('PRAGMA foreign_keys = OFF');
       raw.prepare('DELETE FROM runs WHERE id = :id').run({ id: state.id });
-      const slotBefore = raw.prepare('SELECT run_id AS runId FROM stash_slot').all() as readonly {
-        readonly runId: string;
-      }[];
+      const slotBefore = raw
+        .prepare('SELECT run_id AS runId FROM stash_slot')
+        .all()
+        .map((row) => row.runId);
       raw.close();
       // The staging worked — otherwise the assertion below would pass through
       // the `!stashedId` guard and pin nothing.
-      expect(slotBefore).toEqual([{ runId: state.id }]);
+      expect(slotBefore).toEqual([state.id]);
 
       const restored = unwrapSessionMutation(await sessionService.unstash());
 
