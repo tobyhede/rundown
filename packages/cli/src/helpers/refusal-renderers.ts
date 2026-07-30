@@ -70,6 +70,36 @@ export function renderActorContextRequiredRefusal(
 }
 
 /**
+ * Render a caller/target bearer divergence (`CLAIM_BEARER_MISMATCH`, #613).
+ *
+ * Deliberately NOT folded into {@link renderActorContextRequiredRefusal}. That
+ * refusal means "no authority was named" and its remediation is to pass
+ * `--claim-id`; here the caller passed one, so repeating that advice would
+ * misdiagnose the refusal and send the caller round the same loop.
+ *
+ * The envelope names neither claim. The seam refuses before resolving either
+ * one, so there is no verified claim record to reduce to a non-secret
+ * `claimKey`, and echoing a raw `claimId` would write a bearer secret to output
+ * and logs. The caller supplied both values, so it needs no echo to act.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param commandName - The refused command (e.g. `pass`, `stop`, `goto`).
+ * @returns `true` — always requests a non-zero exit code.
+ */
+export function renderClaimBearerMismatchRefusal(
+  output: OutputEmitter,
+  commandName: string,
+): boolean {
+  output.error(
+    `The presented claim id is not the claim \`rundown ${commandName}\` targeted, ` +
+      `so the command is refused rather than run under the target's authority. ` +
+      `Present the bearer for the claim you are targeting.`,
+    'CLAIM_BEARER_MISMATCH',
+  );
+  return true;
+}
+
+/**
  * Render a claim-grant refusal (`CLAIM_GRANT_REQUIRED`).
  *
  * The caller presented a bearer claim id, but the verified claim does not carry

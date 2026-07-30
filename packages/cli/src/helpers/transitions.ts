@@ -35,6 +35,7 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
 import {
   renderActorContextRequiredRefusal,
+  renderClaimBearerMismatchRefusal,
   renderClaimGrantRequiredRefusal,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
@@ -487,6 +488,8 @@ function renderRefusal(
       return true;
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, config.commandName);
+    case 'claim_bearer_mismatch':
+      return renderClaimBearerMismatchRefusal(output, config.commandName);
     case 'claim_grant_required':
       return renderClaimGrantRequiredRefusal(output, config.commandName);
     case 'unknown_run':

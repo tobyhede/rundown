@@ -10,13 +10,13 @@ import {
   validateGotoTarget,
   executeGoto,
   gotoResultRequiresFailureExit,
+  renderNavigationRefusal,
 } from '../helpers/goto-workflow.js';
 import {
   withTransitionTargetOptions,
   parseTransitionTarget,
   transitionTargetFields,
 } from '../helpers/transition-target.js';
-import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
@@ -46,37 +46,15 @@ export function registerGotoCommand(program: Command): void {
               ...transitionTargetFields(target),
               commandStreamOptions: commandStreamOptionsForOutputMode(options.text),
             });
-            switch (contextResult.kind) {
-              case 'ready':
-                break;
-              case 'none':
-                output.noActiveRunbook('goto');
-                output.flush();
-                return;
-              case 'stale_claim':
-                output.error(contextResult.message, contextResult.code);
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'terminal_claim':
-                output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'unknown_run':
-                output.error(contextResult.message, 'RUN_TARGET_UNAVAILABLE');
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'actor_context_required':
-                renderActorContextRequiredRefusal(output, 'goto');
-                output.flush();
-                process.exitCode = 1;
-                return;
-              default: {
-                const _exhaustive: never = contextResult;
-                return _exhaustive;
-              }
+            // Refusal rendering is owned by one named dispatcher in
+            // goto-workflow.ts, matching renderRefusal (pass/fail) and
+            // renderTerminalOutcome (complete/stop). Only the exit-code mapping
+            // stays here — that is the Category-A part.
+            if (contextResult.kind !== 'ready') {
+              const exitError = renderNavigationRefusal(output, contextResult);
+              output.flush();
+              if (exitError) process.exitCode = 1;
+              return;
             }
             const ctx = contextResult.ctx;
 

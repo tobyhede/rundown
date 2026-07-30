@@ -291,21 +291,26 @@ describe('ErrorCodeSchema code registry', () => {
     expect(CLIErrorCodes.DELEGATION_COLLECTION_PENDING).toBe('DELEGATION_COLLECTION_PENDING');
   });
 
-  it.each(['ACTOR_CONTEXT_REQUIRED', 'CLAIM_GRANT_REQUIRED', 'RUN_TARGET_MISMATCH'] as const)(
-    'accepts %s for command policy rendering',
-    (code) => {
-      expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
-      expect(
-        ErrorResponseSchema.safeParse({
-          kind: 'error',
-          error: `command policy refused with ${code}`,
-          code,
-          details: { source: 'command-policy' },
-        }).success,
-      ).toBe(true);
-      expect(CLIErrorCodes[code]).toBe(code);
-    },
-  );
+  it.each([
+    'ACTOR_CONTEXT_REQUIRED',
+    'CLAIM_GRANT_REQUIRED',
+    // #613: a caller/target bearer divergence. Registered alongside its two
+    // siblings because the CLI's refusal renderers emit all three the same way,
+    // so a consumer validating the published schema must accept all three.
+    'CLAIM_BEARER_MISMATCH',
+    'RUN_TARGET_MISMATCH',
+  ] as const)('accepts %s for command policy rendering', (code) => {
+    expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: `command policy refused with ${code}`,
+        code,
+        details: { source: 'command-policy' },
+      }).success,
+    ).toBe(true);
+    expect(CLIErrorCodes[code]).toBe(code);
+  });
 
   it('accepts collection-operation output codes', () => {
     for (const code of ['COLLECT_ALREADY_APPLIED', 'COLLECT_OPERATION_FAILED'] as const) {

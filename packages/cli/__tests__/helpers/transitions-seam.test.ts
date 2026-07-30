@@ -96,8 +96,9 @@ jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
   getRunbookFromState: mockFn<() => readonly ResolvedStep[]>().mockReturnValue([]),
 }));
 
+const mockReadCallerEvidence = mockFn<(input?: { claimId?: ClaimId }) => unknown>();
 jest.unstable_mockModule('../../src/helpers/caller-evidence', () => ({
-  readLifecycleCallerEvidence: mockFn<() => unknown>().mockReturnValue({ kind: 'direct_cli' }),
+  readLifecycleCallerEvidence: mockReadCallerEvidence,
 }));
 
 const mockRunExecutionLoop =
@@ -227,6 +228,7 @@ function appliedOutcome(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockReadCallerEvidence.mockReturnValue({ kind: 'direct_cli' });
   mockManagerLoad.mockResolvedValue(makeState());
   jest.mocked(getRunbookFromState).mockReturnValue([]);
   mockRunExecutionLoop.mockResolvedValue('done');
@@ -448,6 +450,11 @@ describe('runSeamTransition — explicit --step target resolution', () => {
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
     expect(runArgs.targetSelector).toEqual({ kind: 'claim', claimId: TEST_CLAIM_ID });
+    // Caller evidence is built from the SAME `--claim-id` that named the target.
+    // The seam reconciles the two and refuses a divergence (#613), so a frontend
+    // that sourced them independently would refuse every claim-targeted
+    // transition at runtime; pin the coupling here, where drift would originate.
+    expect(mockReadCallerEvidence).toHaveBeenCalledWith({ claimId: TEST_CLAIM_ID });
   });
 
   it('uses a claim selector for a bare --claim-id transition without --step', async () => {
@@ -460,6 +467,7 @@ describe('runSeamTransition — explicit --step target resolution', () => {
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
     expect(runArgs.targetSelector).toEqual({ kind: 'claim', claimId: TEST_CLAIM_ID });
+    expect(mockReadCallerEvidence).toHaveBeenCalledWith({ claimId: TEST_CLAIM_ID });
     expect(mockResolveTransitionTarget).not.toHaveBeenCalled();
   });
 
@@ -475,6 +483,9 @@ describe('runSeamTransition — explicit --step target resolution', () => {
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
     expect(runArgs.targetSelector).toEqual({ kind: 'default' });
+    // The other half of the #613 coupling: with no `--claim-id`, the evidence
+    // builder is handed no bearer, so a bare transition can never present one.
+    expect(mockReadCallerEvidence).toHaveBeenCalledWith({});
     expect(mockResolveTransitionTarget).not.toHaveBeenCalled();
   });
 });
@@ -644,6 +655,31 @@ describe('runSeamTransition — refusal render table', () => {
     expect(message).toContain('rundown fail');
     // ...and never hands the id back: no details object, no run id anywhere
     // in the envelope (accident barrier, decision 4).
+    expect(details).toBeUndefined();
+    expect(JSON.stringify(output.error.mock.calls[0])).not.toContain(PARENT_RUN_ID);
+    expect(result.exitError).toBe(true);
+  });
+
+  it('renders a bearer divergence under its own code, not the bare-form advice (#613)', async () => {
+    const output = makeOutput();
+    mockRunTransition.mockResolvedValue({
+      kind: 'claim_bearer_mismatch',
+    });
+
+    const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
+
+    const [message, code, details] = output.error.mock.calls[0];
+    expect(code).toBe('CLAIM_BEARER_MISMATCH');
+    expect(code).not.toBe('ACTOR_CONTEXT_REQUIRED');
+    // The whole point of the split: this caller DID present a claim id, so the
+    // bare-form remediation would misdiagnose it. Assert the wrong advice is
+    // absent, not merely that the right advice is present.
+    expect(message).not.toContain('Pass `--claim-id');
+    expect(message).toContain('rundown fail');
+    expect(message).toContain('targeting');
+    // Names neither claim: the seam refuses before resolving either one, so
+    // there is no non-secret claimKey to echo and a raw claimId would leak a
+    // bearer into output.
     expect(details).toBeUndefined();
     expect(JSON.stringify(output.error.mock.calls[0])).not.toContain(PARENT_RUN_ID);
     expect(result.exitError).toBe(true);

@@ -61,6 +61,7 @@ export const CLISymbolicErrorCodeValues = [
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
   'CLAIM_GRANT_REQUIRED',
+  'CLAIM_BEARER_MISMATCH',
   'RUN_TARGET_UNAVAILABLE',
   'RUN_TARGET_MISMATCH',
   'COLLECT_ALREADY_APPLIED',
@@ -134,6 +135,8 @@ export const CLIErrorCodes = {
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
   /** A verified bearer claim lacks the grant required for the requested command */
   CLAIM_GRANT_REQUIRED: 'CLAIM_GRANT_REQUIRED',
+  /** The presented bearer claim is not the claim the command targeted (#613) */
+  CLAIM_BEARER_MISMATCH: 'CLAIM_BEARER_MISMATCH',
   /** The explicit --run target is not a running member of this session's stack */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
   /** The explicit --run target does not own the delegation retry token (delegate --retry) */

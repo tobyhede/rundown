@@ -29,6 +29,10 @@ import {
   type DrivenRunPropagation,
 } from './delegation-completion.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
+import {
+  renderActorContextRequiredRefusal,
+  renderClaimBearerMismatchRefusal,
+} from './refusal-renderers.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
@@ -104,6 +108,66 @@ export function gotoResultRequiresFailureExit(
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
   | Exclude<LifecycleNavigationOutcome, { kind: 'allowed' }>;
+
+/** A {@link BuildGotoContextResult} narrowed to its non-`ready` variants. */
+export type GotoRefusal = Exclude<BuildGotoContextResult, { kind: 'ready' }>;
+
+/**
+ * Render a non-`ready` goto context result and report whether it exits non-zero.
+ *
+ * The navigation counterpart to `renderRefusal` (pass/fail, `transitions.ts`)
+ * and `renderTerminalOutcome` (complete/stop, `terminal-command.ts`): each
+ * command family's helper owns one named dispatcher over its outcome union,
+ * returning `true` when the outcome requests a non-zero exit. `goto` previously
+ * inlined this switch inside `registerGotoCommand`'s action closure, which made
+ * every refusal arm reachable only by running the whole CLI — so arms for
+ * outcomes the CLI cannot construct (`claim_bearer_mismatch`, #613) had no
+ * testable seam at all. Naming the dispatcher restores parity with the siblings
+ * and puts every arm under this module's own unit tests.
+ *
+ * `'goto'` is hard-coded rather than passed in: `LifecycleNavigationInput`
+ * types `command` as the literal `'goto'`, so navigation has exactly one
+ * command and threading it through the call site would only move the literal
+ * somewhere no unit test can observe it.
+ *
+ * Exit-code-to-process mapping stays with the caller (Category A) — this
+ * function decides only the polarity.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param refusal - The non-`ready` result returned by {@link buildGotoContext}.
+ * @returns `true` when the refusal requests a non-zero exit code; `false` for
+ *   `none`, which is an empty-stack no-op rather than a failure.
+ */
+export function renderNavigationRefusal(output: OutputEmitter, refusal: GotoRefusal): boolean {
+  switch (refusal.kind) {
+    case 'none':
+      output.noActiveRunbook('goto');
+      return false;
+    case 'stale_claim':
+      output.error(refusal.message, refusal.code);
+      return true;
+    case 'terminal_claim':
+      output.error(refusal.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+      return true;
+    case 'unknown_run':
+      output.error(refusal.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
+    case 'actor_context_required':
+      return renderActorContextRequiredRefusal(output, 'goto');
+    case 'claim_bearer_mismatch':
+      return renderClaimBearerMismatchRefusal(output, 'goto');
+    default: {
+      // Assigning to `never` keeps the compile-time totality check — adding a
+      // navigation refusal without an arm here is a build error. Returning a
+      // real `true` rather than the `never` value keeps the runtime honest to
+      // the declared `boolean`, so an unrecognized kind from an untyped
+      // frontend still fails closed instead of handing the caller an object.
+      const _exhaustive: never = refusal;
+      void _exhaustive;
+      return true;
+    }
+  }
+}
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
