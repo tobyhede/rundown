@@ -434,12 +434,15 @@ describe('stash command', () => {
 
   // This pins the refusal envelope and the untouched stash slot — not the
   // #666 race itself. Rotating the bearer before invoking `stash` is already
-  // caught by the pre-existing resolver staleness check (the read that feeds
-  // `resolveCommandTarget`/`stashForClaimId` is fresh, so it sees the
-  // rotation regardless of which code path handles it). The actual #666
-  // race — rotation landing inside one command's own resolve-to-commit
-  // window — cannot be observed from a sequential, in-process CLI test; the
-  // regression evidence for that lives at the core layer in
+  // caught by the pre-existing resolver staleness check: the OLD CLI path
+  // (`resolveCommandTarget`) read the claim in a separate step before
+  // mutating, and that pre-read already sees a rotation that happened first.
+  // `stashForClaimId` has no separate feeding read at all — that is the
+  // whole point of this change: verification happens inside the same
+  // transaction that writes the slot. The actual #666 race — rotation
+  // landing inside one command's own resolve-to-commit window — cannot be
+  // observed from a sequential, in-process CLI test; the regression evidence
+  // for that lives at the core layer in
   // `'refuses a bearer rotated after resolution and leaves the stash slot
   // untouched'` (packages/core/__tests__/runbook/session-service.test.ts).
   it('refuses a rotated run-control bearer with the documented JSON envelope', async () => {
@@ -475,8 +478,15 @@ describe('stash command', () => {
         kind: 'error',
         code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
         command: 'stash',
+        // A rotated bearer must render `superseded`'s wording, never the
+        // generic `missing-claim` message — both share the same code, so a
+        // core regression that swapped one status for the other would still
+        // pass a code-only assertion here.
+        error: expect.stringContaining('was released or replaced and is no longer authority'),
       }),
     );
+    // The refusal must identify the claim by its non-secret lookup key.
+    expect(result.stdout).toContain(claimKeyFromBearer(assertClaimId(oldBearer)));
     // The decisive assertion: the slot did not move.
     expect((await readSession(workspace)).stashed).toBeNull();
     // The bearer secret must never reach the transcript. `split('_')` is not a
@@ -510,6 +520,95 @@ describe('stash command', () => {
     const session = await readSession(workspace);
     expect(session.stashed).toBe(runId);
     expect(session.active).toBeNull();
+  });
+
+  // Pins the two-envelope split `claimStashRefusal` introduces:
+  // `already-stashed` (this claim's own run is already parked) must render
+  // CLAIMED_RUNBOOK_UNAVAILABLE, distinct from `slot-occupied` (a different
+  // run holds the slot) below, which renders ALREADY_STASHED. Nothing else
+  // in this file distinguishes the two codes at the CLI boundary — swapping
+  // the two `claimStashRefusal` return bodies would leave every other test
+  // green.
+  it('refuses re-stashing an already-stashed claim with CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    const first = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+    expect(first.exitCode).toBe(0);
+
+    const second = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(second.exitCode).toBe(1);
+    const claimKey = claimKeyFromBearer(assertClaimId(bearer));
+    expect(JSON.parse(second.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        command: 'stash',
+        error: `Claim id ${claimKey} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
+      }),
+    );
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(runId);
+  });
+
+  it('refuses a claimed stash when the slot already holds a different run, with ALREADY_STASHED', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const otherRunId = (await readSession(workspace)).active;
+    if (otherRunId === null) throw new Error('Expected an active run');
+
+    const bareStash = await runCliInProcess('stash --text', workspace);
+    expect(bareStash.exitCode).toBe(0);
+    expect((await readSession(workspace)).stashed).toBe(otherRunId);
+
+    const childPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, childPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const childStarted = await runCliInProcess(['run', childPath], workspace);
+    expect(childStarted.exitCode).toBe(0);
+    const childStartedEvent = parseConcatenatedJson(childStarted.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const childBearer = childStartedEvent?.claim_id;
+    if (typeof childBearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+
+    const result = await runCliInProcess(['stash', '--claim-id', childBearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'ALREADY_STASHED',
+        command: 'stash',
+        error: 'A runbook is already stashed. Pop it first.',
+      }),
+    );
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(otherRunId);
   });
 });
 
