@@ -1349,6 +1349,69 @@ describe('sql.js durability and crash boundaries', () => {
     ).resolves.toBeUndefined();
     expect(directoryOpened).toBe(true);
   });
+
+  it('does not let a directory-handle close failure mask a committed write', async () => {
+    const dbPath = path.join(dir, 'dir-close-fails.db');
+    await seed(dbPath);
+    const originalOpen = fs.open;
+    let closeAttempted = false;
+    const options: SqljsDriverOptions = {
+      directoryOpen: async () => {
+        const handle = await originalOpen(dir, 'r');
+        // Bound before the override replaces it, so the descriptor is still
+        // really released — the test needs a rejecting close, not a leaked fd.
+        const realClose = handle.close.bind(handle);
+        return Object.assign(handle, {
+          close: async () => {
+            closeAttempted = true;
+            await realClose();
+            throw new Error('close denied');
+          },
+        });
+      },
+    };
+
+    await using driver = await openSqljsDriver(dbPath, options);
+    // Rename and directory fsync both succeeded, so the write is durable. A
+    // close rejection is cleanup noise and must never surface as a failed persist.
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 60, k: 'seed' });
+        return 'committed-result';
+      }),
+    ).resolves.toBe('committed-result');
+    expect(closeAttempted).toBe(true);
+    expect(await readSeed(dbPath)).toBe(60);
+  });
+
+  it('does not let a directory-handle close failure mask a real fsync error', async () => {
+    const dbPath = path.join(dir, 'dir-close-and-fsync-fail.db');
+    await seed(dbPath);
+    const originalOpen = fs.open;
+    const syncFailure = Object.assign(new Error('storage I/O failure'), { code: 'EIO' });
+    const options: SqljsDriverOptions = {
+      directoryOpen: async () => {
+        const handle = await originalOpen(dir, 'r');
+        const realClose = handle.close.bind(handle);
+        return Object.assign(handle, {
+          sync: async () => Promise.reject(syncFailure),
+          close: async () => {
+            await realClose();
+            throw new Error('close denied');
+          },
+        });
+      },
+    };
+
+    await using driver = await openSqljsDriver(dbPath, options);
+    // The fsync error is the one that matters; the close rejection must not
+    // replace it on the way out of the `finally`.
+    await expect(
+      driver.immediate((tx) => {
+        tx.prepare('UPDATE kv SET v = :v WHERE k = :k').run({ v: 70, k: 'seed' });
+      }),
+    ).rejects.toBe(syncFailure);
+  });
 });
 
 /** Statements and lifecycle calls a driver made against its sql.js image. */
