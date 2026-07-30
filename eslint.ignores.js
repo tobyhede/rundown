@@ -15,6 +15,12 @@ export const ignores = [
   '.work/**',
   '.worktree/**',
   '.worktrees/**',
+  // Claude Code-managed worktrees (git-excluded via .git/info/exclude). Each is a
+  // full checkout, so linting them multiplies the typed-lint surface and puts
+  // duplicate copies of the workspace packages in front of module resolution —
+  // which both exhausts the heap and degrades real files' types to `any`.
+  // biome.json and .prettierignore already exclude this path.
+  '.claude/worktrees/**',
   '**/.stryker-tmp/**',
   '**/.stryker-tmp*/**',
   'reports/**',
