@@ -402,7 +402,16 @@ export class SqljsDriver implements SqlDriver {
       // Some hosts do not support opening or syncing directories. Atomic rename
       // remains the strongest durability boundary those hosts expose.
     } finally {
-      await dh?.close();
+      // Closing the handle is cleanup, never a durability boundary: the rename
+      // and the directory fsync already decided the outcome. A close rejection
+      // raised from `finally` would replace that outcome — reporting a failed
+      // persist for a write that in fact committed, or masking a real fsync
+      // error with cleanup noise.
+      try {
+        await dh?.close();
+      } catch {
+        // Best-effort, non-masking release (see CLAUDE.md, RD-102).
+      }
     }
   }
 
