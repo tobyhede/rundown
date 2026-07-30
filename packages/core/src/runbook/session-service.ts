@@ -1863,16 +1863,6 @@ export class SessionService {
       if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
         return { status: 'missing-claim', claimId };
       }
-      // Split, where `stashRunbook` collapsed both into `null`: re-stashing the
-      // caller's own parked run is a different mistake from colliding with
-      // someone else's, and only the second is `ALREADY_STASHED`.
-      if (session.stashedRunbookId === claim.controlledRunId) {
-        return { status: 'already-stashed', claim };
-      }
-      if (session.stashedRunbookId !== undefined) {
-        return { status: 'slot-occupied', claim, stashedRunbookId: session.stashedRunbookId };
-      }
-
       const state = ctx.readState(claim.controlledRunId);
       if (!state) {
         // The claim's controlled run state cannot be read. The FK cascade deletes
@@ -1901,6 +1891,26 @@ export class SessionService {
         if (liveness.kind === 'closed') {
           return { status: 'superseded', claimId, reason: liveness.reason };
         }
+      }
+
+      // Split, where `stashRunbook` collapsed both into `null`. `already-stashed`
+      // is the caller's own controlled run already parked in the slot;
+      // `slot-occupied` is a *different* run holding it. Re-parking what you
+      // already parked is a different mistake from colliding with someone else's
+      // parked run, and the caller needs to be told which one happened.
+      //
+      // Both sit last, for the reason `getActiveForClaimId` gives its own
+      // parked-runbook gate: between two simultaneously true refusals, the one
+      // that ends the caller's work beats the one that invites more of it. A
+      // terminal controlled run or a closed delegation is the real answer even
+      // when the slot also happens to be busy — reporting the slot first would
+      // send the caller to pop and retry only to meet the refusal that was true
+      // all along, and would hide a closed delegation's no-retry signal behind it.
+      if (session.stashedRunbookId === claim.controlledRunId) {
+        return { status: 'already-stashed', claim };
+      }
+      if (session.stashedRunbookId !== undefined) {
+        return { status: 'slot-occupied', claim, stashedRunbookId: session.stashedRunbookId };
       }
 
       // `stashRunbook`'s `targetedByClaim` arm is not reproduced: the verified

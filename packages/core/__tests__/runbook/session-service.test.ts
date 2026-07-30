@@ -1823,6 +1823,36 @@ describe('SessionService', () => {
         },
       );
 
+      it('reports a terminal controlled run ahead of a slot held by another run', async () => {
+        // Precedence, not coverage: both refusals are simultaneously true here,
+        // and `terminal-child` is the one that ends the caller's work while
+        // `slot-occupied` invites a pop-and-retry that can only fail again. The
+        // same ordering `getActiveForClaimId` states for its parked-runbook gate.
+        const occupant = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+          runbookPath: 'a.md',
+        });
+        const terminal = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+          runbookPath: 'b.md',
+        });
+        const { claimId: occupantClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(occupant.id),
+        );
+        const { claimId: terminalClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(terminal.id),
+        );
+        unwrapSessionMutation(await sessionService.stashForClaimId(occupantClaim));
+        await manager.update(terminal.id, { lifecycle: 'completed' });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(terminalClaim));
+
+        expect(result.status).toBe('terminal-child');
+        if (result.status === 'terminal-child') {
+          expect(result.lifecycle).toBe('completed');
+          expect(result.claim.controlledRunId).toBe(terminal.id);
+        }
+        expect((await manager.loadSession()).stashedRunbookId).toBe(occupant.id);
+      });
+
       it('leaves other claimed runs on the default stack when one is stashed', async () => {
         // A single-element stack can't distinguish "remove the matching id" from
         // "clear the whole stack" — both leave `defaultStack` at `[]`. A second,
