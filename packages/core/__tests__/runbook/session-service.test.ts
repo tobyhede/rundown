@@ -1979,6 +1979,46 @@ describe('SessionService', () => {
         expect(session.stashedRunbookId).toBe(stashed.id);
         expect(session.defaultStack).toEqual([other.id]);
       });
+
+      // Both claim-targeted stash methods hand the CLI a `VerifiedClaim`, never
+      // the persisted `ClaimRecord`. The record carries `secretHash` — the
+      // bearer proof — so an arm returning it is one careless
+      // `output.detail(result.claim)` away from printing it. Asserted as the
+      // exact key set rather than "no secretHash" so a field added to
+      // `ClaimRecord` later cannot widen the seam without failing here, and
+      // asserted on both methods in one object so a fix applied to only one of
+      // the two mirrored unions is named in the diff.
+      it('returns a verified claim, not the persisted record, from both stash and pop', async () => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'a');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+
+        const stashResult = unwrapSessionMutation(
+          await sessionService.stashForClaimId(claimed.claimId),
+        );
+        const popResult = unwrapSessionMutation(
+          await sessionService.unstashForClaimId(claimed.claimId),
+        );
+
+        expect({ stash: stashResult.status, pop: popResult.status }).toEqual({
+          stash: 'stashed',
+          pop: 'restored',
+        });
+        if (stashResult.status !== 'stashed' || popResult.status !== 'restored') return;
+        const verifiedShape = ['claimKey', 'controlledRunId', 'delegation', 'grants'];
+        expect({
+          stashClaimKeys: Object.keys(stashResult.claim).sort(),
+          popClaimKeys: Object.keys(popResult.claim).sort(),
+        }).toEqual({ stashClaimKeys: verifiedShape, popClaimKeys: verifiedShape });
+      });
     });
 
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {

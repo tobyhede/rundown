@@ -323,19 +323,28 @@ export type ClaimSeenRecordResult =
       readonly error: unknown;
     };
 
-/** Result of restoring a stashed delegated child by claim id. */
+/**
+ * Result of restoring a stashed delegated child by claim id.
+ *
+ * `claim` is a {@link VerifiedClaim}, not the persisted {@link ClaimRecord}:
+ * every arm that carries one is returned only after the presented bearer was
+ * proved against `secretHash` in the same transaction, and the narrower type is
+ * what makes it structurally impossible for a caller to re-emit that hash (or
+ * the record's bookkeeping timestamps) into CLI output. Same reason
+ * {@link SessionService.verifyClaimId} returns one.
+ */
 export type UnstashForClaimIdResult =
-  | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
+  | { readonly status: 'restored'; readonly claim: VerifiedClaim; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
-  | { readonly status: 'not-stashed'; readonly claim: ClaimRecord }
+  | { readonly status: 'not-stashed'; readonly claim: VerifiedClaim }
   | {
       readonly status: 'terminal-child';
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly lifecycle: 'completed' | 'stopped';
     }
-  | { readonly status: 'child-linkage-mismatch'; readonly claim: ClaimRecord }
-  | { readonly status: 'parent-missing'; readonly claim: ClaimRecord }
+  | { readonly status: 'child-linkage-mismatch'; readonly claim: VerifiedClaim }
+  | { readonly status: 'parent-missing'; readonly claim: VerifiedClaim }
   | {
       /**
        * The claim is no longer authority: either a tombstone the parent-side
@@ -354,25 +363,28 @@ export type UnstashForClaimIdResult =
  *
  * Mirrors {@link UnstashForClaimIdResult}, with two stash-specific refusals in
  * place of `not-stashed`: `already-stashed` (the slot already holds this
- * claim's own run) and `slot-occupied` (it holds a different run).
+ * claim's own run) and `slot-occupied` (it holds a different run). `claim` is a
+ * {@link VerifiedClaim} for the same reason it is there, and the two must stay
+ * in step — a sibling that still handed back the raw record would be the leak
+ * the narrowing exists to prevent.
  */
 export type StashForClaimIdResult =
-  | { readonly status: 'stashed'; readonly claim: ClaimRecord; readonly state: RunbookState }
+  | { readonly status: 'stashed'; readonly claim: VerifiedClaim; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
-  | { readonly status: 'already-stashed'; readonly claim: ClaimRecord }
+  | { readonly status: 'already-stashed'; readonly claim: VerifiedClaim }
   | {
       readonly status: 'slot-occupied';
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly stashedRunbookId: RunId;
     }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | {
       readonly status: 'terminal-child';
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly lifecycle: 'completed' | 'stopped';
     }
-  | { readonly status: 'child-linkage-mismatch'; readonly claim: ClaimRecord }
-  | { readonly status: 'parent-missing'; readonly claim: ClaimRecord }
+  | { readonly status: 'child-linkage-mismatch'; readonly claim: VerifiedClaim }
+  | { readonly status: 'parent-missing'; readonly claim: VerifiedClaim }
   | {
       readonly status: 'superseded';
       readonly claimId: ClaimId;
@@ -1920,6 +1932,10 @@ export class SessionService {
       if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
         return { status: 'missing-claim', claimId };
       }
+      // Narrowed the moment the bearer is proved, and it is `verified` — never
+      // `claim` — that leaves this method: the persisted record carries
+      // `secretHash`, and nothing outside the transaction has any use for it.
+      const verified = verifiedClaimFromRecord(claim);
       const state = ctx.readState(claim.controlledRunId);
       if (!state) {
         // The claim's controlled run state cannot be read. The FK cascade deletes
@@ -1930,11 +1946,11 @@ export class SessionService {
         return { status: 'missing-child', childRunId: claim.controlledRunId };
       }
       if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
-        return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
+        return { status: 'terminal-child', claim: verified, lifecycle: state.lifecycle };
       }
       if (claim.delegation) {
         if (!linkageMatchesClaim(state.parentLinkage, claim)) {
-          return { status: 'child-linkage-mismatch', claim };
+          return { status: 'child-linkage-mismatch', claim: verified };
         }
         // Classified, not lifecycle-checked, for the reason given in
         // `getActiveForClaimId`: an active row whose delegation has closed must
@@ -1943,7 +1959,7 @@ export class SessionService {
         const parent = ctx.readState(claim.delegation.parentRunId);
         const liveness = classifyDelegationLiveness(parent, claim.delegation);
         if (liveness.kind === 'parent-unreadable') {
-          return { status: 'parent-missing', claim };
+          return { status: 'parent-missing', claim: verified };
         }
         if (liveness.kind === 'closed') {
           return { status: 'superseded', claimId, reason: liveness.reason };
@@ -1964,10 +1980,14 @@ export class SessionService {
       // send the caller to pop and retry only to meet the refusal that was true
       // all along, and would hide a closed delegation's no-retry signal behind it.
       if (session.stashedRunbookId === claim.controlledRunId) {
-        return { status: 'already-stashed', claim };
+        return { status: 'already-stashed', claim: verified };
       }
       if (session.stashedRunbookId !== undefined) {
-        return { status: 'slot-occupied', claim, stashedRunbookId: session.stashedRunbookId };
+        return {
+          status: 'slot-occupied',
+          claim: verified,
+          stashedRunbookId: session.stashedRunbookId,
+        };
       }
 
       // `stashRunbook`'s `targetedByClaim` arm is not reproduced: the verified
@@ -1976,7 +1996,7 @@ export class SessionService {
       // resident and must leave the stack when it is parked.
       session.defaultStack = session.defaultStack.filter((id) => id !== claim.controlledRunId);
       session.stashedRunbookId = claim.controlledRunId;
-      return { status: 'stashed', claim, state };
+      return { status: 'stashed', claim: verified, state };
     });
   }
 
@@ -2028,8 +2048,12 @@ export class SessionService {
       if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
         return { status: 'missing-claim', claimId };
       }
+      // Narrowed the moment the bearer is proved, and it is `verified` — never
+      // `claim` — that leaves this method: the persisted record carries
+      // `secretHash`, and nothing outside the transaction has any use for it.
+      const verified = verifiedClaimFromRecord(claim);
       if (session.stashedRunbookId !== claim.controlledRunId) {
-        return { status: 'not-stashed', claim };
+        return { status: 'not-stashed', claim: verified };
       }
 
       const state = ctx.readState(claim.controlledRunId);
@@ -2042,13 +2066,13 @@ export class SessionService {
         return { status: 'missing-child', childRunId: claim.controlledRunId };
       }
       if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
-        return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
+        return { status: 'terminal-child', claim: verified, lifecycle: state.lifecycle };
       }
       if (!linkageMatchesClaim(state.parentLinkage, claim)) {
-        return { status: 'child-linkage-mismatch', claim };
+        return { status: 'child-linkage-mismatch', claim: verified };
       }
       if (!claim.delegation) {
-        return { status: 'child-linkage-mismatch', claim };
+        return { status: 'child-linkage-mismatch', claim: verified };
       }
       // Classified, not lifecycle-checked, for the reason given in
       // `getActiveForClaimId`: an active row whose delegation has closed must
@@ -2057,7 +2081,7 @@ export class SessionService {
       const parent = ctx.readState(claim.delegation.parentRunId);
       const liveness = classifyDelegationLiveness(parent, claim.delegation);
       if (liveness.kind === 'parent-unreadable') {
-        return { status: 'parent-missing', claim };
+        return { status: 'parent-missing', claim: verified };
       }
       if (liveness.kind === 'closed') {
         return { status: 'superseded', claimId, reason: liveness.reason };
@@ -2072,7 +2096,15 @@ export class SessionService {
       const now = this.now();
       ctx.touchClaimUpdatedAt(parsed.claimKey, now);
       session.claims[parsed.claimKey] = refreshedClaimRecord(claim, now);
-      return { status: 'restored', claim: session.claims[parsed.claimKey], state };
+      // `refreshedClaimRecord` moves `updatedAt` only, which `VerifiedClaim`
+      // does not carry, so the pre-refresh narrowing is the same value — but it
+      // is derived from the committed record so the two cannot drift if that
+      // refresh ever touches a field the verified shape does keep.
+      return {
+        status: 'restored',
+        claim: verifiedClaimFromRecord(session.claims[parsed.claimKey]),
+        state,
+      };
     });
   }
 
