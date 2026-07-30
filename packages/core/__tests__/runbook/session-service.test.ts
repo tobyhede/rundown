@@ -1802,22 +1802,49 @@ describe('SessionService', () => {
         expect((await manager.loadSession()).stashedRunbookId).toBe(first.id);
       });
 
-      it('refuses a terminal child', async () => {
-        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
-          runbookPath: 'solo.md',
+      it.each(['completed', 'stopped'] as const)(
+        'refuses a %s terminal child',
+        async (lifecycle) => {
+          const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+            runbookPath: 'solo.md',
+          });
+          const { claimId } = unwrapSessionMutation(
+            await sessionService.pushRunbookWithRunControlClaim(run.id),
+          );
+          await manager.update(run.id, { lifecycle });
+
+          const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+          expect(result.status).toBe('terminal-child');
+          if (result.status === 'terminal-child') {
+            expect(result.lifecycle).toBe(lifecycle);
+          }
+          expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+        },
+      );
+
+      it('leaves other claimed runs on the default stack when one is stashed', async () => {
+        // A single-element stack can't distinguish "remove the matching id" from
+        // "clear the whole stack" — both leave `defaultStack` at `[]`. A second,
+        // untouched run on the stack is what actually pins the `.filter` call at
+        // `session-service.ts:1578` against a mutant that clears it outright.
+        const stashed = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+          runbookPath: 'a.md',
         });
-        const { claimId } = unwrapSessionMutation(
-          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        const other = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+          runbookPath: 'b.md',
+        });
+        const { claimId: stashedClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(stashed.id),
         );
-        await manager.update(run.id, { lifecycle: 'completed' });
+        unwrapSessionMutation(await sessionService.pushRunbookWithRunControlClaim(other.id));
 
-        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(stashedClaim));
 
-        expect(result.status).toBe('terminal-child');
-        if (result.status === 'terminal-child') {
-          expect(result.lifecycle).toBe('completed');
-        }
-        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+        expect(result.status).toBe('stashed');
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBe(stashed.id);
+        expect(session.defaultStack).toEqual([other.id]);
       });
     });
 
