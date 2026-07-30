@@ -271,11 +271,20 @@ interface InlineLaunchArgs {
  * to `'stopped'`: the terminal side effect this loop owed did not happen, so it
  * must not report a clean `'done'`.
  *
+ * A refused release also emits a `RUNBOOK_STOPPED` carrying `correctionPosition`
+ * when one is supplied. On the command and drain paths the completion
+ * event was already announced by `orchestrateTransition` — whose policy does not
+ * release in `release-runbook` mode — and cannot be unsent, so the stream would
+ * otherwise end on a clean completion for a run still held on the session stack.
+ * Callers that have not announced a completion pass no position.
+ *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
  * @param mode - Terminal release disposition for this loop.
  * @param emitter - Execution emitter receiving the refusal event.
  * @param terminal - Outcome to report when the release commits.
+ * @param correctionPosition - Position for the corrective stop; supply it only when a
+ *   completion was already announced for this run.
  * @returns `terminal`, or `'stopped'` when the release was refused.
  */
 async function applyExecutionTerminalRelease(
@@ -284,6 +293,7 @@ async function applyExecutionTerminalRelease(
   mode: ExecutionTerminalReleaseMode,
   emitter: ExecutionEventEmitter,
   terminal: 'done' | 'stopped',
+  correctionPosition?: ReturnType<typeof buildStepPosition>,
 ): Promise<'done' | 'stopped'> {
   if (mode === 'defer-to-caller') {
     // The caller (inline parent-advance core seam) owns the single terminal
@@ -317,6 +327,16 @@ async function applyExecutionTerminalRelease(
     type: 'ERROR_OCCURRED',
     payload: { message: released.message, code: sessionMutationRefusalCode(released) },
   });
+  // Keyed on the position alone: supplying one IS the caller's statement that it
+  // already announced a completion needing contradiction. Also testing
+  // `terminal === 'done'` would add a branch no caller can reach, since every
+  // site passing a position reports `'done'`.
+  if (correctionPosition) {
+    emitter.emit({
+      type: 'RUNBOOK_STOPPED',
+      payload: { position: correctionPosition, message: released.message },
+    });
+  }
   return 'stopped';
 }
 
@@ -1259,6 +1279,14 @@ export async function runExecutionLoop(
           terminalReleaseMode,
           emitter,
           'done',
+          // The drain already announced the completion through
+          // orchestrateTransition, so a refusal needs the corrective stop.
+          buildStepPosition(
+            currentState.step,
+            totalSteps,
+            currentState.substep,
+            currentState.forStack,
+          ),
         );
       }
       return 'done';
@@ -1537,6 +1565,9 @@ export async function runExecutionLoop(
           terminalReleaseMode,
           emitter,
           'done',
+          // orchestrateTransition already announced the completion under the
+          // no-release policy, so a refusal needs the corrective stop.
+          stepPosition,
         );
       }
       return 'done';

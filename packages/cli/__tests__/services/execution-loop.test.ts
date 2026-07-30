@@ -1187,6 +1187,21 @@ describe('runExecutionLoop', () => {
   });
 
   describe('terminal release refused for execution ownership (#608)', () => {
+    /**
+     * Every RUNBOOK_STOPPED the emitter received this test.
+     *
+     * `toHaveBeenCalledWith` passes when ANY call matches, so it cannot tell a
+     * single correct stop from one accompanied by a spurious second. These
+     * paths differ precisely in how many stops they emit.
+     *
+     * @returns The stopped events, in emission order.
+     */
+    function stoppedEmissions(): { type: string }[] {
+      return mockEmitter.emit.mock.calls
+        .map(([event]) => event as { type: string })
+        .filter((event) => event.type === 'RUNBOOK_STOPPED');
+    }
+
     /** Drive the loop to a COMPLETE terminal so the release is the only variable. */
     function seedCompletingRun(): void {
       mockManager.load.mockResolvedValue(makeLoopState());
@@ -1294,11 +1309,150 @@ describe('runExecutionLoop', () => {
       expect(mockEmitter.emit).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: 'RUNBOOK_COMPLETED' }),
       );
-      // The stop names where the run halted rather than being a bare marker.
+      // The stop names where the run halted rather than being a bare marker,
+      // and it is the ONLY one: this path suppresses the completion rather than
+      // correcting it, so the helper must not add a second stop on top.
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'RUNBOOK_STOPPED',
         payload: { position: { current: '2', total: 2 } },
       });
+      expect(stoppedEmissions()).toHaveLength(1);
+    });
+
+    it('emits a refusal-bearing stop when the command path release is refused', async () => {
+      // In 'release-runbook' mode the transition policy does not release, so
+      // orchestrateTransition announces RUNBOOK_COMPLETED and the loop releases
+      // afterwards. That completion cannot be unsent, so a refusal has to leave
+      // a stop behind it — otherwise the stream ends on a clean completion for a
+      // run still held on the session stack.
+      seedCompletingRun();
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'release-runbook' },
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+      });
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: { current: '1', total: 2 }, message: refusal.message },
+      });
+    });
+
+    it('returns done and emits no stop when the command path release commits', async () => {
+      // The committing half of the command path. Without it nothing pins that
+      // this site reports `done`: the refusal tests return `stopped` whatever
+      // the committed outcome would have been.
+      seedCompletingRun();
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'release-runbook' },
+      );
+
+      expect(result).toBe('done');
+      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+        retainClaimsAsTerminal: true,
+      });
+      expect(stoppedEmissions()).toHaveLength(0);
+    });
+
+    it.each([
+      { label: 'commits', refuse: false, expected: 'done', stops: 0 },
+      { label: 'is refused', refuse: true, expected: 'stopped', stops: 1 },
+    ])(
+      'drives the drain terminal through the release when it $label',
+      async ({ refuse, expected, stops }) => {
+        // The drain reaches its own terminal release site, distinct from the
+        // command path. It was uncovered in `release-runbook` mode entirely.
+        mockManager.load.mockResolvedValue(makeLoopState());
+        mockCompletionService.drainResolvedCompletions.mockResolvedValue({
+          status: 'done',
+          applied: [],
+          unresolved: 0,
+        });
+        if (refuse) {
+          mockSessionService.releaseRunbook.mockResolvedValue({
+            kind: 'execution_in_progress' as const,
+            runId: runbookId,
+            message: `Run ${runbookId} has an execution in progress.`,
+          });
+        }
+
+        const result = await runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          false,
+          asEmitter(mockEmitter),
+          { terminalReleaseMode: 'release-runbook' },
+        );
+
+        expect(result).toBe(expected);
+        expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+          retainClaimsAsTerminal: true,
+        });
+        expect(stoppedEmissions()).toHaveLength(stops);
+      },
+    );
+
+    it('does not fabricate a corrective stop when the refused terminal was already stopped', async () => {
+      // The correction exists only to contradict a completion that was already
+      // announced. A terminal that stopped emitted its own stop, so adding a
+      // second one would double-report the same halt.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'done',
+            value: 'STOPPED',
+            context: { lastAction: { type: 'STOP', origin: 'direct' } },
+          },
+        }),
+      );
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.popRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+      });
+      expect(stoppedEmissions()).toHaveLength(1);
     });
 
     it('announces completion from state when the snapshot is not recognizably terminal', async () => {

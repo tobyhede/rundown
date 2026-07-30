@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import fc from 'fast-check';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -580,13 +580,17 @@ describe('mutateSessionGuarded ownership refusals', () => {
     const owned = await seedControlledRun();
     await own(owned.runId, owned.claimKey);
 
-    const result = await store.mutateSessionGuarded(order(owned.runId, clean.runId), () => null);
+    const mutate = jest.fn(() => null);
+    const result = await store.mutateSessionGuarded(order(owned.runId, clean.runId), mutate);
 
     expect(result).toEqual({
       kind: 'execution_in_progress',
       runId: owned.runId,
       message: `Run ${owned.runId} has an execution in progress.`,
     });
+    // Preflight refuses before the session is touched: the refusal is a no-op,
+    // not a write that is later discarded.
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it('resolves the affected runs from the session snapshot when given a selector', async () => {

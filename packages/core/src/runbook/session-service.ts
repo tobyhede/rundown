@@ -479,6 +479,8 @@ export class SessionService {
    *
    * @param runId - Run id controlled by the issued claim.
    * @returns Public bearer claim id and the persisted proof-backed record.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async issueRunControlClaim(
     runId: RunId,
@@ -497,6 +499,8 @@ export class SessionService {
    *
    * @param id - The runbook state ID to push and control.
    * @returns Public bearer claim id and the persisted proof-backed record.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async pushRunbookWithRunControlClaim(
     id: RunId,
@@ -752,6 +756,8 @@ export class SessionService {
    *   this from freshly token-validated parent state.
    * @returns A claim record on success, or a failure variant when the child is
    *   missing, terminal, or its persisted linkage diverges from `linkage`.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async claimRunbook(
     childRunId: RunId,
@@ -1206,6 +1212,8 @@ export class SessionService {
    *
    * @param runbookIds - Run ids to release, in descendant-to-root order.
    * @returns The released run ids and the next default-stack runbook id, if any.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async releaseRunbooks(
     runbookIds: readonly RunId[],
@@ -1253,6 +1261,8 @@ export class SessionService {
    *   `terminal` rather than `missing`) instead of deleting them. Used by the
    *   natural-completion terminal-release path; explicit teardown deletes.
    * @returns Structured release result
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async releaseRunbook(
     runbookId: RunId,
@@ -1271,6 +1281,8 @@ export class SessionService {
    *
    * @param childRunIds - Child run ids being pruned.
    * @returns The claim lookup keys that were removed.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async pruneClaimsForChildren(
     childRunIds: readonly string[],
@@ -1358,6 +1370,8 @@ export class SessionService {
    * and returns the new top (parent runbook) ID if one exists.
    *
    * @returns The new active runbook ID (parent), or null if the stack is empty
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async popRunbook(): Promise<SessionMutationResult<RunId | null>> {
     return this.mutateGuarded(topOfStack, (ctx) => {
@@ -1376,6 +1390,8 @@ export class SessionService {
    * in the session's stashed slot. Only one runbook can be stashed at a time.
    *
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async stash(): Promise<SessionMutationResult<RunId | null>> {
     return this.mutateGuarded(topOfStack, (ctx) => {
@@ -1400,6 +1416,8 @@ export class SessionService {
    *
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async stashRunbook(runbookId: RunId): Promise<SessionMutationResult<RunId | null>> {
     return this.mutateGuarded([runbookId], (ctx) => {
@@ -1426,6 +1444,8 @@ export class SessionService {
    *
    * @param claimId - Claim id for the stashed child runbook
    * @returns Discriminated restore result describing success or the refusal reason
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async unstashForClaimId(
     claimId: ClaimId,
@@ -1522,6 +1542,8 @@ export class SessionService {
    * stack, making it the active runbook again. Clears the stashed slot.
    *
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async unstash(): Promise<SessionMutationResult<RunbookState | null>> {
     return this.mutateGuarded(
