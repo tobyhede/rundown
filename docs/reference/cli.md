@@ -554,6 +554,14 @@ rundown stash
 
 Removes active runbook from stack, preserves state.
 
+With `--claim-id`, the bearer is mutation authority, not a target selector: it
+is verified inside the same transaction that writes the stash slot, so a bearer
+that was rotated, released, or superseded refuses rather than parking a runbook
+under authority that has ended. A superseded delegation reports
+`DELEGATION_SUPERSEDED` with the RD-825 no-retry instruction; a rotated or
+released claim reports `CLAIMED_RUNBOOK_UNAVAILABLE`. The claim record itself is
+preserved across a stash.
+
 #### `rundown pop` - Resume Enforcement
 
 Resume from stashed runbook.
@@ -753,7 +761,7 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
 | `rundown collect --claim-id <claim_id>`                    | Bearer-authorized aggregation of delegated results                                |
 | `rundown goto <step> --claim-id <claim_id>`                | Bearer-authorized jump within a claimed run (run-navigation policy gate)          |
-| `rundown stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
+| `rundown stash --claim-id <claim_id>`                      | Bearer-authorized stash of a claimed runbook, preserving the claim record         |
 | `rundown pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
 | `rundown stop --claim-id <claim_id>`                       | Bearer-authorized stop of a claimed run                                           |
 | `rundown complete --claim-id <claim_id>`                   | Bearer-authorized completion of a claimed run                                     |
