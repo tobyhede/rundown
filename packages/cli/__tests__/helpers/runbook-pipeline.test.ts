@@ -42,6 +42,7 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 import { partitionVariablesForTest } from './mock-partition-variables.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { committed } from './session-mutation-fixtures.js';
 import {
   brandDelegationTokenHashForTest,
   brandFrameKeyForTest,
@@ -102,37 +103,40 @@ function claimedRunbookResult(
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
     async (childRunId: RunId, linkage: DelegationLinkage) =>
-      claimedRunbookResult(childRunId, {
-        delegation: {
-          childRunId,
-          tokenHash: linkage.tokenHash,
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          parentStep: linkage.parentStep,
-          parentFrameKey: linkage.parentFrameKey,
-          parentEntry: linkage.parentEntry,
-        },
-      }),
+      committed(
+        claimedRunbookResult(childRunId, {
+          delegation: {
+            childRunId,
+            tokenHash: linkage.tokenHash,
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            parentStep: linkage.parentStep,
+            parentFrameKey: linkage.parentFrameKey,
+            parentEntry: linkage.parentEntry,
+          },
+        }),
+      ),
   );
 }
 
 function mockClaimRunbookAlreadyClaimed(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
-    async (childRunId: RunId, linkage: DelegationLinkage) => ({
-      status: 'already-claimed',
-      childRunId,
-      claim: claimRecord(childRunId, {
-        delegation: {
-          childRunId,
-          tokenHash: linkage.tokenHash,
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          parentStep: linkage.parentStep,
-          parentFrameKey: linkage.parentFrameKey,
-          parentEntry: linkage.parentEntry,
-        },
+    async (childRunId: RunId, linkage: DelegationLinkage) =>
+      committed({
+        status: 'already-claimed',
+        childRunId,
+        claim: claimRecord(childRunId, {
+          delegation: {
+            childRunId,
+            tokenHash: linkage.tokenHash,
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            parentStep: linkage.parentStep,
+            parentFrameKey: linkage.parentFrameKey,
+            parentEntry: linkage.parentEntry,
+          },
+        }),
       }),
-    }),
   );
 }
 
@@ -2011,10 +2015,7 @@ describe('startRunbook', () => {
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
     const mockPushRunbookWithRunControlClaim = mockFn<
       SessionService['pushRunbookWithRunControlClaim']
-    >().mockResolvedValue({
-      claimId: TEST_CLAIM_ID,
-      claim: claimRecord(MOCK_RUN_ID),
-    });
+    >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }));
     const mockEnsureActiveEntry = mockFn<
       ExecutionLifecycleService['ensureActiveEntry']
     >().mockResolvedValue({
@@ -2096,7 +2097,7 @@ describe('startRunbook', () => {
     const createdState = makeState(runId) as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
       SessionService['pushRunbookWithRunControlClaim']
-    >().mockResolvedValue({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) });
+    >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       manager: {
@@ -2130,9 +2131,10 @@ describe('startRunbook', () => {
     const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toBe('launch-failed');
+    if (!result.ok && result.reason === 'launch-failed') {
       expect(result.error).toContain('Failed to initialize runbook engine');
+    } else {
+      throw new Error(`expected a launch-failed result, got ${JSON.stringify(result)}`);
     }
     expect(mockPushWithClaim).not.toHaveBeenCalled();
     // The created run is cleaned up so no orphaned state lingers.
@@ -2152,13 +2154,15 @@ describe('startRunbook', () => {
     } as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
       SessionService['pushRunbookWithRunControlClaim']
-    >().mockResolvedValue({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) });
-    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
-      status: 'released',
-      runbookId: runId,
-      removedFromDefaultStack: true,
-      nextDefaultRunbookId: null,
-    });
+    >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
+    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId: runId,
+        removedFromDefaultStack: true,
+        nextDefaultRunbookId: null,
+      }),
+    );
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       sessionService: {
@@ -2248,10 +2252,12 @@ describe('startRunbook', () => {
       sessionService: {
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
-        >().mockResolvedValue({
-          claimId: TEST_CLAIM_ID,
-          claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
-        }),
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
@@ -2310,10 +2316,12 @@ describe('startRunbook', () => {
       sessionService: {
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
-        >().mockResolvedValue({
-          claimId: TEST_CLAIM_ID,
-          claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
-        }),
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
@@ -2387,10 +2395,12 @@ describe('startRunbook', () => {
       sessionService: {
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
-        >().mockResolvedValue({
-          claimId: TEST_CLAIM_ID,
-          claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
-        }),
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
@@ -2990,20 +3000,22 @@ describe('claimAndLaunch', () => {
 
     installHappyDelegationLockMock();
 
-    const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'linkage-mismatch',
-      childRunId: ORPHAN_RUN_ID,
-      persisted: orphanLinkage,
-      incoming: {
-        kind: 'delegation',
-        parentRunId: DIFFERENT_PARENT_RUN_ID,
-        parentStepId: '1',
-        parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1'),
-        parentEntry: 1,
-        tokenHash,
-      },
-    });
+    const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'linkage-mismatch',
+        childRunId: ORPHAN_RUN_ID,
+        persisted: orphanLinkage,
+        incoming: {
+          kind: 'delegation',
+          parentRunId: DIFFERENT_PARENT_RUN_ID,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: brandFrameKeyForTest('1'),
+          parentEntry: 1,
+          tokenHash,
+        },
+      }),
+    );
     const mockSessionService = {
       claimRunbook: claimSpy,
     } as unknown as SessionService;

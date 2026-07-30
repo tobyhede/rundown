@@ -27,6 +27,7 @@ import { RunbookStateManager } from '../runbook/state.js';
 import { SessionService } from '../runbook/session-service.js';
 import { assertRunId, type RunId } from '../runbook/run-id.js';
 import type { ClaimId } from '../runbook/claim-id.js';
+import type { SessionMutationResult } from '../runbook/storage/runbook-store.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ParentLinkage, RunbookState } from '../runbook/types.js';
 import type { VariableValue } from '../runbook/effective-vars.js';
@@ -191,8 +192,29 @@ export async function seedActiveRun(
     return seeded;
   }
 
-  const { claimId } = await sessions.pushRunbookWithRunControlClaim(seeded.runId);
+  const { claimId } = unwrapSessionMutation(
+    await sessions.pushRunbookWithRunControlClaim(seeded.runId),
+  );
   return { ...seeded, claimId };
+}
+
+/**
+ * Unwrap a session mutation a fixture requires to have committed.
+ *
+ * Seeding runs before any execution owns them, so an ownership refusal here is a
+ * broken fixture, not a condition under test. Throwing keeps the failure at the
+ * seeding line instead of surfacing as an unexplained assertion failure later.
+ *
+ * @template T - Domain value carried by the committed arm.
+ * @param result - Session mutation result to narrow.
+ * @returns The committed domain value.
+ * @throws {Error} When the mutation was refused for execution ownership.
+ */
+export function unwrapSessionMutation<T>(result: SessionMutationResult<T>): T {
+  if (result.kind !== 'committed') {
+    throw new Error(`Unexpected ${result.kind} for ${result.runId}: ${result.message}`);
+  }
+  return result.value;
 }
 
 /**
@@ -214,7 +236,7 @@ export async function seedStashedRun(
 ): Promise<SeededRun> {
   const seeded = await seedActiveRun(cwd, options);
   const sessions = new SessionService(new RunbookStateManager(cwd));
-  const stashed = await sessions.stashRunbook(seeded.runId);
+  const stashed = unwrapSessionMutation(await sessions.stashRunbook(seeded.runId));
   if (stashed === null) {
     throw new Error(`seedStashedRun: stash slot unavailable for ${seeded.runId}`);
   }
@@ -230,7 +252,7 @@ export async function seedStashedRun(
  */
 export async function issueRunControlClaimFor(cwd: string, runId: RunId): Promise<ClaimId> {
   const sessions = new SessionService(new RunbookStateManager(cwd));
-  const { claimId } = await sessions.issueRunControlClaim(runId);
+  const { claimId } = unwrapSessionMutation(await sessions.issueRunControlClaim(runId));
   return claimId;
 }
 

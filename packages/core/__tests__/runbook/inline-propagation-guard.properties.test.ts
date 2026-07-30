@@ -197,7 +197,18 @@ async function walk(
     sessionService: {
       releaseRunbook: async (runbookId: RunId) => {
         released.push(runbookId);
-        return {} as never;
+        // The committed arm specifically: the seam narrows the release result
+        // exhaustively, so an untyped stub would fall through its `never` guard
+        // and become the propagation result.
+        return {
+          kind: 'committed',
+          value: {
+            status: 'released',
+            runbookId,
+            removedFromDefaultStack: true,
+            nextDefaultRunbookId: null,
+          },
+        } as const;
       },
     },
     completionService: {

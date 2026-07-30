@@ -41,6 +41,7 @@ import {
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
 } from './refusal-renderers.js';
+import { renderSessionMutationRefusal } from './session-mutation-result.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
@@ -495,6 +496,9 @@ function renderRefusal(
     case 'unknown_run':
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;
+    case 'execution_in_progress':
+    case 'recovery_required':
+      return renderSessionMutationRefusal(output, outcome);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

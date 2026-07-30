@@ -14,6 +14,7 @@ import {
   InvalidRunbookStateError,
   LegacySnapshotError,
   isError,
+  type SessionMutationRefusalOutcome,
 } from '@rundown-org/core';
 
 /**
@@ -54,11 +55,14 @@ export function isRecoverableActiveStackError(error: Error): boolean {
  * - `empty-stack` — nothing to clean; the default stack is empty.
  * - `healthy-top` — the top entry loads cleanly; it is NOT the orphan and
  *   nothing was deleted. Callers must surface their original error instead.
+ * - {@link SessionMutationRefusalOutcome} — the release was refused because the
+ *   run is execution-owned or awaiting recovery; nothing was removed.
  */
 export type OrphanCleanupResult =
   | { readonly kind: 'removed'; readonly runId: RunId }
   | { readonly kind: 'empty-stack' }
-  | { readonly kind: 'healthy-top'; readonly runId: RunId };
+  | { readonly kind: 'healthy-top'; readonly runId: RunId }
+  | SessionMutationRefusalOutcome;
 
 /**
  * Remove the top default-stack entry only after verifying it is unusable (#518).
@@ -102,7 +106,10 @@ export async function cleanupOrphanedActiveStack(
     return { kind: 'healthy-top', runId: topId };
   }
 
+  // Release BEFORE deleting so an ownership refusal leaves the orphan intact
+  // rather than deleting its state and then failing to remove it from targeting.
+  const released = await sessionService.releaseRunbook(topId);
+  if (released.kind !== 'committed') return released;
   await manager.delete(topId);
-  await sessionService.releaseRunbook(topId);
   return { kind: 'removed', runId: topId };
 }

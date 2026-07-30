@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertRunId, RunbookStateManager, SessionService } from '@rundown-org/core';
 import type { RunId } from '@rundown-org/core';
+import { unwrapSessionMutation } from '@rundown-org/core/testing/session-fixtures';
 import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -303,6 +304,6 @@ export async function withActiveRunClaim(args: readonly string[], cwd: string): 
   const sessionService = new SessionService(manager);
   const state = await sessionService.getActive();
   if (!state) throw new Error('withActiveRunClaim: no active run to target');
-  const { claimId } = await sessionService.issueRunControlClaim(state.id);
+  const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
   return [...args, '--claim-id', claimId];
 }

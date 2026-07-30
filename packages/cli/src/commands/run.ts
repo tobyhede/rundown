@@ -57,6 +57,7 @@ import {
   propagationRequiresFailureExit,
 } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 
 /**
@@ -249,7 +250,11 @@ export function registerRunCommand(program: Command): void {
             });
 
             if (!result.ok) {
-              output.error(result.error, result.code, result.details);
+              if (result.reason === 'session-refused') {
+                renderSessionMutationRefusal(output, result.refusal);
+              } else {
+                output.error(result.error, result.code, result.details);
+              }
               output.flush();
               process.exit(1);
             }

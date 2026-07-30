@@ -11,6 +11,7 @@ import { closeRunbookStores } from '../../src/runbook/storage/store-registry.js'
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import type { RunId, Runbook, Step, DelegationLinkage } from '../../src/runbook/types.js';
+import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { linkageFor, seedLiveDelegation, assertClaimed } from './claim-test-helpers.js';
 import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js';
@@ -392,7 +393,9 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // survives against a whole cohort, not a single racer.
     const seenRunId = await newRun();
     const pushRunIds = await Promise.all([newRun(), newRun(), newRun()]);
-    const { claimId, claim } = await sessionService.issueRunControlClaim(seenRunId);
+    const { claimId, claim } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(seenRunId),
+    );
     const before = claim.lastSeenAt;
 
     const results = await race([
@@ -471,7 +474,9 @@ describe('cross-process session write contention (transaction replaces SessionLo
     await waitForFile(callbackReadyFile, parked.child);
 
     // Commit the claim from this process/SQLite connection while the worker waits.
-    const claimed = assertClaimed(await sessionService.claimRunbook(childRunId, linkage));
+    const claimed = assertClaimed(
+      unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage)),
+    );
     expect((await sessionService.verifyClaimId(assertClaimId(claimed.claimId))).status).toBe(
       'verified',
     );

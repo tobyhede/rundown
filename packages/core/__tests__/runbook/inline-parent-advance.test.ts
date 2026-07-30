@@ -15,7 +15,9 @@ import {
   type DelegationLinkage,
   type InlineLinkage,
   type ReleaseRunbookResult,
+  type SessionMutationResult,
 } from '../../src/runbook/index.js';
+import type { ExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
@@ -71,6 +73,29 @@ const NEVER_ADVANCE: AdvanceInlineParent = () => {
   throw new Error('advanceInlineParent must not be called on this path');
 };
 
+/**
+ * A committed release whose value describes the run that was actually released.
+ *
+ * Deriving the value from the argument keeps the fixture honest. `{} as
+ * ReleaseRunbookResult` satisfies the compiler while describing a state the
+ * union forbids — no `status`, no `runbookId` — so the moment production reads
+ * `release.value` it would see `undefined` and these tests would still pass.
+ *
+ * @param runbookId - Run the seam asked to release.
+ * @returns A committed result carrying a complete `released` value.
+ */
+function committedRelease(runbookId: RunId): SessionMutationResult<ReleaseRunbookResult> {
+  return {
+    kind: 'committed',
+    value: {
+      status: 'released',
+      runbookId,
+      removedFromDefaultStack: true,
+      nextDefaultRunbookId: null,
+    },
+  };
+}
+
 function makeDeps(
   overrides: Partial<PropagateTerminalChildUpwardDeps> = {},
 ): PropagateTerminalChildUpwardDeps {
@@ -84,9 +109,9 @@ function makeDeps(
           (
             id: RunId,
             o?: { readonly retainClaimsAsTerminal?: boolean },
-          ) => Promise<ReleaseRunbookResult>
+          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
         >()
-        .mockResolvedValue({} as ReleaseRunbookResult),
+        .mockImplementation(async (id) => committedRelease(id)),
     },
     completionService: {
       recordChildCompletion: jest
@@ -258,9 +283,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockImplementation(async (id) => committedRelease(id));
     const result = await propagateTerminalChildUpward(
       makeDeps({ advanceInlineParent, sessionService: { releaseRunbook } }),
       child,
@@ -288,9 +313,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockImplementation(async (id) => committedRelease(id));
     const result = await propagateTerminalChildUpward(
       makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
       child,
@@ -301,6 +326,51 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     // so a bare second release never destroys it. See RD-598 verification.
     expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
   });
+
+  it.each([
+    ['execution_in_progress' as const, 'is being executed by another process'],
+    ['recovery_required' as const, 'ended execution with an unknown outcome'],
+  ])(
+    'a %s release refusal does not abort the committed upward propagation',
+    async (kind, message) => {
+      // The terminal transition is already committed by the time the seam
+      // releases; the release is cleanup. A refusal must therefore be
+      // best-effort — swallowed exactly like the rejection path below it
+      // (RD-102) — and must not downgrade the propagation result. Nothing
+      // pinned this before: the exhaustive switch in inline-parent-advance.ts
+      // breaks on both refusal arms, so deleting either arm from the switch is
+      // invisible to every other test in this file.
+      const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+      const parent = makeState(PARENT, { lifecycle: 'stopped', parentLinkage: undefined });
+      const advanceInlineParent = jest
+        .fn<AdvanceInlineParent>()
+        .mockResolvedValue({ status: 'stopped' });
+      const load = jest
+        .fn<(id: string) => Promise<RunbookState | null>>()
+        .mockResolvedValue(parent);
+      const releaseRunbook = jest
+        .fn<
+          (
+            id: RunId,
+            o?: { readonly retainClaimsAsTerminal?: boolean },
+          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+        >()
+        .mockImplementation(async (id) =>
+          kind === 'execution_in_progress'
+            ? { kind, runId: id, message }
+            : { kind, runId: id, epoch: 7 as ExecutionEpoch, message },
+        );
+
+      const result = await propagateTerminalChildUpward(
+        makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+        child,
+        'fail',
+      );
+
+      expect(result).toEqual({ kind: 'stopped' });
+      expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
+    },
+  );
 
   it('done advance with a linkage-free parent returns handled', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
@@ -329,7 +399,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
       .mockRejectedValue(new Error('release boom'));
     const result = await propagateTerminalChildUpward(
@@ -549,9 +619,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockImplementation(async (id) => committedRelease(id));
     const result = await propagateTerminalChildUpward(
       makeDeps({
         advanceInlineParent,
@@ -585,9 +655,9 @@ describe('propagateTerminalChildUpward — inline arm', () => {
         (
           id: RunId,
           o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<ReleaseRunbookResult>
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
       >()
-      .mockResolvedValue({} as ReleaseRunbookResult);
+      .mockImplementation(async (id) => committedRelease(id));
     const result = await propagateTerminalChildUpward(
       makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
       child,

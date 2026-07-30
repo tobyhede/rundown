@@ -1171,6 +1171,63 @@ Code: CLAIM_BEARER_MISMATCH
 }
 ```
 
+### Execution in progress
+
+The command needed to change session targeting (the default stack, the stash
+slot, or a claim) for a run another process is currently executing. Execution
+ownership is exclusive, so the mutation is refused rather than applied under the
+owner — a refusal, not a failure: nothing was written, and the command is safe
+to retry once the owner finishes.
+
+The envelope names the blocked run inside the message. There is no top-level
+`runbookId` field on an error envelope, and the owning process is deliberately
+not identified.
+
+**Text:**
+
+```text
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd has an execution in progress.
+Code: EXECUTION_IN_PROGRESS
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd has an execution in progress.",
+  "code": "EXECUTION_IN_PROGRESS",
+  "command": "pass"
+}
+```
+
+### Recovery required
+
+The command needed to change session targeting for a run whose last execution
+attempt ended without recording an outcome, so whether its effect ran is
+unknown. Distinct from `EXECUTION_IN_PROGRESS`: no process holds the run —
+waiting will not clear it. Recovery must resolve the interrupted attempt first.
+
+The message names the run and the recovery epoch of the unresolved attempt.
+
+**Text:**
+
+```text
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.
+Code: RECOVERY_REQUIRED
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.",
+  "code": "RECOVERY_REQUIRED",
+  "command": "pass"
+}
+```
+
 ### Run target unavailable
 
 The `--run` id supplied is not a running member of this session's active stack.

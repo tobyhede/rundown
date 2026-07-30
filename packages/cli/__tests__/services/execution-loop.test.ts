@@ -1,7 +1,23 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
+import type {
+  ExecutionEventEmitter,
+  ReleaseRunbookResult,
+  RunbookStateManager,
+  RunId,
+  SessionMutationResult,
+} from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
+import type { ExecutionTerminalReleaseMode } from '../../src/services/execution.js';
 import { mockFn } from '../helpers/typed-mocks.js';
+import { committed } from '../helpers/session-mutation-fixtures.js';
+
+// The recovery-required refusal arm, so a fixture epoch carries core's brand
+// without core having to export it. Reaching it through the union also means a
+// change to the arm surfaces here rather than in a cast that keeps compiling.
+type RecoveryRefusal = Extract<
+  SessionMutationResult<ReleaseRunbookResult>,
+  { readonly kind: 'recovery_required' }
+>;
 
 // Permissive runbook-state shape used by lifecycle / actor mocks. The real
 // runtime types include branded fields whose constructors are tied to the
@@ -30,8 +46,14 @@ const mockActorService = {
 const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
   pushRunbook: mockFn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
-  popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
-  releaseRunbook: mockFn<(id: string) => Promise<void>>() as any,
+  popRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue(committed(null)),
+  releaseRunbook:
+    mockFn<
+      (
+        id: RunId,
+        options?: { readonly retainClaimsAsTerminal?: boolean },
+      ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+    >(),
 };
 
 const ensureActiveEntryFn =
@@ -400,7 +422,16 @@ describe('runExecutionLoop', () => {
     mockSessionService.pushRunbook.mockReset();
     mockSessionService.pushRunbook.mockResolvedValue(undefined);
     mockSessionService.releaseRunbook.mockReset();
-    mockSessionService.releaseRunbook.mockResolvedValue(undefined);
+    mockSessionService.releaseRunbook.mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId,
+        removedFromDefaultStack: true,
+        nextDefaultRunbookId: null,
+      }),
+    );
+    mockSessionService.popRunbook.mockReset();
+    mockSessionService.popRunbook.mockResolvedValue(committed(null));
 
     // Default evaluate behavior. ConditionResult requires `action`; the test
     // bodies only check the `message` field so we cast through `unknown` to
@@ -1155,6 +1186,341 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
+  describe('terminal release refused for execution ownership (#608)', () => {
+    /**
+     * Every RUNBOOK_STOPPED the emitter received this test.
+     *
+     * `toHaveBeenCalledWith` passes when ANY call matches, so it cannot tell a
+     * single correct stop from one accompanied by a spurious second. These
+     * paths differ precisely in how many stops they emit.
+     *
+     * @returns The stopped events, in emission order.
+     */
+    function stoppedEmissions(): { type: string }[] {
+      return mockEmitter.emit.mock.calls
+        .map(([event]) => event as { type: string })
+        .filter((event) => event.type === 'RUNBOOK_STOPPED');
+    }
+
+    /** Drive the loop to a COMPLETE terminal so the release is the only variable. */
+    function seedCompletingRun(): void {
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'done',
+          variables: {},
+          runbookPath: '/tmp/test.md',
+        },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
+        },
+        effects: [commandCompletedEffect('pass')],
+      });
+    }
+
+    it.each([
+      {
+        label: 'execution_in_progress',
+        refusal: {
+          kind: 'execution_in_progress' as const,
+          runId: runbookId,
+          message: `Run ${runbookId} has an execution in progress.`,
+        },
+        code: 'EXECUTION_IN_PROGRESS',
+      },
+      {
+        label: 'recovery_required',
+        refusal: {
+          kind: 'recovery_required' as const,
+          runId: runbookId,
+          epoch: 4 as RecoveryRefusal['epoch'],
+          message: `Run ${runbookId} ended execution with an unknown outcome at epoch 4; run recovery before continuing.`,
+        },
+        code: 'RECOVERY_REQUIRED',
+      },
+    ])('reports $label and returns stopped instead of done', async ({ refusal, code }) => {
+      // The run completed, but the release the loop owed did not commit. Returning
+      // 'done' would report a clean finish for a run still on the session stack,
+      // so the loop downgrades to 'stopped' and emits the refusal under its
+      // registered symbolic code.
+      seedCompletingRun();
+      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code },
+      });
+    });
+
+    it('reports a refused stack pop and downgrades an already-completed run', async () => {
+      // The stack-pop disposition of the same release. The run is already
+      // terminal at loop entry, so the pop is the loop's only session write —
+      // and a refused pop must not report `done`.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'done',
+            value: 'COMPLETE',
+            context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+          },
+        }),
+      );
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.popRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+      });
+      // The stream must not claim the run completed: the release it owed was
+      // refused, so the run is still on the session stack. A consumer reading
+      // only the events would otherwise see a clean completion.
+      expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_COMPLETED' }),
+      );
+      // The stop names where the run halted rather than being a bare marker,
+      // and it is the ONLY one: this path suppresses the completion rather than
+      // correcting it, so the helper must not add a second stop on top.
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: { current: '2', total: 2 } },
+      });
+      expect(stoppedEmissions()).toHaveLength(1);
+    });
+
+    it('emits a refusal-bearing stop when the command path release is refused', async () => {
+      // In 'release-runbook' mode the transition policy does not release, so
+      // orchestrateTransition announces RUNBOOK_COMPLETED and the loop releases
+      // afterwards. That completion cannot be unsent, so a refusal has to leave
+      // a stop behind it — otherwise the stream ends on a clean completion for a
+      // run still held on the session stack.
+      seedCompletingRun();
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'release-runbook' },
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+      });
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: { current: '1', total: 2 }, message: refusal.message },
+      });
+    });
+
+    it('returns done and emits no stop when the command path release commits', async () => {
+      // The committing half of the command path. Without it nothing pins that
+      // this site reports `done`: the refusal tests return `stopped` whatever
+      // the committed outcome would have been.
+      seedCompletingRun();
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'release-runbook' },
+      );
+
+      expect(result).toBe('done');
+      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+        retainClaimsAsTerminal: true,
+      });
+      expect(stoppedEmissions()).toHaveLength(0);
+    });
+
+    it.each([
+      { label: 'commits', refuse: false, expected: 'done', stops: 0 },
+      { label: 'is refused', refuse: true, expected: 'stopped', stops: 1 },
+    ])(
+      'drives the drain terminal through the release when it $label',
+      async ({ refuse, expected, stops }) => {
+        // The drain reaches its own terminal release site, distinct from the
+        // command path. It was uncovered in `release-runbook` mode entirely.
+        mockManager.load.mockResolvedValue(makeLoopState());
+        mockCompletionService.drainResolvedCompletions.mockResolvedValue({
+          status: 'done',
+          applied: [],
+          unresolved: 0,
+        });
+        if (refuse) {
+          mockSessionService.releaseRunbook.mockResolvedValue({
+            kind: 'execution_in_progress' as const,
+            runId: runbookId,
+            message: `Run ${runbookId} has an execution in progress.`,
+          });
+        }
+
+        const result = await runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          false,
+          asEmitter(mockEmitter),
+          { terminalReleaseMode: 'release-runbook' },
+        );
+
+        expect(result).toBe(expected);
+        expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+          retainClaimsAsTerminal: true,
+        });
+        expect(stoppedEmissions()).toHaveLength(stops);
+      },
+    );
+
+    it('does not fabricate a corrective stop when the refused terminal was already stopped', async () => {
+      // The correction exists only to contradict a completion that was already
+      // announced. A terminal that stopped emitted its own stop, so adding a
+      // second one would double-report the same halt.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'done',
+            value: 'STOPPED',
+            context: { lastAction: { type: 'STOP', origin: 'direct' } },
+          },
+        }),
+      );
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.popRunbook.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+      });
+      expect(stoppedEmissions()).toHaveLength(1);
+    });
+
+    it('announces completion from state when the snapshot is not recognizably terminal', async () => {
+      // A completed run whose snapshot does not read as terminal takes the
+      // fallback: the completion payload is derived from the run state rather
+      // than from a transition observation. Both branches announce completion,
+      // so only the payload distinguishes them.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'active',
+            value: { 'step::2': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' }, lastMessage: 'Wrapped' },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('done');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_COMPLETED',
+        payload: { message: 'Wrapped', finalPosition: { current: '2', total: 2 } },
+      });
+    });
+
+    it('emits the completion and returns done when the pre-loop release commits', async () => {
+      // The committed half of the same branch. Without it, forcing the refusal
+      // path always-on would still pass: nothing else drives an already-terminal
+      // run through this branch with a release that succeeds.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'done',
+            value: 'COMPLETE',
+            context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('done');
+      expect(mockEmitter.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_COMPLETED' }),
+      );
+      expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_STOPPED' }),
+      );
+    });
+  });
+
   describe("terminalReleaseMode 'defer-to-caller' (#598)", () => {
     it('drives a run to done without releasing — caller owns release', async () => {
       // Mirror the "completes the runbook" fixture: an in-loop command drive to
@@ -1223,6 +1589,78 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('stopped');
       expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
       expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    });
+
+    it("'release-runbook' releases the run and retains the claim as a terminal tombstone", async () => {
+      // No test drove this mode through runExecutionLoop before: the suite's
+      // other retainClaimsAsTerminal assertion is satisfied by a release from a
+      // different module, and the loop's default mode is 'stack-pop'. That left
+      // the flag unpinned here — a mutant flipping it to `false` survived, even
+      // though the disposition is load-bearing: retaining the tombstone is what
+      // lets a later `--claim-id` confirm-or-conflict resolve `terminal` rather
+      // than `missing` (RD-598).
+      mockManager.load.mockResolvedValue(
+        makeLoopState('1', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'release-runbook' },
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+        retainClaimsAsTerminal: true,
+      });
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unrecognized release mode instead of falling through to a stack pop', async () => {
+      // The mode dispatch must not treat "not release-runbook" as "stack-pop":
+      // a future ExecutionTerminalReleaseMode added to the union would then
+      // silently pop the default stack, releasing a run its owner still holds.
+      // The `never` check makes the compiler the primary gate; this pins the
+      // runtime half, which is what a cast at a call site would slip past.
+      // Pre-loaded stopped state, mirroring the sibling test: that path reaches
+      // applyExecutionTerminalRelease unconditionally, whereas the in-loop
+      // transition sites guard the call on the mode and would never reach it.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('1', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      await expect(
+        runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          false,
+          asEmitter(mockEmitter),
+          { terminalReleaseMode: 'future-mode' as ExecutionTerminalReleaseMode },
+        ),
+      ).rejects.toThrow(/future-mode/);
+
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
     });
   });
 

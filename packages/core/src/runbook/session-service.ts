@@ -11,11 +11,13 @@
  */
 
 import type { RunbookStateManager, SessionData } from './state.js';
-import type { RunId } from './run-id.js';
+import { isRunId, type RunId } from './run-id.js';
 import {
   parentAdvanceGuard,
   isOpenDelegatedChildrenError,
   type ParentAdvanceGuard,
+  type SessionMutationRefusal,
+  type SessionMutationResult,
   type SessionMutationTxn,
 } from './storage/runbook-store.js';
 import type { SyncWork } from './storage/sql-driver.js';
@@ -188,6 +190,17 @@ export type UnstashForClaimIdResult =
     };
 
 /**
+ * Command-facing spelling of a session ownership refusal.
+ *
+ * An alias, not a translation: the storage refusal arms already discriminate on
+ * `kind` with the wire-facing spellings, so a command outcome union admits them
+ * directly. Naming the alias keeps the seam legible where command outcomes carry
+ * it (`LifecycleTerminalOutcome` and its siblings) without inviting a second
+ * declaration of the same two arms that could drift from it.
+ */
+export type SessionMutationRefusalOutcome = SessionMutationRefusal;
+
+/**
  * True when persisted child linkage matches an incoming delegation linkage on the
  * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
  *
@@ -209,6 +222,22 @@ function linkageMatchesLinkage(
     persisted.parentStepId === incoming.parentStepId &&
     persisted.tokenHash === incoming.tokenHash
   );
+}
+
+/**
+ * The affected-run selector for a mutation that acts on whatever is on top.
+ *
+ * `popRunbook` and `stash` name their target only by position, so the run whose
+ * ownership must be checked is not knowable until the guarded transaction has
+ * read the session. An empty stack selects nothing: those mutations then return
+ * their domain `null` without a refusal to make.
+ *
+ * @param session - Session snapshot read at the start of the guarded transaction.
+ * @returns The top-of-stack run id, or an empty list when the stack is empty.
+ */
+function topOfStack(session: SessionData): readonly RunId[] {
+  const topId = session.defaultStack[session.defaultStack.length - 1];
+  return topId ? [topId] : [];
 }
 
 function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
@@ -282,6 +311,27 @@ export class SessionService {
    */
   private mutate<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
     return this.manager.mutateSession(work);
+  }
+
+  /**
+   * {@link mutate} for a mutation that can touch a run under execution.
+   *
+   * Every session write that a `claims_guard_*` or `stash_guard_*` trigger can
+   * abort goes through here, so the refusal reaches the caller as a typed arm
+   * instead of an opaque `Error` or a domain `null`.
+   *
+   * @template T - Value the mutation returns.
+   * @param runIds - Affected runs in deterministic refusal order, or a selector
+   *   reading them off the session snapshot inside the transaction (used where
+   *   the affected run is only identifiable from the session itself).
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The committed value, or the first ownership refusal.
+   */
+  private mutateGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): Promise<SessionMutationResult<T>> {
+    return this.manager.mutateSessionGuarded(runIds, work);
   }
 
   /**
@@ -429,11 +479,13 @@ export class SessionService {
    *
    * @param runId - Run id controlled by the issued claim.
    * @returns Public bearer claim id and the persisted proof-backed record.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async issueRunControlClaim(
     runId: RunId,
-  ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
-    return this.mutate((ctx) => this.mintRunControlClaim(ctx.session, runId));
+  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+    return this.mutateGuarded([runId], (ctx) => this.mintRunControlClaim(ctx.session, runId));
   }
 
   /**
@@ -447,11 +499,13 @@ export class SessionService {
    *
    * @param id - The runbook state ID to push and control.
    * @returns Public bearer claim id and the persisted proof-backed record.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async pushRunbookWithRunControlClaim(
     id: RunId,
-  ): Promise<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }> {
-    return this.mutate((ctx) => {
+  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+    return this.mutateGuarded([id], (ctx) => {
       ctx.session.defaultStack.push(id);
       return this.mintRunControlClaim(ctx.session, id);
     });
@@ -702,9 +756,14 @@ export class SessionService {
    *   this from freshly token-validated parent state.
    * @returns A claim record on success, or a failure variant when the child is
    *   missing, terminal, or its persisted linkage diverges from `linkage`.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
-    return this.mutate((ctx): ClaimRunbookResult => {
+  async claimRunbook(
+    childRunId: RunId,
+    linkage: DelegationLinkage,
+  ): Promise<SessionMutationResult<ClaimRunbookResult>> {
+    return this.mutateGuarded([childRunId], (ctx): ClaimRunbookResult => {
       const { session } = ctx;
       const now = this.now();
 
@@ -1153,9 +1212,13 @@ export class SessionService {
    *
    * @param runbookIds - Run ids to release, in descendant-to-root order.
    * @returns The released run ids and the next default-stack runbook id, if any.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async releaseRunbooks(runbookIds: readonly RunId[]): Promise<ReleaseRunbooksResult> {
-    return this.mutate((ctx) => {
+  async releaseRunbooks(
+    runbookIds: readonly RunId[],
+  ): Promise<SessionMutationResult<ReleaseRunbooksResult>> {
+    return this.mutateGuarded(runbookIds, (ctx) => {
       const releasedRunIds: RunId[] = [];
       for (const runbookId of runbookIds) {
         const released = this.releaseFromSession(ctx.session, runbookId);
@@ -1198,12 +1261,16 @@ export class SessionService {
    *   `terminal` rather than `missing`) instead of deleting them. Used by the
    *   natural-completion terminal-release path; explicit teardown deletes.
    * @returns Structured release result
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async releaseRunbook(
     runbookId: RunId,
     options: { readonly retainClaimsAsTerminal?: boolean } = {},
-  ): Promise<ReleaseRunbookResult> {
-    return this.mutate((ctx) => this.releaseFromSession(ctx.session, runbookId, options));
+  ): Promise<SessionMutationResult<ReleaseRunbookResult>> {
+    return this.mutateGuarded([runbookId], (ctx) =>
+      this.releaseFromSession(ctx.session, runbookId, options),
+    );
   }
 
   /**
@@ -1214,9 +1281,15 @@ export class SessionService {
    *
    * @param childRunIds - Child run ids being pruned.
    * @returns The claim lookup keys that were removed.
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimLookupKey[]> {
-    return this.mutate((ctx) => {
+  async pruneClaimsForChildren(
+    childRunIds: readonly string[],
+  ): Promise<SessionMutationResult<ClaimLookupKey[]>> {
+    // Only parseable run ids can name a run that could be under execution; the
+    // rest are unparseable state-file names whose claims are pure tombstone GC.
+    return this.mutateGuarded(childRunIds.filter(isRunId), (ctx) => {
       const targets = new Set<string>(childRunIds);
       const removed: ClaimLookupKey[] = [];
       for (const [claimKey, claim] of Object.entries(ctx.session.claims)) {
@@ -1297,9 +1370,11 @@ export class SessionService {
    * and returns the new top (parent runbook) ID if one exists.
    *
    * @returns The new active runbook ID (parent), or null if the stack is empty
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async popRunbook(): Promise<RunId | null> {
-    return this.mutate((ctx) => {
+  async popRunbook(): Promise<SessionMutationResult<RunId | null>> {
+    return this.mutateGuarded(topOfStack, (ctx) => {
       const { defaultStack } = ctx.session;
       const topId = defaultStack[defaultStack.length - 1];
       if (!topId) return null;
@@ -1315,9 +1390,11 @@ export class SessionService {
    * in the session's stashed slot. Only one runbook can be stashed at a time.
    *
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async stash(): Promise<RunId | null> {
-    return this.mutate((ctx) => {
+  async stash(): Promise<SessionMutationResult<RunId | null>> {
+    return this.mutateGuarded(topOfStack, (ctx) => {
       const { session } = ctx;
 
       // Refuse to overwrite an existing stash — caller must unstash first
@@ -1339,9 +1416,11 @@ export class SessionService {
    *
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async stashRunbook(runbookId: RunId): Promise<RunId | null> {
-    return this.mutate((ctx) => {
+  async stashRunbook(runbookId: RunId): Promise<SessionMutationResult<RunId | null>> {
+    return this.mutateGuarded([runbookId], (ctx) => {
       const { session } = ctx;
       if (session.stashedRunbookId) return null;
 
@@ -1365,10 +1444,22 @@ export class SessionService {
    *
    * @param claimId - Claim id for the stashed child runbook
    * @returns Discriminated restore result describing success or the refusal reason
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async unstashForClaimId(claimId: ClaimId): Promise<UnstashForClaimIdResult> {
-    return this.mutate((ctx): UnstashForClaimIdResult => {
-      const parsed = parseClaimBearer(claimId);
+  async unstashForClaimId(
+    claimId: ClaimId,
+  ): Promise<SessionMutationResult<UnstashForClaimIdResult>> {
+    // Hoisted out of the callback so the affected-run selector can read the same
+    // parsed bearer the mutation does; clearing the stash slot is guarded against
+    // the claim's controlled run.
+    const parsed = parseClaimBearer(claimId);
+    const affectedRun = (session: SessionData): readonly RunId[] => {
+      if (!Object.hasOwn(session.claims, parsed.claimKey)) return [];
+      const claim = session.claims[parsed.claimKey];
+      return verifyClaimSecret(parsed.secret, claim.secretHash) ? [claim.controlledRunId] : [];
+    };
+    return this.mutateGuarded(affectedRun, (ctx): UnstashForClaimIdResult => {
       const { session } = ctx;
       if (!Object.hasOwn(session.claims, parsed.claimKey)) {
         // Same split as `getActiveForClaimId`: a bearer the parent-side latch
@@ -1451,33 +1542,38 @@ export class SessionService {
    * stack, making it the active runbook again. Clears the stashed slot.
    *
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
+   *   Refused `execution_in_progress` or `recovery_required` instead when the
+   *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async unstash(): Promise<RunbookState | null> {
-    return this.mutate((ctx) => {
-      const { session } = ctx;
-      const stashedId = session.stashedRunbookId;
+  async unstash(): Promise<SessionMutationResult<RunbookState | null>> {
+    return this.mutateGuarded(
+      (session) => (session.stashedRunbookId ? [session.stashedRunbookId] : []),
+      (ctx) => {
+        const { session } = ctx;
+        const stashedId = session.stashedRunbookId;
 
-      if (!stashedId) return null;
+        if (!stashedId) return null;
 
-      const targetedByDelegatedClaim = Object.values(session.claims).some(
-        (claim) => claim.delegation !== undefined && claim.controlledRunId === stashedId,
-      );
-      if (targetedByDelegatedClaim) {
-        return null;
-      }
+        const targetedByDelegatedClaim = Object.values(session.claims).some(
+          (claim) => claim.delegation !== undefined && claim.controlledRunId === stashedId,
+        );
+        if (targetedByDelegatedClaim) {
+          return null;
+        }
 
-      const state = ctx.readState(stashedId);
-      if (!state) {
+        const state = ctx.readState(stashedId);
+        if (!state) {
+          session.stashedRunbookId = undefined;
+          return null;
+        }
+
+        // Push back to stack
+        session.defaultStack.push(stashedId);
         session.stashedRunbookId = undefined;
-        return null;
-      }
 
-      // Push back to stack
-      session.defaultStack.push(stashedId);
-      session.stashedRunbookId = undefined;
-
-      return state;
-    });
+        return state;
+      },
+    );
   }
 
   /**

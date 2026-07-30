@@ -33,6 +33,7 @@ import {
   collect,
 } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
+import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import {
   withTransitionTargetOptions,
@@ -387,6 +388,11 @@ export function registerDelegateCommand(program: Command): void {
               case 'delegated':
               case 'already-delegated':
                 throw new Error(`Unexpected retry outcome: ${outcome.kind}`);
+              case 'execution_in_progress':
+              case 'recovery_required':
+                renderSessionMutationRefusal(output, outcome);
+                process.exitCode = 1;
+                break;
               default: {
                 const _exhaustive: never = outcome;
                 throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
@@ -523,6 +529,11 @@ export function registerDelegateCommand(program: Command): void {
             case 'retry_target_required':
               // Retry-only outcomes; unreachable on the fresh-issue path.
               throw new Error(`Unexpected fresh delegate outcome: ${outcome.kind}`);
+            case 'execution_in_progress':
+            case 'recovery_required':
+              renderSessionMutationRefusal(output, outcome);
+              process.exitCode = 1;
+              break;
             default: {
               const _exhaustive: never = outcome;
               throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);

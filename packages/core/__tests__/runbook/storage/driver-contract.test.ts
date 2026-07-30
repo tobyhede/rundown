@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { runInNewContext } from 'node:vm';
 import type { SqlJsStatic } from 'sql.js';
-import { getErrorMessage, isNodeError } from '../../../src/errors.js';
+import { getErrorMessage, isError, isNodeError } from '../../../src/errors.js';
 import {
   AsyncTransactionWorkError,
   UnrepresentableIntegerError,
@@ -271,6 +271,43 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     });
     expect(result.changes).toBe(1);
     expect(Number(result.lastInsertRowid)).toBe(1);
+  });
+
+  // RunbookStore.mutateSessionGuarded classifies a rolled-back ownership abort
+  // by EXACT message equality against 'execution_in_progress' — the string the
+  // claims_guard_* / stash_guard_* triggers raise. If either driver ever
+  // decorated the raise text, that equality would silently degrade to a rethrow
+  // and the typed refusal would surface as a crash, so the shape is pinned here
+  // for both adapters rather than assumed.
+  it('surfaces a RAISE(ABORT) message verbatim, with no adapter decoration', async () => {
+    await using driver = await adapter.open();
+    await driver.immediate((tx) => {
+      tx.exec(`
+        CREATE TABLE owned_runs (id TEXT PRIMARY KEY, exec_token TEXT);
+        CREATE TABLE guarded_claims (run_id TEXT NOT NULL);
+        CREATE TRIGGER guarded_claims_insert
+        BEFORE INSERT ON guarded_claims
+        WHEN (SELECT exec_token FROM owned_runs WHERE id = NEW.run_id) IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'execution_in_progress');
+        END;
+      `);
+      tx.prepare('INSERT INTO owned_runs VALUES (:id, :token)').run({
+        id: 'rd_owned',
+        token: 'sha256:live',
+      });
+    });
+
+    const thrown = await failureOf(() =>
+      driver.immediate((tx) => {
+        tx.prepare('INSERT INTO guarded_claims VALUES (:runId)').run({ runId: 'rd_owned' });
+      }),
+    );
+
+    expect(isError(thrown)).toBe(true);
+    if (!isError(thrown)) throw new Error('expected an Error from the ownership trigger');
+    expect(thrown.message).toBe('execution_in_progress');
+    expect(getErrorMessage(thrown)).toBe('execution_in_progress');
   });
 
   it('unwinds a failed read and stays usable afterwards', async () => {

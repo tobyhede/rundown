@@ -7,10 +7,12 @@ import {
   type RunbookState,
   type RunbookStoppedPayload,
   type RunId,
+  type SessionMutationRefusalOutcome,
   type SessionService,
   type ResolvedStep,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
+import { sessionMutationRefusalCode } from './session-mutation-result.js';
 
 /** Side-effect policy applied when a runbook reaches a terminal state. */
 export interface TerminalSideEffectsPolicy {
@@ -108,11 +110,21 @@ export type OrchestrateTransitionResult =
   | { status: 'done'; action: string; from: string; at: string; message?: string }
   | { status: 'stopped'; action: string; from: string; at: string; message?: string };
 
+/**
+ * Apply the transition's terminal release, reporting an ownership refusal.
+ *
+ * @param sessionService - Session service performing the release.
+ * @param policy - Terminal side-effect policy for the reached terminal.
+ * @param runbookId - Run whose session targeting is being released.
+ * @param sink - Transition event sink receiving the refusal event.
+ * @returns The refusal when the release was refused, else null.
+ */
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
   runbookId: RunId,
-): Promise<void> {
+  sink: TransitionEventSink,
+): Promise<SessionMutationRefusalOutcome | null> {
   if (policy.releaseRunbook) {
     // This is the natural pass/fail transition path (explicit teardown —
     // abort/stop/complete — releases claims directly elsewhere). When a claimed
@@ -120,8 +132,18 @@ async function applyTerminalSideEffects(
     // `rd pass/fail --claim-id` can confirm-or-conflict against the outcome.
     // For an unclaimed top-level runbook there is no matching claim, so this is
     // a no-op. Mirrors `applyExecutionTerminalRelease` in execution.ts.
-    await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
+    const released = await sessionService.releaseRunbook(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
+    if (released.kind !== 'committed') {
+      sink.onErrorOccurred?.({
+        message: released.message,
+        code: sessionMutationRefusalCode(released),
+      });
+      return released;
+    }
   }
+  return null;
 }
 
 /**
@@ -151,6 +173,16 @@ export async function orchestrateTransition(
     command: args.command,
   });
 
+  // A refused release means the terminal side effect this transition owed did
+  // not happen, so the transition reports `stopped` rather than a clean `done`.
+  // It has to resolve BEFORE the events are dispatched: `RUNBOOK_COMPLETED` is
+  // in this same observation, and emitting it first would leave the stream
+  // asserting a clean completion that the return value then contradicts.
+  const refusal =
+    observation.status === 'done'
+      ? await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId, sink)
+      : null;
+
   for (const event of observation.events) {
     switch (event.type) {
       case 'ERROR_OCCURRED':
@@ -160,7 +192,15 @@ export async function orchestrateTransition(
         sink.onStepTransitioned(event.payload);
         break;
       case 'RUNBOOK_COMPLETED':
-        sink.onRunbookCompleted(event.payload);
+        // Downgraded in place: the run did not complete cleanly, so the stream
+        // carries the stop it actually reached, with the refusal as its reason.
+        // The two payloads name the same position differently.
+        if (refusal)
+          sink.onRunbookStopped({
+            position: event.payload.finalPosition,
+            message: refusal.message,
+          });
+        else sink.onRunbookCompleted(event.payload);
         break;
       case 'RUNBOOK_STOPPED':
         sink.onRunbookStopped(event.payload);
@@ -173,24 +213,28 @@ export async function orchestrateTransition(
   }
 
   if (observation.status === 'done') {
-    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
     return {
-      status: 'done',
+      status: refusal ? 'stopped' : 'done',
       action: observation.action,
       from: observation.from,
       at: observation.at,
-      message: observation.message,
+      message: refusal ? refusal.message : observation.message,
     };
   }
 
   if (observation.status === 'stopped') {
-    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
+    const refusal = await applyTerminalSideEffects(
+      sessionService,
+      policy.onStopped,
+      runbookId,
+      sink,
+    );
     return {
       status: 'stopped',
       action: observation.action,
       from: observation.from,
       at: observation.at,
-      message: observation.message,
+      message: refusal ? refusal.message : observation.message,
     };
   }
 

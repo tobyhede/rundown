@@ -26,6 +26,7 @@ import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
 } from '../../src/helpers/active-runbook-cleanup.js';
+import { seedExecutionOwnership } from './test-utils.js';
 
 const RUNBOOK: Runbook = {
   title: 'Cleanup Test Runbook',
@@ -121,6 +122,27 @@ describe('cleanupOrphanedActiveStack', () => {
     expect(result).toEqual({ kind: 'removed', runId: run.id });
     const session = await manager.loadSession();
     expect(session.defaultStack).not.toContain(run.id);
+  });
+
+  it('refuses and leaves the orphan intact when the run is under execution (#608)', async () => {
+    // Release runs BEFORE manager.delete precisely so an ownership refusal is
+    // decisive: the verified-unusable orphan is still on the stack and its
+    // state file still exists. Under the old delete-then-release order the
+    // state would already be gone when the release refused.
+    const run = await createRun();
+    await patchPersistedRunState(tmpCwd, run.id, { schemaVersion: 99 });
+    seedExecutionOwnership(tmpCwd, run.id);
+
+    const result = await cleanupOrphanedActiveStack(manager, sessionService);
+
+    expect(result).toEqual({
+      kind: 'execution_in_progress',
+      runId: run.id,
+      message: `Run ${run.id} has an execution in progress.`,
+    });
+    const session = await manager.loadSession();
+    expect(session.defaultStack).toContain(run.id);
+    expect(await readPersistedRunState(tmpCwd, run.id)).not.toBeNull();
   });
 
   it('removes the top when its state file is a legacy dynamic-step snapshot', async () => {

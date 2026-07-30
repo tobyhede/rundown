@@ -36,6 +36,7 @@ import {
   partitionVariablesForTest,
 } from './mock-partition-variables.js';
 import { mockFn } from './typed-mocks.js';
+import { committed } from './session-mutation-fixtures.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -80,17 +81,30 @@ function claimedRunbookResult(
   return { status: 'claimed', claimId: TEST_CLAIM_ID, claim: claimRecord(childRunId, overrides) };
 }
 
+/**
+ * Wrap a domain result in the committed arm of core's guarded session result.
+ *
+ * Every guarded `SessionService` method now returns `SessionMutationResult<T>`;
+ * these wiring tests exercise the committed path, so the refusal arms stay out
+ * of the fixtures and each mock keeps naming only the domain value it means.
+ *
+ * @param value - Domain result the mocked mutation commits.
+ * @returns The committed session mutation result carrying `value`.
+ */
+
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
     async (childRunId: RunId, linkage: DelegationLinkage) =>
-      claimedRunbookResult(childRunId, {
-        tokenHash: linkage.tokenHash,
-        parentRunId: linkage.parentRunId,
-        parentStepId: linkage.parentStepId,
-        parentStep: linkage.parentStep,
-        parentFrameKey: linkage.parentFrameKey,
-        parentEntry: linkage.parentEntry,
-      }),
+      committed(
+        claimedRunbookResult(childRunId, {
+          tokenHash: linkage.tokenHash,
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: linkage.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        }),
+      ),
   );
 }
 
@@ -1114,12 +1128,14 @@ describe('claimAndLaunch', () => {
       parentEntry: 1,
       tokenHash: MOCK_TOKEN_HASH,
     };
-    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'linkage-mismatch',
-      childRunId: EXISTING_SESSION_CHILD_ID,
-      incoming,
-      persisted,
-    });
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'linkage-mismatch',
+        childRunId: EXISTING_SESSION_CHILD_ID,
+        incoming,
+        persisted,
+      }),
+    );
     const update = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
     const ctx = makeCtx({
       manager: {
@@ -1187,10 +1203,12 @@ describe('claimAndLaunch', () => {
       ],
     };
 
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-child',
-      childRunId: EXISTING_CHILD_RUN_ID,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-child',
+        childRunId: EXISTING_CHILD_RUN_ID,
+      }),
+    );
 
     const ctx = makeCtx({
       sessionService: {
@@ -1261,12 +1279,14 @@ describe('claimAndLaunch', () => {
       parentEntry: 1,
       tokenHash: DIFFERENT_TOKEN_HASH,
     };
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'linkage-mismatch',
-      childRunId: EXISTING_CHILD_RUN_ID,
-      incoming,
-      persisted,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'linkage-mismatch',
+        childRunId: EXISTING_CHILD_RUN_ID,
+        incoming,
+        persisted,
+      }),
+    );
 
     const ctx = makeCtx({
       sessionService: {
@@ -1915,10 +1935,12 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     // claimRunbook returns missing-child — simulates claimChildForPipeline failure
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-child',
-      childRunId: NEW_CHILD_ID,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-child',
+        childRunId: NEW_CHILD_ID,
+      }),
+    );
 
     const ctx = makeCtx({
       manager: {
@@ -2035,18 +2057,22 @@ describe('claimAndLaunch', () => {
     jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
-    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'delegation-superseded',
-      parentRunId: RUN_ID,
-      parentStepId: 'delegate',
-      childRunId: NEW_CHILD_ID,
-    });
-    const releaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
-      status: 'released',
-      runbookId: NEW_CHILD_ID,
-      removedFromDefaultStack: false,
-      nextDefaultRunbookId: null,
-    } satisfies ReleaseRunbookResult);
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'delegation-superseded',
+        parentRunId: RUN_ID,
+        parentStepId: 'delegate',
+        childRunId: NEW_CHILD_ID,
+      }),
+    );
+    const releaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId: NEW_CHILD_ID,
+        removedFromDefaultStack: false,
+        nextDefaultRunbookId: null,
+      } satisfies ReleaseRunbookResult),
+    );
     const update = mockFn<RunbookStateManager['update']>().mockResolvedValue(
       parentState as unknown as RunbookState,
     );
@@ -2190,11 +2216,13 @@ describe('claimAndLaunch', () => {
     // The parent is deleted between the 4a re-read and the claim transaction.
     // That is a race, not a Rundown invariant break, and `parent-missing` is the
     // refusal the same pipeline already emits for it earlier in 4a.
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-parent',
-      parentRunId: RUN_ID,
-      parentStepId: '1',
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-parent',
+        parentRunId: RUN_ID,
+        parentStepId: '1',
+      }),
+    );
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
 
     const ctx = makeCtx({
@@ -2311,12 +2339,14 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     const mockClaimRunbook = mockClaimRunbookSuccess();
-    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
-      status: 'released',
-      runbookId: NEW_CHILD_ID,
-      removedFromDefaultStack: false,
-      nextDefaultRunbookId: null,
-    } satisfies ReleaseRunbookResult);
+    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId: NEW_CHILD_ID,
+        removedFromDefaultStack: false,
+        nextDefaultRunbookId: null,
+      } satisfies ReleaseRunbookResult),
+    );
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(
       parentState as unknown as RunbookState,
     );
@@ -2462,10 +2492,12 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     // claimRunbook returns missing-child — simulates claimChildForPipeline failure
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
-      status: 'missing-child',
-      childRunId: NEW_CHILD_ID,
-    });
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({
+        status: 'missing-child',
+        childRunId: NEW_CHILD_ID,
+      }),
+    );
 
     const mockDelete = mockFn<(id: RunId) => Promise<void>>().mockResolvedValue(undefined);
 

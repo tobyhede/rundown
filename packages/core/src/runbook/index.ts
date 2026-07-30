@@ -29,6 +29,12 @@ export {
 // Storage is otherwise internal; the incompatible-schema error is public so the
 // CLI can classify it by type and surface the RD-305 envelope.
 export { IncompatibleSchemaError } from './storage/schema.js';
+// The ownership-refusal result surface is public for the same reason: a CLI
+// front end must be able to narrow a session mutation's typed refusal.
+export type {
+  SessionMutationRefusal,
+  SessionMutationResult,
+} from './storage/runbook-store.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
@@ -100,6 +106,7 @@ export {
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
   type RunningStackMemberResolution,
+  type SessionMutationRefusalOutcome,
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {

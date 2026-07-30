@@ -18,6 +18,7 @@ import {
   type Substep,
   type RunbookMetadata,
   type RunbookState,
+  type SessionMutationResult,
   type RunbookActorService,
   type ActorSyncResult,
   type ExecutionResult,
@@ -73,6 +74,7 @@ import {
 } from '../helpers/transition-orchestrator.js';
 import { buildRunnableRenderContext } from '../helpers/render-context.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
+import { sessionMutationRefusalCode } from '../helpers/session-mutation-result.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 export { buildStepVariables };
@@ -261,27 +263,81 @@ interface InlineLaunchArgs {
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
+/**
+ * Apply the loop's terminal session release and report the loop's outcome.
+ *
+ * Returns `terminal` once the release commits (or when the mode owes none). An
+ * ownership refusal is emitted as an `ERROR_OCCURRED` and downgrades the outcome
+ * to `'stopped'`: the terminal side effect this loop owed did not happen, so it
+ * must not report a clean `'done'`.
+ *
+ * A refused release also emits a `RUNBOOK_STOPPED` carrying `correctionPosition`
+ * when one is supplied. On the command and drain paths the completion
+ * event was already announced by `orchestrateTransition` — whose policy does not
+ * release in `release-runbook` mode — and cannot be unsent, so the stream would
+ * otherwise end on a clean completion for a run still held on the session stack.
+ * Callers that have not announced a completion pass no position.
+ *
+ * @param sessionService - Session service performing the release.
+ * @param runbookId - Run whose session targeting is being released.
+ * @param mode - Terminal release disposition for this loop.
+ * @param emitter - Execution emitter receiving the refusal event.
+ * @param terminal - Outcome to report when the release commits.
+ * @param correctionPosition - Position for the corrective stop; supply it only when a
+ *   completion was already announced for this run.
+ * @returns `terminal`, or `'stopped'` when the release was refused.
+ */
 async function applyExecutionTerminalRelease(
   sessionService: SessionService,
   runbookId: RunId,
   mode: ExecutionTerminalReleaseMode,
-): Promise<void> {
+  emitter: ExecutionEventEmitter,
+  terminal: 'done' | 'stopped',
+  correctionPosition?: ReturnType<typeof buildStepPosition>,
+): Promise<'done' | 'stopped'> {
   if (mode === 'defer-to-caller') {
     // The caller (inline parent-advance core seam) owns the single terminal
     // release. The loop releases nothing but still returns 'done'/'stopped',
     // which the caller maps to one seam release with its chosen claim
     // disposition. See RD-598 verification.
-    return;
+    return terminal;
   }
-  if (mode === 'release-runbook') {
-    // Natural child completion: retain the claim as a terminal tombstone so
-    // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
-    // outcome (idempotent post-work commands). Explicit teardown
-    // (abort/stop/complete) keeps deleting the claim.
-    await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
-    return;
+  // Narrowed exhaustively rather than as a two-way ternary: "not release-runbook"
+  // must not mean "stack-pop", or a mode added to the union later inherits a
+  // default-stack pop and releases a run whose owner still holds it.
+  let released: SessionMutationResult<unknown>;
+  switch (mode) {
+    case 'release-runbook':
+      // Natural child completion: retain the claim as a terminal tombstone so
+      // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
+      // outcome (idempotent post-work commands). Explicit teardown
+      // (abort/stop/complete) keeps deleting the claim.
+      released = await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
+      break;
+    case 'stack-pop':
+      released = await sessionService.popRunbook();
+      break;
+    default: {
+      const _exhaustive: never = mode;
+      throw new Error(`unhandled execution terminal release mode: ${String(_exhaustive)}`);
+    }
   }
-  await sessionService.popRunbook();
+  if (released.kind === 'committed') return terminal;
+  emitter.emit({
+    type: 'ERROR_OCCURRED',
+    payload: { message: released.message, code: sessionMutationRefusalCode(released) },
+  });
+  // Keyed on the position alone: supplying one IS the caller's statement that it
+  // already announced a completion needing contradiction. Also testing
+  // `terminal === 'done'` would add a branch no caller can reach, since every
+  // site passing a position reports `'done'`.
+  if (correctionPosition) {
+    emitter.emit({
+      type: 'RUNBOOK_STOPPED',
+      payload: { position: correctionPosition, message: released.message },
+    });
+  }
+  return 'stopped';
 }
 
 function createCliCommandServices(
@@ -573,7 +629,19 @@ async function launchInlineChildFromIntent({
           try {
             const activeAfterFailure = await sessionService.getActive();
             if (activeAfterFailure?.id === childRunId) {
-              await sessionService.popRunbook();
+              const pop = await sessionService.popRunbook();
+              // Best-effort cleanup behind a consume failure that is already the
+              // user-facing error; narrowed exhaustively rather than discarded.
+              switch (pop.kind) {
+                case 'committed':
+                case 'execution_in_progress':
+                case 'recovery_required':
+                  break;
+                default: {
+                  const _exhaustive: never = pop;
+                  return _exhaustive;
+                }
+              }
             }
           } catch {
             // Keep the consume failure as the user-facing launch error.
@@ -701,10 +769,13 @@ async function launchInlineChildFromIntent({
     if (!launchResult.ok) {
       emitter.emit({
         type: 'ERROR_OCCURRED',
-        payload: {
-          message: launchResult.error,
-          code: launchResult.code,
-        },
+        payload:
+          launchResult.reason === 'session-refused'
+            ? {
+                message: launchResult.refusal.message,
+                code: sessionMutationRefusalCode(launchResult.refusal),
+              }
+            : { message: launchResult.error, code: launchResult.code },
       });
       return 'stopped';
     }
@@ -1099,13 +1170,43 @@ export async function runExecutionLoop(
       emitter.emit(event);
     }
 
-    await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-    return 'stopped';
+    return await applyExecutionTerminalRelease(
+      sessionService,
+      runbookId,
+      terminalReleaseMode,
+      emitter,
+      'stopped',
+    );
   }
 
   if (currentState.lifecycle === 'completed') {
     const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
     const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
+
+    // Resolve the release BEFORE announcing completion. A refusal leaves the run
+    // on the session stack, so a stream that already emitted RUNBOOK_COMPLETED
+    // would assert a clean finish that the returned 'stopped' contradicts.
+    const terminal = await applyExecutionTerminalRelease(
+      sessionService,
+      runbookId,
+      terminalReleaseMode,
+      emitter,
+      'done',
+    );
+    if (terminal !== 'done') {
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position: buildStepPosition(
+            currentState.step,
+            countNumberedSteps(steps),
+            currentState.substep,
+            currentState.forStack,
+          ),
+        },
+      });
+      return terminal;
+    }
 
     if (snapIsTerminal) {
       const currentStepForProjection = findStepOrThrow(steps, currentState.step);
@@ -1147,8 +1248,7 @@ export async function runExecutionLoop(
         },
       });
     }
-    await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-    return 'done';
+    return terminal;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -1173,13 +1273,33 @@ export async function runExecutionLoop(
     });
     if (drainResult.status === 'done') {
       if (terminalReleaseMode === 'release-runbook') {
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'done',
+          // The drain already announced the completion through
+          // orchestrateTransition, so a refusal needs the corrective stop.
+          buildStepPosition(
+            currentState.step,
+            totalSteps,
+            currentState.substep,
+            currentState.forStack,
+          ),
+        );
       }
       return 'done';
     }
     if (drainResult.status === 'stopped') {
       if (terminalReleaseMode === 'release-runbook') {
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'stopped',
+        );
       }
       return 'stopped';
     }
@@ -1297,8 +1417,13 @@ export async function runExecutionLoop(
             message: 'Runbook state synchronization failed',
           },
         });
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-        return 'stopped';
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'stopped',
+        );
       }
       currentState = consumeSync.state;
     }
@@ -1378,8 +1503,13 @@ export async function runExecutionLoop(
           message: 'Runbook state synchronization failed',
         },
       });
-      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-      return 'stopped';
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
     }
     const syncEffects = cmdSync.effects;
     for (const effect of syncEffects) {
@@ -1404,8 +1534,13 @@ export async function runExecutionLoop(
         snapshot: cmdSync.snapshot,
         position: stepPosition,
       });
-      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-      return 'stopped';
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
     }
 
     const transitionResult = await observeCommandTransition({
@@ -1424,13 +1559,28 @@ export async function runExecutionLoop(
     });
     if (transitionResult.status === 'done') {
       if (terminalReleaseMode === 'release-runbook') {
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'done',
+          // orchestrateTransition already announced the completion under the
+          // no-release policy, so a refusal needs the corrective stop.
+          stepPosition,
+        );
       }
       return 'done';
     }
     if (transitionResult.status === 'stopped') {
       if (terminalReleaseMode === 'release-runbook') {
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'stopped',
+        );
       }
       return 'stopped';
     }

@@ -43,6 +43,7 @@ import {
   type ParentAdvanceGuard,
   type PresentedClaim,
   type RunbookStore,
+  type SessionMutationResult,
   type SessionMutationTxn,
   type StateMutationResult,
 } from './storage/runbook-store.js';
@@ -944,6 +945,27 @@ export class RunbookStateManager {
   async mutateSession<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
     const store = await this.store();
     return store.mutateSession(work);
+  }
+
+  /**
+   * {@link mutateSession} with typed execution-ownership refusals.
+   *
+   * Session mutations that can touch a run another process is executing use this
+   * form, so an ownership refusal reaches the caller as a distinct result arm
+   * rather than as a domain `null` or an opaque trigger-abort `Error`.
+   *
+   * @template T - Value the mutation returns to its caller.
+   * @param runIds - Affected runs in deterministic refusal order, or a selector
+   *   reading them off the session snapshot inside the transaction.
+   * @param work - Mutates `ctx.session` in place and returns the caller's result.
+   * @returns The committed value, or the first ownership refusal.
+   */
+  async mutateSessionGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): Promise<SessionMutationResult<T>> {
+    const store = await this.store();
+    return store.mutateSessionGuarded(runIds, work);
   }
 
   /**

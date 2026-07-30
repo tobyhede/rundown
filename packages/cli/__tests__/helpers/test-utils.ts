@@ -34,7 +34,10 @@ import {
   patchPersistedClaim,
   patchPersistedRunState,
   readPersistedRunState,
+  unwrapSessionMutation,
 } from '@rundown-org/core/testing/session-fixtures';
+import { dbPath } from '@rundown-org/core';
+import { DatabaseSync } from 'node:sqlite';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -393,7 +396,7 @@ export async function withRunTarget(
   if (!state) throw new Error('withRunTarget: no active run to target');
   const manager = new RunbookStateManager(workspace.cwd);
   const sessionService = new SessionService(manager);
-  const { claimId } = await sessionService.issueRunControlClaim(state.id);
+  const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
   return [...args, '--claim-id', claimId];
 }
 
@@ -418,6 +421,41 @@ export async function withRunSelector(
 }
 
 /**
+ * Give a run active execution ownership, as another process holding it would.
+ *
+ * Writes the `execution_attempts` row and the `runs.exec_*` identity directly,
+ * because acquiring a real lease needs `SqliteExecutionLeaseService`, which core
+ * does not export. That is enough for what these tests exercise: the
+ * `claims_guard_*` / `stash_guard_*` triggers and
+ * `RunbookStore.mutateSessionGuarded`'s pre-check both key on
+ * `runs.exec_token IS NOT NULL` alone.
+ *
+ * @param target - Test workspace whose database holds the run, or its `cwd`.
+ * @param runId - Run to mark as owned.
+ * @param epoch - Execution epoch to record (defaults to 1).
+ */
+export function seedExecutionOwnership(
+  target: TestWorkspace | string,
+  runId: RunbookState['id'],
+  epoch = 1,
+): void {
+  const db = new DatabaseSync(dbPath(typeof target === 'string' ? target : target.cwd));
+  try {
+    db.prepare(
+      `INSERT INTO execution_attempts
+         (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
+       VALUES (:runId, :epoch, 'sha256:owned', 'claimed', :pid, :now)`,
+    ).run({ runId, epoch, pid: process.pid, now: new Date().toISOString() });
+    db.prepare(
+      `UPDATE runs SET exec_epoch = :epoch, exec_pid = :pid, exec_token = 'sha256:owned'
+        WHERE id = :runId`,
+    ).run({ runId, epoch, pid: process.pid });
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * Issue bearer authority for an arbitrary run in a test workspace.
  *
  * @param workspace - Test workspace containing the run
@@ -430,7 +468,7 @@ export async function issueRunControlClaim(
 ): Promise<ClaimId> {
   const manager = new RunbookStateManager(workspace.cwd);
   const sessionService = new SessionService(manager);
-  const { claimId } = await sessionService.issueRunControlClaim(runId);
+  const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
   return claimId;
 }
 
