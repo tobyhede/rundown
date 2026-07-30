@@ -36,6 +36,7 @@ import {
   partitionVariablesForTest,
 } from './mock-partition-variables.js';
 import { mockFn } from './typed-mocks.js';
+import { committed } from './session-mutation-fixtures.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -90,9 +91,6 @@ function claimedRunbookResult(
  * @param value - Domain result the mocked mutation commits.
  * @returns The committed session mutation result carrying `value`.
  */
-function committed<T>(value: T): { readonly kind: 'committed'; readonly value: T } {
-  return { kind: 'committed', value };
-}
 
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(

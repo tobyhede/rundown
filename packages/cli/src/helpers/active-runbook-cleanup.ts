@@ -55,12 +55,13 @@ export function isRecoverableActiveStackError(error: Error): boolean {
  * - `empty-stack` — nothing to clean; the default stack is empty.
  * - `healthy-top` — the top entry loads cleanly; it is NOT the orphan and
  *   nothing was deleted. Callers must surface their original error instead.
+ * - {@link SessionMutationRefusalOutcome} — the release was refused because the
+ *   run is execution-owned or awaiting recovery; nothing was removed.
  */
 export type OrphanCleanupResult =
   | { readonly kind: 'removed'; readonly runId: RunId }
   | { readonly kind: 'empty-stack' }
   | { readonly kind: 'healthy-top'; readonly runId: RunId }
-  // The release was refused for execution ownership; nothing was removed.
   | SessionMutationRefusalOutcome;
 
 /**

@@ -42,6 +42,7 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 import { partitionVariablesForTest } from './mock-partition-variables.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { committed } from './session-mutation-fixtures.js';
 import {
   brandDelegationTokenHashForTest,
   brandFrameKeyForTest,
@@ -109,9 +110,6 @@ function claimedRunbookResult(
  * @param value - Domain result the mocked mutation commits.
  * @returns The committed session mutation result carrying `value`.
  */
-function committed<T>(value: T): { readonly kind: 'committed'; readonly value: T } {
-  return { kind: 'committed', value };
-}
 
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(

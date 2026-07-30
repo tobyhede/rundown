@@ -18,6 +18,7 @@ import {
   type Substep,
   type RunbookMetadata,
   type RunbookState,
+  type SessionMutationResult,
   type RunbookActorService,
   type ActorSyncResult,
   type ExecutionResult,
@@ -291,14 +292,26 @@ async function applyExecutionTerminalRelease(
     // disposition. See RD-598 verification.
     return terminal;
   }
-  const released =
-    mode === 'release-runbook'
-      ? // Natural child completion: retain the claim as a terminal tombstone so
-        // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
-        // outcome (idempotent post-work commands). Explicit teardown
-        // (abort/stop/complete) keeps deleting the claim.
-        await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true })
-      : await sessionService.popRunbook();
+  // Narrowed exhaustively rather than as a two-way ternary: "not release-runbook"
+  // must not mean "stack-pop", or a mode added to the union later inherits a
+  // default-stack pop and releases a run whose owner still holds it.
+  let released: SessionMutationResult<unknown>;
+  switch (mode) {
+    case 'release-runbook':
+      // Natural child completion: retain the claim as a terminal tombstone so
+      // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
+      // outcome (idempotent post-work commands). Explicit teardown
+      // (abort/stop/complete) keeps deleting the claim.
+      released = await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
+      break;
+    case 'stack-pop':
+      released = await sessionService.popRunbook();
+      break;
+    default: {
+      const _exhaustive: never = mode;
+      throw new Error(`unhandled execution terminal release mode: ${String(_exhaustive)}`);
+    }
+  }
   if (released.kind === 'committed') return terminal;
   emitter.emit({
     type: 'ERROR_OCCURRED',

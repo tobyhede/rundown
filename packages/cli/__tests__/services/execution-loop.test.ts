@@ -1,7 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
+import type { ExecutionTerminalReleaseMode } from '../../src/services/execution.js';
 import { mockFn } from '../helpers/typed-mocks.js';
+import { committed } from '../helpers/session-mutation-fixtures.js';
 
 // Permissive runbook-state shape used by lifecycle / actor mocks. The real
 // runtime types include branded fields whose constructors are tied to the
@@ -26,12 +28,6 @@ const mockActorService = {
     (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
   >() as any,
 };
-
-/** A committed session mutation carrying `value`, matching core's guarded API. */
-const committed = <T>(value: T): { readonly kind: 'committed'; readonly value: T } => ({
-  kind: 'committed',
-  value,
-});
 
 const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
@@ -1336,6 +1332,78 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('stopped');
       expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
       expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    });
+
+    it("'release-runbook' releases the run and retains the claim as a terminal tombstone", async () => {
+      // No test drove this mode through runExecutionLoop before: the suite's
+      // other retainClaimsAsTerminal assertion is satisfied by a release from a
+      // different module, and the loop's default mode is 'stack-pop'. That left
+      // the flag unpinned here — a mutant flipping it to `false` survived, even
+      // though the disposition is load-bearing: retaining the tombstone is what
+      // lets a later `--claim-id` confirm-or-conflict resolve `terminal` rather
+      // than `missing` (RD-598).
+      mockManager.load.mockResolvedValue(
+        makeLoopState('1', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { terminalReleaseMode: 'release-runbook' },
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+        retainClaimsAsTerminal: true,
+      });
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unrecognized release mode instead of falling through to a stack pop', async () => {
+      // The mode dispatch must not treat "not release-runbook" as "stack-pop":
+      // a future ExecutionTerminalReleaseMode added to the union would then
+      // silently pop the default stack, releasing a run its owner still holds.
+      // The `never` check makes the compiler the primary gate; this pins the
+      // runtime half, which is what a cast at a call site would slip past.
+      // Pre-loaded stopped state, mirroring the sibling test: that path reaches
+      // applyExecutionTerminalRelease unconditionally, whereas the in-loop
+      // transition sites guard the call on the mode and would never reach it.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('1', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      await expect(
+        runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          false,
+          asEmitter(mockEmitter),
+          { terminalReleaseMode: 'future-mode' as ExecutionTerminalReleaseMode },
+        ),
+      ).rejects.toThrow(/future-mode/);
+
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
     });
   });
 
