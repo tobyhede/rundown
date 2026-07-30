@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -39,6 +39,7 @@ import {
   createDelegatedChildGrants,
   hashClaimSecret,
   parseClaimBearer,
+  SessionService,
 } from '@rundown-org/core';
 
 const VALID_OTHER_CLAIM_ID = assertClaimId(
@@ -92,6 +93,30 @@ describe('stash command', () => {
   function getAutoIssuedToken(stdout: string): string {
     return requireFrontierToken(stdout, '1.1');
   }
+
+  it('resolves and parks the active run in one core call, never getActive + stashRunbook', async () => {
+    // Structural guard on the bare path's half of #666, and the only kind of
+    // test that can hold it: every behavioural test here is sequential, so
+    // restoring the `getActive()` -> `stashRunbook()` pair would leave all of
+    // them green while reopening the window where a concurrent push means the
+    // run that gets parked is not the one the command resolved. Atomicity is
+    // "the CLI asks core exactly once", so that is what is asserted.
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const stash = jest.spyOn(SessionService.prototype, 'stash');
+    const stashRunbook = jest.spyOn(SessionService.prototype, 'stashRunbook');
+    const getActive = jest.spyOn(SessionService.prototype, 'getActive');
+
+    const result = await runCliInProcess('stash', workspace);
+
+    expect(result.exitCode).toBe(0);
+    // One named object so the failure diff says which call moved.
+    expect({
+      atomicStash: stash.mock.calls.length,
+      unlockedActiveReads: getActive.mock.calls.length,
+      bearerBlindStashes: stashRunbook.mock.calls.length,
+    }).toEqual({ atomicStash: 1, unlockedActiveReads: 0, bearerBlindStashes: 0 });
+    jest.restoreAllMocks();
+  });
 
   it('moves active runbook to stashed', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);

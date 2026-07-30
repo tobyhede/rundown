@@ -332,6 +332,33 @@ describe('SessionService', () => {
       expect(await manager.loadSession()).toMatchObject({ defaultStack: [] });
       expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
+
+    it('stash resolves the active run and writes the slot in exactly one transaction', async () => {
+      // Structural guard, not a behavioural one. Every other test here is
+      // sequential, so reintroducing an unlocked `getActive()` pre-read before
+      // the guarded write would leave them all green while restoring the #666
+      // check-then-act window. `getActive` reads through `loadSession`, so
+      // "zero session reads outside the transaction" is what pins atomicity.
+      const state = await manager.create({ source: 'project', path: 'atomic.md' }, mockRunbook, {
+        runbookPath: 'atomic.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      const loadSession = jest.spyOn(manager, 'loadSession');
+      const load = jest.spyOn(manager, 'load');
+      const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
+
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result.status).toBe('stashed');
+      // Asserted as one named object so the failure diff says which property
+      // moved: a non-zero unlocked read is a resolve-then-commit split, and a
+      // second guarded transaction is the same defect wearing a lock.
+      expect({
+        guardedTransactions: mutateSessionGuarded.mock.calls.length,
+        unlockedSessionReads: loadSession.mock.calls.length,
+        unlockedStateReads: load.mock.calls.length,
+      }).toEqual({ guardedTransactions: 1, unlockedSessionReads: 0, unlockedStateReads: 0 });
+    });
   });
 
   describe('claim-id runbook targeting', () => {
@@ -1674,6 +1701,37 @@ describe('SessionService', () => {
         const session = await manager.loadSession();
         expect(session.stashedRunbookId).toBeUndefined();
         expect(session.defaultStack).toEqual([run.id]);
+      });
+
+      it('verifies the bearer and writes the slot in exactly one transaction', async () => {
+        // Structural guard on the #666 fix, because no behavioural test can
+        // reach it: every test in this file is sequential, so a reintroduced
+        // `getActiveForClaimId(...)` pre-read before `mutateSessionGuarded`
+        // would keep them all green while restoring the window where a bearer
+        // rotated between resolve and commit still stashes. That pre-read must
+        // call `loadSession`, so "zero unlocked reads, one guarded
+        // transaction" is the property that makes the verification atomic.
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        const loadSession = jest.spyOn(manager, 'loadSession');
+        const load = jest.spyOn(manager, 'load');
+        const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+        expect(result.status).toBe('stashed');
+        // One named object so the failure diff says which property moved: a
+        // non-zero unlocked read is a resolve-then-commit split, and a second
+        // guarded transaction is the same defect wearing a lock.
+        expect({
+          guardedTransactions: mutateSessionGuarded.mock.calls.length,
+          unlockedSessionReads: loadSession.mock.calls.length,
+          unlockedStateReads: load.mock.calls.length,
+        }).toEqual({ guardedTransactions: 1, unlockedSessionReads: 0, unlockedStateReads: 0 });
       });
 
       it('stashes a run-control claim and takes its run off the default stack', async () => {
