@@ -122,7 +122,7 @@ describe('renderClaimBearerMismatchRefusal', () => {
     // The bare-form advice ("pass --claim-id") would misdiagnose a caller that
     // already presented one, so it must not appear here.
     expect(bareErr?.args[0]).toContain('--claim-id');
-    expect(mismatchErr?.args[0]).not.toContain('bare');
+    expect(mismatchErr?.args[0]).not.toContain('Pass `--claim-id');
   });
 
   it('emits an envelope a schema-validating consumer accepts (#613)', () => {

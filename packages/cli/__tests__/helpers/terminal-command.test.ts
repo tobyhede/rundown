@@ -150,7 +150,7 @@ describe('renderTerminalOutcome', () => {
     // A terminal is the highest-consequence divergence — forcing and releasing
     // a run on the target's own authority. It must not reuse the bare-form
     // advice, which would tell a caller that presented a claim to present one.
-    expect(errorCall?.args[0]).not.toContain('bare');
+    expect(errorCall?.args[0]).not.toContain('Pass `--claim-id');
     expect(errorCall?.args[0]).toContain('Present the bearer');
     expect(errorCall?.args[2]).toBeUndefined();
     expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);

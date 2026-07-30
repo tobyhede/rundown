@@ -2414,6 +2414,79 @@ describe('RunbookLifecycleCommandService', () => {
       expect(sendSpy).not.toHaveBeenCalled();
       expect((await manager.load(runB))?.lifecycle).toBe('running');
     });
+
+    it('reconciles identically across all three seams for the same divergence', async () => {
+      // The three seams each own a claim-shaped entry point, and each must
+      // reconcile it the same way. Asserting them together — rather than one
+      // case per seam — is what fails if a seam reconciles differently, skips
+      // the reconciliation, or grows a fourth entry point that forgets it.
+      // Divergence, and the no-bearer variant, must both refuse everywhere.
+      const { claimA, claimB } = await activateTwoClaimedRuns();
+      const divergent = { kind: 'claim_bearer', claimId: claimA } as const;
+      const target = { kind: 'claim', claimId: claimB } as const;
+      const expected = { kind: 'claim_bearer_mismatch' };
+
+      for (const evidence of [divergent, DIRECT_CLI]) {
+        expect(
+          await seam.runTransition({
+            command: 'pass',
+            callerEvidence: evidence,
+            targetSelector: target,
+            terminalPolicy: RELEASE_POLICY,
+          }),
+        ).toEqual(expected);
+        expect(
+          await seam.runTerminal({
+            command: 'complete',
+            callerEvidence: evidence,
+            targetSelector: target,
+          }),
+        ).toEqual(expected);
+        expect(
+          await seam.resolveRunNavigation({
+            command: 'goto',
+            callerEvidence: evidence,
+            targetSelector: target,
+          }),
+        ).toEqual(expected);
+      }
+
+      // Six refusals, and neither run advanced or terminalized under any of them.
+      expect((await manager.load(runA))?.step).toBe('1');
+      expect((await manager.load(runB))?.step).toBe('1');
+      expect((await manager.load(runB))?.lifecycle).toBe('running');
+    });
+
+    it('admits the matching bearer on all three seams, so the gate is not blanket refusal', async () => {
+      // Anti-vacuity for the case above: if the gate refused every claim-shaped
+      // target, the six refusals would prove nothing. Each seam must still
+      // accept the claim whose bearer was actually presented.
+      const { claimB } = await activateTwoClaimedRuns();
+      const presented = { kind: 'claim_bearer', claimId: claimB } as const;
+      const target = { kind: 'claim', claimId: claimB } as const;
+
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: presented,
+        targetSelector: target,
+      });
+      expect(navigation.kind).toBe('allowed');
+
+      const transition = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: presented,
+        targetSelector: target,
+        terminalPolicy: RELEASE_POLICY,
+      });
+      expect(transition.kind).not.toBe('claim_bearer_mismatch');
+
+      const terminal = await seam.runTerminal({
+        command: 'complete',
+        callerEvidence: presented,
+        targetSelector: target,
+      });
+      expect(terminal.kind).not.toBe('claim_bearer_mismatch');
+    });
   });
 
   describe('explicit --run targeting', () => {

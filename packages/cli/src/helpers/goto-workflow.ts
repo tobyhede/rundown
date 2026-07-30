@@ -157,8 +157,14 @@ export function renderNavigationRefusal(output: OutputEmitter, refusal: GotoRefu
     case 'claim_bearer_mismatch':
       return renderClaimBearerMismatchRefusal(output, 'goto');
     default: {
+      // Assigning to `never` keeps the compile-time totality check — adding a
+      // navigation refusal without an arm here is a build error. Returning a
+      // real `true` rather than the `never` value keeps the runtime honest to
+      // the declared `boolean`, so an unrecognized kind from an untyped
+      // frontend still fails closed instead of handing the caller an object.
       const _exhaustive: never = refusal;
-      return _exhaustive;
+      void _exhaustive;
+      return true;
     }
   }
 }

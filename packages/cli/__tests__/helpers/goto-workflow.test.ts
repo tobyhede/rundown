@@ -97,7 +97,11 @@ const {
   resolveTerminalReleaseModeForRunbook,
   gotoResultRequiresFailureExit,
   renderNavigationRefusal,
+  buildGotoContext,
 } = await import('../../src/helpers/goto-workflow.js');
+const { buildNonDelegatingLifecycleSeam } = await import(
+  '../../src/helpers/lifecycle-seam-factory.js'
+);
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -176,6 +180,75 @@ beforeEach(() => {
     at: target.step,
   }));
   jest.mocked(runExecutionLoop).mockResolvedValue('done');
+});
+
+describe('buildGotoContext claim-target coupling (#613)', () => {
+  /**
+   * Pin that goto derives caller evidence and the target selector from the SAME
+   * `--claim-id`.
+   *
+   * `docs/reference/cli.md` and `docs/internal/architecture.md` both state that
+   * `CLAIM_BEARER_MISMATCH` is unreachable from the CLI. That claim rests
+   * entirely on this coupling: the seam refuses a divergence, so a frontend
+   * sourcing the two fields independently would refuse every claim-targeted
+   * goto at runtime AND silently falsify both docs. Nothing else fails if the
+   * coupling breaks, so it is pinned here, where drift would originate.
+   *
+   * `readLifecycleCallerEvidence` is deliberately NOT mocked in this suite, so
+   * this exercises the real derivation rather than a stand-in.
+   */
+  it('derives caller evidence and target selector from one --claim-id', async () => {
+    const captured: unknown[] = [];
+    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
+      manager: {} as never,
+      seam: {
+        resolveRunNavigation: async (input: unknown) => {
+          captured.push(input);
+          // `none` short-circuits buildGotoContext before it assembles context,
+          // which keeps this test about input construction only.
+          return { kind: 'none' } as never;
+        },
+      } as never,
+    } as never);
+    const output = { noActiveRunbook: () => {} } as unknown as OutputEmitter;
+
+    await buildGotoContext(output, '/cwd', { claimId: CLAIM_ID });
+
+    expect(captured).toHaveLength(1);
+    const input = captured[0] as {
+      callerEvidence: { kind: string; claimId?: unknown };
+      targetSelector: { kind: string; claimId?: unknown };
+    };
+    expect(input.callerEvidence).toEqual({ kind: 'claim_bearer', claimId: CLAIM_ID });
+    expect(input.targetSelector).toEqual({ kind: 'claim', claimId: CLAIM_ID });
+    // The invariant, stated as the seam's own gate states it: same id on both.
+    expect(input.callerEvidence.claimId).toBe(input.targetSelector.claimId);
+  });
+
+  it('presents no bearer when no --claim-id is supplied, so the gate cannot fire', async () => {
+    const captured: unknown[] = [];
+    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
+      manager: {} as never,
+      seam: {
+        resolveRunNavigation: async (input: unknown) => {
+          captured.push(input);
+          return { kind: 'none' } as never;
+        },
+      } as never,
+    } as never);
+    const output = { noActiveRunbook: () => {} } as unknown as OutputEmitter;
+
+    await buildGotoContext(output, '/cwd', {});
+
+    const input = captured[0] as {
+      callerEvidence: { kind: string };
+      targetSelector: { kind: string };
+    };
+    // Anti-vacuity for the case above: without `--claim-id` neither field is
+    // claim-shaped, so the reconciliation is a no-op rather than a refusal.
+    expect(input.callerEvidence).toEqual({ kind: 'direct_cli' });
+    expect(input.targetSelector.kind).not.toBe('claim');
+  });
 });
 
 describe('renderNavigationRefusal', () => {
@@ -271,7 +344,7 @@ describe('renderNavigationRefusal', () => {
     // Names this command, so the message cannot be command-agnostic boilerplate.
     expect(errors[0]?.[0]).toContain('rundown goto');
     // The caller DID present a claim id, so the bare-form advice would misdiagnose.
-    expect(errors[0]?.[0]).not.toContain('bare');
+    expect(errors[0]?.[0]).not.toContain('Pass `--claim-id');
     expect(errors[0]?.[2]).toBeUndefined();
   });
 
@@ -288,7 +361,11 @@ describe('renderNavigationRefusal', () => {
       kind: 'unrecognized_future_refusal',
     } as unknown as Parameters<typeof renderNavigationRefusal>[1]);
 
-    expect(exitError).toBeTruthy();
+    // `toBe(true)`, not `toBeTruthy()`: the signature promises a boolean, so the
+    // unreachable arm must honour it too. A truthiness assertion would also pass
+    // for an arm that returned the refusal object, leaving a `=== true` call
+    // site free to break on it.
+    expect(exitError).toBe(true);
     // Nothing is rendered for a kind we cannot describe — no guessed envelope.
     expect(errors).toEqual([]);
     expect(noActive).toEqual([]);

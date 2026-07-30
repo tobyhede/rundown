@@ -674,7 +674,7 @@ describe('runSeamTransition — refusal render table', () => {
     // The whole point of the split: this caller DID present a claim id, so the
     // bare-form remediation would misdiagnose it. Assert the wrong advice is
     // absent, not merely that the right advice is present.
-    expect(message).not.toContain('bare');
+    expect(message).not.toContain('Pass `--claim-id');
     expect(message).toContain('rundown fail');
     expect(message).toContain('targeting');
     // Names neither claim: the seam refuses before resolving either one, so

@@ -846,11 +846,9 @@ function terminalForceEvent(command: TerminalCommandName): 'FORCE_COMPLETE' | 'F
   }
 }
 
-/** A target selector narrowed to its claim-shaped variant. */
-type ClaimTargetSelector = Extract<CommandTargetSelector, { readonly kind: 'claim' }>;
-
 /**
- * Whether the caller presented the very bearer that names a claim-shaped target.
+ * Reconcile caller evidence against a claim-shaped target, returning the refusal
+ * to propagate when they diverge.
  *
  * A `claim` selector names its target BY THE BEARER ITSELF — the claim id
  * carries the live secret segment — so naming one is an act of presentation,
@@ -862,18 +860,29 @@ type ClaimTargetSelector = Extract<CommandTargetSelector, { readonly kind: 'clai
  * so acting as the target while the caller's evidence said something else
  * (#613).
  *
+ * Returns the refusal rather than a boolean so the outcome is constructed once
+ * here instead of at each seam: a caller cannot consult this and then forget to
+ * refuse, and every seam propagates an identical refusal by construction. Every
+ * non-claim selector reconciles trivially, so all three seams can call this
+ * unconditionally at entry rather than narrowing first.
+ *
  * Authority keys on the DECLARED evidence kind, never on the mere presence of a
  * `claimId` property: `CallerEvidence` has no non-bearer variant carrying one,
  * and an untyped frontend must not be able to smuggle authority through a stray
  * field.
  *
  * @param evidence - Typed caller evidence supplied by the frontend.
- * @param selector - The command's target selector, already narrowed to its
- *   claim-shaped variant by the caller.
- * @returns True when the evidence is bearer evidence for exactly this claim.
+ * @param selector - The command's target selector, any variant.
+ * @returns A `claim_bearer_mismatch` refusal when a claim-shaped target was not
+ *   presented by the caller; `undefined` when there is nothing to refuse.
  */
-function presentsClaimTarget(evidence: CallerEvidence, selector: ClaimTargetSelector): boolean {
-  return evidence.kind === 'claim_bearer' && evidence.claimId === selector.claimId;
+function reconcileClaimTarget(
+  evidence: CallerEvidence,
+  selector: CommandTargetSelector,
+): ClaimBearerMismatchRefusal | undefined {
+  if (selector.kind !== 'claim') return undefined;
+  const presented = evidence.kind === 'claim_bearer' && evidence.claimId === selector.claimId;
+  return presented ? undefined : { kind: 'claim_bearer_mismatch' };
 }
 
 /**
@@ -1509,11 +1518,10 @@ export class RunbookLifecycleCommandService {
     // A claim-shaped target is reconciled against the caller's evidence before
     // anything is resolved from it, so the claim id below is always the bearer
     // the caller presented (#613).
-    const claimTarget = input.targetSelector.kind === 'claim' ? input.targetSelector : undefined;
-    if (claimTarget !== undefined && !presentsClaimTarget(input.callerEvidence, claimTarget)) {
-      return { kind: 'claim_bearer_mismatch' };
-    }
-    const claimId = claimTarget?.claimId;
+    const claimMismatch = reconcileClaimTarget(input.callerEvidence, input.targetSelector);
+    if (claimMismatch) return claimMismatch;
+    const claimId =
+      input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
     const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     let actorContext: ActorContext = UNKNOWN_ACTOR_CONTEXT;
@@ -1668,14 +1676,15 @@ export class RunbookLifecycleCommandService {
         if (refusal) return refusal;
       }
     }
+    // Same entry reconciliation as the other two seams, in the same shape and
+    // ahead of the dispatch: the forced claim is the bearer the caller
+    // presented, never a divergent selector value that would force (and
+    // release) a run on the target's own authority (#613).
+    const claimMismatch = reconcileClaimTarget(input.callerEvidence, input.targetSelector);
+    if (claimMismatch) return claimMismatch;
     switch (input.targetSelector.kind) {
-      // Same entry reconciliation as the transition seam: the forced claim is
-      // the bearer the caller presented, never a divergent selector value that
-      // would force (and release) a run on the target's own authority.
       case 'claim':
-        return presentsClaimTarget(input.callerEvidence, input.targetSelector)
-          ? this.#driveTerminalClaim(input, input.targetSelector.claimId)
-          : { kind: 'claim_bearer_mismatch' };
+        return this.#driveTerminalClaim(input, input.targetSelector.claimId);
       case 'default':
         return this.#driveTerminalBare(input);
       case 'run':
@@ -1759,13 +1768,11 @@ export class RunbookLifecycleCommandService {
     // as much: without it a claim-shaped target derives a verified actor
     // context from the TARGET's claim, which both authorizes a divergent
     // presenter and satisfies the run-navigation role gate (#613).
-    const claimTarget = selector.kind === 'claim' ? selector : undefined;
-    if (claimTarget !== undefined && !presentsClaimTarget(input.callerEvidence, claimTarget)) {
-      return { kind: 'claim_bearer_mismatch' };
-    }
+    const claimMismatch = reconcileClaimTarget(input.callerEvidence, selector);
+    if (claimMismatch) return claimMismatch;
 
     const resolution = await resolveCommandTarget(this.#deps.sessionService, {
-      ...(claimTarget ? { claimId: claimTarget.claimId } : {}),
+      ...(selector.kind === 'claim' ? { claimId: selector.claimId } : {}),
       ...(selector.kind === 'run' ? { runId: selector.runId } : {}),
     });
 
