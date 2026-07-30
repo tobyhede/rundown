@@ -220,9 +220,12 @@ export function unwrapSessionMutation<T>(result: SessionMutationResult<T>): T {
 /**
  * Persist a run and move it straight into the session's single stash slot.
  *
- * The run is pushed (and claimed, unless disabled) before being stashed, because
- * `stashRunbook` refuses a run nothing targets — the same refusal production
- * relies on.
+ * The run is pushed onto the default stack (and claimed, unless disabled) before
+ * being stashed, because `stashRunbook` refuses a run nothing targets. It is the
+ * stack push alone that satisfies that refusal here — production never reaches
+ * the claim half of it either, since `stashRunbook`'s only production caller is
+ * the bare CLI stash path, which passes `getActive()`, i.e. the stack top by
+ * construction. `stash --claim-id` goes through `stashForClaimId` instead.
  *
  * @param cwd - Project root whose store receives the run.
  * @param options - Run identity, content, and claim minting.

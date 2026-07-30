@@ -312,8 +312,10 @@ const RECORDING_COMMANDS: Readonly<Record<string, RecordingCase>> = {
 };
 
 /**
- * Commands whose `--claim-id` names another agent's claim as a target selector.
- * They do not record because the presenter cannot vouch for that holder (AC5).
+ * Commands whose `--claim-id` is not provably the presenter's OWN claim — either
+ * a pure target selector, or (for `stash`/`pop`) real mutation authority that an
+ * orchestrator is equally entitled to present on a child's behalf. They do not
+ * record because the presenter cannot vouch for that holder's liveness (AC5).
  *
  * Listed rather than omitted, because a non-recording classification is a
  * DECISION the guard pins in BOTH directions: a future edit that starts recording
@@ -329,7 +331,7 @@ const NON_RECORDING_CLAIM_COMMANDS: Readonly<Record<string, NonRecordingCase>> =
   },
   stash: {
     reason:
-      'Its help says "Target a claimed delegated child runbook": the claim is target selection, not bearer authority attributable to the presenter.',
+      "The presented bearer IS mutation authority — `stashForClaimId` verifies it in the same transaction that writes the slot — but authority is not attribution. An orchestrator can present a delegated child's bearer, so whoever ran the command is not provably the claim's holder, and `recordClaimSeen` would credit that presenter's activity to the child as liveness. `pop` verifies its bearer in-transaction too and is non-recording for exactly this reason.",
     arrange: arrangeStashableChild,
     driveInvocation: driveClaimStash,
   },
