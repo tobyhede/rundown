@@ -1136,6 +1136,41 @@ Code: ACTOR_CONTEXT_REQUIRED
 }
 ```
 
+### Claim bearer mismatch
+
+The presented bearer claim is not the claim the command targeted, so the command
+is refused rather than run under the target's authority. Deliberately distinct
+from `ACTOR_CONTEXT_REQUIRED`: authority _was_ named, so that refusal's "pass
+`--claim-id`" remediation would misdiagnose it.
+
+**Unreachable from the `rundown` CLI** — `--claim-id` supplies both the evidence
+and the target, so the two cannot disagree. Only a programmatic front end that
+populates them independently can provoke it. It is documented and registered
+because `ErrorCodeSchema` is a closed enum: a consumer validating against the
+published schema must accept the code rather than reject the envelope.
+
+The envelope names neither claim. The seam refuses before resolving either one,
+so there is no verified claim record to reduce to a non-secret `claimKey`, and
+echoing a raw `claimId` would write a bearer secret to output and logs.
+
+**Text:**
+
+```text
+Error: The presented claim id is not the claim `rundown pass` targeted, so the command is refused rather than run under the target's authority. Present the bearer for the claim you are targeting.
+Code: CLAIM_BEARER_MISMATCH
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "The presented claim id is not the claim `rundown pass` targeted, so the command is refused rather than run under the target's authority. Present the bearer for the claim you are targeting.",
+  "code": "CLAIM_BEARER_MISMATCH",
+  "command": "pass"
+}
+```
+
 ### Run target unavailable
 
 The `--run` id supplied is not a running member of this session's active stack.
