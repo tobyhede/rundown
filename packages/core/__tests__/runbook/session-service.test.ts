@@ -255,7 +255,15 @@ describe('SessionService', () => {
       expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
 
-    it('unstash returns null and clears stash when persisted state is missing', async () => {
+    it('unstash reports an idle session when the stashed run is deleted', async () => {
+      // Renamed from "…clears stash when persisted state is missing", which
+      // described a branch this case never reaches. `stash_slot.run_id` is a
+      // `ON DELETE CASCADE` foreign key onto `runs`, so `manager.delete` takes
+      // the slot row with it and `unstash` returns from its `!stashedId` guard
+      // — the same shape as the `session_stack` cascade one test above.
+      // Verified by making the missing-state branch throw: this case still
+      // passed. The clearing branch is genuinely reachable, but only from the
+      // corrupted state the next test stages, and that is where it is pinned.
       const state = await manager.create({ source: 'project', path: 'temp.md' }, mockRunbook, {
         runbookPath: 'temp.md',
       });
@@ -268,6 +276,40 @@ describe('SessionService', () => {
       expect(restored).toBeNull();
       expect(await sessionService.getStashedRunbookId()).toBeNull();
       expect(await sessionService.getActive()).toBeNull();
+    });
+
+    it('unstash clears a stash slot whose run row was removed out of band', async () => {
+      // The missing-state branch, and the reason it is NOT the dead sibling of
+      // the arm removed from `stash()` in the same wave. That arm could not be
+      // constructed at all: `applySession` rewrites the stack unconditionally
+      // via `setStack`, so committing over a dangling `session_stack` row fails
+      // the foreign key before any arm can be returned. The stash slot is
+      // written by `setStash`, whose clearing form is a bare `DELETE` with no
+      // reference to write — so `unstash` can both reach this branch and commit
+      // its repair. The branch is self-healing, not defensive dead code.
+      const state = await manager.create({ source: 'project', path: 'dangling.md' }, mockRunbook, {
+        runbookPath: 'dangling.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      unwrapSessionMutation(await sessionService.stash());
+
+      // Out of band, with the cascade disabled: the only way to leave a stash
+      // slot pointing at a run whose state can no longer be read.
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      raw.exec('PRAGMA foreign_keys = OFF');
+      raw.prepare('DELETE FROM runs WHERE id = :id').run({ id: state.id });
+      const slotBefore = raw.prepare('SELECT run_id AS runId FROM stash_slot').all() as readonly {
+        readonly runId: string;
+      }[];
+      raw.close();
+      // The staging worked — otherwise the assertion below would pass through
+      // the `!stashedId` guard and pin nothing.
+      expect(slotBefore).toEqual([{ runId: state.id }]);
+
+      const restored = unwrapSessionMutation(await sessionService.unstash());
+
+      expect(restored).toBeNull();
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
 
     it('stash refuses to overwrite existing stash', async () => {

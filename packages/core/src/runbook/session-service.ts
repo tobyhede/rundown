@@ -2159,6 +2159,18 @@ export class SessionService {
 
         const state = ctx.readState(stashedId);
         if (!state) {
+          // Live, despite looking like the sibling of the `missing-active-state`
+          // arm removed from `stash()` — and the difference is which session
+          // structure `applySession` has to rewrite. That arm left a dangling id
+          // in `defaultStack`, and `setStack` writes the stack unconditionally,
+          // so the commit failed the `session_stack` foreign key before the arm
+          // could be returned. Here the slot is written by `setStash`, whose
+          // clearing form is a bare `DELETE FROM stash_slot` with no reference
+          // to insert, so this repair commits. Reaching it still needs an
+          // out-of-band delete with the cascade disabled — pinned by "unstash
+          // clears a stash slot whose run row was removed out of band". Do not
+          // fold this into the `!stashedId` guard: that would leave the corrupt
+          // row in place and every later `unstash` returning null forever.
           session.stashedRunbookId = undefined;
           return null;
         }
