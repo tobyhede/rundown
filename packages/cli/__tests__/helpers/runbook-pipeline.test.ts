@@ -100,17 +100,6 @@ function claimedRunbookResult(
   return { status: 'claimed', claimId: TEST_CLAIM_ID, claim: claimRecord(childRunId, overrides) };
 }
 
-/**
- * Wrap a domain result in the committed arm of core's guarded session result.
- *
- * Every guarded `SessionService` method now returns `SessionMutationResult<T>`;
- * these wiring tests exercise the committed path, so the refusal arms stay out
- * of the fixtures and each mock keeps naming only the domain value it means.
- *
- * @param value - Domain result the mocked mutation commits.
- * @returns The committed session mutation result carrying `value`.
- */
-
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
     async (childRunId: RunId, linkage: DelegationLinkage) =>

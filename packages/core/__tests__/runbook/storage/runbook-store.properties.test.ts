@@ -559,28 +559,34 @@ describe('mutateSessionGuarded ownership refusals', () => {
     expect(await store.read((txn) => txn.stack())).toEqual([]);
   });
 
-  it('refuses on the first affected run in caller-supplied order', async () => {
-    await fc.assert(
-      fc.asyncProperty(fc.boolean(), async (ownedFirst) => {
-        const clean = await seedControlledRun();
-        const owned = await seedControlledRun();
-        await own(owned.runId, owned.claimKey);
-        const order = ownedFirst
-          ? [owned.runId, clean.runId]
-          : [clean.runId, owned.runId, owned.runId];
+  // Three enumerable orders, so each is stated rather than sampled: a boolean
+  // generator over two shapes buys no coverage a table does not, and it hid the
+  // duplicate-id case inside one of the branches.
+  it.each([
+    {
+      label: 'owned first',
+      order: (owned: RunId, clean: RunId) => [owned, clean],
+    },
+    {
+      label: 'clean first — a clean run never masks a later owned one',
+      order: (owned: RunId, clean: RunId) => [clean, owned],
+    },
+    {
+      label: 'a repeated owned id resolves to the same single refusal',
+      order: (owned: RunId, clean: RunId) => [clean, owned, owned],
+    },
+  ])('refuses on the first affected run in caller-supplied order: $label', async ({ order }) => {
+    const clean = await seedControlledRun();
+    const owned = await seedControlledRun();
+    await own(owned.runId, owned.claimKey);
 
-        const result = await store.mutateSessionGuarded(order, () => null);
+    const result = await store.mutateSessionGuarded(order(owned.runId, clean.runId), () => null);
 
-        // Order is the caller's, and a clean run never masks a later owned one:
-        // the refusal always names the owned run whichever position it holds.
-        expect(result).toEqual({
-          kind: 'execution_in_progress',
-          runId: owned.runId,
-          message: `Run ${owned.runId} has an execution in progress.`,
-        });
-      }),
-      { numRuns: 10 },
-    );
+    expect(result).toEqual({
+      kind: 'execution_in_progress',
+      runId: owned.runId,
+      message: `Run ${owned.runId} has an execution in progress.`,
+    });
   });
 
   it('resolves the affected runs from the session snapshot when given a selector', async () => {

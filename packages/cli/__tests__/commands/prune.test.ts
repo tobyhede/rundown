@@ -756,11 +756,13 @@ Do the thing.
       const result = await runCliInProcess('prune', workspace);
 
       expect(result.exitCode).toBe(1);
-      const [envelope] = parseConcatenatedJson(result.stdout) as {
+      // Exactly one document: `parseConcatenatedJson` plus a destructure would
+      // pass while the refusal path also printed a stray success envelope.
+      const envelope = JSON.parse(result.stdout) as {
         kind?: string;
         code?: string;
         error?: string;
-      }[];
+      };
       expect(envelope).toMatchObject({
         kind: 'error',
         code: 'EXECUTION_IN_PROGRESS',

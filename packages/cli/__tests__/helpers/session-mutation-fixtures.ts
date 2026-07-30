@@ -9,6 +9,14 @@
  * suites asserting against a shape production no longer returns.
  */
 
+import type { SessionMutationResult } from '@rundown-org/core';
+
+/** The committed arm of core's guarded session result, carrying `T`. */
+export type CommittedSessionMutation<T> = Extract<
+  SessionMutationResult<T>,
+  { readonly kind: 'committed' }
+>;
+
 /**
  * Build the committed arm of a guarded session mutation.
  *
@@ -16,6 +24,6 @@
  * @param value - Committed value to carry.
  * @returns The committed arm wrapping `value`.
  */
-export function committed<T>(value: T): { readonly kind: 'committed'; readonly value: T } {
+export function committed<T>(value: T): CommittedSessionMutation<T> {
   return { kind: 'committed', value };
 }

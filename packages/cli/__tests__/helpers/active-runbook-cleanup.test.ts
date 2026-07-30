@@ -9,9 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import {
-  dbPath,
   InvalidRunbookStateError,
   LegacySnapshotError,
   RunbookStateManager,
@@ -28,6 +26,7 @@ import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
 } from '../../src/helpers/active-runbook-cleanup.js';
+import { seedExecutionOwnership } from './test-utils.js';
 
 const RUNBOOK: Runbook = {
   title: 'Cleanup Test Runbook',
@@ -95,33 +94,6 @@ describe('cleanupOrphanedActiveStack', () => {
     await writeRawRunJson(tmpCwd, id, 'not json');
   }
 
-  /**
-   * Give a run active execution ownership, as another process holding it would.
-   *
-   * Written straight to the columns because acquiring a real lease needs
-   * `SqliteExecutionLeaseService`, which core does not export; the ownership
-   * guards key on `runs.exec_token IS NOT NULL` alone.
-   *
-   * @param cwd - Project root whose database holds the run.
-   * @param ownedRunId - Run to mark as owned.
-   */
-  function ownRunForTest(cwd: string, ownedRunId: string): void {
-    const db = new DatabaseSync(dbPath(cwd));
-    try {
-      db.prepare(
-        `INSERT INTO execution_attempts
-           (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
-         VALUES (:runId, 1, 'sha256:owned', 'claimed', :pid, :now)`,
-      ).run({ runId: ownedRunId, pid: process.pid, now: new Date().toISOString() });
-      db.prepare(
-        `UPDATE runs SET exec_epoch = 1, exec_pid = :pid, exec_token = 'sha256:owned'
-          WHERE id = :runId`,
-      ).run({ runId: ownedRunId, pid: process.pid });
-    } finally {
-      db.close();
-    }
-  }
-
   it('returns empty-stack and touches nothing when the default stack is empty', async () => {
     const result = await cleanupOrphanedActiveStack(manager, sessionService);
 
@@ -159,7 +131,7 @@ describe('cleanupOrphanedActiveStack', () => {
     // state would already be gone when the release refused.
     const run = await createRun();
     await patchPersistedRunState(tmpCwd, run.id, { schemaVersion: 99 });
-    ownRunForTest(tmpCwd, run.id);
+    seedExecutionOwnership(tmpCwd, run.id);
 
     const result = await cleanupOrphanedActiveStack(manager, sessionService);
 

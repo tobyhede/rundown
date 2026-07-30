@@ -430,16 +430,16 @@ export async function withRunSelector(
  * `RunbookStore.mutateSessionGuarded`'s pre-check both key on
  * `runs.exec_token IS NOT NULL` alone.
  *
- * @param workspace - Test workspace whose database holds the run.
+ * @param target - Test workspace whose database holds the run, or its `cwd`.
  * @param runId - Run to mark as owned.
  * @param epoch - Execution epoch to record (defaults to 1).
  */
 export function seedExecutionOwnership(
-  workspace: TestWorkspace,
+  target: TestWorkspace | string,
   runId: RunbookState['id'],
   epoch = 1,
 ): void {
-  const db = new DatabaseSync(dbPath(workspace.cwd));
+  const db = new DatabaseSync(dbPath(typeof target === 'string' ? target : target.cwd));
   try {
     db.prepare(
       `INSERT INTO execution_attempts

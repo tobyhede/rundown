@@ -1424,11 +1424,15 @@ export class RunbookLifecycleCommandService {
     // propagated createDelegation error), so the dispatch collapses to one arm.
     if (result.status !== 'retried') return { kind: 'error', error: result.error };
 
-    await this.#supersedePendingOutcome(freshState.id, frameKey, substepId);
+    // Release BEFORE superseding: both are durable writes, and a refusal
+    // returns without issuing the replacement substep. Superseding first would
+    // leave the pending outcome destroyed on a retry the caller is told did not
+    // happen, so the refusal has to be a no-op rather than a partial mutation.
     if (linkedChildRunId && allowLinkedChildRun) {
       const release = await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
       if (release.kind !== 'committed') return release;
     }
+    await this.#supersedePendingOutcome(freshState.id, frameKey, substepId);
     await this.#persistIssuedSubstep(
       freshState.id,
       result.updatedSubstepStates,

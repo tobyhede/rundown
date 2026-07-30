@@ -1317,6 +1317,111 @@ describe('RunbookLifecycleCommandService', () => {
       ).resolves.toBeNull();
     });
 
+    it('releases nothing when the retried substep has no linked child', async () => {
+      // The release is guarded on there being a terminal linked child to let go
+      // of. A fresh delegation has no child yet, so retrying it must not call
+      // releaseRunbook at all — releasing on every retry would hand back a run
+      // the seam never linked.
+      const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('retried');
+      expect(releaseSpy).not.toHaveBeenCalled();
+    });
+
+    it('leaves the pending outcome intact when the linked-child release is refused', async () => {
+      // The retry writes twice: it supersedes the pending outcome, then issues
+      // the replacement substep. A refused release between them must not leave
+      // the first write committed and the second skipped — the caller is told
+      // the retry did not happen, so the outcome it would re-report must still
+      // be there. Ordering the guarded release ahead of the supersede is what
+      // makes the refusal a no-op rather than a partial mutation.
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const keyForSubstep = (substepId: string) =>
+        buildCompletionKey(activeFrame(buildFrameKey('1'), 1), substepId);
+      const childRunId = assertRunId('rd_33333333333333333333333333333333');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.token === first.token
+            ? {
+                ...entry,
+                status: 'done',
+                result: 'fail',
+                delegation: { ...entry.delegation, token: undefined, childRunId },
+              }
+            : entry,
+        ),
+      }));
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'completed',
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: state.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(first.tokenHash),
+          },
+        }),
+      );
+      const parentWithLinkedChild = await mgr.load(state.id);
+      if (!parentWithLinkedChild) throw new Error('expected persisted parent');
+      await mgr.save({
+        ...parentWithLinkedChild,
+        resolvedCompletions: {
+          [keyForSubstep('1')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+        },
+      });
+      jest.spyOn(deps.sessionService, 'releaseRunbook').mockResolvedValue({
+        kind: 'execution_in_progress',
+        runId: childRunId,
+        message: `Run ${childRunId} has an execution in progress.`,
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome).toEqual({
+        kind: 'execution_in_progress',
+        runId: childRunId,
+        message: `Run ${childRunId} has an execution in progress.`,
+      });
+      // The supersede is the write that must not have happened.
+      await expect(
+        deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
+      ).resolves.not.toBeNull();
+    });
+
     it('continues to refuse retry over a running linked child', async () => {
       const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({

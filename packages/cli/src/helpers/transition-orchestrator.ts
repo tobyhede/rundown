@@ -173,6 +173,16 @@ export async function orchestrateTransition(
     command: args.command,
   });
 
+  // A refused release means the terminal side effect this transition owed did
+  // not happen, so the transition reports `stopped` rather than a clean `done`.
+  // It has to resolve BEFORE the events are dispatched: `RUNBOOK_COMPLETED` is
+  // in this same observation, and emitting it first would leave the stream
+  // asserting a clean completion that the return value then contradicts.
+  const refusal =
+    observation.status === 'done'
+      ? await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId, sink)
+      : null;
+
   for (const event of observation.events) {
     switch (event.type) {
       case 'ERROR_OCCURRED':
@@ -182,7 +192,15 @@ export async function orchestrateTransition(
         sink.onStepTransitioned(event.payload);
         break;
       case 'RUNBOOK_COMPLETED':
-        sink.onRunbookCompleted(event.payload);
+        // Downgraded in place: the run did not complete cleanly, so the stream
+        // carries the stop it actually reached, with the refusal as its reason.
+        // The two payloads name the same position differently.
+        if (refusal)
+          sink.onRunbookStopped({
+            position: event.payload.finalPosition,
+            message: refusal.message,
+          });
+        else sink.onRunbookCompleted(event.payload);
         break;
       case 'RUNBOOK_STOPPED':
         sink.onRunbookStopped(event.payload);
@@ -195,14 +213,6 @@ export async function orchestrateTransition(
   }
 
   if (observation.status === 'done') {
-    // A refused release means the terminal side effect this transition owed did
-    // not happen, so the transition reports `stopped` rather than a clean `done`.
-    const refusal = await applyTerminalSideEffects(
-      sessionService,
-      policy.onComplete,
-      runbookId,
-      sink,
-    );
     return {
       status: refusal ? 'stopped' : 'done',
       action: observation.action,

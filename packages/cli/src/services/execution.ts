@@ -1163,6 +1163,31 @@ export async function runExecutionLoop(
     const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
     const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
 
+    // Resolve the release BEFORE announcing completion. A refusal leaves the run
+    // on the session stack, so a stream that already emitted RUNBOOK_COMPLETED
+    // would assert a clean finish that the returned 'stopped' contradicts.
+    const terminal = await applyExecutionTerminalRelease(
+      sessionService,
+      runbookId,
+      terminalReleaseMode,
+      emitter,
+      'done',
+    );
+    if (terminal !== 'done') {
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position: buildStepPosition(
+            currentState.step,
+            countNumberedSteps(steps),
+            currentState.substep,
+            currentState.forStack,
+          ),
+        },
+      });
+      return terminal;
+    }
+
     if (snapIsTerminal) {
       const currentStepForProjection = findStepOrThrow(steps, currentState.step);
       const observation = deriveTransitionObservation({
@@ -1203,13 +1228,7 @@ export async function runExecutionLoop(
         },
       });
     }
-    return await applyExecutionTerminalRelease(
-      sessionService,
-      runbookId,
-      terminalReleaseMode,
-      emitter,
-      'done',
-    );
+    return terminal;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition

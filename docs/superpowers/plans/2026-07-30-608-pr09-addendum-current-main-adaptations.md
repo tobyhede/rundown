@@ -23,16 +23,16 @@ Full conflict dispositions:
 
 | Path | Resolution |
 | --- | --- |
-| `core/src/runbook/state.ts` | Union the import list. |
-| `core/src/runbook/session-service.ts` | `HEAD` wins both hunks. `describeSupersession` / `supersededStashedClaim` are pure `HEAD` additions the salvage predates. |
-| `core/src/runbook/lifecycle-command-service.ts` | `HEAD` wins both discriminants. Keep the named `StaleClaimRefusal` and `ClaimBearerMismatchRefusal`; **add** the `SessionMutationRefusalOutcome` arm. |
-| `cli/src/helpers/runbook-pipeline.ts` | Union. `HEAD`'s `parent-missing` / `delegation-superseded` arms and the salvage's refusal arms are disjoint. Rename the salvage's discriminants to `main`'s snake_case. |
-| `cli/src/commands/pop.ts` | Union, and **keep `claimPopRefusal`** (`pop.ts:23-57`) — it maps `superseded` to `describeSupersededClaim`, the RD-825 no-retry signal. Wrap it in the committed/refusal split rather than replacing it with a flat `CLAIMED_RUNBOOK_UNAVAILABLE`. |
-| `core/__tests__/runbook/session-service.test.ts:1794` | `HEAD` wins — asserts `'superseded'` / `'parent-ended'`; the salvage asserts `'missing-claim'`. |
-| `core/__tests__/runbook/claim-seen.test.ts` | `HEAD` wins — uses `patchPersistedClaim`, because `saveSession` no longer persists an existing claim and the salvage's in-memory edit would not reach the row. |
-| `core/__tests__/runbook/lifecycle-command-service.test.ts:2610,2663` | Keep `HEAD`'s `claimed ??=` first-call-only injection; the salvage's unconditional `=` masks a wrong-reason guard. Add the unwrap inside it. |
-| `core/__tests__/runbook/session-service.process.test.ts:15` | Union the import list. |
-| `core/__tests__/runbook/storage/driver-contract.test.ts:276` | Both-added, no overlap. Keep both — see Delta 5. |
+| `packages/core/src/runbook/state.ts` | Union the import list. |
+| `packages/core/src/runbook/session-service.ts` | `HEAD` wins both hunks. `describeSupersession` / `supersededStashedClaim` are pure `HEAD` additions the salvage predates. |
+| `packages/core/src/runbook/lifecycle-command-service.ts` | `HEAD` wins both discriminants. Keep the named `StaleClaimRefusal` and `ClaimBearerMismatchRefusal`; **add** the `SessionMutationRefusalOutcome` arm. |
+| `packages/cli/src/helpers/runbook-pipeline.ts` | Union. `HEAD`'s `parent-missing` / `delegation-superseded` arms and the salvage's refusal arms are disjoint. Rename the salvage's discriminants to `main`'s snake_case. |
+| `packages/cli/src/commands/pop.ts` | Union, and **keep `claimPopRefusal`** (`pop.ts:23-57`) — it maps `superseded` to `describeSupersededClaim`, the RD-825 no-retry signal. Wrap it in the committed/refusal split rather than replacing it with a flat `CLAIMED_RUNBOOK_UNAVAILABLE`. |
+| `packages/core/__tests__/runbook/session-service.test.ts:1794` | `HEAD` wins — asserts `'superseded'` / `'parent-ended'`; the salvage asserts `'missing-claim'`. |
+| `packages/core/__tests__/runbook/claim-seen.test.ts` | `HEAD` wins — uses `patchPersistedClaim`, because `saveSession` no longer persists an existing claim and the salvage's in-memory edit would not reach the row. |
+| `packages/core/__tests__/runbook/lifecycle-command-service.test.ts:2610,2663` | Keep `HEAD`'s `claimed ??=` first-call-only injection; the salvage's unconditional `=` masks a wrong-reason guard. Add the unwrap inside it. |
+| `packages/core/__tests__/runbook/session-service.process.test.ts:15` | Union the import list. |
+| `packages/core/__tests__/runbook/storage/driver-contract.test.ts:276` | Both-added, no overlap. Keep both — see Delta 5. |
 
 ## Delta 2 — derive the result type, do not introduce one
 

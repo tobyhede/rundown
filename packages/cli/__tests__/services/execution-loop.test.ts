@@ -1,9 +1,23 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
+import type {
+  ExecutionEventEmitter,
+  ReleaseRunbookResult,
+  RunbookStateManager,
+  RunId,
+  SessionMutationResult,
+} from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
 import type { ExecutionTerminalReleaseMode } from '../../src/services/execution.js';
 import { mockFn } from '../helpers/typed-mocks.js';
 import { committed } from '../helpers/session-mutation-fixtures.js';
+
+// The recovery-required refusal arm, so a fixture epoch carries core's brand
+// without core having to export it. Reaching it through the union also means a
+// change to the arm surfaces here rather than in a cast that keeps compiling.
+type RecoveryRefusal = Extract<
+  SessionMutationResult<ReleaseRunbookResult>,
+  { readonly kind: 'recovery_required' }
+>;
 
 // Permissive runbook-state shape used by lifecycle / actor mocks. The real
 // runtime types include branded fields whose constructors are tied to the
@@ -33,7 +47,13 @@ const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
   pushRunbook: mockFn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
   popRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue(committed(null)),
-  releaseRunbook: mockFn<(id: string) => Promise<unknown>>() as any,
+  releaseRunbook:
+    mockFn<
+      (
+        id: RunId,
+        options?: { readonly retainClaimsAsTerminal?: boolean },
+      ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+    >(),
 };
 
 const ensureActiveEntryFn =
@@ -402,7 +422,14 @@ describe('runExecutionLoop', () => {
     mockSessionService.pushRunbook.mockReset();
     mockSessionService.pushRunbook.mockResolvedValue(undefined);
     mockSessionService.releaseRunbook.mockReset();
-    mockSessionService.releaseRunbook.mockResolvedValue(committed(null));
+    mockSessionService.releaseRunbook.mockResolvedValue(
+      committed({
+        status: 'released',
+        runbookId,
+        removedFromDefaultStack: true,
+        nextDefaultRunbookId: null,
+      }),
+    );
     mockSessionService.popRunbook.mockReset();
     mockSessionService.popRunbook.mockResolvedValue(committed(null));
 
@@ -1196,7 +1223,7 @@ describe('runExecutionLoop', () => {
         refusal: {
           kind: 'recovery_required' as const,
           runId: runbookId,
-          epoch: 4,
+          epoch: 4 as RecoveryRefusal['epoch'],
           message: `Run ${runbookId} ended execution with an unknown outcome at epoch 4; run recovery before continuing.`,
         },
         code: 'RECOVERY_REQUIRED',
@@ -1261,6 +1288,82 @@ describe('runExecutionLoop', () => {
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
       });
+      // The stream must not claim the run completed: the release it owed was
+      // refused, so the run is still on the session stack. A consumer reading
+      // only the events would otherwise see a clean completion.
+      expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_COMPLETED' }),
+      );
+      // The stop names where the run halted rather than being a bare marker.
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: { current: '2', total: 2 } },
+      });
+    });
+
+    it('announces completion from state when the snapshot is not recognizably terminal', async () => {
+      // A completed run whose snapshot does not read as terminal takes the
+      // fallback: the completion payload is derived from the run state rather
+      // than from a transition observation. Both branches announce completion,
+      // so only the payload distinguishes them.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'active',
+            value: { 'step::2': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' }, lastMessage: 'Wrapped' },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('done');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_COMPLETED',
+        payload: { message: 'Wrapped', finalPosition: { current: '2', total: 2 } },
+      });
+    });
+
+    it('emits the completion and returns done when the pre-loop release commits', async () => {
+      // The committed half of the same branch. Without it, forcing the refusal
+      // path always-on would still pass: nothing else drives an already-terminal
+      // run through this branch with a release that succeeds.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'done',
+            value: 'COMPLETE',
+            context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('done');
+      expect(mockEmitter.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_COMPLETED' }),
+      );
+      expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_STOPPED' }),
+      );
     });
   });
 
