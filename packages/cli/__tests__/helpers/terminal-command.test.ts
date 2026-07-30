@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import {
   assertClaimId,
   assertRunId,
@@ -10,14 +10,32 @@ import {
   type RunbookStateManager,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
-import {
+import type { ChildTerminalPropagator } from '../../src/helpers/terminal-command.js';
+import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { takeExitCode } from './exit-code.js';
+
+// `runSeamTerminal` resolves the seam through this factory internally rather than
+// taking it as a parameter — the one dependency in this module that is not
+// injected. Mocking it is the only way to observe the seam input it builds, which
+// the claim-target coupling guard below asserts on. Every other export here takes
+// its `manager` as a parameter, so no existing test is affected by the mock.
+//
+// The module under test therefore has to be imported AFTER registration, which is
+// why the value import below is dynamic; the type-only import above is erased and
+// does not load the module.
+jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
+  buildNonDelegatingLifecycleSeam: jest.fn(),
+}));
+
+const {
   finalizeAppliedClaimTerminal,
   handleTerminalRecovery,
   renderTerminalOutcome,
-  type ChildTerminalPropagator,
-} from '../../src/helpers/terminal-command.js';
-import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { takeExitCode } from './exit-code.js';
+  runSeamTerminal,
+} = await import('../../src/helpers/terminal-command.js');
+const { buildNonDelegatingLifecycleSeam } = await import(
+  '../../src/helpers/lifecycle-seam-factory.js'
+);
 
 // Renderer contract coverage for the terminal (complete/stop) seam front end.
 // Each LifecycleTerminalOutcome kind must map to the correct CLI envelope / error
@@ -92,6 +110,64 @@ function codeOf(calls: Recorded[], method: string): string | undefined {
   const call = calls.find((c) => c.method === method);
   return call?.args[1] as string | undefined;
 }
+
+describe('runSeamTerminal claim-target coupling (#613)', () => {
+  /**
+   * Drive `runSeamTerminal` against a stub seam and return the input it built.
+   *
+   * The stub answers `actor_context_required`: with a claim target that skips the
+   * bare orphan-cleanup branch (guarded on `options.claimId === undefined`) and
+   * renders through a path that never touches `manager`, so this stays a test of
+   * input construction rather than of terminal rendering.
+   */
+  async function capturedSeamInput(
+    options: { claimId?: ReturnType<typeof assertClaimId> } = {},
+  ): Promise<Record<string, unknown>> {
+    const captured: unknown[] = [];
+    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
+      manager: {} as never,
+      sessionService: {} as never,
+      seam: {
+        runTerminal: async (input: unknown) => {
+          captured.push(input);
+          return { kind: 'actor_context_required' } as never;
+        },
+      } as never,
+    });
+    const { output } = recordingEmitter();
+
+    await runSeamTerminal(output, '/cwd', 'complete', options);
+
+    expect(captured).toHaveLength(1);
+    return captured[0] as Record<string, unknown>;
+  }
+
+  it('derives caller evidence and target selector from one --claim-id', async () => {
+    // `docs/reference/cli.md` and `docs/internal/architecture.md` both state that
+    // CLAIM_BEARER_MISMATCH is unreachable from the CLI. That rests entirely on
+    // this coupling, and complete/stop is where losing it costs most: a
+    // divergence would force AND release a run on the target's own authority.
+    // Nothing else fails if the two fields drift apart — the docs would just
+    // silently become false — so it is pinned here, where drift would originate.
+    const input = await capturedSeamInput({ claimId: CLAIM_ID });
+
+    expect(input.callerEvidence).toEqual({ kind: 'claim_bearer', claimId: CLAIM_ID });
+    expect(input.targetSelector).toEqual({ kind: 'claim', claimId: CLAIM_ID });
+    // Stated as the seam's own gate states it: the same id on both sides.
+    const evidence = input.callerEvidence as { claimId: unknown };
+    const selector = input.targetSelector as { claimId: unknown };
+    expect(evidence.claimId).toBe(selector.claimId);
+  });
+
+  it('presents no bearer without --claim-id, so the gate cannot fire', async () => {
+    // Anti-vacuity for the case above: if the construction always produced a
+    // claim-shaped pair the assertion would hold for the wrong reason.
+    const input = await capturedSeamInput();
+
+    expect(input.callerEvidence).toEqual({ kind: 'direct_cli' });
+    expect((input.targetSelector as { kind: string }).kind).not.toBe('claim');
+  });
+});
 
 describe('renderTerminalOutcome', () => {
   it('renders none as noActiveRunbook and exits 0', async () => {

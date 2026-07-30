@@ -2421,40 +2421,63 @@ describe('RunbookLifecycleCommandService', () => {
       // case per seam — is what fails if a seam reconciles differently, skips
       // the reconciliation, or grows a fourth entry point that forgets it.
       // Divergence, and the no-bearer variant, must both refuse everywhere.
+      // Arrange.
       const { claimA, claimB } = await activateTwoClaimedRuns();
       const divergent = { kind: 'claim_bearer', claimId: claimA } as const;
       const target = { kind: 'claim', claimId: claimB } as const;
       const expected = { kind: 'claim_bearer_mismatch' };
 
-      for (const evidence of [divergent, DIRECT_CLI]) {
-        expect(
-          await seam.runTransition({
+      // Act. Every seam runs for every evidence shape BEFORE anything is
+      // asserted: interleaving act and assert would abort at the first
+      // divergence and hide the very comparison this test exists to make. The
+      // labels make the single diff below name which seam drifted.
+      const outcomes: { readonly at: string; readonly outcome: unknown }[] = [];
+      for (const [shape, evidence] of [
+        ['divergent bearer', divergent],
+        ['no bearer', DIRECT_CLI],
+      ] as const) {
+        outcomes.push({
+          at: `${shape} → runTransition`,
+          outcome: await seam.runTransition({
             command: 'pass',
             callerEvidence: evidence,
             targetSelector: target,
             terminalPolicy: RELEASE_POLICY,
           }),
-        ).toEqual(expected);
-        expect(
-          await seam.runTerminal({
+        });
+        outcomes.push({
+          at: `${shape} → runTerminal`,
+          outcome: await seam.runTerminal({
             command: 'complete',
             callerEvidence: evidence,
             targetSelector: target,
           }),
-        ).toEqual(expected);
-        expect(
-          await seam.resolveRunNavigation({
+        });
+        outcomes.push({
+          at: `${shape} → resolveRunNavigation`,
+          outcome: await seam.resolveRunNavigation({
             command: 'goto',
             callerEvidence: evidence,
             targetSelector: target,
           }),
-        ).toEqual(expected);
+        });
       }
+      const finalA = await manager.load(runA);
+      const finalB = await manager.load(runB);
 
+      // Assert.
+      expect(outcomes).toEqual([
+        { at: 'divergent bearer → runTransition', outcome: expected },
+        { at: 'divergent bearer → runTerminal', outcome: expected },
+        { at: 'divergent bearer → resolveRunNavigation', outcome: expected },
+        { at: 'no bearer → runTransition', outcome: expected },
+        { at: 'no bearer → runTerminal', outcome: expected },
+        { at: 'no bearer → resolveRunNavigation', outcome: expected },
+      ]);
       // Six refusals, and neither run advanced or terminalized under any of them.
-      expect((await manager.load(runA))?.step).toBe('1');
-      expect((await manager.load(runB))?.step).toBe('1');
-      expect((await manager.load(runB))?.lifecycle).toBe('running');
+      expect(finalA?.step).toBe('1');
+      expect(finalB?.step).toBe('1');
+      expect(finalB?.lifecycle).toBe('running');
     });
 
     it('admits the matching bearer on all three seams, so the gate is not blanket refusal', async () => {
