@@ -1,4 +1,4 @@
-import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps, type StepId } from '@rundown-org/parser';
 import {
   UNKNOWN_ACTOR_CONTEXT,
   verifiedClaimContext,
@@ -6,9 +6,9 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
-import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
+import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
-import { authorizeClaim, claimCanReportDelegationResult } from './claim-id.js';
+import { authorizeClaim, claimCanReportDelegationResult, claimKeyFromBearer } from './claim-id.js';
 import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
 import { classifyDelegationExposureDetail } from './delegation-exposure.js';
 import type {
@@ -39,6 +39,7 @@ import {
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
+import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import {
   type IssuanceAnchorResolution,
   type ResolveIssuanceAnchorOptions,
@@ -51,14 +52,9 @@ import {
 } from './manual-completion-cursor.js';
 import type { CompletionLockLike } from './completion-lock.js';
 import type { SessionMutationRefusalOutcome, SessionService } from './session-service.js';
-import type {
-  DrainResolvedCompletionsArgs,
-  DrainResolvedCompletionsResult,
-  RunbookCompletionService,
-} from './completion-service.js';
+import type { RunbookCompletionService } from './completion-service.js';
 import type { ActionType } from './transition-kernel.js';
 import {
-  deriveTerminalDrainObservationEvent,
   deriveTransitionObservation,
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
@@ -72,6 +68,9 @@ import {
   findSubstepState,
 } from './targeting.js';
 import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
+import type { GuardedMutationResult } from './storage/mutation-result.js';
+import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
+import type { PreparedActorMutation } from './effectful-mutation-executor.js';
 
 /**
  * Core services the lifecycle command seam drives.
@@ -92,6 +91,8 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly lifecycleService: ExecutionLifecycleService;
   /** Completion service used to record and drain resolved substep completions. */
   readonly completionService: RunbookCompletionService;
+  /** Core-owned execution fence for actor-derived lifecycle mutations. */
+  readonly actorMutationRunner: EffectfulActorMutationRunner;
   /**
    * Load a run's persisted state by id, or `undefined` when it does not exist.
    *
@@ -481,8 +482,13 @@ export interface LifecycleTransitionInput {
 export type LifecycleTransitionOutcome =
   | { readonly kind: 'none' }
   | StaleClaimRefusal
+  | Exclude<GuardedMutationResult<never>, { readonly kind: 'committed' }>
   /** Refusal: the terminal release this transition owes hit execution ownership. */
   | SessionMutationRefusalOutcome
+  | Extract<
+      GuardedMutationResult<never>,
+      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+    >
   | {
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
@@ -543,6 +549,9 @@ export type LifecycleTransitionOutcome =
         readonly entry: number;
       };
     };
+
+/** Canonical command-facing result of one fenced lifecycle computation. */
+export type EffectfulLifecycleCommandResult<T> = GuardedMutationResult<T>;
 
 /**
  * The two {@link TransitionTargetResolution} kinds that carry a resolved run and
@@ -607,6 +616,12 @@ export type LifecycleTerminalOutcome =
   | { readonly kind: 'none' }
   /** Refusal: a release this terminal owes hit execution ownership on the named run. */
   | SessionMutationRefusalOutcome
+  | Extract<
+      GuardedMutationResult<never>,
+      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+    >
+  /** Aggregate force crossed its effect boundary and every named attempt requires recovery. */
+  | AbandonedAttemptSetOutcome
   /** The targeted claim id does not resolve to a live claimed child. */
   | StaleClaimRefusal
   /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
@@ -738,6 +753,28 @@ export type LifecycleNavigationOutcome =
       /** Parsed steps of the target run, derived in-seam. */
       readonly steps: readonly ResolvedStep[];
       /** How a follow-on execution loop should release this run terminally. */
+      readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
+    };
+
+/** Input to an already-authorized fenced GOTO mutation. */
+export interface LifecycleNavigationMutationInput {
+  readonly runId: RunId;
+  readonly callerEvidence: CallerEvidence;
+  readonly steps: readonly ResolvedStep[];
+  readonly target: StepId;
+  readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
+}
+
+/** Result of applying an already-authorized GOTO through the execution fence. */
+export type LifecycleNavigationMutationOutcome =
+  | Exclude<GuardedMutationResult<never>, { readonly kind: 'committed' }>
+  | {
+      readonly kind: 'applied';
+      readonly runId: RunId;
+      readonly previousState: RunbookState;
+      readonly updatedState: RunbookState;
+      readonly snapshot: unknown;
+      readonly steps: readonly ResolvedStep[];
       readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
     };
 
@@ -1882,6 +1919,53 @@ export class RunbookLifecycleCommandService {
     };
   }
 
+  /**
+   * Apply an authorized GOTO through core-owned execution fencing.
+   *
+   * @param input - Selected run, caller evidence, parsed steps, and validated target.
+   * @returns Applied transition data or a typed capture/execution refusal.
+   */
+  async runNavigationMutation(
+    input: LifecycleNavigationMutationInput,
+  ): Promise<LifecycleNavigationMutationOutcome> {
+    let previousState: RunbookState | undefined;
+    const result = await this.#deps.actorMutationRunner.run({
+      runId: input.runId,
+      ...(input.callerEvidence.kind === 'claim_bearer'
+        ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
+        : {}),
+      makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, input.steps),
+      compute: async (capturedState) => {
+        previousState = this.#deps.lifecycleService.deriveActiveEntry(capturedState).state;
+        const prepared = await this.#deps.actorService.prepareActorMutation(
+          capturedState.id,
+          previousState,
+          input.steps,
+          { type: 'GOTO', target: input.target },
+        );
+        const projected = this.#deps.lifecycleService.deriveActiveEntry(
+          prepared.nextState,
+          previousState,
+          true,
+        );
+        return { ...prepared, previousState, nextState: projected.state };
+      },
+    });
+    if (result.kind !== 'committed') return result;
+    if (previousState === undefined) {
+      throw new Error('Fenced GOTO committed without a captured previous state');
+    }
+    return {
+      kind: 'applied',
+      runId: input.runId,
+      previousState,
+      updatedState: result.value.state,
+      snapshot: result.value.snapshot,
+      steps: input.steps,
+      terminalReleaseMode: input.terminalReleaseMode,
+    };
+  }
+
   // Run-targeted terminal: resolve the named session-stack run, then feed it to
   // the existing inline force-terminal plan as the root anchor. Naming a run
   // outside the stack (or a terminal one) refuses as `unknown_run` via the
@@ -1988,66 +2072,90 @@ export class RunbookLifecycleCommandService {
       await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
-    const steps = await this.#deps.loadSteps(state);
-    const currentStep = this.#findStep(steps, state.step);
-    const eventType = terminalForceEvent(input.command);
-
-    const syncResult = await actorService.sendAndSync(state.id, steps, {
-      type: eventType,
-      ...(input.message !== undefined ? { message: input.message } : {}),
-    });
-    if (!syncResult) {
-      // The claimed child raced to null: its persisted state vanished between the
-      // resolver read and this dispatch, so there is nothing to force or record.
-      // Release with a retained tombstone (item 4) and report the close per the
-      // command's terminal intent — a claim-path race is a benign no-op close
-      // (the child is already gone), so it stays command-success and propagates
-      // nothing to the parent. (A bare-path race is handled distinctly in
-      // #driveTerminalBare as `root-unavailable`, which exits non-zero for retry.)
-      const raceRelease = await sessionService.releaseRunbook(state.id, {
-        retainClaimsAsTerminal: true,
-      });
-      if (raceRelease.kind !== 'committed') return raceRelease;
-      return {
-        kind: 'applied_claim',
+    const shouldReport = claimCanReportDelegationResult(resolution.claim, state);
+    const parentRunId = shouldReport ? state.parentLinkage?.parentRunId : undefined;
+    const targets = [
+      {
         runId: state.id,
-        status: input.command === 'complete' ? 'completed' : 'stopped',
-        events: [],
-        reported: 'not-applicable',
-      };
+        claimKey: claimKeyFromBearer(claimId),
+      },
+      ...(parentRunId === undefined ? [] : [{ runId: parentRunId }]),
+    ];
+    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
+    for (const target of targets) {
+      const targetState =
+        target.runId === state.id ? state : await this.#deps.loadRun(target.runId);
+      if (targetState !== undefined) {
+        stepsByRun.set(target.runId, await this.#deps.loadSteps(targetState));
+      }
     }
-
-    const observation = deriveTransitionObservation({
-      steps,
-      currentStep,
-      previousState: state,
-      updatedState: syncResult.state,
-      snapshot: syncResult.snapshot,
-      result: input.command === 'complete' ? 'pass' : 'fail',
-      ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+    const eventType = terminalForceEvent(input.command);
+    const aggregate = await this.#deps.actorMutationRunner.runAll({
+      targets,
+      releases: [{ runId: state.id, retainClaimsAsTerminal: true }],
+      makeRecoveryActor: (runId, recoveryState) => {
+        const recoverySteps = stepsByRun.get(runId);
+        if (recoverySteps === undefined) {
+          throw new Error(`Missing recovery steps for aggregate run ${runId}.`);
+        }
+        return actorService.createRecoveryActor(recoveryState, recoverySteps);
+      },
+      compute: async (captured) => {
+        const child = captured.at(0);
+        if (child?.state.id !== state.id) {
+          throw new Error('Aggregate claimed terminal capture order changed.');
+        }
+        const childSteps = await this.#deps.loadSteps(child.state);
+        stepsByRun.set(child.state.id, childSteps);
+        const currentStep = this.#findStep(childSteps, child.state.step);
+        const prepared = await actorService.prepareActorMutation(
+          child.state.id,
+          child.state,
+          childSteps,
+          {
+            type: eventType,
+            ...(input.message !== undefined ? { message: input.message } : {}),
+          },
+        );
+        const observation = deriveTransitionObservation({
+          steps: childSteps,
+          currentStep,
+          previousState: child.state,
+          updatedState: prepared.nextState,
+          snapshot: prepared.snapshot,
+          result: input.command === 'complete' ? 'pass' : 'fail',
+          ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+        });
+        let reported: TerminalReportOutcome = 'not-applicable';
+        const members = [{ runId: child.state.id, nextState: prepared.nextState }];
+        const parent = captured.at(1);
+        if (parent !== undefined) {
+          const report = completionService.prepareChildCompletion(
+            { childState: prepared.nextState },
+            parent.state,
+          );
+          reported = report.kind;
+          members.push({
+            runId: parent.state.id,
+            nextState: report.kind === 'recorded' ? report.nextParentState : parent.state,
+          });
+        }
+        return {
+          members,
+          value: {
+            kind: 'applied_claim' as const,
+            runId: child.state.id,
+            status:
+              prepared.nextState.lifecycle === 'stopped'
+                ? ('stopped' as const)
+                : ('completed' as const),
+            events: observation.events,
+            reported,
+          },
+        };
+      },
     });
-
-    // Record BEFORE release (decision #4), but only when the verified claim also
-    // carries the exact parent/child report grant. No explicit `result` → core
-    // derives completed→pass / stopped→fail via lifecycleToDelegationOutcome.
-    const reported = claimCanReportDelegationResult(resolution.claim, syncResult.state)
-      ? await completionService.recordChildCompletion({
-          childState: syncResult.state,
-        })
-      : 'not-applicable';
-
-    const release = await sessionService.releaseRunbook(state.id, {
-      retainClaimsAsTerminal: true,
-    });
-    if (release.kind !== 'committed') return release;
-
-    return {
-      kind: 'applied_claim',
-      runId: state.id,
-      status: syncResult.state.lifecycle === 'stopped' ? 'stopped' : 'completed',
-      events: observation.events,
-      reported,
-    };
+    return aggregate.kind === 'committed' ? aggregate.value : aggregate;
   }
 
   // Bare-cascade terminal: resolve the inline chain, gate the resolved root, force
@@ -2205,73 +2313,139 @@ export class RunbookLifecycleCommandService {
     }
 
     const eventType = terminalForceEvent(input.command);
-    const events: AttributedTerminalObservation[] = [];
-    const forcedRunIds: RunId[] = [];
-    let finalRootState: RunbookState = plan.targetState;
-
-    // Force descendant→root, collecting observations instead of streaming. Each
-    // event is tagged with its producing run so the frontend attributes streamed
-    // events across the chain rather than root-stamping the whole cascade.
-    for (const state of plan.forceOrder) {
-      if (state.lifecycle !== 'running') continue;
-      const steps = await this.#deps.loadSteps(state);
-      const currentStep = this.#findStep(steps, state.step);
-      const result = await actorService.sendAndSync(state.id, steps, {
-        type: eventType,
-        ...(input.message !== undefined ? { message: input.message } : {}),
-      });
-      if (!result) continue; // raced to null; skip (matches prior behaviour)
-      forcedRunIds.push(state.id);
-      const observation = deriveTransitionObservation({
-        steps,
-        currentStep,
-        previousState: state,
-        updatedState: result.state,
-        snapshot: result.snapshot,
-        result: input.command === 'complete' ? 'pass' : 'fail',
-        ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
-      });
-      for (const event of observation.events) {
-        events.push({ runId: state.id, runbook: state.runbook, event });
+    const externalParentRunId = plan.targetState.parentLinkage?.parentRunId;
+    const presentedClaim =
+      input.callerEvidence.kind === 'claim_bearer'
+        ? await sessionService.verifyClaimId(input.callerEvidence.claimId)
+        : undefined;
+    const controlledRunId =
+      presentedClaim?.status === 'verified' ? presentedClaim.claim.controlledRunId : undefined;
+    const claimKey =
+      input.callerEvidence.kind === 'claim_bearer'
+        ? claimKeyFromBearer(input.callerEvidence.claimId)
+        : undefined;
+    const targets = [
+      ...plan.forceOrder.map((member) => ({
+        runId: member.id,
+        ...(member.id === controlledRunId && claimKey !== undefined ? { claimKey } : {}),
+      })),
+      ...(externalParentRunId === undefined ||
+      plan.forceOrder.some(({ id }) => id === externalParentRunId)
+        ? []
+        : [{ runId: externalParentRunId }]),
+    ];
+    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
+    for (const target of targets) {
+      const targetState =
+        plan.forceOrder.find(({ id }) => id === target.runId) ??
+        (await this.#deps.loadRun(target.runId));
+      if (targetState !== undefined) {
+        stepsByRun.set(target.runId, await this.#deps.loadSteps(targetState));
       }
-      if (state.id === plan.targetState.id) finalRootState = result.state;
     }
+    const aggregate = await this.#deps.actorMutationRunner.runAll({
+      targets,
+      releases: plan.releaseRunIds.map((runId) => ({
+        runId,
+        retainClaimsAsTerminal: runId === plan.targetState.id,
+      })),
+      makeRecoveryActor: (runId, recoveryState) => {
+        const recoverySteps = stepsByRun.get(runId);
+        if (recoverySteps === undefined) {
+          throw new Error(`Missing recovery steps for aggregate run ${runId}.`);
+        }
+        return actorService.createRecoveryActor(recoveryState, recoverySteps);
+      },
+      compute: async (captured) => {
+        const events: AttributedTerminalObservation[] = [];
+        const forcedRunIds: RunId[] = [];
+        const members: { runId: RunId; nextState: RunbookState }[] = [];
+        let finalRootState: RunbookState | undefined;
 
-    // Root raced to null → never forced; surface the dedicated non-terminal outcome.
-    if (!forcedRunIds.includes(plan.targetState.id)) {
-      return {
-        kind: 'inline_plan_unavailable',
-        reason: 'root-unavailable',
-        message: `Runbook state changed during force-${input.command}; retry`,
-        code: 'RUNBOOK_STATE_CHANGED',
-      };
-    }
+        for (let index = 0; index < plan.forceOrder.length; index += 1) {
+          const exact = captured.at(index);
+          const planned = plan.forceOrder[index];
+          if (exact?.state.id !== planned.id) {
+            throw new Error('Aggregate inline force order changed during capture.');
+          }
+          const nextPlanned = plan.forceOrder.at(index + 1);
+          if (
+            nextPlanned !== undefined &&
+            (exact.state.parentLinkage?.kind !== 'inline' ||
+              exact.state.parentLinkage.parentRunId !== nextPlanned.id)
+          ) {
+            throw new Error('Aggregate inline linkage changed during capture.');
+          }
+          const steps = await this.#deps.loadSteps(exact.state);
+          stepsByRun.set(exact.state.id, steps);
+          let nextState = exact.state;
+          if (exact.state.lifecycle === 'running') {
+            const currentStep = this.#findStep(steps, exact.state.step);
+            const prepared = await actorService.prepareActorMutation(
+              exact.state.id,
+              exact.state,
+              steps,
+              {
+                type: eventType,
+                ...(input.message !== undefined ? { message: input.message } : {}),
+              },
+            );
+            nextState = prepared.nextState;
+            forcedRunIds.push(exact.state.id);
+            const observation = deriveTransitionObservation({
+              steps,
+              currentStep,
+              previousState: exact.state,
+              updatedState: nextState,
+              snapshot: prepared.snapshot,
+              result: input.command === 'complete' ? 'pass' : 'fail',
+              ...(input.computeActionResult
+                ? { computeActionResult: input.computeActionResult }
+                : {}),
+            });
+            for (const event of observation.events) {
+              events.push({ runId: exact.state.id, runbook: exact.state.runbook, event });
+            }
+          }
+          members.push({ runId: exact.state.id, nextState });
+          if (exact.state.id === plan.targetState.id) finalRootState = nextState;
+        }
 
-    // Record the ROOT outcome BEFORE releasing (decision #4). Core derives the
-    // outcome; self-guards since the root's linkage is delegation-or-none (inline
-    // descendants never reach here as the propagating child — only the root does).
-    const reported = await completionService.recordChildCompletion({ childState: finalRootState });
-
-    // Release descendants (no claims → delete) then the root (retain tombstone,
-    // decision #3). Descendant ids are the chain minus the root.
-    const descendantReleaseIds = plan.releaseRunIds.filter((id) => id !== plan.targetState.id);
-    if (descendantReleaseIds.length > 0) {
-      const descendantsRelease = await sessionService.releaseRunbooks(descendantReleaseIds);
-      if (descendantsRelease.kind !== 'committed') return descendantsRelease;
-    }
-    const rootRelease = await sessionService.releaseRunbook(plan.targetState.id, {
-      retainClaimsAsTerminal: true,
+        if (finalRootState === undefined || !forcedRunIds.includes(plan.targetState.id)) {
+          throw new Error(`Runbook state changed during force-${input.command}.`);
+        }
+        let reported: TerminalReportOutcome = 'not-applicable';
+        const externalParent = captured.at(plan.forceOrder.length);
+        if (externalParent !== undefined) {
+          const parentSteps = await this.#deps.loadSteps(externalParent.state);
+          stepsByRun.set(externalParent.state.id, parentSteps);
+          const report = completionService.prepareChildCompletion(
+            { childState: finalRootState },
+            externalParent.state,
+          );
+          reported = report.kind;
+          members.push({
+            runId: externalParent.state.id,
+            nextState: report.kind === 'recorded' ? report.nextParentState : externalParent.state,
+          });
+        }
+        return {
+          members,
+          value: {
+            kind: 'applied_bare' as const,
+            rootRunId: plan.targetState.id,
+            status:
+              finalRootState.lifecycle === 'stopped'
+                ? ('stopped' as const)
+                : ('completed' as const),
+            events,
+            forcedRunIds,
+            reported,
+          },
+        };
+      },
     });
-    if (rootRelease.kind !== 'committed') return rootRelease;
-
-    return {
-      kind: 'applied_bare',
-      rootRunId: plan.targetState.id,
-      status: finalRootState.lifecycle === 'stopped' ? 'stopped' : 'completed',
-      events,
-      forcedRunIds,
-      reported,
-    };
+    return aggregate.kind === 'committed' ? aggregate.value : aggregate;
   }
 
   // Resolve the issuance anchor run via the shared `resolveIssuanceAnchor` seam
@@ -2423,363 +2597,197 @@ export class RunbookLifecycleCommandService {
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, lifecycleService } = this.#deps;
+    const { actorService } = this.#deps;
     const fresh = await actorService.assertFreshState(state.id, steps);
     if (!fresh) {
       throw new Error('Runbook state is stale or mismatched with current definition');
     }
-    const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
-    const activeState = ensured.state;
-    const activeStep = this.#findStep(steps, activeState.step);
+    const activeStep = this.#findStep(steps, state.step);
+    const isSubstepCompletion = Boolean(
+      state.substep && resolvedStepHasSubsteps(activeStep) && activeStep.substeps.length,
+    );
+    if (input.explicitTarget === undefined && !isSubstepCompletion) {
+      return this.#driveTopLevel(input, steps, state, terminalReleaseMode, guardOpenChildren);
+    }
+
     if (input.explicitTarget !== undefined) {
-      // An explicit target always routes through the locked substep span, even
-      // when the live cursor is parked on a top-level step — the in-lock
-      // resolver refuses targets the fresh state cannot satisfy.
-      return this.#driveSubstepExplicit(
+      return this.#driveSubstepFenced(
         input,
-        input.explicitTarget,
         steps,
-        activeState,
+        state,
         terminalReleaseMode,
+        false,
+        input.explicitTarget,
       );
     }
-    const isSubstepCompletion = Boolean(
-      activeState.substep && resolvedStepHasSubsteps(activeStep) && activeStep.substeps.length,
-    );
     if (isSubstepCompletion) {
-      return this.#driveSubstep(input, steps, activeState, terminalReleaseMode, guardOpenChildren);
+      // A bare transition means "advance the thing currently in front of the
+      // operator". When that thing is an already-running inline child, resume
+      // it instead of recording a completion against its parent substep.
+      if (await this.#reactivateRunningInlineChild(state)) {
+        return {
+          kind: 'applied',
+          runId: state.id,
+          mutation: 'manual-completion',
+          terminalReleaseMode,
+          status: 'continue',
+          events: [],
+          loop: { kind: 'none' },
+        };
+      }
+      return this.#driveSubstepFenced(input, steps, state, terminalReleaseMode, guardOpenChildren);
     }
-    return this.#driveTopLevel(input, steps, activeState, terminalReleaseMode, guardOpenChildren);
+    throw new Error('Lifecycle transition path changed while active-entry state was initialized');
   }
 
-  // Manual substep completion path (bare transition): record (guarded, via the
-  // locking record) then drain resolved completions via the locking drain
-  // wrapper. The explicit `--step` / `--index` path is #driveSubstepExplicit.
-  async #driveSubstep(
+  async #driveSubstepFenced(
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
     activeState: RunbookState,
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
+    explicitTarget?: ExplicitTransitionTarget,
   ): Promise<LifecycleTransitionOutcome> {
-    const { completionService } = this.#deps;
-    const cursor: ResolvedCursor = activeCursor(activeState);
-    const targetSubstep = cursor.substep;
-    if (!targetSubstep) {
-      throw new Error('Substep completion requires an active or explicit substep target');
-    }
+    const { actorService, actorMutationRunner, completionService, lifecycleService } = this.#deps;
+    let preparedOutcome:
+      | {
+          readonly events: readonly TransitionObservationEvent[];
+          readonly applied: number;
+          readonly state: RunbookState;
+          readonly terminalStatus?: 'done' | 'stopped';
+          readonly duplicate?: { at: string; frameKey: FrameKey; entry: number };
+        }
+      | undefined;
 
-    // Bare transition at a substep whose inline child is still running: this is
-    // "advance the thing the operator is looking at" — resume the child rather
-    // than record a completion against the parent. The decision (is the child
-    // still open?) is runbook logic and belongs in core; the effect is
-    // `SessionService.pushRunbook`. The explicit `--step` path never
-    // reactivates — it is a deliberate completion against a named substep.
-    if (await this.#reactivateRunningInlineChild(activeState)) {
-      return {
-        kind: 'applied',
+    const run = (guard?: ParentAdvanceGuard): ReturnType<EffectfulActorMutationRunner['run']> =>
+      actorMutationRunner.run({
         runId: activeState.id,
-        mutation: 'manual-completion',
-        terminalReleaseMode,
-        status: 'continue',
-        events: [],
-        loop: { kind: 'none' },
-      };
-    }
+        ...(input.callerEvidence.kind === 'claim_bearer'
+          ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
+          : {}),
+        ...(guard === undefined ? {} : { guard }),
+        terminalRelease: {
+          onComplete: input.terminalPolicy.onComplete.releaseRunbook,
+          onStopped: input.terminalPolicy.onStopped.releaseRunbook,
+          retainClaimsAsTerminal: true,
+        },
+        makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
+        compute: async (capturedState) => {
+          const initial = lifecycleService.deriveActiveEntry(capturedState).state;
+          const cursor =
+            explicitTarget === undefined
+              ? activeCursor(initial)
+              : resolveManualCompletionCursor(steps, initial, explicitTarget);
+          if (!cursor.substep) {
+            throw new Error('Substep completion requires an active or explicit substep target');
+          }
+          const record = completionService.prepareManualCompletion({
+            runbookId: initial.id,
+            currentState: initial,
+            targetStep: cursor.step,
+            targetSubstep: cursor.substep,
+            ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
+            targetFrame: cursor.frame,
+            result: input.command,
+            agentId: 'manual',
+          });
+          const duplicate =
+            record.status === 'duplicate'
+              ? {
+                  at: cursor.at,
+                  frameKey: cursor.frame.frameKey,
+                  entry: completionEntryForFrame(cursor.frame),
+                }
+              : undefined;
+          const events: TransitionObservationEvent[] = [];
+          let state = record.nextState;
+          let snapshot: unknown = state.snapshot;
+          let effects: PreparedActorMutation['effects'] = [];
+          let applied = 0;
+          let terminalStatus: 'done' | 'stopped' | undefined;
 
-    const recordArgs: Parameters<RunbookCompletionService['recordManualCompletion']>[0] = {
-      runbookId: activeState.id,
-      currentState: activeState,
-      targetStep: cursor.step,
-      targetSubstep,
-      ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
-      targetFrame: cursor.frame,
-      result: input.command,
-      agentId: 'manual',
-    };
+          for (;;) {
+            const currentStep = this.#findStep(steps, state.step);
+            if (!resolvedStepHasSubsteps(currentStep) || !state.substep) break;
+            const projected = lifecycleService.deriveActiveEntry(state).state;
+            state = projected;
+            const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+            const entry = state.activeEntry ?? 1;
+            const current = Object.entries(state.resolvedCompletions ?? {}).find(
+              ([, completion]) =>
+                completion.targetStep === state.step &&
+                completion.targetSubstep === state.substep &&
+                completion.targetFrameKey === frameKey,
+            );
+            if (current === undefined) break;
+            const validated = completionService.validateCurrentCompletion(state, current[1], entry);
+            if ('status' in validated) throw new Error(validated.message);
+            const prepared = await actorService.prepareActorMutation(state.id, state, steps, {
+              type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+              completionKey: current[0],
+              completion: validated,
+            });
+            const next = lifecycleService.deriveActiveEntry(prepared.nextState, state, true).state;
+            const observation = deriveTransitionObservation({
+              steps,
+              currentStep,
+              previousState: state,
+              updatedState: next,
+              snapshot: prepared.snapshot,
+              result: validated.result,
+              ...(input.computeActionResult
+                ? { computeActionResult: input.computeActionResult }
+                : {}),
+            });
+            events.push(...observation.events);
+            applied += 1;
+            state = next;
+            snapshot = prepared.snapshot;
+            effects = [...effects, ...prepared.effects];
+            if (observation.status === 'done' || observation.status === 'stopped') {
+              terminalStatus = observation.status;
+              break;
+            }
+          }
+          preparedOutcome = {
+            events,
+            applied,
+            state,
+            ...(terminalStatus === undefined ? {} : { terminalStatus }),
+            ...(duplicate === undefined ? {} : { duplicate }),
+          };
+          return {
+            previousState: capturedState,
+            nextState: state,
+            snapshot,
+            effects,
+          };
+        },
+      });
 
-    // Guarded: thread the in-transaction guard into the decisive write. Unguarded
-    // (explicit-target / claim-authorized): no guarded advance, no guard.
-    const record = await this.#runGuardedOrPlain(
+    const fenced = await this.#runGuardedOrPlain(
       guardOpenChildren,
       activeState.id,
-      (guard) => completionService.recordManualCompletion(recordArgs, { guard }),
-      () => completionService.recordManualCompletion(recordArgs),
+      (guard) => run(guard),
+      () => run(),
     );
-    if (record.kind === 'refusal') return record.outcome;
-    const recordResult = record.value;
-
-    const duplicate =
-      recordResult.status === 'duplicate'
-        ? {
-            at: cursor.at,
-            frameKey: cursor.frame.frameKey,
-            entry: completionEntryForFrame(cursor.frame),
-          }
-        : undefined;
-
-    // A `duplicate` record performed NO store write, so the guard threaded into it
-    // above was never evaluated — and the drain below then becomes the decisive
-    // parent-advancing write. Guard the drain in its own right, or a claim
-    // committing between the pre-check and here advances the parent past a live
-    // delegated child, which is exactly the refusal this path exists to make.
-    //
-    // The guard arms the drain's FIRST apply only. The drain loops, one committed
-    // transaction per queued completion, and only the first is the decisive write;
-    // `#drainSubstepObservations` owns that rule (see its comment).
-    //
-    // Scoped to the duplicate case deliberately, and the same reason governs both:
-    // after a `recorded` result the decisive write already committed under its own
-    // guard, so there is no decisive write left in the drain to arm — handing the
-    // guard to a follow-on apply would let an unrelated live child abort the drain
-    // and strand a recorded-but-undrained completion, the very state that produces
-    // this bug.
-    //
-    // Lock ordering is unchanged: this is the same SessionLock -> CompletionLock
-    // edge the guarded record above already holds (see #driveSubstepExplicit's
-    // proof), since `runGuardedParentAdvance` wraps the LOCKING drain from outside
-    // and holds no CompletionLock itself.
-    const drain = await this.#runGuardedOrPlain(
-      guardOpenChildren && recordResult.status === 'duplicate',
+    if (fenced.kind === 'refusal') return fenced.outcome;
+    if (fenced.value.kind !== 'committed') return fenced.value;
+    if (preparedOutcome === undefined) {
+      throw new Error('Fenced substep transition committed without a prepared outcome');
+    }
+    const drained: SubstepDrainObservation = {
+      drainEvents: [...preparedOutcome.events],
+      applied: preparedOutcome.applied,
+      observedState: preparedOutcome.state,
+      terminalStatus: preparedOutcome.terminalStatus,
+    };
+    return this.#substepOutcome(
       activeState.id,
-      (guard) =>
-        this.#drainSubstepObservations(
-          input,
-          steps,
-          activeState,
-          undefined,
-          (args) => completionService.drainResolvedCompletions(args),
-          guard,
-        ),
-      () =>
-        this.#drainSubstepObservations(input, steps, activeState, undefined, (args) =>
-          completionService.drainResolvedCompletions(args),
-        ),
+      terminalReleaseMode,
+      drained,
+      preparedOutcome.duplicate,
     );
-    if (drain.kind === 'refusal') return drain.outcome;
-    const drained = drain.value;
-    if (drained.terminalStatus) {
-      const refusal = await this.#applyTerminalSideEffects(
-        input,
-        drained.terminalStatus,
-        activeState.id,
-      );
-      if (refusal) return refusal;
-    }
-    return this.#substepOutcome(activeState.id, terminalReleaseMode, drained, duplicate);
-  }
-
-  // Explicit `--step` / `--index` completion path (#500): ONE CompletionLock
-  // scope spans the locked re-read, cursor derivation, record, and drain, so a
-  // concurrent writer can neither orphan the recorded row nor move the cursor
-  // between record and drain.
-  //
-  // Lock-ordering proof (roadmap item 15, amended by the 2026-07-03 plan
-  // review): nothing reachable from inside this span acquires another domain
-  // lock.
-  // - `guardOpenChildren` is false BY CONSTRUCTION on every explicit-target
-  //   path (an explicit-step selector makes the transition targeted; a
-  //   claim-with---step combination resolves kind 'claim'), so the SessionLock
-  //   guard (`runGuardedParentAdvance`) never nests inside this scope.
-  // - `#applyTerminalSideEffects` → `sessionService.releaseRunbook` acquires
-  //   the project-wide SessionLock, and IS reachable from a terminal drain —
-  //   so `#drainSubstepObservations` returns the pending terminal status as
-  //   data and the side effect is applied strictly AFTER the `await using`
-  //   scope below closes. Applying it in-span would create a CompletionLock →
-  //   SessionLock edge; the bare guarded path holds the opposite SessionLock →
-  //   CompletionLock edge (`runGuardedParentAdvance` around the locking
-  //   record), which would be an ABBA inversion.
-  // - Remaining cross-lock edges stay acyclic: SessionLock → CompletionLock
-  //   (bare guarded record — never holds CompletionLock while waiting),
-  //   DelegationLock → CompletionLock (`recordChildCompletion` →
-  //   `recordManualCompletion`), and every domain lock → RunStateLock (the
-  //   sanctioned leaf per run-state-lock.ts). CompletionLock acquires nothing
-  //   but RunStateLock inside this span.
-  //
-  // Hold-time note: the span holds the CompletionLock across the whole drain
-  // loop, so the worst case scales with the number of queued resolved
-  // completions (substep count × single-apply machine dispatch, each pass an
-  // `ensureActiveEntry` + `listResolvedCompletions` + `sendAndSync` under
-  // RunStateLock — milliseconds each on a local filesystem). Contenders are
-  // bounded by the 5s file-lock deadline, and `recordChildCompletion` waits on
-  // this lock WHILE HOLDING the parent DelegationLock, so the hold time must
-  // stay well under that deadline; if a step ever carries enough substeps to
-  // threaten it, cap applied completions per span and let the next locking
-  // drain pick up the surplus.
-  //
-  // `CompletionLockTimeoutError` propagates as a throw — the same contract the
-  // pre-span record path had when its internal lock scope timed out.
-  async #driveSubstepExplicit(
-    input: LifecycleTransitionInput,
-    explicitTarget: ExplicitTransitionTarget,
-    steps: readonly ResolvedStep[],
-    activeState: RunbookState,
-    terminalReleaseMode: LifecycleTerminalReleaseMode,
-  ): Promise<LifecycleTransitionOutcome> {
-    const { completionService } = this.#deps;
-
-    let drained: SubstepDrainObservation;
-    let duplicate: { at: string; frameKey: FrameKey; entry: number } | undefined;
-    {
-      await this.#deps.completionLock.acquire(activeState.id);
-      await using _guard = heldLock(
-        () => this.#deps.completionLock.release(activeState.id),
-        () => ({ lock: 'completion', runId: activeState.id, site: 'driveSubstepExplicit' }),
-      );
-
-      // Locked re-read: the authoritative state for cursor derivation, the
-      // duplicate decision, and the drain start.
-      const fresh = await this.#deps.loadRun(activeState.id);
-      if (!fresh) {
-        throw new Error('Runbook state is stale or mismatched with current definition');
-      }
-
-      // Derive-or-refuse INSIDE the lock: the cursor is resolved against the
-      // locked re-read, so it cannot go stale before the record below (the
-      // pre-#500 TOCTOU). A run that advanced off the target step refuses
-      // here; a re-entered frame or a drifted FOR iteration resolves to the
-      // LIVE frame/entry, so a stale-frame orphan row is unrepresentable.
-      const cursor = resolveManualCompletionCursor(steps, fresh, explicitTarget);
-
-      const recordResult = await completionService.recordManualCompletionUnlocked({
-        runbookId: fresh.id,
-        currentState: fresh,
-        targetStep: cursor.step,
-        targetSubstep: cursor.substep,
-        ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
-        targetFrame: cursor.frame,
-        result: input.command,
-        agentId: 'manual',
-      });
-
-      duplicate =
-        recordResult.status === 'duplicate'
-          ? {
-              at: cursor.at,
-              frameKey: cursor.frame.frameKey,
-              entry: completionEntryForFrame(cursor.frame),
-            }
-          : undefined;
-
-      drained = await this.#drainSubstepObservations(input, steps, fresh, cursor.frame, (args) =>
-        completionService.drainResolvedCompletionsUnlocked(args),
-      );
-    }
-    // The `await using` scope above has closed: the CompletionLock is released
-    // before any terminal side effect can take the SessionLock (see the
-    // lock-ordering proof in the method comment).
-    if (drained.terminalStatus) {
-      const refusal = await this.#applyTerminalSideEffects(
-        input,
-        drained.terminalStatus,
-        activeState.id,
-      );
-      if (refusal) return refusal;
-    }
-    return this.#substepOutcome(activeState.id, terminalReleaseMode, drained, duplicate);
-  }
-
-  // Drain persisted completions one at a time, deriving observation events per
-  // applied completion. `drain` selects the locking variant (bare path) or the
-  // unlocked twin (explicit span, which already holds the CompletionLock).
-  // Terminal side effects are NOT applied here: a terminal drain returns its
-  // status as data and the caller applies #applyTerminalSideEffects — the
-  // explicit span must do so only after its CompletionLock scope closes
-  // (SessionLock must never nest inside it).
-  //
-  // `guard` arrives as a parameter rather than baked into the `drain` closure
-  // because this loop is what decides which write is decisive. Each iteration
-  // commits its own transaction, so a closure-captured guard would re-arm on
-  // every one of them; only the first iteration is the parent-advancing write
-  // the guard exists to refuse. See the guard comment in
-  // `RunbookCompletionService.drainResolvedCompletionsUnlocked` — the same rule
-  // one level down, which together bound a guarded scope to exactly one guarded
-  // write however the two loops interleave.
-  async #drainSubstepObservations(
-    input: LifecycleTransitionInput,
-    steps: readonly ResolvedStep[],
-    startState: RunbookState,
-    frameOverride: Frame | undefined,
-    drain: (args: DrainResolvedCompletionsArgs) => Promise<DrainResolvedCompletionsResult>,
-    guard?: ParentAdvanceGuard,
-  ): Promise<SubstepDrainObservation> {
-    const drainEvents: TransitionObservationEvent[] = [];
-    let drainState: RunbookState = startState;
-    let observedState: RunbookState = startState;
-    let applied = 0;
-    let terminalStatus: 'done' | 'stopped' | undefined;
-
-    drainLoop: for (;;) {
-      const drained = await drain({
-        runbookId: startState.id,
-        steps,
-        currentState: drainState,
-        maxApplied: 1,
-        ...(frameOverride ? { frameOverride } : {}),
-        ...guardOptions(applied === 0 ? guard : undefined),
-      });
-
-      if (drained.status === 'failed') {
-        throw new Error(drained.message);
-      }
-      if (drained.status === 'not_active') {
-        break;
-      }
-
-      for (const appliedCompletion of drained.applied) {
-        const currentStep = this.#findStep(steps, appliedCompletion.stateBefore.step);
-        const observation = deriveTransitionObservation({
-          steps,
-          currentStep,
-          previousState: appliedCompletion.stateBefore,
-          updatedState: appliedCompletion.stateAfter,
-          snapshot: appliedCompletion.snapshot,
-          result: appliedCompletion.completion.result,
-          ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
-        });
-        drainEvents.push(...observation.events);
-        applied += 1;
-        if (observation.status === 'done' || observation.status === 'stopped') {
-          terminalStatus = observation.status;
-          break drainLoop;
-        }
-        observedState = observation.state;
-        drainState = observation.state;
-      }
-
-      if (drained.status === 'done' || drained.status === 'stopped') {
-        // A drain can report terminal even when the last applied completion's
-        // observation did not: the drain derives terminal from the applied
-        // completion's `state.lifecycle` while `deriveTransitionObservation`
-        // derives it from the XState snapshot's top-level status/value, and the
-        // two are independent. When that divergence happens the per-completion
-        // observation above emitted only a STEP_TRANSITIONED, so emit the matching
-        // terminal event here from the drain's authoritative status — otherwise
-        // the run is released but the agent-facing output omits the terminal
-        // envelope. The terminal status is returned as data so this exit can
-        // never skip the caller-owned terminal side effect.
-        const last = drained.applied.at(-1);
-        if (last !== undefined) {
-          drainEvents.push(
-            deriveTerminalDrainObservationEvent({
-              steps,
-              currentStep: this.#findStep(steps, last.stateBefore.step),
-              previousState: last.stateBefore,
-              updatedState: last.stateAfter,
-              snapshot: last.snapshot,
-              status: drained.status,
-              result: last.completion.result,
-            }),
-          );
-        }
-        terminalStatus = drained.status;
-        break;
-      }
-      if (drained.applied.length === 0) {
-        break;
-      }
-    }
-    return { drainEvents, applied, observedState, terminalStatus };
   }
 
   // Assemble the `applied` outcome for a substep mutation, shared by the bare
@@ -2828,9 +2836,7 @@ export class RunbookLifecycleCommandService {
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, lifecycleService } = this.#deps;
-    const previousState: RunbookState = { ...activeState };
-    const currentStep = this.#findStep(steps, previousState.step);
+    const { actorService, lifecycleService, actorMutationRunner } = this.#deps;
     // Exhaustive map from command to engine event. A `never` fallthrough makes a
     // future `TransitionCommandName` member a compile error here rather than a
     // silent collapse to FAIL (see CLAUDE.md § No silent mapping).
@@ -2849,42 +2855,91 @@ export class RunbookLifecycleCommandService {
 
     // Guarded: thread the in-transaction guard into the decisive write. Unguarded
     // (explicit-target / claim-authorized): no guarded advance, no guard.
+    let previousState: RunbookState | undefined;
+    const transitionSteps = steps;
     const sync = await this.#runGuardedOrPlain(
       guardOpenChildren,
       activeState.id,
-      (guard) => actorService.sendAndSync(activeState.id, steps, { type: eventType }, { guard }),
-      () => actorService.sendAndSync(activeState.id, steps, { type: eventType }),
+      (guard) =>
+        actorMutationRunner.run({
+          runId: activeState.id,
+          ...(input.callerEvidence.kind === 'claim_bearer'
+            ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
+            : {}),
+          guard,
+          terminalRelease: {
+            onComplete: input.terminalPolicy.onComplete.releaseRunbook,
+            onStopped: input.terminalPolicy.onStopped.releaseRunbook,
+            retainClaimsAsTerminal: true,
+          },
+          makeRecoveryActor: (state) => actorService.createRecoveryActor(state, transitionSteps),
+          compute: async (capturedState) => {
+            previousState = lifecycleService.deriveActiveEntry(capturedState).state;
+            const prepared = await actorService.prepareActorMutation(
+              capturedState.id,
+              previousState,
+              transitionSteps,
+              { type: eventType },
+            );
+            const projected = lifecycleService.deriveActiveEntry(
+              prepared.nextState,
+              previousState,
+              true,
+            );
+            return { ...prepared, previousState, nextState: projected.state };
+          },
+        }),
+      () =>
+        actorMutationRunner.run({
+          runId: activeState.id,
+          ...(input.callerEvidence.kind === 'claim_bearer'
+            ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
+            : {}),
+          terminalRelease: {
+            onComplete: input.terminalPolicy.onComplete.releaseRunbook,
+            onStopped: input.terminalPolicy.onStopped.releaseRunbook,
+            retainClaimsAsTerminal: true,
+          },
+          makeRecoveryActor: (state) => actorService.createRecoveryActor(state, transitionSteps),
+          compute: async (capturedState) => {
+            previousState = lifecycleService.deriveActiveEntry(capturedState).state;
+            const prepared = await actorService.prepareActorMutation(
+              capturedState.id,
+              previousState,
+              transitionSteps,
+              { type: eventType },
+            );
+            const projected = lifecycleService.deriveActiveEntry(
+              prepared.nextState,
+              previousState,
+              true,
+            );
+            return { ...prepared, previousState, nextState: projected.state };
+          },
+        }),
     );
     if (sync.kind === 'refusal') return sync.outcome;
     const syncResult = sync.value;
-    if (!syncResult) {
-      throw new Error('Failed to dispatch transition to runbook engine');
+    if (syncResult.kind !== 'committed') {
+      return syncResult;
     }
-
-    const ensuredAfter = await lifecycleService.ensureActiveEntry(
-      activeState.id,
-      previousState,
-      syncResult.state,
-    );
-    const updatedState = ensuredAfter.state;
+    if (previousState === undefined) {
+      throw new Error('Fenced transition committed without a prepared observation context');
+    }
+    const updatedState = syncResult.value.state;
+    const currentStep = this.#findStep(transitionSteps, previousState.step);
 
     const observation = deriveTransitionObservation({
-      steps,
+      steps: transitionSteps,
       currentStep,
       previousState,
       updatedState,
-      snapshot: syncResult.snapshot,
+      snapshot: syncResult.value.snapshot,
       result: input.command,
       ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
     });
 
     if (observation.status === 'done' || observation.status === 'stopped') {
-      const refusal = await this.#applyTerminalSideEffects(
-        input,
-        observation.status,
-        activeState.id,
-      );
-      if (refusal) return refusal;
       return {
         kind: 'applied',
         runId: activeState.id,
@@ -2906,27 +2961,6 @@ export class RunbookLifecycleCommandService {
       loop: { kind: 'run', prompted: Boolean(updatedState.prompted) },
       updatedState,
     };
-  }
-
-  // Apply terminal release per policy when a transition reaches a terminal state.
-  // Returns the refusal when the release was refused for execution ownership, so
-  // the caller reports it instead of an `applied` outcome it did not fully apply.
-  async #applyTerminalSideEffects(
-    input: LifecycleTransitionInput,
-    status: 'done' | 'stopped',
-    runId: RunId,
-  ): Promise<SessionMutationRefusalOutcome | null> {
-    const releaseRunbook =
-      status === 'done'
-        ? input.terminalPolicy.onComplete.releaseRunbook
-        : input.terminalPolicy.onStopped.releaseRunbook;
-    if (releaseRunbook) {
-      const release = await this.#deps.sessionService.releaseRunbook(runId, {
-        retainClaimsAsTerminal: true,
-      });
-      if (release.kind !== 'committed') return release;
-    }
-    return null;
   }
 
   // Run a parent-advancing write under the open-delegated-children guard when the

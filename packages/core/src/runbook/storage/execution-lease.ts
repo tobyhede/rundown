@@ -153,6 +153,24 @@ export type AbandonedAttemptOutcome = Extract<
   { readonly kind: 'recovery_required' | 'execution_in_progress' }
 >;
 
+/** Exact interrupted attempt identity retained for aggregate recovery. */
+export interface InterruptedAttemptRef {
+  /** Run whose effect outcome is ambiguous. */
+  readonly runId: RunId;
+  /** Execution epoch that crossed the effect boundary. */
+  readonly epoch: ExecutionEpoch;
+}
+
+/** Outcome of abandoning an aggregate effect to recovery all-or-none. */
+export type AbandonedAttemptSetOutcome =
+  | {
+      readonly kind: 'aggregate_recovery_required';
+      /** Every exact attempt that must be recovered before the workflow resumes. */
+      readonly attempts: readonly InterruptedAttemptRef[];
+      readonly message: string;
+    }
+  | Extract<GuardedMutationResult<never>, { readonly kind: 'execution_in_progress' }>;
+
 /**
  * Phase-aware dead-owner recovery outcome.
  *
@@ -194,6 +212,22 @@ export interface ExecutionLeaseService {
    */
   markEffectStarted(attempt: ExecutionAttempt): Promise<GuardedMutationResult<ExecutionAttempt>>;
   /**
+   * Move an owned run set from `claimed` to `effect_started` atomically.
+   *
+   * @param attempts - The exact attempts acquired for one aggregate workflow.
+   * @returns Every marked attempt, or a refusal with no attempt changed.
+   */
+  markEffectStartedAll(
+    attempts: readonly ExecutionAttempt[],
+  ): Promise<GuardedMutationResult<readonly ExecutionAttempt[]>>;
+  /**
+   * Best-effort release of exact attempts that never crossed the effect boundary.
+   *
+   * @param attempts - Claimed attempts to clear when still owned exactly.
+   * @returns A promise resolving after every still-matching attempt is cleared.
+   */
+  releaseClaimed(attempts: readonly ExecutionAttempt[]): Promise<void>;
+  /**
    * Abandon this process's own `effect_started` attempt to `recovery_pending`
    * after a mid-effect failure whose external outcome is unknown.
    *
@@ -212,6 +246,17 @@ export interface ExecutionLeaseService {
     attempt: ExecutionAttempt,
     reason: ExecutionRecoveryReason,
   ): Promise<AbandonedAttemptOutcome>;
+  /**
+   * Move an aggregate workflow's exact attempts to `recovery_pending` atomically.
+   *
+   * @param attempts - The effect-started attempts owned by the workflow.
+   * @param reason - Closed recovery cause recorded on every attempt.
+   * @returns Every exact recovery identity, or a refusal with no attempt changed.
+   */
+  abandonAllToRecovery(
+    attempts: readonly ExecutionAttempt[],
+    reason: ExecutionRecoveryReason,
+  ): Promise<AbandonedAttemptSetOutcome>;
   /**
    * Recover a run whose owner may be dead, using out-of-SQLite liveness and
    * exact-tuple CAS.
@@ -306,6 +351,48 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     });
   }
 
+  async markEffectStartedAll(
+    attempts: readonly ExecutionAttempt[],
+  ): Promise<GuardedMutationResult<readonly ExecutionAttempt[]>> {
+    if (attempts.length === 0) {
+      return { kind: 'committed', value: [] };
+    }
+    const now = new Date().toISOString();
+    try {
+      const marked = await this.driver.immediate((tx) => {
+        const result: ExecutionAttempt[] = [];
+        for (const attempt of attempts) {
+          const hash = hashExecutionToken(attempt.token);
+          const changes = tx
+            .prepare(
+              `UPDATE execution_attempts
+                  SET phase = 'effect_started', effect_started_at = :now
+                WHERE run_id = :runId AND exec_epoch = :epoch
+                  AND exec_token = :hash AND phase = 'claimed'
+                  AND EXISTS (
+                    SELECT 1 FROM runs
+                     WHERE id = :runId AND exec_token = :hash AND exec_epoch = :epoch
+                  )`,
+            )
+            .run({ now, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
+          if (changes !== 1) {
+            throw new AllOrNoneRefusal({
+              kind: 'execution_in_progress',
+              runId: attempt.runId,
+              message: `Lost execution ownership of run ${attempt.runId} before the aggregate effect boundary.`,
+            });
+          }
+          result.push({ ...attempt, phase: 'effect_started' });
+        }
+        return result;
+      });
+      return { kind: 'committed', value: marked };
+    } catch (err) {
+      if (err instanceof AllOrNoneRefusal) return err.refusal;
+      throw err;
+    }
+  }
+
   async abandonToRecovery(
     attempt: ExecutionAttempt,
     reason: ExecutionRecoveryReason,
@@ -334,6 +421,96 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
         message: `Run ${attempt.runId} needs recovery: its execution outcome is unknown after a mid-effect failure.`,
       };
     });
+  }
+
+  async releaseClaimed(attempts: readonly ExecutionAttempt[]): Promise<void> {
+    if (attempts.length === 0) return;
+    const finishedAt = new Date().toISOString();
+    await this.driver.immediate((tx) => {
+      for (const attempt of attempts) {
+        const hash = hashExecutionToken(attempt.token);
+        const cleared = tx
+          .prepare(
+            `UPDATE runs
+                SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
+              WHERE id = :runId AND exec_pid = :ownerPid
+                AND exec_token = :hash AND exec_epoch = :epoch
+                AND EXISTS (
+                  SELECT 1 FROM execution_attempts
+                   WHERE run_id = :runId AND exec_epoch = :epoch
+                     AND exec_token = :hash AND phase = 'claimed'
+                )`,
+          )
+          .run({
+            runId: attempt.runId,
+            ownerPid: attempt.ownerPid,
+            hash,
+            epoch: attempt.epoch,
+          }).changes;
+        if (cleared === 0) continue;
+        const closed = tx
+          .prepare(
+            `UPDATE execution_attempts
+                SET phase = 'committed', finished_at = :finishedAt,
+                    reason = COALESCE(reason, 'released_before_effect')
+              WHERE run_id = :runId AND exec_epoch = :epoch
+                AND exec_token = :hash AND phase = 'claimed'`,
+          )
+          .run({ finishedAt, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
+        assertExactlyOneRow(closed, attempt.runId);
+      }
+    });
+  }
+
+  async abandonAllToRecovery(
+    attempts: readonly ExecutionAttempt[],
+    reason: ExecutionRecoveryReason,
+  ): Promise<AbandonedAttemptSetOutcome> {
+    if (attempts.length === 0) {
+      return {
+        kind: 'aggregate_recovery_required',
+        attempts: [],
+        message: 'No attempts require recovery.',
+      };
+    }
+    try {
+      const interrupted = await this.driver.immediate((tx) => {
+        const result: InterruptedAttemptRef[] = [];
+        for (const attempt of attempts) {
+          const hash = hashExecutionToken(attempt.token);
+          const changes = tx
+            .prepare(
+              `UPDATE execution_attempts
+                  SET phase = 'recovery_pending', reason = COALESCE(reason, :reason)
+                WHERE run_id = :runId AND exec_epoch = :epoch
+                  AND exec_token = :hash AND phase = 'effect_started'`,
+            )
+            .run({ reason, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
+          if (changes !== 1) {
+            throw new AllOrNoneRefusal({
+              kind: 'execution_in_progress',
+              runId: attempt.runId,
+              message: `The aggregate attempt for run ${attempt.runId} was no longer effect-started.`,
+            });
+          }
+          result.push({ runId: attempt.runId, epoch: attempt.epoch });
+        }
+        return result;
+      });
+      return {
+        kind: 'aggregate_recovery_required',
+        attempts: interrupted,
+        message: 'The aggregate execution outcome is unknown and requires recovery.',
+      };
+    } catch (err) {
+      if (err instanceof AllOrNoneRefusal) {
+        if (err.refusal.kind !== 'execution_in_progress') {
+          throw new Error(`Unexpected aggregate-abandon refusal: ${err.refusal.kind}`);
+        }
+        return err.refusal;
+      }
+      throw err;
+    }
   }
 
   async recoverDeadOwner(runId: RunId): Promise<DeadOwnerRecovery> {

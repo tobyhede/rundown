@@ -59,6 +59,7 @@ import {
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
+import { buildNonDelegatingLifecycleSeam } from '../helpers/lifecycle-seam-factory.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -307,6 +308,8 @@ export function registerRunCommand(program: Command): void {
                 output,
                 manager,
                 actorService,
+                seam: buildNonDelegatingLifecycleSeam(cwd).seam,
+                callerEvidence: { kind: 'direct_cli' as const },
                 sessionService,
                 lifecycleService,
                 state: gotoState,

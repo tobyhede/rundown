@@ -462,6 +462,120 @@ describe('all-or-none multi-run acquisition', () => {
     expect(cOwner).toBeNull();
   });
 
+  it('marks every acquired attempt effect-started in one transaction', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+
+    const marked = await lease.markEffectStartedAll(acquired.value);
+
+    expect(marked.kind).toBe('committed');
+    if (marked.kind !== 'committed') return;
+    expect(marked.value.map((attempt) => attempt.phase)).toEqual([
+      'effect_started',
+      'effect_started',
+    ]);
+  });
+
+  it('rolls back every effect-start marker when one attempt was superseded', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId")
+        .run({ runId: b.state.id });
+    });
+
+    const marked = await lease.markEffectStartedAll(acquired.value);
+
+    expect(marked.kind).toBe('execution_in_progress');
+    const phases = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT run_id, phase FROM execution_attempts ORDER BY run_id')
+        .all<{ readonly run_id: string; readonly phase: string }>(),
+    );
+    expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
+      [a.state.id]: 'claimed',
+      [b.state.id]: 'committed',
+    });
+  });
+
+  it('releases every still-owned claimed attempt after a boundary-mark refusal', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId")
+        .run({ runId: b.state.id });
+    });
+
+    await lease.releaseClaimed(acquired.value);
+
+    const releasedOwner = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT exec_token FROM runs WHERE id = :id')
+          .get<{ readonly exec_token: string | null }>({ id: a.state.id })?.exec_token,
+    );
+    const phases = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT run_id, phase FROM execution_attempts ORDER BY run_id')
+        .all<{ readonly run_id: string; readonly phase: string }>(),
+    );
+    expect(releasedOwner).toBeNull();
+    expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
+      [a.state.id]: 'committed',
+      [b.state.id]: 'committed',
+    });
+  });
+
+  it('abandons every effect-started attempt to recovery in one transaction', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+
+    const abandoned = await lease.abandonAllToRecovery(marked.value, 'effect_boundary_crossed');
+
+    expect(abandoned.kind).toBe('aggregate_recovery_required');
+    if (abandoned.kind !== 'aggregate_recovery_required') return;
+    expect(abandoned.attempts).toEqual(marked.value.map(({ runId, epoch }) => ({ runId, epoch })));
+  });
+
+  it('rolls back every recovery marker when one attempt was superseded', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId")
+        .run({ runId: b.state.id });
+    });
+
+    const abandoned = await lease.abandonAllToRecovery(marked.value, 'effect_boundary_crossed');
+
+    expect(abandoned.kind).toBe('execution_in_progress');
+    const phases = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT run_id, phase FROM execution_attempts ORDER BY run_id')
+        .all<{ readonly run_id: string; readonly phase: string }>(),
+    );
+    expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
+      [a.state.id]: 'effect_started',
+      [b.state.id]: 'committed',
+    });
+  });
+
   it('acquires an empty set trivially', async () => {
     const result = await lease.acquireAll([], process.pid);
     expect(result.kind).toBe('committed');

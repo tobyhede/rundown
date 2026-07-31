@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { createActor } from 'xstate';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
@@ -10,7 +10,10 @@ import { openRunbookDriver } from '../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver } from '../../src/runbook/storage/sql-driver.js';
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
-import { assertClaimGeneration } from '../../src/runbook/storage/mutation-result.js';
+import {
+  assertClaimGeneration,
+  assertExecutionEpoch,
+} from '../../src/runbook/storage/mutation-result.js';
 import {
   ExecutionRecoveryService,
   validateReason,
@@ -82,6 +85,7 @@ function makeActor(state: RunbookState): RecoveryActor {
       actor.send(event);
     },
     getPersistedSnapshot: () => actor.getPersistedSnapshot(),
+    hasTag: (tag) => tag === 'recovery' && actor.getSnapshot().hasTag(tag),
     stop: () => actor.stop(),
   };
 }
@@ -236,6 +240,7 @@ describe('ExecutionRecoveryService', () => {
           actor.send(event);
         },
         getPersistedSnapshot: () => actor.getPersistedSnapshot(),
+        hasTag: (tag) => tag === 'recovery' && actor.getSnapshot().hasTag(tag),
         stop: () => actor.stop(),
       };
     };
@@ -299,6 +304,27 @@ describe('ExecutionRecoveryService', () => {
     expect(row?.exec_token).toBeNull();
     expect(row?.state_json).not.toContain('sha256:');
     expect(row?.state_json).not.toContain('exec_token');
+  });
+
+  it('never recovers a newer pending epoch on behalf of an older interrupted attempt', async () => {
+    const runId = await intoRecoveryPending();
+    const pending = await store.readPendingRecovery(runId);
+    if (pending === null) throw new Error('missing seeded recovery');
+    const requested = assertExecutionEpoch(pending.epoch + 1);
+    const makeActorSpy = jest.fn(makeActor);
+
+    const outcome = await new ExecutionRecoveryService(store, makeActorSpy).recover(
+      runId,
+      requested,
+    );
+
+    expect(outcome).toEqual({
+      kind: 'superseded',
+      runId,
+      message: `Recovery epoch ${String(requested)} for run ${runId} was superseded by epoch ${String(pending.epoch)}.`,
+    });
+    expect(makeActorSpy).not.toHaveBeenCalled();
+    await expect(store.readPendingRecovery(runId)).resolves.toEqual(pending);
   });
 
   it.each(['missing', 'wrong-phase'] as const)(

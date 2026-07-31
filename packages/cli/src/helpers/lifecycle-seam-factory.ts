@@ -16,6 +16,7 @@ import {
   RunbookLifecycleCommandService,
   SessionService,
   ExecutionLifecycleService,
+  createEffectfulActorMutationRunner,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -61,6 +62,7 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
     actorService,
     lifecycleService,
     completionService,
+    actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     deleteRun: async (id) => {
       await manager.delete(id);

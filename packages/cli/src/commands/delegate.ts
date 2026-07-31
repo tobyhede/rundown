@@ -12,6 +12,7 @@ import {
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
   replaceSubstepStateEntry,
+  createEffectfulActorMutationRunner,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -612,6 +613,7 @@ function buildDelegateSeam(
     actorService,
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+    actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     deleteRun: async (id) => {
       await manager.delete(id);

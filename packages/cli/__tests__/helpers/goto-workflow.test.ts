@@ -1,9 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
-  ActorSyncResult,
   ClaimId,
   RunbookActorService,
+  RunbookLifecycleCommandService,
   RunbookState,
   RunbookStateManager,
   StepId,
@@ -50,6 +50,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // structural mocking — every static import from @rundown-org/core resolves
   // through the factory rather than leaking the real module.
   assertClaimId: jest.fn((s: string) => s),
+  claimKeyFromBearer: jest.fn((s: string) => `key:${s}`),
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
   // Statically imported by refusal-renderers.js, which goto-workflow.js pulls in
   // for renderNavigationRefusal. Only the terminal-claim renderers call it, and
@@ -622,10 +623,14 @@ describe('executeGoto', () => {
     };
   }
 
-  it('returns error when sendAndSync fails', async () => {
+  it('returns a typed error when the fenced core mutation refuses', async () => {
     const update = mockFn<RunbookStateManager['update']>();
-    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
-    sendAndSync.mockResolvedValue(null);
+    const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
+    runNavigationMutation.mockResolvedValue({
+      kind: 'missing',
+      runId: DEFAULT_RUNBOOK_ID,
+      message: 'run disappeared',
+    });
 
     const ctx = {
       output: {
@@ -636,7 +641,9 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: { sendAndSync } as unknown as RunbookActorService,
+      actorService: {} as RunbookActorService,
+      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
@@ -647,20 +654,23 @@ describe('executeGoto', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('ENGINE_INIT_FAILED');
+      expect(result.code).toBe('RUN_TARGET_UNAVAILABLE');
     }
   });
 
   it('returns ok with loop result on success', async () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
-    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
-    const syncResult: ActorSyncResult = {
-      state: makeState({ step: '2' }),
+    const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
+    runNavigationMutation.mockResolvedValue({
+      kind: 'applied',
+      runId: DEFAULT_RUNBOOK_ID,
+      previousState: makeState(),
+      updatedState: makeState({ step: '2' }),
       snapshot: {},
-      effects: [],
-    };
-    sendAndSync.mockResolvedValue(syncResult);
+      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
+      terminalReleaseMode: 'stack-pop',
+    });
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
     const action = jest.fn();
@@ -673,7 +683,9 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: { sendAndSync } as unknown as RunbookActorService,
+      actorService: {} as RunbookActorService,
+      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -691,10 +703,7 @@ describe('executeGoto', () => {
       expect(result.propagation).toEqual({ kind: 'skipped' });
     }
     expect(action).toHaveBeenCalled();
-    expect(sendAndSync).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID, ctx.steps, {
-      type: 'GOTO',
-      target,
-    });
+    expect(runNavigationMutation).toHaveBeenCalledTimes(1);
     expect(update).not.toHaveBeenCalledWith(
       DEFAULT_RUNBOOK_ID,
       expect.objectContaining({ lastAction: expect.anything() }),
@@ -703,13 +712,16 @@ describe('executeGoto', () => {
 
   it('does not call clearLastResult after core GOTO synchronization', async () => {
     const clearLastResult = jest.fn(async () => undefined);
-    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
-    const syncResult: ActorSyncResult = {
-      state: makeState({ step: '2' }),
+    const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
+    runNavigationMutation.mockResolvedValue({
+      kind: 'applied',
+      runId: DEFAULT_RUNBOOK_ID,
+      previousState: makeState(),
+      updatedState: makeState({ step: '2' }),
       snapshot: {},
-      effects: [],
-    };
-    sendAndSync.mockResolvedValue(syncResult);
+      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
+      terminalReleaseMode: 'stack-pop',
+    });
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
     const outputAction = jest.fn();
@@ -722,7 +734,9 @@ describe('executeGoto', () => {
       manager: {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: { sendAndSync } as unknown as RunbookActorService,
+      actorService: {} as RunbookActorService,
+      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -747,13 +761,16 @@ describe('executeGoto', () => {
   it('returns stopped when execution loop stops', async () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
-    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
-    const syncResult: ActorSyncResult = {
-      state: makeState({ step: '2' }),
+    const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
+    runNavigationMutation.mockResolvedValue({
+      kind: 'applied',
+      runId: DEFAULT_RUNBOOK_ID,
+      previousState: makeState(),
+      updatedState: makeState({ step: '2' }),
       snapshot: {},
-      effects: [],
-    };
-    sendAndSync.mockResolvedValue(syncResult);
+      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
+      terminalReleaseMode: 'stack-pop',
+    });
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
 
     const ctx = {
@@ -765,7 +782,9 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: { sendAndSync } as unknown as RunbookActorService,
+      actorService: {} as RunbookActorService,
+      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',

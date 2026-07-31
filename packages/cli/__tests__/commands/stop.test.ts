@@ -154,10 +154,8 @@ The result is {{ Result }}.
       expect(JSON.stringify(stateAfter!.snapshot)).toContain('Cancelled after review');
     });
 
-    it('dispatches FORCE_STOP and exits cleanly when sendAndSync returns null', async () => {
-      const sendSpy = jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
-        .mockResolvedValueOnce(null);
+    it('prepares FORCE_STOP with the operator message through the fenced actor seam', async () => {
+      const prepareSpy = jest.spyOn(RunbookActorService.prototype, 'prepareActorMutation');
 
       const runbook = `# Stop Null Sync
 
@@ -171,7 +169,7 @@ The result is {{ Result }}.
       const result = await runCliInProcess(['stop', 'race', '--text'], workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(sendSpy.mock.calls[0]?.[2]).toEqual({
+      expect(prepareSpy.mock.calls[0]?.[3]).toEqual({
         type: 'FORCE_STOP',
         message: 'race',
       });
@@ -313,7 +311,7 @@ The result is {{ Result }}.
       // broken run is `rd prune --active`/`--all`, made stack-safe in this
       // same change set (#534).
       jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess('stop --text', workspace);
@@ -378,17 +376,19 @@ The result is {{ Result }}.
       expect(session.defaultStack).toContain(child!.id);
     });
 
-    it('surfaces the original error when the cleanup probe itself fails', async () => {
+    it('surfaces recovery-required when an aggregate terminal effect becomes ambiguous', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       // The seam rejects with a recoverable snapshot error; the recovery
       // guard's probe load then fails hard (non-recoverable IO error). All
       // loads before the seam failure stay real — only probe-phase loads fail.
       let probePhase = false;
-      jest.spyOn(RunbookActorService.prototype, 'sendAndSync').mockImplementationOnce(async () => {
-        probePhase = true;
-        throw new InvalidRunbookStateError('snapshot incompatible');
-      });
+      jest
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
+        .mockImplementationOnce(async () => {
+          probePhase = true;
+          throw new InvalidRunbookStateError('snapshot incompatible');
+        });
       // eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this`
       const realLoad = RunbookStateManager.prototype.load;
       jest.spyOn(RunbookStateManager.prototype, 'load').mockImplementation(function (
@@ -405,8 +405,7 @@ The result is {{ Result }}.
 
       expect(result.exitCode).not.toBe(0);
       const emitted = `${result.stdout}\n${result.stderr}`;
-      expect(emitted).toMatch(/snapshot incompatible/); // original diagnostic survives
-      expect(emitted).not.toMatch(/probe blew up/); // probe failure never substituted
+      expect(emitted).toMatch(/RECOVERY_REQUIRED/);
     });
 
     it('propagates non-invalid sendAndSync errors instead of cleaning up', async () => {
@@ -415,7 +414,7 @@ The result is {{ Result }}.
       const stateId = state!.id;
 
       jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
         .mockRejectedValueOnce(new Error('boom'));
 
       const result = await runCliInProcess('stop --text', workspace);
@@ -462,14 +461,12 @@ Do work.
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
       jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
-      if (result.exitCode !== 0) {
-        throw new Error(`stop claimed parent failed:\n${result.stdout}\n${result.stderr}`);
-      }
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toMatch(/RECOVERY_REQUIRED/);
 
       // Parent stack untouched — claim-id path does not invoke cleanup.
       const session = await readSession(workspace);

@@ -41,6 +41,28 @@ const mockActorService = {
   observeExecutionUnitEntry: mockFn<
     (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
   >() as any,
+  prepareActorMutation: mockFn<
+    (
+      id: string,
+      previousState: Record<string, unknown>,
+      steps: unknown,
+      event: unknown,
+    ) => Promise<Record<string, unknown>>
+  >() as any,
+};
+
+const mockActorMutationRunner = {
+  run: mockFn<
+    (input: {
+      runId: string;
+      compute: (state: Record<string, unknown>) => Promise<{
+        previousState: Record<string, unknown>;
+        nextState: Record<string, unknown>;
+        snapshot: unknown;
+        effects: unknown[];
+      }>;
+    }) => Promise<Record<string, unknown>>
+  >(),
 };
 
 const mockSessionService = {
@@ -89,6 +111,7 @@ const mockCompletionService = {
 const mockLifecycleService = {
   setLastResult: jest.fn() as any,
   ensureActiveEntry: ensureActiveEntryFn,
+  deriveActiveEntry: jest.fn() as any,
   listResolvedCompletions: listResolvedCompletionsFn,
   consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
@@ -123,6 +146,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
 
     // Actor / session / lifecycle services — replaced by test doubles
     RunbookActorService: jest.fn(() => mockActorService),
+    createEffectfulActorMutationRunner: jest.fn(() => mockActorMutationRunner),
     SessionService: jest.fn(() => mockSessionService),
     ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
     RunbookCompletionService: jest.fn(() => mockCompletionService),
@@ -357,6 +381,19 @@ describe('runExecutionLoop', () => {
         entry: state?.activeEntry ?? 1,
       }),
     );
+    mockLifecycleService.deriveActiveEntry.mockReset();
+    mockLifecycleService.deriveActiveEntry.mockImplementation((state: Record<string, unknown>) => {
+      const step = typeof state.step === 'string' ? state.step : '1';
+      return {
+        state: {
+          ...state,
+          activeEntry: state.activeEntry ?? 1,
+          activeFrameKey: `${step}|`,
+        },
+        frameKey: `${step}|`,
+        entry: state.activeEntry ?? 1,
+      };
+    });
     mockLifecycleService.listResolvedCompletions.mockReset();
     mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
@@ -372,6 +409,40 @@ describe('runExecutionLoop', () => {
     mockCompletionService.recordChildCompletion.mockResolvedValue('recorded');
 
     mockActorService.sendAndSync.mockReset();
+    mockActorService.prepareActorMutation.mockReset();
+    mockActorService.prepareActorMutation.mockImplementation(
+      async (
+        id: string,
+        previousState: Record<string, unknown>,
+        actorSteps: unknown,
+        event: unknown,
+      ) => {
+        const synchronized = await mockActorService.sendAndSync(id, actorSteps, event);
+        if (!synchronized) throw new Error('Actor synchronization failed');
+        return {
+          previousState,
+          nextState: synchronized.state,
+          snapshot: synchronized.snapshot,
+          effects: synchronized.effects ?? [],
+        };
+      },
+    );
+    mockActorMutationRunner.run.mockReset();
+    mockActorMutationRunner.run.mockImplementation(async (input) => {
+      const capturedState = await mockManager.load(input.runId);
+      if (!capturedState) {
+        return { kind: 'missing', runId: input.runId, message: 'Runbook not found' };
+      }
+      const prepared = await input.compute(capturedState);
+      return {
+        kind: 'committed',
+        value: {
+          state: prepared.nextState,
+          snapshot: prepared.snapshot,
+          effects: prepared.effects,
+        },
+      };
+    });
     mockActorService.getContextSnapshot.mockReset();
     mockActorService.getContextSnapshot.mockResolvedValue(null);
     mockActorService.observeExecutionUnitEntry.mockReset();
@@ -1180,9 +1251,16 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     });
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
-      retainClaimsAsTerminal: true,
-    });
+    expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalRelease: {
+          onComplete: true,
+          onStopped: true,
+          retainClaimsAsTerminal: false,
+        },
+      }),
+    );
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
@@ -1244,12 +1322,8 @@ describe('runExecutionLoop', () => {
         code: 'RECOVERY_REQUIRED',
       },
     ])('reports $label and returns stopped instead of done', async ({ refusal, code }) => {
-      // The run completed, but the release the loop owed did not commit. Returning
-      // 'done' would report a clean finish for a run still on the session stack,
-      // so the loop downgrades to 'stopped' and emits the refusal under its
-      // registered symbolic code.
-      seedCompletingRun();
-      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+      mockManager.load.mockResolvedValue(makeLoopState());
+      mockActorMutationRunner.run.mockResolvedValueOnce(refusal);
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -1265,6 +1339,8 @@ describe('runExecutionLoop', () => {
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code },
       });
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
     });
 
     it('reports a refused stack pop and downgrades an already-completed run', async () => {
@@ -1319,19 +1395,14 @@ describe('runExecutionLoop', () => {
       expect(stoppedEmissions()).toHaveLength(1);
     });
 
-    it('emits a refusal-bearing stop when the command path release is refused', async () => {
-      // In 'release-runbook' mode the transition policy does not release, so
-      // orchestrateTransition announces RUNBOOK_COMPLETED and the loop releases
-      // afterwards. That completion cannot be unsent, so a refusal has to leave
-      // a stop behind it — otherwise the stream ends on a clean completion for a
-      // run still held on the session stack.
-      seedCompletingRun();
+    it('does not release the winner when a stale command claimant is refused', async () => {
+      mockManager.load.mockResolvedValue(makeLoopState());
       const refusal = {
-        kind: 'execution_in_progress' as const,
+        kind: 'claim_superseded' as const,
         runId: runbookId,
-        message: `Run ${runbookId} has an execution in progress.`,
+        message: `Claim authority for run ${runbookId} was superseded.`,
       };
-      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+      mockActorMutationRunner.run.mockResolvedValueOnce(refusal);
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -1346,12 +1417,10 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('stopped');
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
-        payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
+        payload: { message: refusal.message, code: 'STALE_CLAIM' },
       });
-      expect(mockEmitter.emit).toHaveBeenCalledWith({
-        type: 'RUNBOOK_STOPPED',
-        payload: { position: { current: '1', total: 2 }, message: refusal.message },
-      });
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
     });
 
     it('returns done and emits no stop when the command path release commits', async () => {
@@ -1371,9 +1440,16 @@ describe('runExecutionLoop', () => {
       );
 
       expect(result).toBe('done');
-      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
-        retainClaimsAsTerminal: true,
-      });
+      expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalRelease: {
+            onComplete: true,
+            onStopped: true,
+            retainClaimsAsTerminal: true,
+          },
+        }),
+      );
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
       expect(stoppedEmissions()).toHaveLength(0);
     });
 

@@ -182,10 +182,8 @@ This step should not become the persisted cursor.
     expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
-  it('dispatches FORCE_COMPLETE but reports a race (exit 1) when the root sendAndSync returns null', async () => {
-    const sendSpy = jest
-      .spyOn(RunbookActorService.prototype, 'sendAndSync')
-      .mockResolvedValueOnce(null);
+  it('prepares FORCE_COMPLETE with the operator message through the fenced actor seam', async () => {
+    const prepareSpy = jest.spyOn(RunbookActorService.prototype, 'prepareActorMutation');
 
     const runbook = `# Complete Null Sync
 
@@ -198,21 +196,17 @@ This step should not become the persisted cursor.
 
     const result = await runCliInProcess(['complete', 'race', '--text'], workspace);
 
-    // The resolved root raced to null, so it was never forced. `complete` must
-    // NOT report a clean completion (that would propagate a still-running root as
-    // a pass); it surfaces the race and exits non-zero so the user can retry.
-    expect(result.exitCode).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain('Runbook state changed');
-    const forceCompleteCall = sendSpy.mock.calls.find(
-      (call) => (call[2] as { type: string }).type === 'FORCE_COMPLETE',
+    expect(result.exitCode).toBe(0);
+    const forceCompleteCall = prepareSpy.mock.calls.find(
+      (call) => (call[3] as { type: string }).type === 'FORCE_COMPLETE',
     );
-    expect(forceCompleteCall?.[2]).toEqual({
+    expect(forceCompleteCall?.[3]).toEqual({
       type: 'FORCE_COMPLETE',
       message: 'race',
     });
   });
 
-  it('skips parent propagation in a real delegation when forced complete sync returns null', async () => {
+  it('prepares a claimed child FORCE_COMPLETE through the fenced actor seam', async () => {
     const parentRunbook = `# Parent Null Sync
 
 ## 1. Parent delegates child
@@ -242,29 +236,19 @@ This step should not become the persisted cursor.
     const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
     expect(typeof claimId).toBe('string');
 
-    // Install the spy AFTER delegate/claim so the FORCE_COMPLETE call is the
-    // one consumed by mockResolvedValueOnce(null).
-    const sendSpy = jest
-      .spyOn(RunbookActorService.prototype, 'sendAndSync')
-      .mockResolvedValueOnce(null);
+    const prepareSpy = jest.spyOn(RunbookActorService.prototype, 'prepareActorMutation');
 
     const result = await runCliInProcess(
       ['complete', '--claim-id', String(claimId), 'race', '--text'],
       workspace,
     );
 
-    // The claimed child raced to null (its state vanished between resolve and
-    // dispatch): there is nothing to force or record. A claim-path race is a
-    // benign no-op close (the child is already gone), so it stays command-success
-    // (exit 0) and never propagates to the parent — distinct from a bare-path race
-    // (the operator's own run), which exits non-zero for a retry.
     expect(result.exitCode).toBe(0);
 
-    // FORCE_COMPLETE was dispatched against the child.
-    const forceCompleteCall = sendSpy.mock.calls.find(
-      (call) => (call[2] as { type: string }).type === 'FORCE_COMPLETE',
+    const forceCompleteCall = prepareSpy.mock.calls.find(
+      (call) => (call[3] as { type: string }).type === 'FORCE_COMPLETE',
     );
-    expect(forceCompleteCall?.[2]).toEqual({
+    expect(forceCompleteCall?.[3]).toEqual({
       type: 'FORCE_COMPLETE',
       message: 'race',
     });
@@ -273,8 +257,7 @@ This step should not become the persisted cursor.
     // (the seam recorded nothing to the delegating run for a child it never forced).
     const parentState = await readRunbookState(workspace, parentBefore!.id);
     expect(parentState!.lifecycle).toBe(parentBefore!.lifecycle);
-    expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'direct' });
-    expect(parentState!.lastAction).not.toEqual({ type: 'STOP', origin: 'direct' });
+    expect(Object.values(parentState!.resolvedCompletions ?? {})).toHaveLength(1);
   });
 
   it('reports no active runbook', async () => {
@@ -302,13 +285,13 @@ This step should not become the persisted cursor.
       // pre-#518 code deleted it unconditionally). Recovery for a genuinely
       // broken run is `rd prune --active`/`--all`.
       jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess('complete --text', workspace);
       expect(result.exitCode).not.toBe(0);
       const emitted = `${result.stdout}\n${result.stderr}`;
-      expect(emitted).toMatch(/snapshot incompatible/); // original diagnostic survives
+      expect(emitted).toMatch(/recovery/i);
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toContain(stateId);
@@ -328,7 +311,7 @@ This step should not become the persisted cursor.
       const stateId = state!.id;
 
       jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
         .mockRejectedValueOnce(new Error('boom'));
 
       const result = await runCliInProcess('complete --text', workspace);
@@ -371,7 +354,7 @@ Do work.
       expect(typeof claimId).toBe('string');
 
       jest
-        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .spyOn(RunbookActorService.prototype, 'prepareActorMutation')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess(

@@ -22,7 +22,12 @@ import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
-import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
+import {
+  compileRunbookToMachine,
+  PENDING_MACHINE_EFFECT_TAG,
+  RECOVERY_TAG,
+} from '../../src/runbook/compiler.js';
+import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { createRunbook } from './fixtures.js';
@@ -3748,6 +3753,30 @@ echo ok
 
       expect('enteredArtifacts' in state).toBe(false);
       expect(JSON.stringify(state.snapshot)).toContain('enteredArtifacts');
+    });
+  });
+  describe('createRecoveryActor', () => {
+    it('enters the tagged recovery state through the pure recovery event', async () => {
+      const harness = await createLifecycleHarness(`## 1. First
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const recovery = harness.service.createRecoveryActor(harness.state, harness.steps);
+      try {
+        expect(recovery.hasTag(RECOVERY_TAG)).toBe(false);
+        expect(recovery.hasTag('unrelated')).toBe(false);
+        recovery.send({
+          type: 'EXECUTION_OUTCOME_UNKNOWN',
+          epoch: assertExecutionEpoch(1),
+          reason: 'effect_boundary_crossed',
+          interruptedStepId: '1',
+        });
+        expect(recovery.hasTag(RECOVERY_TAG)).toBe(true);
+        expect(recovery.getPersistedSnapshot()).toBeDefined();
+      } finally {
+        recovery.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
     });
   });
 });

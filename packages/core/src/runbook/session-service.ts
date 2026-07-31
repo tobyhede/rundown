@@ -66,6 +66,56 @@ export type ReleaseRunbookResult =
       readonly nextDefaultRunbookId: RunId | null;
     };
 
+/**
+ * Project one terminal release onto an in-memory session snapshot.
+ *
+ * @param session - Session snapshot to mutate in place.
+ * @param runbookId - Run to remove from session targeting structures.
+ * @param options - Terminal-claim retention policy.
+ * @param options.retainClaimsAsTerminal - Whether matching claims remain as terminal tombstones.
+ * @returns Structured release result for the projected snapshot.
+ */
+export function projectRunbookRelease(
+  session: SessionData,
+  runbookId: RunId,
+  options: { readonly retainClaimsAsTerminal?: boolean } = {},
+): ReleaseRunbookResult {
+  const originalDefaultStackLength = session.defaultStack.length;
+  session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
+  const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
+
+  const removedClaimIds: string[] = [];
+  const retainedClaimIds: string[] = [];
+  for (const [claimKey, claim] of Object.entries(session.claims)) {
+    if (claim.controlledRunId === runbookId) {
+      if (options.retainClaimsAsTerminal) {
+        retainedClaimIds.push(claimKey);
+      } else {
+        removedClaimIds.push(claimKey);
+        delete session.claims[claimKey];
+      }
+    }
+  }
+
+  const removedFromStash = session.stashedRunbookId === runbookId;
+  if (removedFromStash) session.stashedRunbookId = undefined;
+
+  if (
+    !removedFromDefaultStack &&
+    removedClaimIds.length === 0 &&
+    retainedClaimIds.length === 0 &&
+    !removedFromStash
+  ) {
+    return { status: 'not-found', runbookId };
+  }
+  return {
+    status: 'released',
+    runbookId,
+    removedFromDefaultStack,
+    nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
+  };
+}
+
 /** Force-terminal command kind that drives inline-root resolution. */
 export type InlineForceTerminalKind = 'complete' | 'stop';
 
@@ -1481,46 +1531,7 @@ export class SessionService {
     runbookId: RunId,
     options: { readonly retainClaimsAsTerminal?: boolean } = {},
   ): ReleaseRunbookResult {
-    const originalDefaultStackLength = session.defaultStack.length;
-    session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
-    const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
-
-    const removedClaimIds: string[] = [];
-    const retainedClaimIds: string[] = [];
-    for (const [claimKey, claim] of Object.entries(session.claims)) {
-      if (claim.controlledRunId === runbookId) {
-        if (options.retainClaimsAsTerminal) {
-          // Leave the record in place as a terminal tombstone so
-          // getActiveForClaimId resolves `terminal` (not `missing`). Pruned
-          // alongside the child run by `rd prune`.
-          retainedClaimIds.push(claimKey);
-        } else {
-          removedClaimIds.push(claimKey);
-          delete session.claims[claimKey];
-        }
-      }
-    }
-
-    const removedFromStash = session.stashedRunbookId === runbookId;
-    if (removedFromStash) {
-      session.stashedRunbookId = undefined;
-    }
-
-    if (
-      !removedFromDefaultStack &&
-      removedClaimIds.length === 0 &&
-      retainedClaimIds.length === 0 &&
-      !removedFromStash
-    ) {
-      return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
-    }
-
-    return {
-      status: 'released',
-      runbookId,
-      removedFromDefaultStack,
-      nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
-    } satisfies ReleaseRunbookResult;
+    return projectRunbookRelease(session, runbookId, options);
   }
 
   /**

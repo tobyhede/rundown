@@ -10,6 +10,7 @@ import {
   RunbookLifecycleCommandService,
   RunbookStateManager,
   SessionService,
+  createEffectfulActorMutationRunner,
   type LifecycleTerminalReleasePolicy,
   type CallerEvidence,
   type ResolvedStep,
@@ -101,6 +102,7 @@ describe('guarded drain composition (real store, real predicate)', () => {
       actorService,
       lifecycleService,
       completionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       deleteRun: async (id) => {
         await manager.delete(id);
@@ -140,7 +142,7 @@ describe('guarded drain composition (real store, real predicate)', () => {
     return key;
   }
 
-  it('does not lose a committed advance when a delegated child claims mid-drain', async () => {
+  it('commits no partial advance when a delegated child claims during preparation', async () => {
     // A real initialised state: the machine snapshot is what lets the applies below
     // run for real instead of dying inside sendAndSync.
     const created = await manager.create(
@@ -171,24 +173,25 @@ describe('guarded drain composition (real store, real predicate)', () => {
     await manager.update(childBase.id, { parentLinkage: linkage });
     await seedLiveDelegation(manager, linkage);
 
-    // Commit the claim once the FIRST apply has committed and before the second
-    // write runs — the exact window the defect exploited. The real implementation
-    // still performs the apply; this only controls when the claim lands.
-    const realSendAndSync = actorService.sendAndSync.bind(actorService);
+    // Commit the claim after the first pure actor preparation and before the one
+    // owned commit. The execution guard must refuse the whole prepared mutation.
+    const realPrepare = actorService.prepareActorMutation.bind(actorService);
     let applies = 0;
     let claimedId: string | undefined;
     jest
-      .spyOn(actorService, 'sendAndSync')
-      .mockImplementation(async (...args: Parameters<RunbookActorService['sendAndSync']>) => {
-        const result = await realSendAndSync(...args);
-        applies += 1;
-        if (applies === 1) {
-          claimedId = assertClaimed(
-            unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage)),
-          ).claimId;
-        }
-        return result;
-      });
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockImplementation(
+        async (...args: Parameters<RunbookActorService['prepareActorMutation']>) => {
+          const result = await realPrepare(...args);
+          applies += 1;
+          if (applies === 1) {
+            claimedId = assertClaimed(
+              unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage)),
+            ).claimId;
+          }
+          return result;
+        },
+      );
 
     const outcome = await seam.runTransition({
       command: 'pass',
@@ -202,21 +205,18 @@ describe('guarded drain composition (real store, real predicate)', () => {
     expect(claimedId).toBeDefined();
     expect((await sessionService.verifyClaimId(assertClaimId(claimedId!))).status).toBe('verified');
 
-    // The advance is reported, not swallowed. A guarded follow-on write aborts the
-    // drain here and surfaces `open_delegated_children` with zero events, while the
-    // first apply stays committed on disk — the caller is told nothing happened.
-    expect(outcome.kind).toBe('applied');
-    if (outcome.kind !== 'applied') return;
-    expect(outcome.events.filter((e) => e.type === 'STEP_TRANSITIONED')).toHaveLength(2);
+    expect(outcome.kind).toBe('recovery_required');
 
-    // Both completions were really consumed, so both applies committed.
-    await expect(lifecycleService.getResolvedCompletion(parentRunId, firstKey)).resolves.toBeNull();
+    // Neither prepared completion was consumed: record + drain is all-or-none.
+    await expect(
+      lifecycleService.getResolvedCompletion(parentRunId, firstKey),
+    ).resolves.not.toBeNull();
     await expect(
       lifecycleService.getResolvedCompletion(parentRunId, secondKey),
-    ).resolves.toBeNull();
+    ).resolves.not.toBeNull();
 
-    // ...and the persisted cursor agrees with what the caller was told.
+    // ...and the persisted cursor remains at the pre-mutation substep.
     const parentAfter: RunbookState | null = await manager.load(parentRunId);
-    expect(parentAfter?.substep).toBe(DELEGATED_SUBSTEP_ID);
+    expect(parentAfter?.substep).toBe('1');
   });
 });

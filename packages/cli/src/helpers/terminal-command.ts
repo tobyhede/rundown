@@ -219,6 +219,18 @@ export async function renderTerminalOutcome(
     case 'execution_in_progress':
     case 'recovery_required':
       return renderSessionMutationRefusal(output, outcome);
+    case 'aggregate_recovery_required':
+      output.error(outcome.message, 'RECOVERY_REQUIRED');
+      return true;
+    case 'claim_superseded':
+      output.error(outcome.message, 'STALE_CLAIM');
+      return true;
+    case 'concurrent_modification':
+      output.error(outcome.message, 'CONCURRENT_MODIFICATION');
+      return true;
+    case 'missing':
+      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

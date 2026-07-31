@@ -23,6 +23,7 @@ import type { RunbookState, ExecutionRecoveryReason, ExecutionRecoveryEvent } fr
 import type { RunbookStore } from './storage/runbook-store.js';
 import type { ExecutionEpoch, GuardedMutationResult } from './storage/mutation-result.js';
 import { InvalidRunbookStateError } from './state.js';
+import { RECOVERY_TAG } from './compiler.js';
 
 /**
  * Minimal machine-actor surface the recovery service drives. Rehydrated at the
@@ -41,6 +42,13 @@ export interface RecoveryActor {
    * @returns The serialized machine snapshot.
    */
   getPersistedSnapshot(): unknown;
+  /**
+   * Test whether the live recovered snapshot carries a machine tag.
+   *
+   * @param tag - Machine tag to inspect.
+   * @returns Whether the current snapshot carries the tag.
+   */
+  hasTag(tag: string): boolean;
   /** Stop the actor, releasing any resources. */
   stop(): void;
 }
@@ -97,9 +105,10 @@ export class ExecutionRecoveryService {
    * Recover an interrupted run.
    *
    * @param runId - Run to recover.
+   * @param expectedEpoch - Exact interrupted attempt requested by the caller.
    * @returns The recovery outcome.
    */
-  async recover(runId: RunId): Promise<RecoveryOutcome> {
+  async recover(runId: RunId, expectedEpoch?: ExecutionEpoch): Promise<RecoveryOutcome> {
     const state = await this.store.loadRun(runId);
     if (state === null) {
       return { kind: 'missing', runId };
@@ -107,6 +116,13 @@ export class ExecutionRecoveryService {
     const pending = await this.store.readPendingRecovery(runId);
     if (pending === null) {
       return { kind: 'not_pending', runId };
+    }
+    if (expectedEpoch !== undefined && pending.epoch !== expectedEpoch) {
+      return {
+        kind: 'superseded',
+        runId,
+        message: `Recovery epoch ${String(expectedEpoch)} for run ${runId} was superseded by epoch ${String(pending.epoch)}.`,
+      };
     }
     const reason = validateReason(pending.reason);
 
@@ -120,6 +136,11 @@ export class ExecutionRecoveryService {
         reason,
         interruptedStepId: state.step,
       });
+      if (!actor.hasTag(RECOVERY_TAG)) {
+        throw new InvalidRunbookStateError(
+          `Recovery for run ${runId} did not enter the machine recovery state.`,
+        );
+      }
       snapshot = actor.getPersistedSnapshot();
     } finally {
       actor.stop();

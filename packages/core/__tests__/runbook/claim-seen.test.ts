@@ -8,6 +8,7 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { createEffectfulActorMutationRunner } from '../../src/runbook/effectful-actor-mutation-runner.js';
 import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
 import {
   RunbookLifecycleCommandService,
@@ -307,6 +308,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       actorService,
       lifecycleService,
       completionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       deleteRun: async (id) => {
         await manager.delete(id);
@@ -414,22 +416,23 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
   });
 
-  it('records liveness before a post-authorization mutation dispatch throws', async () => {
+  it('records liveness before a post-authorization mutation enters recovery', async () => {
     const { claimId, claim } = unwrapSessionMutation(
       await sessionService.issueRunControlClaim(runId),
     );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     await new Promise((resolve) => setTimeout(resolve, 5));
-    jest.spyOn(actorService, 'sendAndSync').mockRejectedValueOnce(new Error('dispatch exploded'));
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockRejectedValueOnce(new Error('dispatch exploded'));
 
-    await expect(
-      seam.runTransition({
-        command: 'pass',
-        callerEvidence: { kind: 'claim_bearer', claimId },
-        targetSelector: { kind: 'claim', claimId },
-        terminalPolicy: releasePolicy,
-      }),
-    ).rejects.toThrow('dispatch exploded');
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('recovery_required');
 
     const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));

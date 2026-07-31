@@ -69,6 +69,26 @@ export class ExecutionLifecycleService {
   }
 
   /**
+   * Derive active frame/entry metadata without persisting it.
+   *
+   * Fenced actor computations use this projection before their one guarded
+   * commit; calling {@link ensureActiveEntry} while a lease is held would create
+   * a second write that the ownership guard correctly refuses.
+   *
+   * @param base - State receiving the derived metadata.
+   * @param previousState - State before the transition, when one occurred.
+   * @param transitioned - Whether `base` is the result of a transition.
+   * @returns Projected state and its active frame identity.
+   */
+  deriveActiveEntry(
+    base: RunbookState,
+    previousState?: RunbookState,
+    transitioned = false,
+  ): { state: RunbookState; frameKey: FrameKey; entry: number } {
+    return deriveActiveEntryProjection(base, previousState, transitioned);
+  }
+
+  /**
    * Ensure active frame/entry identity is initialized and current.
    *
    * Entry increments when execution enters a frame from another frame, or when
@@ -88,38 +108,9 @@ export class ExecutionLifecycleService {
     const base = nextState ?? (await this.manager.load(id));
     if (!base) throw new Error(`Runbook ${id} not found`);
 
-    const activeFrame = deriveActiveFrame(base);
-    const previousFrame = previousState ? deriveActiveFrame(previousState) : undefined;
-
-    const frameEntryCounts = { ...(base.frameEntryCounts ?? {}) };
-    const knownEntry = frameEntryCounts[activeFrame.frameKey] ?? 0;
-
-    let entry = base.activeEntry ?? knownEntry;
-    if (!entry || entry < 1) {
-      entry = knownEntry > 0 ? knownEntry : 1;
-    }
-
-    const fromFrameKey = previousFrame?.frameKey;
-    const toFrameKey = activeFrame.frameKey;
-    const reenteredSameFrame =
-      fromFrameKey === toFrameKey &&
-      nextState !== undefined &&
-      (nextState.lastAction?.type === 'GOTO' || nextState.lastAction?.type === 'RETRY');
-    const switchedFrame =
-      fromFrameKey !== undefined && toFrameKey !== fromFrameKey && nextState !== undefined;
-
-    if (!base.activeFrameKey || base.activeEntry === undefined) {
-      // First-time initialization: use known history or start at 1
-      entry = knownEntry > 0 ? knownEntry : 1;
-    } else if (reenteredSameFrame || switchedFrame) {
-      // Bump entry on re-entry (GOTO/RETRY) or frame switch to isolate completion scopes
-      entry = Math.max(knownEntry, entry) + 1;
-    } else if (base.activeFrameKey !== toFrameKey) {
-      // Frame key drift without explicit transition — also bumps to isolate scopes
-      entry = Math.max(knownEntry, entry) + 1;
-    }
-
-    frameEntryCounts[toFrameKey] = Math.max(frameEntryCounts[toFrameKey] ?? 0, entry);
+    const projected = this.deriveActiveEntry(base, previousState, nextState !== undefined);
+    const { frameKey: toFrameKey, entry } = projected;
+    const frameEntryCounts = projected.state.frameEntryCounts ?? {};
 
     const unchanged =
       base.activeFrameKey === toFrameKey &&
@@ -128,10 +119,7 @@ export class ExecutionLifecycleService {
     if (unchanged) {
       return {
         state: {
-          ...base,
-          activeFrameKey: toFrameKey,
-          activeEntry: entry,
-          frameEntryCounts,
+          ...projected.state,
         },
         frameKey: toFrameKey,
         entry,
@@ -303,4 +291,50 @@ export class ExecutionLifecycleService {
 
     return null;
   }
+}
+
+/**
+ * Derive active frame and entry metadata without persisting it.
+ *
+ * @param base - State receiving the derived active-entry metadata.
+ * @param previousState - State before the transition, when one occurred.
+ * @param transitioned - Whether `base` is the result of a transition.
+ * @returns Projected state and its active frame identity.
+ */
+function deriveActiveEntryProjection(
+  base: RunbookState,
+  previousState: RunbookState | undefined,
+  transitioned: boolean,
+): { state: RunbookState; frameKey: FrameKey; entry: number } {
+  const currentFrame = deriveActiveFrame(base);
+  const previousFrame = previousState ? deriveActiveFrame(previousState) : undefined;
+  const frameEntryCounts = { ...(base.frameEntryCounts ?? {}) };
+  const knownEntry = frameEntryCounts[currentFrame.frameKey] ?? 0;
+  let entry = base.activeEntry ?? knownEntry;
+  if (!entry || entry < 1) entry = knownEntry > 0 ? knownEntry : 1;
+
+  const fromFrameKey = previousFrame?.frameKey;
+  const toFrameKey = currentFrame.frameKey;
+  const reenteredSameFrame =
+    transitioned &&
+    fromFrameKey === toFrameKey &&
+    (base.lastAction?.type === 'GOTO' || base.lastAction?.type === 'RETRY');
+  const switchedFrame = transitioned && fromFrameKey !== undefined && toFrameKey !== fromFrameKey;
+
+  if (!base.activeFrameKey || base.activeEntry === undefined) {
+    entry = knownEntry > 0 ? knownEntry : 1;
+  } else if (reenteredSameFrame || switchedFrame || base.activeFrameKey !== toFrameKey) {
+    entry = Math.max(knownEntry, entry) + 1;
+  }
+  frameEntryCounts[toFrameKey] = Math.max(frameEntryCounts[toFrameKey] ?? 0, entry);
+  return {
+    state: {
+      ...base,
+      activeFrameKey: toFrameKey,
+      activeEntry: entry,
+      frameEntryCounts,
+    },
+    frameKey: toFrameKey,
+    entry,
+  };
 }

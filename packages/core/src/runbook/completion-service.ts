@@ -4,7 +4,7 @@ import { DelegationLock } from './delegation-lock.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
 import { merge } from './state-update-ops.js';
-import type { RunbookStateManager } from './state.js';
+import { applyRunbookStateUpdate, type RunbookStateManager } from './state.js';
 import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import {
   SENTINEL_ENTRY,
@@ -215,6 +215,12 @@ export type RecordCompletionResult =
       readonly key: string;
     };
 
+/** Pure manual-completion preparation for a fenced state commit. */
+export type PreparedManualCompletion = RecordCompletionResult & {
+  /** Parent state after the completion projection, unchanged for duplicates. */
+  readonly nextState: RunbookState;
+};
+
 /** Arguments for recording a manual parent/substep completion. */
 export interface RecordManualCompletionArgs {
   /** Run id of the parent state owning the lifecycle row. */
@@ -257,6 +263,17 @@ export interface RecordChildCompletionArgs {
    */
   readonly ignoreCancellation?: boolean;
 }
+
+/** Pure preparation result for an aggregate child-terminal report. */
+export type PreparedChildCompletion =
+  | {
+      readonly kind: 'recorded';
+      readonly key: string;
+      readonly nextParentState: RunbookState;
+    }
+  | {
+      readonly kind: 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked';
+    };
 
 /** Arguments for draining persisted completions into the current machine cursor. */
 export interface DrainResolvedCompletionsArgs {
@@ -361,6 +378,162 @@ export class RunbookCompletionService {
     private readonly lifecycleService: ExecutionLifecycleService,
     private readonly actorService: RunbookActorService,
   ) {}
+
+  /**
+   * Prepare a delegated child report against an exact captured parent state.
+   *
+   * This performs no IO. Aggregate terminal workflows can include the returned
+   * parent state in the same owned run-set commit as the child terminal state.
+   *
+   * @param args - Terminal child report input.
+   * @param parentState - Exact captured delegating parent state.
+   * @returns Prepared parent state or a typed no-write outcome.
+   */
+  prepareChildCompletion(
+    args: RecordChildCompletionArgs,
+    parentState: RunbookState,
+  ): PreparedChildCompletion {
+    if (!args.childState.parentLinkage) return { kind: 'not-applicable' };
+    const linkage = assertCompleteParentLinkage(args.childState);
+    if (parentState.id !== linkage.parentRunId) return { kind: 'not-applicable' };
+    const projection = projectDelegationTerminalOutcome(args.childState, args.result);
+    if (projection.kind === 'not_terminal') return { kind: 'not-applicable' };
+    if (projection.kind === 'command_infrastructure') return { kind: 'blocked' };
+
+    const activeParentFrameKey =
+      parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey;
+    const activeParentEntry = parentState.activeEntry ?? 1;
+    const substepState = findSubstepState(
+      parentState.substepStates ?? [],
+      linkage.parentStepId,
+      linkage.parentFrameKey,
+    );
+    if (
+      linkage.kind === 'delegation' &&
+      substepState?.delegation?.tokenHash !== undefined &&
+      substepState.delegation.tokenHash !== linkage.tokenHash
+    ) {
+      return { kind: 'not-applicable' };
+    }
+    if (
+      linkage.kind === 'delegation' &&
+      substepState?.delegation?.cancelledAt &&
+      !args.ignoreCancellation
+    ) {
+      return { kind: 'cancelled' };
+    }
+
+    const targetFrame =
+      linkage.parentFrameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
+        ? activeFrame(linkage.parentFrameKey, activeParentEntry)
+        : exactFrame(linkage.parentFrameKey, linkage.parentEntry);
+    const key = buildCompletionKey(targetFrame, linkage.parentStepId);
+    const existing = parentState.resolvedCompletions ?? {};
+    const duplicate = Object.entries(existing).some(
+      ([existingKey, completion]) =>
+        existingKey === key ||
+        (completion.targetFrameKey === linkage.parentFrameKey &&
+          completion.targetSubstep === linkage.parentStepId),
+    );
+    if (duplicate) return { kind: 'duplicate' };
+
+    const completion = buildResolvedCompletion({
+      agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
+      result: projection.result,
+      targetStep: linkage.parentStep,
+      targetSubstep: linkage.parentStepId,
+      targetFrame,
+      finalVars: args.childState.finalVars,
+      completedAt: args.completedAt,
+    });
+    const nextParentState = applyRunbookStateUpdate(
+      parentState,
+      {
+        resolvedCompletions: merge({ [key]: completion }),
+        substepStates: upsertSubstepState(
+          parentState.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+          { status: 'done', result: projection.result },
+        ),
+      },
+      args.completedAt ?? new Date().toISOString(),
+    );
+    return { kind: 'recorded', key, nextParentState };
+  }
+
+  /**
+   * Prepare one manual completion against an exact captured state without IO.
+   *
+   * @param args - Manual completion target and result.
+   * @returns Duplicate/recorded status plus the prepared parent state.
+   */
+  prepareManualCompletion(args: RecordManualCompletionArgs): PreparedManualCompletion {
+    const existing = args.currentState.resolvedCompletions ?? {};
+    const existingEntry = Object.entries(existing).find(
+      ([key, completion]) =>
+        key === buildCompletionKey(args.targetFrame, args.targetSubstep) ||
+        (completion.targetFrameKey === args.targetFrame.frameKey &&
+          completion.targetSubstep === args.targetSubstep),
+    );
+    if (existingEntry !== undefined) {
+      return { status: 'duplicate', key: existingEntry[0], nextState: args.currentState };
+    }
+    const activeFrameKey =
+      args.currentState.activeFrameKey ?? deriveActiveFrame(args.currentState).frameKey;
+    const isActiveCursorTarget =
+      args.targetSubstep === args.currentState.substep &&
+      args.targetFrame.frameKey === activeFrameKey;
+    const existingSubstepState = findSubstepState(
+      args.currentState.substepStates ?? [],
+      args.targetSubstep,
+      args.targetFrame.frameKey,
+    );
+    const key = buildCompletionKey(args.targetFrame, args.targetSubstep);
+    if (!isActiveCursorTarget && existingSubstepState?.status === 'done') {
+      return { status: 'duplicate', key, nextState: args.currentState };
+    }
+    const completion = buildResolvedCompletion({
+      agentId: args.agentId,
+      result: args.result,
+      targetStep: args.targetStep,
+      targetSubstep: args.targetSubstep,
+      targetIteration: args.targetIteration,
+      targetFrame: args.targetFrame,
+      finalVars: args.finalVars,
+      completedAt: args.completedAt,
+    });
+    const nextState = applyRunbookStateUpdate(
+      args.currentState,
+      {
+        resolvedCompletions: merge({ [key]: completion }),
+        substepStates: upsertSubstepState(
+          args.currentState.substepStates ?? [],
+          args.targetSubstep,
+          args.targetFrame.frameKey,
+          { status: 'done', result: args.result },
+        ),
+      },
+      args.completedAt ?? new Date().toISOString(),
+    );
+    return { status: 'recorded', key, nextState };
+  }
+
+  /**
+   * Validate a completion against the live in-memory cursor.
+   *
+   * @param state - Current prepared state.
+   * @param completion - Completion candidate.
+   * @param entry - Live active entry.
+   * @returns Branded current-cursor completion or mismatch.
+   */
+  validateCurrentCompletion(
+    state: RunbookState,
+    completion: ResolvedCompletion,
+    entry: number,
+  ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
+    return this.resolveAgainstCurrentCursor(state, completion, { entry });
+  }
 
   private async findExistingCompletion(
     runbookId: RunId,

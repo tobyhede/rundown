@@ -925,6 +925,22 @@ export class RunbookStateManager {
   }
 
   /**
+   * Capture a presented claim's authority and run state atomically.
+   *
+   * @param runId - Target run.
+   * @param claimKey - Lookup key derived from the presented bearer.
+   * @returns Captured authority plus the exact state read with it, or a typed refusal.
+   * @throws {Error} When persisted run state fails schema validation.
+   */
+  async captureAuthorityState(
+    runId: RunId,
+    claimKey: ClaimLookupKey,
+  ): Promise<CapturedRunStateResult> {
+    const store = await this.store();
+    return store.captureAuthorityState(runId, claimKey);
+  }
+
+  /**
    * Persist session data.
    *
    * @remarks

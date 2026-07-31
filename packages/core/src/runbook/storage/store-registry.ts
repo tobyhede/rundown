@@ -32,7 +32,7 @@ import { openRunbookDriver, type OpenRunbookDriverOptions } from './driver-facto
 import { RunbookStore } from './runbook-store.js';
 
 /** An opened database and its typed repository. */
-interface OpenStore {
+export interface OpenStore {
   /** The capability-selected driver. */
   readonly driver: SqlDriver;
   /** The repository over that driver. */
