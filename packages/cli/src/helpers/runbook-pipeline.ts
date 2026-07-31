@@ -71,6 +71,7 @@ import {
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
 import { getHelperRegistry } from '../services/helper-registry.js';
+import { getRunbookFromState } from './runbook-loader.js';
 
 /**
  * Raw input-supplying CLI flags collected before variable resolution.
@@ -1214,21 +1215,6 @@ type ClaimChildResult =
   | SessionRefusedFailure;
 
 /**
- * Load resolved steps for a persisted run state without eagerly importing the loader.
- *
- * @param state - Persisted run state naming the source runbook.
- * @param cwd - Project working directory used to resolve the source.
- * @returns Resolved steps for machine preparation.
- */
-async function loadRunbookSteps(
-  state: RunbookState,
-  cwd: string,
-): Promise<readonly ResolvedStep[]> {
-  const { getRunbookFromState } = await import('./runbook-loader.js');
-  return getRunbookFromState(state, cwd);
-}
-
-/**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
  *
  * `claimRunbook` owns the idempotent delegation contract: for a matching
@@ -1263,7 +1249,7 @@ async function claimChildForPipeline(
     }
     const prepared = await ctx.actorService.prepareDelegationChildLink(
       captured.state,
-      await loadRunbookSteps(captured.state, ctx.cwd),
+      getRunbookFromState(captured.state, ctx.cwd),
       childRunId,
       linkage,
     );
@@ -1811,8 +1797,7 @@ export async function claimAndLaunch(
     const parentPrompted = freshParent.prompted ?? false;
 
     // 4g. Launch child runbook
-    let capturedChildRunId: RunId | undefined;
-    let capturedClaimId: ClaimId | undefined;
+    let capturedClaim: { readonly claimId: ClaimId; readonly childRunId: RunId } | undefined;
     let initialLinkCommitted = false;
     // Captures a write-side claim invariant violation in `afterInit` so we
     // can surface it as a structured launch-failed result instead of an
@@ -1836,12 +1821,12 @@ export async function claimAndLaunch(
             `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
           );
         }
-        capturedClaimId = 'claimId' in claimResult ? claimResult.claimId : undefined;
-        capturedChildRunId = claimResult.childRunId;
+        capturedClaim = { claimId: claimResult.claimId, childRunId: claimResult.childRunId };
         initialLinkCommitted = true;
       },
       afterInitRollback: async (childStateId) => {
         if (!initialLinkCommitted) return;
+        capturedClaim = undefined;
         const captured = await manager.captureRunAuthorityState(delegationLinkage.parentRunId);
         if (captured.kind !== 'captured') {
           output.warning(
@@ -1851,7 +1836,7 @@ export async function claimAndLaunch(
         }
         const prepared = await ctx.actorService.prepareDelegationChildUnlink(
           captured.state,
-          await loadRunbookSteps(captured.state, ctx.cwd),
+          getRunbookFromState(captured.state, ctx.cwd),
           childStateId,
           delegationLinkage,
         );
@@ -1873,8 +1858,6 @@ export async function claimAndLaunch(
           );
           return;
         }
-        capturedClaimId = undefined;
-        capturedChildRunId = undefined;
         initialLinkCommitted = false;
       },
     });
@@ -1900,7 +1883,10 @@ export async function claimAndLaunch(
       // already owns the mapping, and 4a emits this very refusal earlier for the
       // same fact — so the outcome must not change just because the race lost
       // later.
-      if (invariantViolation.reason === 'parent-missing') {
+      if (
+        invariantViolation.reason === 'parent-missing' ||
+        invariantViolation.reason === 'concurrent-modification'
+      ) {
         return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
       }
       // An ownership refusal is likewise a race, not a broken invariant: the
@@ -1933,8 +1919,7 @@ export async function claimAndLaunch(
       };
     }
 
-    const claimId = capturedClaimId;
-    if (claimId === undefined) {
+    if (capturedClaim === undefined) {
       return {
         ok: false,
         reason: 'launch-failed',
@@ -1947,29 +1932,11 @@ export async function claimAndLaunch(
         },
       };
     }
-    // capturedClaimId and capturedChildRunId are assigned together in afterInit
-    // (see the launch-result handler above); a defined claim id implies a defined
-    // child run id. The defensive check below preserves the invariant explicitly.
-    if (capturedChildRunId === undefined) {
-      return {
-        ok: false,
-        reason: 'launch-failed',
-        runbook: childDisplayPath,
-        code: ErrorCodes.LAUNCH_FAILED.code,
-        cause: 'Child run id was not captured for delegated child.',
-        details: {
-          runbookName: childDisplayPath,
-          runbook: childDisplayPath,
-        },
-      };
-    }
-    const childRunId = capturedChildRunId;
-
     return emitClaimedSuccess({
       output,
       truncatedToken,
-      childRunId,
-      claimId,
+      childRunId: capturedClaim.childRunId,
+      claimId: capturedClaim.claimId,
       childRunbookPath: childDisplayPath,
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,

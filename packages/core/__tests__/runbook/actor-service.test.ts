@@ -1871,6 +1871,17 @@ echo ok
       if (unlink.kind !== 'prepared') throw new Error(`Expected prepared, got ${unlink.kind}`);
       expect(unlink.prepared.mutation.nextState.substepStates).toEqual([target, sibling]);
 
+      const pendingEffectParent = {
+        ...prepared.nextState,
+        snapshot: {
+          ...(prepared.snapshot as Record<string, unknown>),
+          value: { 'step::1::1': '__capture' },
+        },
+      };
+      await expect(
+        service.prepareDelegationChildUnlink(pendingEffectParent, steps, childRunId, linkage),
+      ).rejects.toThrow('Unsupported snapshot.value shape');
+
       await expect(
         service.prepareDelegationChildLink(prepared.nextState, steps, otherChildRunId, linkage),
       ).resolves.toEqual({
@@ -1891,9 +1902,11 @@ echo ok
           ...linkage,
           parentEntry: 2,
         }),
-      ).resolves.toEqual(
-        expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
-      );
+      ).resolves.toEqual({
+        kind: 'delegation_superseded',
+        runId: state.id,
+        message: 'Delegation 1.1 no longer names parent entry 2',
+      });
 
       const fallbackEntryState = {
         ...before,
@@ -1906,6 +1919,47 @@ echo ok
       await expect(
         service.prepareDelegationChildLink(
           { ...fallbackEntryState, frameEntryCounts: undefined },
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+      await expect(
+        service.prepareDelegationChildLink(
+          { ...fallbackEntryState, frameEntryCounts: undefined },
+          steps,
+          childRunId,
+          { ...linkage, parentEntry: 2 },
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+      );
+      await expect(
+        service.prepareDelegationChildLink(
+          {
+            ...before,
+            activeFrameKey: buildFrameKey('other'),
+            activeEntry: 2,
+            frameEntryCounts: { [frameKey]: 1 },
+          },
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+      await expect(
+        service.prepareDelegationChildLink(
+          { ...before, activeEntry: 2, frameEntryCounts: { [frameKey]: 1 } },
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+      );
+      await expect(
+        service.prepareDelegationChildLink(
+          { ...before, activeEntry: undefined, frameEntryCounts: { [frameKey]: 1 } },
           steps,
           childRunId,
           linkage,
@@ -1945,11 +1999,43 @@ echo ok
         ),
       ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
       await expect(
+        service.prepareDelegationChildUnlink(
+          {
+            ...prepared.nextState,
+            activeFrameKey: undefined,
+            activeEntry: undefined,
+            frameEntryCounts: undefined,
+          },
+          steps,
+          childRunId,
+          { ...linkage, parentEntry: 2 },
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+      );
+      await expect(
         service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
           ...linkage,
           tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
         }),
       ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
+
+      await expect(
+        service.prepareDelegationChildLink(
+          { ...before, substepStates: null } as unknown as RunbookState,
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).rejects.toThrow(TypeError);
+      await expect(
+        service.prepareDelegationChildUnlink(
+          { ...prepared.nextState, substepStates: null } as unknown as RunbookState,
+          steps,
+          childRunId,
+          linkage,
+        ),
+      ).rejects.toThrow(TypeError);
     });
   });
 

@@ -909,7 +909,6 @@ export type RunbookEvent =
       type: 'DELEGATION_CHILD_LINKED';
       parentStepId: string;
       parentFrameKey: FrameKey;
-      parentEntry: number;
       tokenHash: DelegationTokenHash;
       childRunId: RunId;
     }
@@ -917,7 +916,6 @@ export type RunbookEvent =
       type: 'DELEGATION_CHILD_UNLINKED';
       parentStepId: string;
       parentFrameKey: FrameKey;
-      parentEntry: number;
       tokenHash: DelegationTokenHash;
       childRunId: RunId;
     }

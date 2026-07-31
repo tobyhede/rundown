@@ -802,6 +802,10 @@ Delegation semantics:
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a one-time `claim_id`; replaying the same token is
   refused.
+- `claim` creates the initial claim and parent link atomically, guarding both
+  the child and parent. Parent execution ownership refuses with
+  `EXECUTION_IN_PROGRESS`; parent recovery state refuses with
+  `RECOVERY_REQUIRED`. Neither refusal writes the claim or parent link.
 - `claim` refuses with RD-825 (`DELEGATION_SUPERSEDED`) when the parent has
   moved past the delegation — it advanced its cursor beyond the step, ended,
   reset the substep, or reissued the token — before the claim committed. A

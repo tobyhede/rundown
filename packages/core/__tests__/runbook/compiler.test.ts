@@ -641,7 +641,6 @@ Review the plan manually.
         type: 'DELEGATION_CHILD_LINKED',
         parentStepId: '1.1',
         parentFrameKey: targetFrame,
-        parentEntry: 1,
         tokenHash,
         childRunId,
       });
@@ -669,7 +668,6 @@ Review the plan manually.
         type: 'DELEGATION_CHILD_LINKED',
         parentStepId: '1.1',
         parentFrameKey: targetFrame,
-        parentEntry: 1,
         tokenHash,
         childRunId,
       });
@@ -682,7 +680,6 @@ Review the plan manually.
           type: 'DELEGATION_CHILD_LINKED' as const,
           parentStepId: '1.1',
           parentFrameKey: targetFrame,
-          parentEntry: 1,
           tokenHash,
           childRunId: otherChildRunId,
         },
@@ -690,7 +687,6 @@ Review the plan manually.
           type: 'DELEGATION_CHILD_LINKED' as const,
           parentStepId: '1.1',
           parentFrameKey: targetFrame,
-          parentEntry: 1,
           tokenHash: otherTokenHash,
           childRunId,
         },
@@ -710,7 +706,6 @@ Review the plan manually.
           type: 'DELEGATION_CHILD_LINKED',
           parentStepId: '1.1',
           parentFrameKey: targetFrame,
-          parentEntry: 1,
           tokenHash,
           childRunId,
         }),
@@ -730,7 +725,6 @@ Review the plan manually.
         type: 'DELEGATION_CHILD_UNLINKED' as const,
         parentStepId: '1.1',
         parentFrameKey: targetFrame,
-        parentEntry: 1,
         tokenHash,
         childRunId,
       };
@@ -756,7 +750,6 @@ Review the plan manually.
         type: 'DELEGATION_CHILD_UNLINKED' as const,
         parentStepId: '1.1',
         parentFrameKey: targetFrame,
-        parentEntry: 1,
         tokenHash,
         childRunId,
       };

@@ -328,6 +328,9 @@ describe('captureRunAuthority (bare caller, no presented claim)', () => {
     // The resolved authority is the run's controlling claim, not an invention.
     expect(cap.authority.claimKey).toBe(key);
     expect(cap.authority.runId).toBe(state.id);
+
+    const stateCap = await store.captureRunAuthorityState(state.id);
+    expect(stateCap).toEqual({ kind: 'captured', authority: cap.authority, state });
   });
 
   it('agrees with captureAuthority when the caller does present the claim', async () => {
@@ -355,8 +358,28 @@ describe('captureRunAuthority (bare caller, no presented claim)', () => {
   });
 
   it('returns missing for an absent run, distinguishing it from an unclaimed one', async () => {
-    const cap = await store.captureRunAuthority(assertRunId(`rd_${'8'.repeat(32)}`));
-    expect(cap.kind).toBe('missing');
+    const runId = assertRunId(`rd_${'8'.repeat(32)}`);
+    const cap = await store.captureRunAuthority(runId);
+    expect(cap).toEqual({ kind: 'missing', runId, message: `Run ${runId} does not exist.` });
+    await expect(store.captureRunAuthorityState(runId)).resolves.toEqual(cap);
+  });
+
+  it('agrees on claim_superseded without deserializing invalid state for an unclaimed run', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE runs SET state_json = :stateJson WHERE id = :runId')
+        .run({ runId: state.id, stateJson: '{"schemaVersion":999}' });
+    });
+    const expected = {
+      kind: 'claim_superseded',
+      runId: state.id,
+      message: `Run ${state.id} has no active controlling claim.`,
+    } as const;
+
+    await expect(store.captureRunAuthority(state.id)).resolves.toEqual(expected);
+    await expect(store.captureRunAuthorityState(state.id)).resolves.toEqual(expected);
   });
 });
 

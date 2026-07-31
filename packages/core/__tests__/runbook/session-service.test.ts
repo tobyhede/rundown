@@ -1877,6 +1877,73 @@ describe('SessionService', () => {
       expect(claimGeneration(child.id)).toBe(beforeGeneration + 1);
     });
 
+    it('throws before mutation when initial-link parent coordinates disagree', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const otherParent = await manager.create(
+        { source: 'project', path: 'other-parent.md' },
+        mockRunbook,
+        { runbookPath: 'other-parent.md' },
+      );
+      const linkage = linkageFor(parent.id, 'e');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const prepared = await prepareInitialLink({ parent, child, fill: 'e' });
+      const beforeParent = await manager.load(parent.id);
+
+      await expect(
+        sessionService.claimAndInitialLink({
+          childRunId: child.id,
+          linkage: { ...linkage, parentRunId: otherParent.id },
+          capturedParent: prepared.captured.authority,
+          preparedParent: prepared.preparedParent,
+        }),
+      ).rejects.toThrow('Initial delegation link names different parent runs');
+      expect(await manager.load(parent.id)).toEqual(beforeParent);
+      expect(await sessionService.findClaimForDelegation(linkage)).toBeNull();
+    });
+
+    it('refuses when the delegation was already claimed by another child', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '6');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const foreignChild = await manager.create(
+        { source: 'project', path: 'foreign-child.md' },
+        mockRunbook,
+        { runbookPath: 'foreign-child.md', parentLinkage: linkage },
+      );
+      const prepared = await prepareInitialLink({ parent, child, fill: '6' });
+      assertClaimed(
+        unwrapSessionMutation(await sessionService.claimRunbook(foreignChild.id, linkage)),
+      );
+      const beforeParent = await manager.load(parent.id);
+
+      const result = await sessionService.claimAndInitialLink({
+        childRunId: child.id,
+        linkage,
+        capturedParent: prepared.captured.authority,
+        preparedParent: prepared.preparedParent,
+      });
+
+      expect(result).toEqual({
+        kind: 'concurrent_modification',
+        runId: parent.id,
+        message: `Run ${parent.id} was modified concurrently.`,
+      });
+      expect(await manager.load(parent.id)).toEqual(beforeParent);
+      expect(await sessionService.findClaimForDelegation(linkage)).toEqual(
+        expect.objectContaining({ controlledRunId: foreignChild.id }),
+      );
+    });
+
     it('atomically rolls back the exact initial claim and machine-derived parent link', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',

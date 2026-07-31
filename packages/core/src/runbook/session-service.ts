@@ -814,6 +814,10 @@ export class SessionService {
   /**
    * Atomically persist a machine-derived parent link with the child's first claim.
    *
+   * An idempotent `already-claimed` result may still commit the derived parent
+   * link, repairing a missing link for the same child and exact delegation
+   * coordinates. All other typed refusals leave both child and parent unchanged.
+   *
    * @param input - Captured parent authority, derived parent state, child, and linkage.
    * @returns The committed claim result or a canonical guarded refusal.
    * @throws {Error} When captured authority, linkage, or prepared states name different parents.
