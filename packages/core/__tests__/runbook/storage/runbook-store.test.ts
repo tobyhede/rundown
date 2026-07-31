@@ -381,6 +381,20 @@ describe('captureRunAuthority (bare caller, no presented claim)', () => {
     await expect(store.captureRunAuthority(state.id)).resolves.toEqual(expected);
     await expect(store.captureRunAuthorityState(state.id)).resolves.toEqual(expected);
   });
+
+  it('propagates malformed persisted state for a controlled run on both bare capture paths', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await mintClaim(state.id, 'd'.repeat(32));
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE runs SET state_json = :stateJson WHERE id = :runId')
+        .run({ runId: state.id, stateJson: '{"schemaVersion":999}' });
+    });
+
+    await expect(store.captureRunAuthority(state.id)).rejects.toThrow();
+    await expect(store.captureRunAuthorityState(state.id)).rejects.toThrow();
+  });
 });
 
 describe('guarded state writes', () => {

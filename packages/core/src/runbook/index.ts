@@ -35,6 +35,7 @@ export type {
   SessionMutationRefusal,
   SessionMutationResult,
 } from './storage/runbook-store.js';
+export { assertExecutionEpoch, type ExecutionEpoch } from './storage/mutation-result.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
@@ -103,6 +104,7 @@ export {
   type ActiveInlineForceTerminalPlan,
   type ClaimAndInitialLinkInput,
   type ClaimAndInitialLinkResult,
+  type RollbackInitialLinkInput,
   type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
   type ReleaseRunbookResult,
@@ -334,7 +336,9 @@ export {
   type ActorSyncResult,
   type AnyActorRef,
   type PreparedDelegationChildLink,
+  type PreparedDelegationChildUnlink,
   type PrepareDelegationChildLinkResult,
+  type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';

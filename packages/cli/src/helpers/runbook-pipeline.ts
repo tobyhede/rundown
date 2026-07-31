@@ -1827,38 +1827,41 @@ export async function claimAndLaunch(
       afterInitRollback: async (childStateId) => {
         if (!initialLinkCommitted) return;
         capturedClaim = undefined;
-        const captured = await manager.captureRunAuthorityState(delegationLinkage.parentRunId);
-        if (captured.kind !== 'captured') {
+        const warnUnlinkRefusal = (reason: string): void => {
           output.warning(
-            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${captured.message}`,
+            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${reason}`,
           );
-          return;
-        }
-        const prepared = await ctx.actorService.prepareDelegationChildUnlink(
-          captured.state,
-          getRunbookFromState(captured.state, ctx.cwd),
-          childStateId,
-          delegationLinkage,
-        );
-        if (prepared.kind !== 'prepared') {
-          output.warning(
-            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${prepared.message}`,
+        };
+        try {
+          const captured = await manager.captureRunAuthorityState(delegationLinkage.parentRunId);
+          if (captured.kind !== 'captured') {
+            warnUnlinkRefusal(captured.message);
+            return;
+          }
+          const prepared = await ctx.actorService.prepareDelegationChildUnlink(
+            captured.state,
+            getRunbookFromState(captured.state, ctx.cwd),
+            childStateId,
+            delegationLinkage,
           );
-          return;
+          if (prepared.kind !== 'prepared') {
+            warnUnlinkRefusal(prepared.message);
+            return;
+          }
+          const rollback = await ctx.sessionService.rollbackInitialLink({
+            childRunId: childStateId,
+            linkage: delegationLinkage,
+            capturedParent: captured.authority,
+            preparedParent: prepared.prepared,
+          });
+          if (rollback.kind !== 'committed') {
+            warnUnlinkRefusal(rollback.message);
+            return;
+          }
+          initialLinkCommitted = false;
+        } catch (error: unknown) {
+          warnUnlinkRefusal(getErrorMessage(error));
         }
-        const rollback = await ctx.sessionService.rollbackInitialLink({
-          childRunId: childStateId,
-          linkage: delegationLinkage,
-          capturedParent: captured.authority,
-          preparedParent: prepared.prepared,
-        });
-        if (rollback.kind !== 'committed') {
-          output.warning(
-            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${rollback.message}`,
-          );
-          return;
-        }
-        initialLinkCommitted = false;
       },
     });
 

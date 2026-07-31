@@ -416,6 +416,8 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
     update: jest.fn(),
   } as unknown as RunbookStateManager;
   Object.assign(manager, typedOverrides.manager);
+  // This default must use the merged manager.load: overrides are assigned above,
+  // and initial-link tests depend on capture observing that overridden behavior.
   const captureRunAuthorityState = mockFn<
     RunbookStateManager['captureRunAuthorityState']
   >().mockImplementation(async (runId) => {
@@ -2123,7 +2125,7 @@ describe('claimAndLaunch', () => {
       },
     },
   ])(
-    'returns $caseName and rolls back a fresh child when the claim race loses',
+    'returns $caseName and deletes the fresh child without unlinking when the claim race loses',
     async ({ atomicResult, expected }) => {
       const parentState = {
         id: RUN_ID,
@@ -2240,6 +2242,10 @@ describe('claimAndLaunch', () => {
       expect(removeChild).toHaveBeenCalledWith(NEW_CHILD_ID);
       expect(initializeState).toHaveBeenCalled();
       expect(runExecutionLoop).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
+      expect(ctx.actorService.prepareDelegationChildUnlink).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
+      expect(ctx.sessionService.rollbackInitialLink).not.toHaveBeenCalled();
     },
   );
 
@@ -2504,7 +2510,14 @@ describe('claimAndLaunch', () => {
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
-  it('rolls back the exact atomic initial link when startup fails before the execution loop', async () => {
+  async function exerciseInitialLinkRollback(
+    scenario:
+      | 'successful'
+      | 'missing-parent'
+      | 'superseded-delegation'
+      | 'concurrent-modification'
+      | 'thrown-error',
+  ) {
     const parentState = {
       id: RUN_ID,
       step: '1',
@@ -2649,59 +2662,70 @@ describe('claimAndLaunch', () => {
     const capturedAuthority = (await firstCapture.value) as Awaited<
       ReturnType<RunbookStateManager['captureRunAuthorityState']>
     >;
+    const rollbackSetup = { ctx, prepareUnlink, rollbackInitialLink, capturedAuthority };
 
-    capture.mockReset();
-    capture.mockResolvedValueOnce(capturedAuthority).mockResolvedValueOnce({
-      kind: 'missing',
-      runId: RUN_ID,
-      message: `Run ${RUN_ID} disappeared before rollback.`,
-    });
-    prepareUnlink.mockClear();
-    rollbackInitialLink.mockClear();
+    if (scenario === 'successful') return rollbackSetup;
 
-    // cspell:disable
-    const missingParentRollback = await claimAndLaunch(
-      ctx,
-      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
-      {},
-    );
-    // cspell:enable
+    if (scenario === 'missing-parent') {
+      capture.mockReset();
+      capture.mockResolvedValueOnce(capturedAuthority).mockResolvedValueOnce({
+        kind: 'missing',
+        runId: RUN_ID,
+        message: `Run ${RUN_ID} disappeared before rollback.`,
+      });
+      prepareUnlink.mockClear();
+      rollbackInitialLink.mockClear();
 
-    expect(missingParentRollback).toMatchObject({ ok: false, reason: 'launch-failed' });
-    expect(capture).toHaveBeenCalledTimes(2);
-    expect(prepareUnlink).not.toHaveBeenCalled();
-    expect(rollbackInitialLink).not.toHaveBeenCalled();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
-    expect(ctx.output.warning).toHaveBeenCalledWith(
-      `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: Run ${RUN_ID} disappeared before rollback.`,
-    );
+      // cspell:disable
+      const missingParentRollback = await claimAndLaunch(
+        ctx,
+        'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+        {},
+      );
+      // cspell:enable
+
+      expect(missingParentRollback).toMatchObject({ ok: false, reason: 'launch-failed' });
+      expect(capture).toHaveBeenCalledTimes(2);
+      expect(prepareUnlink).not.toHaveBeenCalled();
+      expect(rollbackInitialLink).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
+      expect(ctx.output.warning).toHaveBeenCalledWith(
+        `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: Run ${RUN_ID} disappeared before rollback.`,
+      );
+      return rollbackSetup;
+    }
+
+    if (scenario === 'superseded-delegation') {
+      capture.mockReset();
+      capture.mockResolvedValue(capturedAuthority);
+      prepareUnlink.mockReset();
+      prepareUnlink.mockResolvedValue({
+        kind: 'delegation_superseded',
+        runId: RUN_ID,
+        message: 'The delegation moved before rollback preparation.',
+      });
+      rollbackInitialLink.mockClear();
+
+      // cspell:disable
+      const supersededRollback = await claimAndLaunch(
+        ctx,
+        'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+        {},
+      );
+      // cspell:enable
+
+      expect(supersededRollback).toMatchObject({ ok: false, reason: 'launch-failed' });
+      expect(prepareUnlink).toHaveBeenCalledTimes(1);
+      expect(rollbackInitialLink).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
+      expect(ctx.output.warning).toHaveBeenCalledWith(
+        `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: The delegation moved before rollback preparation.`,
+      );
+      return rollbackSetup;
+    }
 
     capture.mockReset();
     capture.mockResolvedValue(capturedAuthority);
-    prepareUnlink.mockReset();
-    prepareUnlink.mockResolvedValue({
-      kind: 'delegation_superseded',
-      runId: RUN_ID,
-      message: 'The delegation moved before rollback preparation.',
-    });
-    rollbackInitialLink.mockClear();
-
-    // cspell:disable
-    const supersededRollback = await claimAndLaunch(
-      ctx,
-      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
-      {},
-    );
-    // cspell:enable
-
-    expect(supersededRollback).toMatchObject({ ok: false, reason: 'launch-failed' });
-    expect(prepareUnlink).toHaveBeenCalledTimes(1);
-    expect(rollbackInitialLink).not.toHaveBeenCalled();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
-    expect(ctx.output.warning).toHaveBeenCalledWith(
-      `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: The delegation moved before rollback preparation.`,
-    );
-
     prepareUnlink.mockReset();
     prepareUnlink.mockImplementation(
       async (previousState) =>
@@ -2717,11 +2741,19 @@ describe('claimAndLaunch', () => {
           },
         }) as unknown as Awaited<ReturnType<RunbookActorService['prepareDelegationChildUnlink']>>,
     );
-    rollbackInitialLink.mockResolvedValue({
-      kind: 'concurrent_modification',
-      runId: RUN_ID,
-      message: `Run ${RUN_ID} was modified concurrently.`,
-    });
+    const rollbackMessage =
+      scenario === 'thrown-error'
+        ? 'rollback storage failed'
+        : `Run ${RUN_ID} was modified concurrently.`;
+    if (scenario === 'thrown-error') {
+      rollbackInitialLink.mockRejectedValue(new Error(rollbackMessage));
+    } else {
+      rollbackInitialLink.mockResolvedValue({
+        kind: 'concurrent_modification',
+        runId: RUN_ID,
+        message: rollbackMessage,
+      });
+    }
 
     // cspell:disable-next-line
     const refusedRollback = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -2729,8 +2761,47 @@ describe('claimAndLaunch', () => {
     expect(refusedRollback).toMatchObject({ ok: false, reason: 'launch-failed' });
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
     expect(ctx.output.warning).toHaveBeenCalledWith(
-      `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: Run ${RUN_ID} was modified concurrently.`,
+      `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: ${rollbackMessage}`,
     );
+    return rollbackSetup;
+  }
+
+  it('rolls back the exact atomic initial link when startup fails before the execution loop', async () => {
+    const setup = await exerciseInitialLinkRollback('successful');
+    expect(setup).toEqual(
+      expect.objectContaining({
+        ctx: expect.any(Object),
+        prepareUnlink: expect.any(Function),
+        rollbackInitialLink: expect.any(Function),
+        capturedAuthority: expect.objectContaining({ kind: 'captured' }),
+      }),
+    );
+  });
+
+  it.each([
+    {
+      name: 'missing parent',
+      configure: () => 'missing-parent' as const,
+      expectedWarning: `Run ${RUN_ID} disappeared before rollback.`,
+    },
+    {
+      name: 'superseded delegation',
+      configure: () => 'superseded-delegation' as const,
+      expectedWarning: 'The delegation moved before rollback preparation.',
+    },
+    {
+      name: 'concurrent modification',
+      configure: () => 'concurrent-modification' as const,
+      expectedWarning: `Run ${RUN_ID} was modified concurrently.`,
+    },
+    {
+      name: 'unexpected rollback error',
+      configure: () => 'thrown-error' as const,
+      expectedWarning: 'rollback storage failed',
+    },
+  ])('warns and preserves the launch failure for $name', async ({ configure, expectedWarning }) => {
+    expect(expectedWarning).toBeTruthy();
+    await exerciseInitialLinkRollback(configure());
   });
 
   it('deletes orphaned child state when afterInit throws due to claim invariant violation', async () => {

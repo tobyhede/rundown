@@ -12,7 +12,6 @@ import {
   type DelegationClaimLinkage,
 } from '../../src/runbook/claim-id.js';
 import type {
-  Step,
   Runbook,
   RunId,
   RunbookState,
@@ -119,12 +118,11 @@ describe('SessionService', () => {
   }
 
   let sessionService: SessionService;
-  const mockParsedSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
-  const mockSteps = mockParsedSteps as unknown as ResolvedStep[];
+  const mockSteps: ResolvedStep[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
     description: 'A test',
-    steps: mockParsedSteps,
+    steps: [makeBaseStep({ name: '1', description: 'Initial step' })],
   };
 
   beforeEach(async () => {
@@ -1934,13 +1932,37 @@ describe('SessionService', () => {
       });
 
       expect(result).toEqual({
-        kind: 'concurrent_modification',
-        runId: parent.id,
-        message: `Run ${parent.id} was modified concurrently.`,
+        kind: 'committed',
+        value: expect.objectContaining({
+          status: 'already-claimed',
+          childRunId: foreignChild.id,
+        }),
       });
       expect(await manager.load(parent.id)).toEqual(beforeParent);
       expect(await sessionService.findClaimForDelegation(linkage)).toEqual(
         expect.objectContaining({ controlledRunId: foreignChild.id }),
+      );
+    });
+
+    it('rejects an unlink mutation passed to the initial claim operation', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '0');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const prepared = await prepareInitialLink({ parent, child, fill: '0' });
+      const invalidInput = {
+        childRunId: child.id,
+        linkage,
+        capturedParent: prepared.captured.authority,
+        preparedParent: { ...prepared.preparedParent, operation: 'unlink' },
+      } as unknown as Parameters<SessionService['claimAndInitialLink']>[0];
+
+      await expect(sessionService.claimAndInitialLink(invalidInput)).rejects.toThrow(
+        'Initial delegation link received the wrong mutation operation',
       );
     });
 
@@ -1980,6 +2002,28 @@ describe('SessionService', () => {
           linkage.parentFrameKey,
         )?.delegation?.childRunId,
       ).toBeNull();
+    });
+
+    it('rejects a link mutation passed to rollback', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '1');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const prepared = await prepareInitialLink({ parent, child, fill: '1' });
+      const invalidInput = {
+        childRunId: child.id,
+        linkage,
+        capturedParent: prepared.captured.authority,
+        preparedParent: prepared.preparedParent,
+      } as unknown as Parameters<SessionService['rollbackInitialLink']>[0];
+
+      await expect(sessionService.rollbackInitialLink(invalidInput)).rejects.toThrow(
+        'Initial delegation rollback received the wrong mutation operation',
+      );
     });
 
     it('refuses rollback when the delegation claim is controlled by a different child', async () => {
@@ -2183,6 +2227,10 @@ describe('SessionService', () => {
         preparedParent: firstPrepared.preparedParent,
       });
       expect(first.kind).toBe('committed');
+      if (first.kind !== 'committed') throw new Error(`Expected commit, got ${first.kind}`);
+      if (first.value.status !== 'claimed') {
+        throw new Error(`Expected first claim, got ${first.value.status}`);
+      }
       expect(claimGeneration(child.id)).toBe(beforeGeneration + 1);
 
       const capturedAgain = await manager.captureRunAuthorityState(parent.id);
@@ -2209,6 +2257,10 @@ describe('SessionService', () => {
       expect(second.kind).toBe('committed');
       if (second.kind !== 'committed') throw new Error(`Expected commit, got ${second.kind}`);
       expect(second.value).toEqual(expect.objectContaining({ status: 'already-claimed' }));
+      if (second.value.status !== 'already-claimed') {
+        throw new Error(`Expected replayed claim, got ${second.value.status}`);
+      }
+      expect(second.value.claim.claimKey).toBe(first.value.claim.claimKey);
       expect(claimGeneration(child.id)).toBe(beforeGeneration + 1);
       expect(Object.values((await manager.loadSession()).claims)).toHaveLength(2);
     });

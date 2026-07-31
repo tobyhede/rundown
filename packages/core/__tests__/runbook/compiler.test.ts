@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { createActor, fromPromise, waitFor } from 'xstate';
 import {
   compileRunbookToMachine,
+  DelegationChildLinkPreparationError,
   deriveDelegationChildUnlinkedSubsteps,
   MAX_FILE_ITERATIONS,
   PENDING_COMMAND_EXECUTION_TAG,
@@ -586,7 +587,7 @@ Review the plan manually.
     const targetFrame = buildFrameKey('1', 1);
     const collidingFrame = buildFrameKey('1', 2);
 
-    function machineWithDelegations(
+    function delegationFixture(
       options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
     ) {
       const target = makeDelegatedSubstepState({
@@ -608,10 +609,15 @@ Review the plan manually.
         frameKey: targetFrame,
         delegation: { tokenHash },
       });
+      return { target, sameIdOtherFrame, sibling };
+    }
+
+    function machineWithDelegations(
+      options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
+    ) {
+      const fixture = delegationFixture(options);
       return {
-        target,
-        sameIdOtherFrame,
-        sibling,
+        ...fixture,
         machine: compileRunbookToMachine(
           inferSteps([
             {
@@ -625,7 +631,9 @@ Review the plan manually.
               ],
             },
           ]),
-          { substepStates: [target, sameIdOtherFrame, sibling] },
+          {
+            substepStates: [fixture.target, fixture.sameIdOtherFrame, fixture.sibling],
+          },
         ),
       };
     }
@@ -675,28 +683,42 @@ Review the plan manually.
       expect(actorErrors).toEqual([]);
       sameActor.stop();
 
-      for (const event of [
+      for (const scenario of [
         {
-          type: 'DELEGATION_CHILD_LINKED' as const,
-          parentStepId: '1.1',
-          parentFrameKey: targetFrame,
-          tokenHash,
-          childRunId: otherChildRunId,
+          event: {
+            type: 'DELEGATION_CHILD_LINKED' as const,
+            parentStepId: '1.1',
+            parentFrameKey: targetFrame,
+            tokenHash,
+            childRunId: otherChildRunId,
+          },
+          reason: 'concurrent_modification',
+          message: 'Delegation 1.1 is already linked to another child',
         },
         {
-          type: 'DELEGATION_CHILD_LINKED' as const,
-          parentStepId: '1.1',
-          parentFrameKey: targetFrame,
-          tokenHash: otherTokenHash,
-          childRunId,
+          event: {
+            type: 'DELEGATION_CHILD_LINKED' as const,
+            parentStepId: '1.1',
+            parentFrameKey: targetFrame,
+            tokenHash: otherTokenHash,
+            childRunId,
+          },
+          reason: 'delegation_superseded',
+          message: 'Delegation 1.1 no longer matches the presented token',
         },
-      ]) {
-        const conflict = machineWithDelegations({ linkedChild: childRunId });
-        const initial = [conflict.target, conflict.sameIdOtherFrame, conflict.sibling];
-        expect(() => deriveDelegationChildLinkedSubsteps(initial, event)).toThrow(
-          /already linked|token/,
-        );
-        expect(initial).toEqual([conflict.target, conflict.sameIdOtherFrame, conflict.sibling]);
+      ] as const) {
+        const { target, sameIdOtherFrame, sibling } = delegationFixture({
+          linkedChild: childRunId,
+        });
+        const initial = [target, sameIdOtherFrame, sibling];
+        try {
+          deriveDelegationChildLinkedSubsteps(initial, scenario.event);
+          throw new Error('Expected delegated-child link refusal');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
+          expect(error).toMatchObject({ reason: scenario.reason, message: scenario.message });
+        }
+        expect(initial).toEqual([target, sameIdOtherFrame, sibling]);
       }
     });
 
@@ -753,22 +775,37 @@ Review the plan manually.
         tokenHash,
         childRunId,
       };
-      expect(() => deriveDelegationChildUnlinkedSubsteps(undefined, event)).toThrow(
-        /captured frame entry/,
-      );
       const linked = machineWithDelegations({ linkedChild: childRunId });
-      expect(() =>
-        deriveDelegationChildUnlinkedSubsteps(
-          [linked.target, linked.sameIdOtherFrame, linked.sibling],
-          { ...event, tokenHash: otherTokenHash },
-        ),
-      ).toThrow(/rollback token/);
-      expect(() =>
-        deriveDelegationChildUnlinkedSubsteps(
-          [linked.target, linked.sameIdOtherFrame, linked.sibling],
-          { ...event, childRunId: otherChildRunId },
-        ),
-      ).toThrow(/newer child/);
+      const initial = [linked.target, linked.sameIdOtherFrame, linked.sibling];
+      for (const scenario of [
+        {
+          states: undefined,
+          event,
+          reason: 'delegation_superseded',
+          message: 'Delegation 1.1 no longer names the captured frame entry',
+        },
+        {
+          states: initial,
+          event: { ...event, tokenHash: otherTokenHash },
+          reason: 'delegation_superseded',
+          message: 'Delegation 1.1 no longer matches the rollback token',
+        },
+        {
+          states: initial,
+          event: { ...event, childRunId: otherChildRunId },
+          reason: 'concurrent_modification',
+          message: 'Delegation 1.1 is linked to a newer child',
+        },
+      ] as const) {
+        try {
+          deriveDelegationChildUnlinkedSubsteps(scenario.states, scenario.event);
+          throw new Error('Expected delegated-child unlink refusal');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
+          expect(error).toMatchObject({ reason: scenario.reason, message: scenario.message });
+        }
+        if (scenario.states !== undefined) expect(scenario.states).toEqual(initial);
+      }
     });
   });
 

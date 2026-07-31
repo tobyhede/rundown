@@ -24,7 +24,10 @@ import {
 } from './storage/runbook-store.js';
 import type { CapturedAuthority, GuardedMutationResult } from './storage/mutation-result.js';
 import type { SyncWork } from './storage/sql-driver.js';
-import type { PreparedDelegationChildLink } from './actor-service.js';
+import type {
+  PreparedDelegationChildLink,
+  PreparedDelegationChildUnlink,
+} from './actor-service.js';
 import {
   createDelegatedChildGrants,
   createClaimRecord,
@@ -119,8 +122,14 @@ export interface ClaimAndInitialLinkInput {
   readonly linkage: DelegationLinkage;
   /** Parent authority captured with the state used to derive `preparedParent`. */
   readonly capturedParent: CapturedAuthority;
-  /** Opaque parent mutation produced by an XState delegation link or unlink transition. */
+  /** Opaque parent mutation produced by an XState delegation link transition. */
   readonly preparedParent: PreparedDelegationChildLink;
+}
+
+/** Machine-derived inputs committed when rolling back a delegated child's initial link. */
+export interface RollbackInitialLinkInput extends Omit<ClaimAndInitialLinkInput, 'preparedParent'> {
+  /** Opaque parent mutation produced by an XState delegation unlink transition. */
+  readonly preparedParent: PreparedDelegationChildUnlink;
 }
 
 /** Atomic initial-claim/link outcome. */
@@ -132,14 +141,17 @@ export type ClaimAndInitialLinkResult = GuardedMutationResult<ClaimRunbookResult
  * @param input - Atomic link or rollback input to validate.
  * @param operation - Operation named in an invariant-failure diagnostic.
  * @returns The machine-derived next parent state.
- * @throws {Error} When captured authority, linkage, or prepared states name different parents.
+ * @throws {Error} When the operation is wrong or parent coordinates disagree.
  */
 function assertInitialLinkParentCoordinates(
-  input: ClaimAndInitialLinkInput,
+  input: ClaimAndInitialLinkInput | RollbackInitialLinkInput,
   operation: 'link' | 'rollback',
 ): RunbookState {
   const { linkage, capturedParent, preparedParent } = input;
   const { previousState, nextState } = preparedParent.mutation;
+  if (preparedParent.operation !== (operation === 'link' ? 'link' : 'unlink')) {
+    throw new Error(`Initial delegation ${operation} received the wrong mutation operation`);
+  }
   if (
     capturedParent.runId !== linkage.parentRunId ||
     previousState.id !== linkage.parentRunId ||
@@ -820,7 +832,7 @@ export class SessionService {
    *
    * @param input - Captured parent authority, derived parent state, child, and linkage.
    * @returns The committed claim result or a canonical guarded refusal.
-   * @throws {Error} When captured authority, linkage, or prepared states name different parents.
+   * @throws {Error} When the operation is wrong or parent coordinates disagree.
    */
   async claimAndInitialLink(input: ClaimAndInitialLinkInput): Promise<ClaimAndInitialLinkResult> {
     const { childRunId, linkage, capturedParent } = input;
@@ -844,11 +856,7 @@ export class SessionService {
           };
         }
         if (claim.status === 'already-claimed' && claim.childRunId !== childRunId) {
-          return {
-            kind: 'concurrent_modification',
-            runId: linkage.parentRunId,
-            message: `Run ${linkage.parentRunId} was modified concurrently.`,
-          };
+          return { kind: 'committed', value: claim };
         }
         if (claim.status !== 'claimed' && claim.status !== 'already-claimed') {
           return { kind: 'committed', value: claim };
@@ -866,10 +874,10 @@ export class SessionService {
    *
    * @param input - Recaptured parent authority and machine-derived unlink mutation.
    * @returns A committed rollback status or canonical guarded refusal.
-   * @throws {Error} When captured authority, linkage, or prepared states name different parents.
+   * @throws {Error} When the operation is wrong or parent coordinates disagree.
    */
   async rollbackInitialLink(
-    input: ClaimAndInitialLinkInput,
+    input: RollbackInitialLinkInput,
   ): Promise<GuardedMutationResult<{ readonly status: 'rolled-back' | 'already-absent' }>> {
     const { childRunId, linkage, capturedParent } = input;
     const nextState = assertInitialLinkParentCoordinates(input, 'rollback');
@@ -904,6 +912,14 @@ export class SessionService {
     return nested.kind === 'committed' ? nested.value : nested;
   }
 
+  /**
+   * Claim a run using an already-open session transaction; performs no IO itself.
+   *
+   * @param ctx - Open session mutation transaction.
+   * @param childRunId - Child run receiving the claim.
+   * @param linkage - Exact live parent delegation coordinates.
+   * @returns The claim result recorded in the supplied transaction.
+   */
   private claimRunbookInTransaction(
     ctx: SessionMutationTxn,
     childRunId: RunId,

@@ -29,7 +29,11 @@ import type {
   Transitions,
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { assertClaimLookupKey, assertClaimSecretHash } from '@rundown-org/core';
+import {
+  assertClaimLookupKey,
+  assertClaimSecretHash,
+  assertExecutionEpoch,
+} from '@rundown-org/core';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { resolveVariables as resolveVariablesType } from '../../src/services/variable-discovery.js';
 import type {
@@ -2855,7 +2859,7 @@ describe('claimAndLaunch', () => {
         initialLinkResult: {
           kind: 'recovery_required',
           runId: ORPHAN_RUN_ID,
-          epoch: 1 as never,
+          epoch: assertExecutionEpoch(1),
           message: 'child requires recovery',
         },
       },

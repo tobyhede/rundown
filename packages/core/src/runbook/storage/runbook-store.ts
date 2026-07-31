@@ -810,7 +810,7 @@ export class RunbookStore {
    */
   constructor(
     private readonly driver: SqlDriver,
-    private readonly cwd: string,
+    cwd: string,
   ) {
     this.stateSchema = makeRunbookStateSchema(cwd);
   }
@@ -898,15 +898,13 @@ export class RunbookStore {
    *
    * @param runId - Target run.
    * @returns The captured authority or a typed refusal.
+   * @throws {Error} When a controlled run's persisted state fails schema validation.
    */
-  captureRunAuthority(runId: RunId): Promise<CaptureResult> {
-    return this.driver.read((tx) => {
-      const claimKey = resolveControllingClaim(tx, runId);
-      if (claimKey === null) {
-        return classifyRunWithoutControllingClaim(tx, runId);
-      }
-      return captureAuthority(tx, runId, claimKey);
-    });
+  async captureRunAuthority(runId: RunId): Promise<CaptureResult> {
+    const captured = await this.captureRunAuthorityState(runId);
+    if (captured.kind !== 'captured') return captured;
+    const { state: _state, ...authority } = captured;
+    return authority;
   }
 
   /**

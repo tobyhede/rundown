@@ -917,6 +917,7 @@ export class RunbookStateManager {
    *
    * @param runId - Run whose bare controlling authority is required.
    * @returns Captured authority plus the exact state read with it, or a typed refusal.
+   * @throws {Error} When persisted run state fails schema validation.
    */
   async captureRunAuthorityState(runId: RunId): Promise<CapturedRunStateResult> {
     const store = await this.store();
