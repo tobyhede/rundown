@@ -10,7 +10,7 @@ const pendingTag = 'pending-machine-effect';
 const pendingCommandTag = 'pending-command-execution';
 let effectStarted = 0;
 let releaseEffect: (() => void) | undefined;
-let compileMode: 'initialize' | 'transition' = 'transition';
+let compileMode: 'error' | 'initialize' | 'transition' = 'transition';
 
 function waitForRelease(): Promise<void> {
   effectStarted += 1;
@@ -33,6 +33,16 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
   PENDING_MACHINE_EFFECT_TAG: pendingTag,
   PENDING_COMMAND_EXECUTION_TAG: pendingCommandTag,
   RECOVERY_REQUIRED_STATE_NAME: 'recoveryRequired',
+  DelegationChildLinkPreparationError: class DelegationChildLinkPreparationError extends Error {
+    constructor(
+      readonly reason: 'delegation_superseded' | 'concurrent_modification',
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+  deriveDelegationChildLinkedSubsteps: (substepStates: unknown) => substepStates,
+  deriveDelegationChildUnlinkedSubsteps: (substepStates: unknown) => substepStates,
   isCompoundLeafValue: (value: unknown) =>
     value === 'idle' ||
     value === '__capture' ||
@@ -56,6 +66,9 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
         markStart: assign({
           lastAction: () => ({ type: 'START' as const, origin: 'direct' as const }),
         }),
+        explode: () => {
+          throw new Error('synthetic transition failure');
+        },
       },
     }).createMachine({
       id: 'runbook',
@@ -75,7 +88,7 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
         },
         'step::1': {
           on: {
-            PASS: 'passEffect',
+            PASS: compileMode === 'error' ? { actions: 'explode' } : 'passEffect',
             FAIL: 'failEffect',
             GOTO: 'gotoEffect',
             EXECUTE_COMMAND: 'commandEffect',
@@ -211,5 +224,20 @@ describe('RunbookActorService pending machine effects', () => {
 
     expect(synced?.state.step).toBe('2');
     expect(JSON.stringify(synced?.state.snapshot)).not.toContain('commandEffect');
+  });
+
+  it('prepareActorMutation rejects an errored snapshot before deriving a patch', async () => {
+    compileMode = 'error';
+    const state = await manager.create({ source: 'project', path: 'error.md' }, runbook, {
+      runbookPath: 'error.md',
+      frontmatterOutputs: [],
+    });
+    const before = await manager.load(state.id);
+    if (!before) throw new Error('Expected persisted run state');
+
+    await expect(
+      service.prepareActorMutation(state.id, before, [...runbook.steps], { type: 'PASS' }),
+    ).rejects.toThrow(`Runbook ${state.id} actor entered an error state`);
+    await expect(manager.load(state.id)).resolves.toEqual(before);
   });
 });

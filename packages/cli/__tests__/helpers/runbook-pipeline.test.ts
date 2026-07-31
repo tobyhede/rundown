@@ -29,7 +29,11 @@ import type {
   Transitions,
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { assertClaimLookupKey, assertClaimSecretHash } from '@rundown-org/core';
+import {
+  assertClaimLookupKey,
+  assertClaimSecretHash,
+  assertExecutionEpoch,
+} from '@rundown-org/core';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { resolveVariables as resolveVariablesType } from '../../src/services/variable-discovery.js';
 import type {
@@ -54,6 +58,7 @@ import {
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
 const {
+  inferFrameEntryFromState: realInferFrameEntryFromState,
   isDelegationToken: realIsDelegationToken,
   isJsonArrayStream: realIsJsonArrayStream,
   RunbookRefSchema: realRunbookRefSchema,
@@ -140,6 +145,66 @@ function mockClaimRunbookAlreadyClaimed(): jest.Mock<SessionService['claimRunboo
   );
 }
 
+function mockCaptureRunAuthorityState(
+  parentState: RunbookState,
+): jest.Mock<RunbookStateManager['captureRunAuthorityState']> {
+  return mockFn<RunbookStateManager['captureRunAuthorityState']>().mockResolvedValue({
+    kind: 'captured',
+    authority: {
+      runId: parentState.id,
+      claimKey: assertClaimLookupKey('rdclk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      claimGeneration: 0,
+      stateVersion: 0,
+    },
+    state: parentState,
+  } as Awaited<ReturnType<RunbookStateManager['captureRunAuthorityState']>>);
+}
+
+function mockPrepareDelegationChildLink(): jest.Mock<
+  RunbookActorService['prepareDelegationChildLink']
+> {
+  return mockFn<RunbookActorService['prepareDelegationChildLink']>().mockImplementation(
+    async (previousState) =>
+      ({
+        kind: 'prepared',
+        prepared: {
+          mutation: {
+            previousState,
+            nextState: previousState,
+            snapshot: previousState.snapshot ?? {},
+            effects: [],
+          },
+        },
+      }) as unknown as Awaited<ReturnType<RunbookActorService['prepareDelegationChildLink']>>,
+  );
+}
+
+function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndInitialLink']> {
+  return mockFn<SessionService['claimAndInitialLink']>().mockImplementation(async (input) =>
+    committed(
+      claimedRunbookResult(input.childRunId, {
+        delegation: {
+          childRunId: input.childRunId,
+          tokenHash: input.linkage.tokenHash,
+          parentRunId: input.linkage.parentRunId,
+          parentStepId: input.linkage.parentStepId,
+          parentStep: input.linkage.parentStep,
+          parentFrameKey: input.linkage.parentFrameKey,
+          parentEntry: input.linkage.parentEntry,
+        },
+      }),
+    ),
+  );
+}
+
+function adaptClaimMockToInitialLink(
+  claim: jest.Mock<SessionService['claimRunbook']>,
+): jest.Mock<SessionService['claimAndInitialLink']> {
+  return mockFn<SessionService['claimAndInitialLink']>().mockImplementation((input) =>
+    claim(input.childRunId, input.linkage),
+  );
+}
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
@@ -157,6 +222,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, iteration?: number) =>
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
   ),
+  inferFrameEntryFromState: jest.fn(realInferFrameEntryFromState),
   parseStepIdFromString: jest.fn(),
   // Defaults to live so the 4a′ latch precheck is a no-op here; the precheck
   // only short-circuits on { kind: 'closed', reason: 'cursor-advanced' }, and
@@ -393,6 +459,10 @@ jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateOutputsDeclarations: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
 }));
 
+jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
+  getRunbookFromState: mockFn<() => ResolvedRunbook['steps']>().mockReturnValue([]),
+}));
+
 // Mock node:fs/promises
 const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
@@ -586,6 +656,9 @@ beforeEach(() => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     );
   jest.mocked(core.getActiveForContext).mockReturnValue(undefined);
+  jest
+    .mocked(core.inferFrameEntryFromState)
+    .mockImplementation((state, frameKey) => realInferFrameEntryFromState(state, frameKey));
   jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
   jest
     .mocked(createBridgedEmitter)
@@ -802,6 +875,10 @@ describe('inferEntryFromState', () => {
     }) as unknown as RunbookState;
     // Pins the `activeFrameKey === frameKey && activeEntry` active-frame branch.
     expect(inferEntryFromState(state, FRAME_KEY)).toBe(7);
+    expect(core.inferFrameEntryFromState as unknown as jest.Mock).toHaveBeenCalledWith(
+      state,
+      FRAME_KEY,
+    );
   });
 
   it('returns the recorded frame entry count when the frame is not the active frame', () => {
@@ -2626,6 +2703,9 @@ describe('claimAndLaunch', () => {
     findClaimForDelegation?: unknown;
     childState?: unknown;
     claimSpy?: jest.Mock<SessionService['claimRunbook']>;
+    captureResult?: Awaited<ReturnType<RunbookStateManager['captureRunAuthorityState']>>;
+    prepareResult?: Awaited<ReturnType<RunbookActorService['prepareDelegationChildLink']>>;
+    initialLinkResult?: Awaited<ReturnType<SessionService['claimAndInitialLink']>>;
   }) => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
@@ -2660,6 +2740,12 @@ describe('claimAndLaunch', () => {
         async (id: unknown) => (id === PARENT_RUN_ID ? parentState : (opts.childState ?? null)),
       ),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      captureRunAuthorityState:
+        opts.captureResult === undefined
+          ? mockCaptureRunAuthorityState(parentState as unknown as RunbookState)
+          : mockFn<RunbookStateManager['captureRunAuthorityState']>().mockResolvedValue(
+              opts.captureResult,
+            ),
     };
     jest
       .mocked(core.RunbookStateManager)
@@ -2670,9 +2756,22 @@ describe('claimAndLaunch', () => {
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
-      actorService: {} as unknown as RunbookActorService,
+      actorService: {
+        prepareDelegationChildLink:
+          opts.prepareResult === undefined
+            ? mockPrepareDelegationChildLink()
+            : mockFn<RunbookActorService['prepareDelegationChildLink']>().mockResolvedValue(
+                opts.prepareResult,
+              ),
+      } as unknown as RunbookActorService,
       sessionService: {
         claimRunbook: opts.claimSpy ?? mockClaimRunbookSuccess(),
+        claimAndInitialLink:
+          opts.initialLinkResult === undefined
+            ? adaptClaimMockToInitialLink(opts.claimSpy ?? mockClaimRunbookSuccess())
+            : mockFn<SessionService['claimAndInitialLink']>().mockResolvedValue(
+                opts.initialLinkResult,
+              ),
         findClaimForDelegation: mockFn<
           (...args: unknown[]) => Promise<unknown>
         >().mockResolvedValue(opts.findClaimForDelegation ?? null),
@@ -2702,6 +2801,126 @@ describe('claimAndLaunch', () => {
     });
     expect(result.ok).toBe(false);
     expect(result).toMatchObject({ stepId: '1' });
+  });
+
+  it.each([
+    {
+      name: 'missing captured parent',
+      options: {
+        captureResult: {
+          kind: 'missing',
+          runId: PARENT_RUN_ID,
+          message: 'parent disappeared before authority capture',
+        },
+      },
+      expected: { reason: 'parent-missing' },
+    },
+    {
+      name: 'superseded captured parent claim',
+      options: {
+        captureResult: {
+          kind: 'claim_superseded',
+          runId: PARENT_RUN_ID,
+          message: 'parent claim generation changed',
+        },
+      },
+      expected: { reason: 'delegation-superseded' },
+    },
+    {
+      name: 'superseded prepared delegation',
+      options: {
+        prepareResult: {
+          kind: 'delegation_superseded',
+          runId: PARENT_RUN_ID,
+          message: 'delegation moved before preparation',
+        },
+      },
+      expected: { reason: 'delegation-superseded' },
+    },
+    {
+      name: 'concurrently modified prepared delegation',
+      options: {
+        prepareResult: {
+          kind: 'concurrent_modification',
+          runId: PARENT_RUN_ID,
+          message: 'parent changed before preparation',
+        },
+      },
+      expected: { reason: 'concurrent-modification' },
+    },
+    {
+      name: 'execution-in-progress atomic commit',
+      options: {
+        initialLinkResult: {
+          kind: 'execution_in_progress',
+          runId: ORPHAN_RUN_ID,
+          message: 'child is executing',
+        },
+      },
+      expected: {
+        reason: 'session-refused',
+        refusal: expect.objectContaining({ kind: 'execution_in_progress' }),
+      },
+    },
+    {
+      name: 'recovery-required atomic commit',
+      options: {
+        initialLinkResult: {
+          kind: 'recovery_required',
+          runId: ORPHAN_RUN_ID,
+          epoch: assertExecutionEpoch(1),
+          message: 'child requires recovery',
+        },
+      },
+      expected: {
+        reason: 'session-refused',
+        refusal: expect.objectContaining({ kind: 'recovery_required' }),
+      },
+    },
+    {
+      name: 'superseded atomic commit',
+      options: {
+        initialLinkResult: {
+          kind: 'claim_superseded',
+          runId: PARENT_RUN_ID,
+          message: 'parent authority was superseded',
+        },
+      },
+      expected: { reason: 'delegation-superseded' },
+    },
+    {
+      name: 'concurrently modified atomic commit',
+      options: {
+        initialLinkResult: {
+          kind: 'concurrent_modification',
+          runId: PARENT_RUN_ID,
+          message: 'parent changed during commit',
+        },
+      },
+      expected: { reason: 'concurrent-modification' },
+    },
+    {
+      name: 'missing child during atomic commit',
+      options: {
+        initialLinkResult: {
+          kind: 'missing',
+          runId: ORPHAN_RUN_ID,
+          message: 'child disappeared during commit',
+        },
+      },
+      expected: { reason: 'child-missing', childRunId: ORPHAN_RUN_ID },
+    },
+  ] as const)('maps $name to the public claim failure', async ({ options, expected }) => {
+    const orphanState = makeState(ORPHAN_RUN_ID, {
+      delegation: { parentRunId: PARENT_RUN_ID, parentStepId: '1', tokenHash: MOCK_TOKEN_HASH },
+    });
+
+    const result = await runSubstepClaimFailure({
+      findOrphanedChild: orphanState,
+      ...options,
+    });
+
+    expect(result).toMatchObject({ ok: false, ...expected });
   });
 
   it('reports substepId (not stepId) on an existing-claim child-missing failure', async () => {
@@ -2847,6 +3066,9 @@ describe('claimAndLaunch', () => {
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      captureRunAuthorityState: mockCaptureRunAuthorityState(
+        parentState as unknown as RunbookState,
+      ),
     };
     jest
       .mocked(core.RunbookStateManager)
@@ -2858,8 +3080,13 @@ describe('claimAndLaunch', () => {
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
-      actorService: {} as unknown as RunbookActorService,
-      sessionService: { claimRunbook: claimSpy } as unknown as SessionService,
+      actorService: {
+        prepareDelegationChildLink: mockPrepareDelegationChildLink(),
+      } as unknown as RunbookActorService,
+      sessionService: {
+        claimRunbook: claimSpy,
+        claimAndInitialLink: adaptClaimMockToInitialLink(claimSpy),
+      } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -2872,7 +3099,7 @@ describe('claimAndLaunch', () => {
     if (result.ok) {
       expect(result.childRunId).toBe(ORPHAN_RUN_ID);
     }
-    expect(mockManager.update).toHaveBeenCalled();
+    expect(mockManager.update).not.toHaveBeenCalled();
   });
 
   it('rejects re-claim when the already-claimed child is owned by a different agent', async () => {
@@ -2993,6 +3220,9 @@ describe('claimAndLaunch', () => {
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      captureRunAuthorityState: mockCaptureRunAuthorityState(
+        parentState as unknown as RunbookState,
+      ),
     };
     jest
       .mocked(core.RunbookStateManager)
@@ -3018,12 +3248,15 @@ describe('claimAndLaunch', () => {
     );
     const mockSessionService = {
       claimRunbook: claimSpy,
+      claimAndInitialLink: adaptClaimMockToInitialLink(claimSpy),
     } as unknown as SessionService;
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
-      actorService: {} as unknown as RunbookActorService,
+      actorService: {
+        prepareDelegationChildLink: mockPrepareDelegationChildLink(),
+      } as unknown as RunbookActorService,
       sessionService: mockSessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -3098,6 +3331,9 @@ describe('claimAndLaunch', () => {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
       create: mockCreate,
       update: mockUpdate,
+      captureRunAuthorityState: mockCaptureRunAuthorityState(
+        parentState as unknown as RunbookState,
+      ),
       initializeSubsteps:
         mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
@@ -3117,10 +3353,12 @@ describe('claimAndLaunch', () => {
           id: 'new-child-id',
           step: '1',
         } as unknown as RunbookState),
+        prepareDelegationChildLink: mockPrepareDelegationChildLink(),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
         claimRunbook: mockClaimRunbookSuccess(),
+        claimAndInitialLink: mockClaimAndInitialLinkSuccess(),
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,
@@ -3220,6 +3458,9 @@ describe('claimAndLaunch', () => {
         title: 'Child',
       }),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      captureRunAuthorityState: mockCaptureRunAuthorityState(
+        parentState as unknown as RunbookState,
+      ),
       initializeSubsteps:
         mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
@@ -3239,10 +3480,12 @@ describe('claimAndLaunch', () => {
           id: 'new-child-id',
           step: '1',
         } as unknown as RunbookState),
+        prepareDelegationChildLink: mockPrepareDelegationChildLink(),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
         claimRunbook: mockClaimRunbookSuccess(),
+        claimAndInitialLink: mockClaimAndInitialLinkSuccess(),
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,
@@ -3347,6 +3590,9 @@ describe('claimAndLaunch', () => {
         title: 'Child',
       }),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      captureRunAuthorityState: mockCaptureRunAuthorityState(
+        parentState as unknown as RunbookState,
+      ),
       initializeSubsteps:
         mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
@@ -3366,10 +3612,12 @@ describe('claimAndLaunch', () => {
           id: 'new-child-id',
           step: '1',
         } as unknown as RunbookState),
+        prepareDelegationChildLink: mockPrepareDelegationChildLink(),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
         claimRunbook: mockClaimRunbookSuccess(),
+        claimAndInitialLink: mockClaimAndInitialLinkSuccess(),
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,

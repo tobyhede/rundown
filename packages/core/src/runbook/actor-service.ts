@@ -20,6 +20,7 @@ import type {
   ForContext,
   LastAction,
   RunId,
+  DelegationLinkage,
 } from './types.js';
 import type {
   CommandExecutionOutput,
@@ -45,6 +46,9 @@ import {
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
   RECOVERY_REQUIRED_STATE_NAME,
+  DelegationChildLinkPreparationError,
+  deriveDelegationChildLinkedSubsteps,
+  deriveDelegationChildUnlinkedSubsteps,
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
@@ -53,6 +57,7 @@ import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -113,6 +118,41 @@ export interface ActorSyncResult {
   effects: readonly ExecutionObservationEffect[];
 }
 
+declare const preparedDelegationChildLinkBrand: unique symbol;
+declare const preparedDelegationChildUnlinkBrand: unique symbol;
+
+/** Opaque machine-derived parent mutation for a delegated child link change. */
+export interface PreparedDelegationChildLink {
+  /** Prevents frontends from structurally constructing a raw parent-state patch. */
+  readonly [preparedDelegationChildLinkBrand]: true;
+  /** Identifies this mutation as a delegated-child link. */
+  readonly operation: 'link';
+  /** Prepared actor mutation whose next state carries the linked child. */
+  readonly mutation: PreparedActorMutation;
+}
+
+/** Opaque machine-derived parent mutation for a delegated child unlink. */
+export interface PreparedDelegationChildUnlink {
+  /** Prevents frontends from structurally constructing a raw parent-state patch. */
+  readonly [preparedDelegationChildUnlinkBrand]: true;
+  /** Identifies this mutation as a delegated-child unlink. */
+  readonly operation: 'unlink';
+  /** Prepared actor mutation whose next state removes the linked child. */
+  readonly mutation: PreparedActorMutation;
+}
+
+/** Typed outcome of preparing an exact delegated child link. */
+export type PrepareDelegationChildLinkResult =
+  | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildLink }
+  | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
+  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+
+/** Typed outcome of preparing an exact delegated child unlink. */
+export type PrepareDelegationChildUnlinkResult =
+  | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildUnlink }
+  | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
+  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+
 /** Runtime dependencies for {@link RunbookActorService}. */
 export interface RunbookActorServiceOptions {
   /** Resolve authored child runbook references for machine-owned delegation issuance. */
@@ -146,6 +186,7 @@ export interface RunbookActorServiceOptions {
  * the full XState snapshot envelope is otherwise opaque.
  */
 type PersistedRunbookSnapshot = {
+  status?: string;
   value: unknown;
   context?: Partial<RunbookContext>;
 };
@@ -324,6 +365,8 @@ function lastResultSyncForEvent(
     case 'DELEGATE_FRONTIER_CONSUMED':
     case 'INLINE_LAUNCH_CONSUMED':
     case 'INLINE_CHILD_STARTED':
+    case 'DELEGATION_CHILD_LINKED':
+    case 'DELEGATION_CHILD_UNLINKED':
     // Recovery jumps to recoveryRequired; the interrupted step's result is
     // unknown, so the prior lastResult is preserved rather than resolved.
     case 'EXECUTION_OUTCOME_UNKNOWN':
@@ -1036,10 +1079,14 @@ export class RunbookActorService {
       );
     }
     const actor = this.createActorForState(id, previousState, steps, collector);
+    const errorSubscription = actor.subscribe({ error: () => undefined });
     try {
       actor.send(event);
       await this.waitForMachineEffects(actor);
       const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
+      if (snapshot.status === 'error') {
+        throw new Error(`Runbook ${id} actor entered an error state`);
+      }
       const consumePatch =
         event.type === 'APPLY_CURRENT_RESOLVED_COMPLETION'
           ? buildConsumedCompletionPatchFrom(previousState, event.completionKey)
@@ -1060,8 +1107,155 @@ export class RunbookActorService {
       }
       return { previousState, nextState, snapshot, effects };
     } finally {
+      errorSubscription.unsubscribe();
       this.stopActor(actor);
     }
+  }
+
+  /**
+   * Refuse a delegation preparation whose captured frame entry has been superseded.
+   *
+   * @param parent - Parent state used to derive the machine transition.
+   * @param linkage - Exact delegation coordinates captured by the caller.
+   * @returns A typed supersession refusal, or `undefined` when the entry still matches.
+   */
+  private delegationParentEntryRefusal(
+    parent: RunbookState,
+    linkage: DelegationLinkage,
+  ):
+    | Extract<PrepareDelegationChildLinkResult, { readonly kind: 'delegation_superseded' }>
+    | undefined {
+    const observedParentEntry = inferFrameEntryFromState(parent, linkage.parentFrameKey);
+    return observedParentEntry !== linkage.parentEntry
+      ? {
+          kind: 'delegation_superseded',
+          runId: parent.id,
+          message: `Delegation ${linkage.parentStepId} no longer names parent entry ${String(linkage.parentEntry)}`,
+        }
+      : undefined;
+  }
+
+  /**
+   * Validate and derive a delegated-child link mutation without persisting it.
+   *
+   * @param parent - Captured parent state.
+   * @param steps - Parsed parent runbook steps.
+   * @param linkage - Exact delegation coordinates captured by the caller.
+   * @param event - Typed link or unlink event.
+   * @param derive - Pure derivation used to validate and classify the event.
+   * @returns A prepared actor mutation or typed preparation refusal.
+   */
+  private async prepareDelegationChildLinkMutation<
+    TEvent extends Extract<
+      RunbookEvent,
+      { readonly type: 'DELEGATION_CHILD_LINKED' | 'DELEGATION_CHILD_UNLINKED' }
+    >,
+  >(
+    parent: RunbookState,
+    steps: readonly ResolvedStep[],
+    linkage: DelegationLinkage,
+    event: TEvent,
+    derive: (
+      substepStates: RunbookState['substepStates'],
+      event: TEvent,
+    ) => RunbookState['substepStates'],
+  ): Promise<
+    | { readonly kind: 'prepared'; readonly mutation: PreparedActorMutation }
+    | Exclude<PrepareDelegationChildLinkResult, { readonly kind: 'prepared' }>
+  > {
+    const entryRefusal = this.delegationParentEntryRefusal(parent, linkage);
+    if (entryRefusal !== undefined) return entryRefusal;
+    const authoritativeSubstepStates = parent.substepStates;
+    try {
+      derive(authoritativeSubstepStates, event);
+    } catch (error: unknown) {
+      if (!(error instanceof DelegationChildLinkPreparationError)) throw error;
+      return { kind: error.reason, runId: parent.id, message: error.message };
+    }
+    const mutation = await this.prepareActorMutation(
+      parent.id,
+      { ...parent, substepStates: authoritativeSubstepStates },
+      steps,
+      event,
+    );
+    return { kind: 'prepared', mutation };
+  }
+
+  /**
+   * Derive an exact delegated-child parent link without persisting it.
+   *
+   * @param parent - Captured parent state.
+   * @param steps - Parsed parent runbook steps.
+   * @param childRunId - Child run to link.
+   * @param linkage - Exact delegation coordinates captured by the caller.
+   * @returns Opaque prepared mutation, or a typed preparation refusal.
+   * @throws {Error} When snapshot validation, actor preparation, or an unexpected derivation error fails.
+   */
+  async prepareDelegationChildLink(
+    parent: RunbookState,
+    steps: readonly ResolvedStep[],
+    childRunId: RunId,
+    linkage: DelegationLinkage,
+  ): Promise<PrepareDelegationChildLinkResult> {
+    const event = {
+      type: 'DELEGATION_CHILD_LINKED',
+      parentStepId: linkage.parentStepId,
+      parentFrameKey: linkage.parentFrameKey,
+      tokenHash: linkage.tokenHash,
+      childRunId,
+    } as const;
+    const result = await this.prepareDelegationChildLinkMutation(
+      parent,
+      steps,
+      linkage,
+      event,
+      deriveDelegationChildLinkedSubsteps,
+    );
+    if (result.kind !== 'prepared') return result;
+    return {
+      kind: 'prepared',
+      prepared: { operation: 'link', mutation: result.mutation } as PreparedDelegationChildLink,
+    };
+  }
+
+  /**
+   * Derive an exact delegated-child unlink for launch rollback without persisting it.
+   *
+   * @param parent - Current parent state.
+   * @param steps - Parsed parent runbook steps.
+   * @param childRunId - Child run whose link is being rolled back.
+   * @param linkage - Exact delegation coordinates originally committed.
+   * @returns Opaque prepared mutation, or a typed preparation refusal.
+   * @throws {Error} When snapshot validation, actor preparation, or an unexpected derivation error fails.
+   */
+  async prepareDelegationChildUnlink(
+    parent: RunbookState,
+    steps: readonly ResolvedStep[],
+    childRunId: RunId,
+    linkage: DelegationLinkage,
+  ): Promise<PrepareDelegationChildUnlinkResult> {
+    const event = {
+      type: 'DELEGATION_CHILD_UNLINKED',
+      parentStepId: linkage.parentStepId,
+      parentFrameKey: linkage.parentFrameKey,
+      tokenHash: linkage.tokenHash,
+      childRunId,
+    } as const;
+    const result = await this.prepareDelegationChildLinkMutation(
+      parent,
+      steps,
+      linkage,
+      event,
+      deriveDelegationChildUnlinkedSubsteps,
+    );
+    if (result.kind !== 'prepared') return result;
+    return {
+      kind: 'prepared',
+      prepared: {
+        operation: 'unlink',
+        mutation: result.mutation,
+      } as PreparedDelegationChildUnlink,
+    };
   }
 
   private async buildConsumedCompletionPatch(
@@ -1254,10 +1448,7 @@ export class RunbookActorService {
             ...entry,
             inlineLaunch: {
               ...intent,
-              parentEntry:
-                state.activeFrameKey === intent.parentFrameKey && state.activeEntry
-                  ? state.activeEntry
-                  : (state.frameEntryCounts?.[intent.parentFrameKey as FrameKey] ?? 1),
+              parentEntry: inferFrameEntryFromState(state, intent.parentFrameKey as FrameKey),
             },
           }
         : entry;

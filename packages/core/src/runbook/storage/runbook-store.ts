@@ -548,6 +548,41 @@ export type CaptureResult =
   | { readonly kind: 'missing'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'claim_superseded'; readonly runId: RunId; readonly message: string };
 
+/** Authority capture paired with the exact run state read in the same transaction. */
+export type CapturedRunStateResult =
+  | {
+      readonly kind: 'captured';
+      readonly authority: CapturedAuthority;
+      readonly state: RunbookState;
+    }
+  | Exclude<CaptureResult, { readonly kind: 'captured' }>;
+
+/**
+ * Classify a run for which no active controlling claim was found.
+ *
+ * This probe deliberately reads only row existence. Authority capture must not
+ * deserialize state until a live claim exists to fence the state read.
+ *
+ * @param tx - Open read transaction.
+ * @param runId - Target run.
+ * @returns Missing when the run row is absent, otherwise claim superseded.
+ */
+function classifyRunWithoutControllingClaim(
+  tx: SqlReadTransaction,
+  runId: RunId,
+): Exclude<CaptureResult, { readonly kind: 'captured' }> {
+  const present = tx
+    .prepare('SELECT 1 AS present FROM runs WHERE id = :runId')
+    .get<{ readonly present: number }>({ runId });
+  return present
+    ? {
+        kind: 'claim_superseded',
+        runId,
+        message: `Run ${runId} has no active controlling claim.`,
+      }
+    : { kind: 'missing', runId, message: `Run ${runId} does not exist.` };
+}
+
 /**
  * Capture the complete authority predicate for a run + presented claim.
  *
@@ -775,7 +810,7 @@ export class RunbookStore {
    */
   constructor(
     private readonly driver: SqlDriver,
-    private readonly cwd: string,
+    cwd: string,
   ) {
     this.stateSchema = makeRunbookStateSchema(cwd);
   }
@@ -863,23 +898,36 @@ export class RunbookStore {
    *
    * @param runId - Target run.
    * @returns The captured authority or a typed refusal.
+   * @throws {Error} When a controlled run's persisted state fails schema validation.
    */
-  captureRunAuthority(runId: RunId): Promise<CaptureResult> {
+  async captureRunAuthority(runId: RunId): Promise<CaptureResult> {
+    const captured = await this.captureRunAuthorityState(runId);
+    if (captured.kind !== 'captured') return captured;
+    const { state: _state, ...authority } = captured;
+    return authority;
+  }
+
+  /**
+   * Capture bare-run authority and its state from one read transaction.
+   *
+   * @param runId - Target run.
+   * @returns Captured authority plus the exact state it describes, or a typed refusal.
+   * @throws {Error} When a controlled run's persisted state fails schema validation. Uncontrolled
+   *   runs are refused from an existence-only probe without deserializing their state.
+   */
+  captureRunAuthorityState(runId: RunId): Promise<CapturedRunStateResult> {
     return this.driver.read((tx) => {
       const claimKey = resolveControllingClaim(tx, runId);
       if (claimKey === null) {
-        const present = tx
-          .prepare('SELECT 1 AS present FROM runs WHERE id = :runId')
-          .get<{ readonly present: number }>({ runId });
-        return present
-          ? {
-              kind: 'claim_superseded' as const,
-              runId,
-              message: `Run ${runId} has no active controlling claim.`,
-            }
-          : { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
+        return classifyRunWithoutControllingClaim(tx, runId);
       }
-      return captureAuthority(tx, runId, claimKey);
+      const captured = captureAuthority(tx, runId, claimKey);
+      if (captured.kind !== 'captured') return captured;
+      const state = this.readRun(tx, runId);
+      if (state === null) {
+        return { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
+      }
+      return { ...captured, state };
     });
   }
 

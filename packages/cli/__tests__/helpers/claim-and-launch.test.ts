@@ -4,10 +4,12 @@ import type {
   ClaimRecord,
   ClaimRunbookResult,
   DelegationLinkage,
+  FrameKey,
   PrepareParsedRunbookInput,
   PrepareParsedRunbookResult,
   PreparedTemplateVariables,
   ReleaseRunbookResult,
+  RunbookActorService,
   RunbookRef,
   RunId,
   RunbookStateManager,
@@ -41,8 +43,11 @@ import { committed } from './session-mutation-fixtures.js';
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
-const { isDelegationToken: realIsDelegationToken, isJsonArrayStream: realIsJsonArrayStream } =
-  await import('@rundown-org/core');
+const {
+  inferFrameEntryFromState: realInferFrameEntryFromState,
+  isDelegationToken: realIsDelegationToken,
+  isJsonArrayStream: realIsJsonArrayStream,
+} = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 const DIFFERENT_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`);
@@ -97,14 +102,35 @@ function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
     async (childRunId: RunId, linkage: DelegationLinkage) =>
       committed(
         claimedRunbookResult(childRunId, {
-          tokenHash: linkage.tokenHash,
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          parentStep: linkage.parentStep,
-          parentFrameKey: linkage.parentFrameKey,
-          parentEntry: linkage.parentEntry,
+          delegation: {
+            childRunId,
+            tokenHash: linkage.tokenHash,
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            parentStep: linkage.parentStep,
+            parentFrameKey: linkage.parentFrameKey,
+            parentEntry: linkage.parentEntry,
+          },
         }),
       ),
+  );
+}
+
+function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndInitialLink']> {
+  return mockFn<SessionService['claimAndInitialLink']>().mockImplementation(async (input) =>
+    committed(
+      claimedRunbookResult(input.childRunId, {
+        delegation: {
+          childRunId: input.childRunId,
+          tokenHash: input.linkage.tokenHash,
+          parentRunId: input.linkage.parentRunId,
+          parentStepId: input.linkage.parentStepId,
+          parentStep: input.linkage.parentStep,
+          parentFrameKey: input.linkage.parentFrameKey,
+          parentEntry: input.linkage.parentEntry,
+        },
+      }),
+    ),
   );
 }
 
@@ -124,6 +150,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveActiveFrame: jest
     .fn()
     .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1|' }),
+  inferFrameEntryFromState: jest.fn((state: RunbookState, frameKey: FrameKey) =>
+    realInferFrameEntryFromState(state, frameKey),
+  ),
   getActiveForContext: mockFn<() => unknown>().mockReturnValue(null),
   buildFrameKey: jest.fn(
     (step: string, iteration?: number) =>
@@ -347,6 +376,10 @@ jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateOutputsDeclarations: mockFn<() => string[]>().mockReturnValue([]),
 }));
 
+jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
+  getRunbookFromState: mockFn<() => ResolvedRunbook['steps']>().mockReturnValue([]),
+}));
+
 // Mock node:fs/promises
 const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
@@ -369,6 +402,7 @@ const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVa
 const { validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
+const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
@@ -381,25 +415,88 @@ const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js')
  * only stub the methods exercised by the code under test.
  */
 function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
+  const typedOverrides = overrides as Partial<RunPipelineContext>;
+  const manager = {
+    load: jest.fn(),
+    list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+    create: jest.fn(),
+    update: jest.fn(),
+  } as unknown as RunbookStateManager;
+  Object.assign(manager, typedOverrides.manager);
+  // This default must use the merged manager.load: overrides are assigned above,
+  // and initial-link tests depend on capture observing that overridden behavior.
+  const captureRunAuthorityState = mockFn<
+    RunbookStateManager['captureRunAuthorityState']
+  >().mockImplementation(async (runId) => {
+    const state = await manager.load(runId);
+    if (!state) return { kind: 'missing', runId, message: `Run ${runId} does not exist.` };
+    return {
+      kind: 'captured',
+      authority: {
+        runId,
+        claimKey: assertClaimLookupKey('rdclk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+        claimGeneration: 0,
+        stateVersion: 0,
+      },
+      state,
+    } as Awaited<ReturnType<RunbookStateManager['captureRunAuthorityState']>>;
+  });
+  if (!typedOverrides.manager?.captureRunAuthorityState) {
+    Object.assign(manager, { captureRunAuthorityState });
+  }
+  const actorService = {
+    prepareDelegationChildLink: mockFn<
+      RunbookActorService['prepareDelegationChildLink']
+    >().mockImplementation(
+      async (previousState) =>
+        ({
+          kind: 'prepared',
+          prepared: {
+            mutation: {
+              previousState,
+              nextState: previousState,
+              snapshot: previousState.snapshot ?? {},
+              effects: [],
+            },
+          },
+        }) as unknown as Awaited<ReturnType<RunbookActorService['prepareDelegationChildLink']>>,
+    ),
+    prepareDelegationChildUnlink: mockFn<
+      RunbookActorService['prepareDelegationChildUnlink']
+    >().mockImplementation(
+      async (previousState) =>
+        ({
+          kind: 'prepared',
+          prepared: {
+            mutation: {
+              previousState,
+              nextState: previousState,
+              snapshot: previousState.snapshot ?? {},
+              effects: [],
+            },
+          },
+        }) as unknown as Awaited<ReturnType<RunbookActorService['prepareDelegationChildUnlink']>>,
+    ),
+  };
+  Object.assign(actorService, typedOverrides.actorService);
+  const sessionService = {
+    claimRunbook: mockClaimRunbookSuccess(),
+    claimAndInitialLink: mockClaimAndInitialLinkSuccess(),
+    rollbackInitialLink: mockFn<SessionService['rollbackInitialLink']>().mockResolvedValue(
+      committed({ status: 'rolled-back' }),
+    ),
+    findClaimForDelegation:
+      mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+  };
+  Object.assign(sessionService, typedOverrides.sessionService);
   return {
     output: {
       error: jest.fn(),
       status: jest.fn(),
       action: jest.fn(),
       detail: jest.fn(),
+      warning: jest.fn(),
       flush: jest.fn(),
-    },
-    manager: {
-      load: jest.fn(),
-      list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
-      create: jest.fn(),
-      update: jest.fn(),
-    },
-    actorService: {},
-    sessionService: {
-      claimRunbook: mockClaimRunbookSuccess(),
-      findClaimForDelegation:
-        mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
     },
     lifecycleService: {},
     // Fake cwd for the mocked pipeline context. Deliberately NOT under /tmp:
@@ -407,7 +504,10 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
     // temp-dir taint source and propagates through production into the safe-fs
     // directory guard, producing a false positive on a read-only O_NOFOLLOW open.
     cwd: '/work/test',
-    ...overrides,
+    ...typedOverrides,
+    manager,
+    actorService: actorService as unknown as RunPipelineContext['actorService'],
+    sessionService: sessionService as unknown as RunPipelineContext['sessionService'],
   } as unknown as RunPipelineContext;
 }
 
@@ -519,6 +619,9 @@ beforeEach(() => {
   jest
     .mocked(core.classifyDelegationLiveness)
     .mockReturnValue({ kind: 'live' } as ReturnType<typeof core.classifyDelegationLiveness>);
+  jest
+    .mocked(core.inferFrameEntryFromState)
+    .mockImplementation((state, frameKey) => realInferFrameEntryFromState(state, frameKey));
   jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
   const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
     parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
@@ -663,6 +766,10 @@ beforeEach(() => {
   );
   jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
   jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+  jest.mocked(getRunbookFromState).mockReturnValue([]);
+  jest
+    .mocked(createBridgedEmitter)
+    .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
 });
 
 describe('claimAndLaunch', () => {
@@ -919,10 +1026,9 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.childRunId).toBe(EXISTING_CHILD_RUN_ID);
-      expect(result.parentRunId).toBe(RUN_ID);
-    }
+    if (!result.ok) throw new Error(`Expected success, got ${result.reason}`);
+    expect(result.childRunId).toBe(EXISTING_CHILD_RUN_ID);
+    expect(result.parentRunId).toBe(RUN_ID);
   });
 
   it('adopts orphaned child run when findOrphanedChild returns a match', async () => {
@@ -979,19 +1085,17 @@ describe('claimAndLaunch', () => {
       expect(result.parentRunId).toBe(RUN_ID);
     }
 
-    // Verify update wrote the orphan's childRunId onto the parent delegation
-    const { update: updateMock } = ctx.manager as unknown as { update: jest.Mock };
-    expect(updateMock).toHaveBeenCalledWith(
-      RUN_ID,
+    const serviceMocks = ctx.sessionService as unknown as {
+      readonly claimAndInitialLink: jest.Mock;
+    };
+    expect(serviceMocks.claimAndInitialLink.mock.calls).toContainEqual([
       expect.objectContaining({
-        substepStates: expect.arrayContaining([
-          expect.objectContaining({
-            id: '1',
-            delegation: expect.objectContaining({ childRunId: ORPHAN_RUN_ID }),
-          }),
-        ]),
+        childRunId: ORPHAN_RUN_ID,
+        linkage: expect.objectContaining({ parentRunId: RUN_ID, tokenHash: MOCK_TOKEN_HASH }),
       }),
-    );
+    ]);
+    const managerMocks = ctx.manager as unknown as { readonly update: jest.Mock };
+    expect(managerMocks.update).not.toHaveBeenCalled();
   });
 
   it('returns existing session claim when delegation has no linked child', async () => {
@@ -1027,7 +1131,7 @@ describe('claimAndLaunch', () => {
         parentEntry: 1,
       }),
     );
-    const claimRunbook = mockClaimRunbookSuccess();
+    const claimAndInitialLink = mockClaimAndInitialLinkSuccess();
     const update = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
     const ctx = makeCtx({
       manager: {
@@ -1037,7 +1141,7 @@ describe('claimAndLaunch', () => {
         update,
       },
       sessionService: {
-        claimRunbook,
+        claimAndInitialLink,
         findClaimForDelegation,
       },
     });
@@ -1069,15 +1173,17 @@ describe('claimAndLaunch', () => {
         tokenHash: MOCK_TOKEN_HASH,
       }),
     );
-    expect(claimRunbook).toHaveBeenCalledWith(
-      EXISTING_SESSION_CHILD_ID,
+    expect(claimAndInitialLink).toHaveBeenCalledWith(
       expect.objectContaining({
-        parentRunId: RUN_ID,
-        parentStepId: '1',
-        tokenHash: MOCK_TOKEN_HASH,
+        childRunId: EXISTING_SESSION_CHILD_ID,
+        linkage: expect.objectContaining({
+          parentRunId: RUN_ID,
+          parentStepId: '1',
+          tokenHash: MOCK_TOKEN_HASH,
+        }),
       }),
     );
-    expect(update).toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('surfaces linkage-mismatch when existing session claim child linkage diverges', async () => {
@@ -1128,7 +1234,7 @@ describe('claimAndLaunch', () => {
       parentEntry: 1,
       tokenHash: MOCK_TOKEN_HASH,
     };
-    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+    const claimAndInitialLink = mockFn<SessionService['claimAndInitialLink']>().mockResolvedValue(
       committed({
         status: 'linkage-mismatch',
         childRunId: EXISTING_SESSION_CHILD_ID,
@@ -1145,7 +1251,7 @@ describe('claimAndLaunch', () => {
         update,
       },
       sessionService: {
-        claimRunbook,
+        claimAndInitialLink,
         findClaimForDelegation,
       },
     });
@@ -1171,13 +1277,8 @@ describe('claimAndLaunch', () => {
       expect(result.childRunId).toBe(EXISTING_SESSION_CHILD_ID);
       expect(result.parentRunId).toBe(RUN_ID);
     }
-    expect(claimRunbook).toHaveBeenCalledWith(
-      EXISTING_SESSION_CHILD_ID,
-      expect.objectContaining({
-        parentRunId: RUN_ID,
-        parentStepId: '1',
-        tokenHash: MOCK_TOKEN_HASH,
-      }),
+    expect(claimAndInitialLink).toHaveBeenCalledWith(
+      expect.objectContaining({ childRunId: EXISTING_SESSION_CHILD_ID }),
     );
     expect(update).not.toHaveBeenCalled();
   });
@@ -1689,7 +1790,8 @@ describe('claimAndLaunch', () => {
       title: 'Child',
     });
 
-    const mockClaimRunbook = mockClaimRunbookSuccess();
+    const mockClaimAndInitialLink = mockClaimAndInitialLinkSuccess();
+    const mockUpdate = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
 
     const ctx = makeCtx({
       manager: {
@@ -1697,7 +1799,7 @@ describe('claimAndLaunch', () => {
           parentState as unknown as RunbookState,
         ),
         create: mockCreate,
-        update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        update: mockUpdate,
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
       },
@@ -1709,7 +1811,7 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockClaimRunbook,
+        claimAndInitialLink: mockClaimAndInitialLink,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
@@ -1732,6 +1834,7 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`Expected success, got ${result.reason}`);
 
     // Critical assertion: delegation linkage should use the delegation's stored
     // frameKey ('1|3'), NOT the parent's current frame ('1|5')
@@ -1746,20 +1849,21 @@ describe('claimAndLaunch', () => {
       }),
     );
 
-    // Result surfaces the claim id returned by claimRunbook, and claimRunbook
+    // Result surfaces the claim id returned by the atomic operation, which
     // is called with the freshly built linkage (not stale persisted data).
-    if (result.ok) {
-      // cspell:disable-next-line
-      expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
-      expect(result.childRunId).toBe(NEW_CHILD_ID);
-    }
-    expect(mockClaimRunbook).toHaveBeenCalledWith(
-      NEW_CHILD_ID,
+    // cspell:disable-next-line
+    expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
+    expect(result.childRunId).toBe(NEW_CHILD_ID);
+    expect(mockClaimAndInitialLink).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: 'delegation',
-        parentFrameKey: '1|3',
+        childRunId: NEW_CHILD_ID,
+        linkage: expect.objectContaining({
+          kind: 'delegation',
+          parentFrameKey: '1|3',
+        }),
       }),
     );
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   it('returns LAUNCH_FAILED (RD-816) when manager.create throws and releases the lock', async () => {
@@ -1934,13 +2038,13 @@ describe('claimAndLaunch', () => {
     jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
-    // claimRunbook returns missing-child — simulates claimChildForPipeline failure
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
-      committed({
-        status: 'missing-child',
-        childRunId: NEW_CHILD_ID,
-      }),
-    );
+    const mockClaimAndInitialLink = mockFn<
+      SessionService['claimAndInitialLink']
+    >().mockResolvedValue({
+      kind: 'missing',
+      runId: NEW_CHILD_ID,
+      message: `Run ${NEW_CHILD_ID} no longer exists.`,
+    });
 
     const ctx = makeCtx({
       manager: {
@@ -1962,7 +2066,7 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockClaimRunbook,
+        claimAndInitialLink: mockClaimAndInitialLink,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
@@ -1993,164 +2097,167 @@ describe('claimAndLaunch', () => {
     // Execution loop must not have run — the throw aborted launchRunbook before it
     expect(runExecutionLoop).not.toHaveBeenCalled();
     // Claim was attempted against the newly created child run ID
-    expect(mockClaimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
+    expect(mockClaimAndInitialLink).toHaveBeenCalledWith(
+      expect.objectContaining({ childRunId: NEW_CHILD_ID }),
+    );
     // Lock must be released even on claim failure
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
-  it('returns delegation-superseded and rolls back a fresh child when the claim race loses', async () => {
-    const parentState = {
-      id: RUN_ID,
-      step: '1',
-      variables: {},
-      substepStates: [
-        {
-          id: 'delegate',
-          frameKey: '1|0',
-          status: 'pending',
-          delegation: {
-            tokenHash: MOCK_TOKEN_HASH,
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            childRunId: null,
-            cancelledAt: null,
-            contextSnapshot: { vars: {}, ancestors: [] },
-            createdAt: '2026-02-27T10:00:00.000Z',
-          },
-        },
-      ],
-    };
-
-    mockScanService(
-      scanResult({
-        parentState,
-        stepId: '1',
-        substepId: 'delegate',
-        delegation: parentState.substepStates[0].delegation,
-        frameKey: brandFrameKeyForTest('1', 0),
-      }),
-      null,
-    );
-    mockHappyDelegationLock();
-
-    jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/tmp/test/child.md',
-      source: 'project',
-      sourceRoot: '/tmp/test',
-    });
-    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
-      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
-      frontmatter: null,
-      diagnostics: [],
-    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
-    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
-    jest.mocked(resolveVariables).mockResolvedValue({
-      vars: {},
-      warnings: [],
-      providedKeys: new Set(),
-    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
-    jest
-      .mocked(resolveForBounds)
-      .mockImplementation(
-        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
-      );
-    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
-    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
-
-    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
-      committed({
-        status: 'delegation-superseded',
+  it.each([
+    {
+      caseName: 'delegation-superseded',
+      atomicResult: {
+        kind: 'claim_superseded' as const,
+        runId: RUN_ID,
+        message: `Run ${RUN_ID} claim was superseded.`,
+      },
+      expected: {
+        ok: false,
+        reason: 'delegation-superseded',
         parentRunId: RUN_ID,
-        parentStepId: 'delegate',
+        stepId: 'delegate',
+      },
+    },
+    {
+      caseName: 'concurrent-modification',
+      atomicResult: {
+        kind: 'concurrent_modification' as const,
+        runId: RUN_ID,
+        message: `Run ${RUN_ID} changed during the atomic claim.`,
+      },
+      expected: {
+        ok: false,
+        reason: 'concurrent-modification',
+        parentRunId: RUN_ID,
+        stepId: 'delegate',
         childRunId: NEW_CHILD_ID,
-      }),
-    );
-    const releaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
-      committed({
-        status: 'released',
-        runbookId: NEW_CHILD_ID,
-        removedFromDefaultStack: false,
-        nextDefaultRunbookId: null,
-      } satisfies ReleaseRunbookResult),
-    );
-    const update = mockFn<RunbookStateManager['update']>().mockResolvedValue(
-      parentState as unknown as RunbookState,
-    );
-    const removeChild = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
-    const initializeState = mockFn<() => Promise<RunbookState>>();
-    const rollbackParentState = {
-      ...parentState,
-      substepStates: [
-        {
-          ...parentState.substepStates[0],
-          delegation: {
-            ...parentState.substepStates[0].delegation,
-            childRunId: NEW_CHILD_ID,
-          },
-        },
-      ],
-    };
-    const load = mockFn<() => Promise<RunbookState>>()
-      .mockResolvedValueOnce(parentState as unknown as RunbookState)
-      .mockResolvedValue(rollbackParentState as unknown as RunbookState);
-    const ctx = makeCtx({
-      manager: {
-        load,
-        create: mockFn<
-          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
-        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
-        update,
-        delete: removeChild,
-        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
-        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
       },
-      actorService: { initializeState },
-      sessionService: {
-        claimRunbook,
-        releaseRunbook,
-        findClaimForDelegation:
-          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
-      },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|0' },
-          frameKey: '1|0',
-          entry: 1,
-        }),
-      },
-    });
-
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
-
-    expect(result).toEqual({
-      ok: false,
-      reason: 'delegation-superseded',
-      parentRunId: RUN_ID,
-      stepId: 'delegate',
-    });
-    expect(claimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
-    expect(releaseRunbook).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(update).toHaveBeenCalledWith(
-      RUN_ID,
-      expect.objectContaining({
+    },
+  ])(
+    'returns $caseName and deletes the fresh child without unlinking when the claim race loses',
+    async ({ atomicResult, expected }) => {
+      const parentState = {
+        id: RUN_ID,
+        step: '1',
+        variables: {},
         substepStates: [
-          expect.objectContaining({
-            delegation: expect.objectContaining({ childRunId: null }),
-          }),
+          {
+            id: 'delegate',
+            frameKey: '1|0',
+            status: 'pending',
+            delegation: {
+              tokenHash: MOCK_TOKEN_HASH,
+              childRunbookPath: 'child.md',
+              childRunbookRef: { source: 'project', path: 'child.md' },
+              childRunId: null,
+              cancelledAt: null,
+              contextSnapshot: { vars: {}, ancestors: [] },
+              createdAt: '2026-02-27T10:00:00.000Z',
+            },
+          },
         ],
-      }),
-    );
-    expect(removeChild).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(initializeState).not.toHaveBeenCalled();
-    expect(runExecutionLoop).not.toHaveBeenCalled();
-  });
+      };
+
+      mockScanService(
+        scanResult({
+          parentState,
+          stepId: '1',
+          substepId: 'delegate',
+          delegation: parentState.substepStates[0].delegation,
+          frameKey: brandFrameKeyForTest('1', 0),
+        }),
+        null,
+      );
+      mockHappyDelegationLock();
+
+      jest.mocked(resolveRunbookFile).mockResolvedValue({
+        path: '/tmp/test/child.md',
+        source: 'project',
+        sourceRoot: '/tmp/test',
+      });
+      jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+        runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+        frontmatter: null,
+        diagnostics: [],
+      } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+      jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+      jest.mocked(resolveVariables).mockResolvedValue({
+        vars: {},
+        warnings: [],
+        providedKeys: new Set(),
+      } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+      jest
+        .mocked(resolveForBounds)
+        .mockImplementation(
+          (runbook) =>
+            ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+        );
+      jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+      jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+      const claimAndInitialLink =
+        mockFn<SessionService['claimAndInitialLink']>().mockResolvedValue(atomicResult);
+      const update = mockFn<RunbookStateManager['update']>().mockResolvedValue(
+        parentState as unknown as RunbookState,
+      );
+      const removeChild = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+      const initializeState = mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+        id: NEW_CHILD_ID,
+        step: '1',
+      } as unknown as RunbookState);
+      const load = mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+        parentState as unknown as RunbookState,
+      );
+      const ctx = makeCtx({
+        manager: {
+          load,
+          create: mockFn<
+            (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+          >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+          update,
+          delete: removeChild,
+          list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+          initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        },
+        actorService: { initializeState },
+        sessionService: {
+          claimAndInitialLink,
+          findClaimForDelegation:
+            mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+        },
+        lifecycleService: {
+          ensureActiveEntry: mockFn<
+            () => Promise<{
+              state: { activeEntry: number; activeFrameKey: string };
+              frameKey: string;
+              entry: number;
+            }>
+          >().mockResolvedValue({
+            state: { activeEntry: 1, activeFrameKey: '1|0' },
+            frameKey: '1|0',
+            entry: 1,
+          }),
+        },
+      });
+
+      // cspell:disable-next-line
+      const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+      expect(result).toEqual(expected);
+      expect(claimAndInitialLink).toHaveBeenCalledWith(
+        expect.objectContaining({ childRunId: NEW_CHILD_ID }),
+      );
+      expect(update).not.toHaveBeenCalled();
+      expect(removeChild).toHaveBeenCalledWith(NEW_CHILD_ID);
+      expect(initializeState).toHaveBeenCalled();
+      expect(runExecutionLoop).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
+      expect(ctx.actorService.prepareDelegationChildUnlink).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
+      expect(ctx.sessionService.rollbackInitialLink).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps parent-missing typed when the parent is deleted after fresh launch, rather than RD-820', async () => {
     const parentState = {
@@ -2216,13 +2323,13 @@ describe('claimAndLaunch', () => {
     // The parent is deleted between the 4a re-read and the claim transaction.
     // That is a race, not a Rundown invariant break, and `parent-missing` is the
     // refusal the same pipeline already emits for it earlier in 4a.
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
-      committed({
-        status: 'missing-parent',
-        parentRunId: RUN_ID,
-        parentStepId: '1',
-      }),
-    );
+    const mockClaimAndInitialLink = mockFn<
+      SessionService['claimAndInitialLink']
+    >().mockResolvedValue({
+      kind: 'missing',
+      runId: RUN_ID,
+      message: `Run ${RUN_ID} no longer exists.`,
+    });
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
 
     const ctx = makeCtx({
@@ -2246,7 +2353,7 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockClaimRunbook,
+        claimAndInitialLink: mockClaimAndInitialLink,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
@@ -2278,7 +2385,7 @@ describe('claimAndLaunch', () => {
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
-  it('rolls back claim and parent childRunId when fresh delegated launch fails after claim', async () => {
+  it('does not claim or link when fresh delegated launch initialization fails', async () => {
     const parentState = {
       id: RUN_ID,
       step: '1',
@@ -2401,35 +2508,254 @@ describe('claimAndLaunch', () => {
       expect(result.code).toBe('RD-816');
       expect(result.cause).toContain('initialize failed');
     }
-    expect(mockClaimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
-    expect(mockReleaseRunbook).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(mockClaimRunbook).not.toHaveBeenCalled();
+    const serviceMocks = ctx.sessionService as unknown as {
+      readonly claimAndInitialLink: jest.Mock;
+    };
+    expect(serviceMocks.claimAndInitialLink).not.toHaveBeenCalled();
+    expect(mockReleaseRunbook).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(mockUpdate).toHaveBeenCalledTimes(2);
-    expect(mockUpdate).toHaveBeenNthCalledWith(
-      1,
-      RUN_ID,
-      expect.objectContaining({
-        substepStates: [
-          expect.objectContaining({
-            delegation: expect.objectContaining({ childRunId: NEW_CHILD_ID }),
-          }),
-        ],
-      }),
-    );
-    expect(mockUpdate).toHaveBeenNthCalledWith(
-      2,
-      RUN_ID,
-      expect.objectContaining({
-        substepStates: [
-          expect.objectContaining({
-            delegation: expect.objectContaining({ childRunId: null }),
-          }),
-        ],
-      }),
-    );
+    expect(mockUpdate).not.toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
+
+  async function arrangeInitialLinkRollback() {
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const linkage: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: RUN_ID,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1', 0),
+      parentEntry: 1,
+      tokenHash: MOCK_TOKEN_HASH,
+    };
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: linkage.parentFrameKey,
+      }),
+      null,
+    );
+    mockHappyDelegationLock();
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/tmp/test/child.md',
+      source: 'project',
+      sourceRoot: '/tmp/test',
+    });
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+    const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(
+      parentState as unknown as RunbookState,
+    );
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+    const claimAndInitialLink = mockClaimAndInitialLinkSuccess();
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockFn<() => Promise<{ id: RunId; title: string }>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          title: 'Child',
+        }),
+        update: mockUpdate,
+        delete: mockDelete,
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
+      },
+      sessionService: { claimAndInitialLink },
+    });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+    const prepareUnlink = jest.mocked(ctx.actorService.prepareDelegationChildUnlink);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+    const rollbackInitialLink = jest.mocked(ctx.sessionService.rollbackInitialLink);
+    jest.mocked(createBridgedEmitter).mockReturnValue({
+      emit: jest.fn(() => {
+        throw new Error('post-link startup failure');
+      }),
+    } as unknown as ReturnType<typeof createBridgedEmitter>);
+
+    // cspell:disable-next-line
+    await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+    const capture = jest.mocked(ctx.manager.captureRunAuthorityState);
+    const firstCapture = capture.mock.results.at(0);
+    if (firstCapture === undefined) throw new Error('Expected the initial parent capture');
+    const capturedAuthority = (await firstCapture.value) as Awaited<
+      ReturnType<RunbookStateManager['captureRunAuthorityState']>
+    >;
+    if (capturedAuthority.kind !== 'captured') {
+      throw new Error('Expected the initial launch to capture the parent authority');
+    }
+    return { ctx, prepareUnlink, rollbackInitialLink, capturedAuthority };
+  }
+
+  it('rolls back the exact atomic initial link when startup fails before the execution loop', async () => {
+    const { ctx, prepareUnlink, rollbackInitialLink, capturedAuthority } =
+      await arrangeInitialLinkRollback();
+
+    expect(prepareUnlink as unknown as jest.Mock).toHaveBeenCalledWith(
+      capturedAuthority.state,
+      [],
+      NEW_CHILD_ID,
+      expect.objectContaining({ parentRunId: RUN_ID, tokenHash: MOCK_TOKEN_HASH }),
+    );
+    expect(rollbackInitialLink as unknown as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        childRunId: NEW_CHILD_ID,
+        linkage: expect.objectContaining({ parentRunId: RUN_ID, tokenHash: MOCK_TOKEN_HASH }),
+      }),
+    );
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural state-manager mock without invoking it.
+    expect(ctx.manager.delete).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(runExecutionLoop).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural state-manager mock without invoking it.
+    expect(ctx.manager.update).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
+    expect(ctx.output.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'missing parent',
+      configure: (mocks: Awaited<ReturnType<typeof arrangeInitialLinkRollback>>): void => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+        const capture = jest.mocked(mocks.ctx.manager.captureRunAuthorityState);
+        capture.mockReset();
+        capture.mockResolvedValueOnce(mocks.capturedAuthority).mockResolvedValueOnce({
+          kind: 'missing',
+          runId: RUN_ID,
+          message: `Run ${RUN_ID} disappeared before rollback.`,
+        });
+        mocks.prepareUnlink.mockClear();
+        mocks.rollbackInitialLink.mockClear();
+      },
+      expectedWarning: `Run ${RUN_ID} disappeared before rollback.`,
+      expectedPrepareCalls: 0,
+      expectedRollbackCalls: 0,
+    },
+    {
+      name: 'superseded delegation',
+      configure: (mocks: Awaited<ReturnType<typeof arrangeInitialLinkRollback>>): void => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+        const capture = jest.mocked(mocks.ctx.manager.captureRunAuthorityState);
+        capture.mockReset();
+        capture.mockResolvedValue(mocks.capturedAuthority);
+        mocks.prepareUnlink.mockReset();
+        mocks.prepareUnlink.mockResolvedValue({
+          kind: 'delegation_superseded',
+          runId: RUN_ID,
+          message: 'The delegation moved before rollback preparation.',
+        });
+        mocks.rollbackInitialLink.mockClear();
+      },
+      expectedWarning: 'The delegation moved before rollback preparation.',
+      expectedPrepareCalls: 1,
+      expectedRollbackCalls: 0,
+    },
+    {
+      name: 'concurrent modification',
+      configure: (mocks: Awaited<ReturnType<typeof arrangeInitialLinkRollback>>): void => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+        const capture = jest.mocked(mocks.ctx.manager.captureRunAuthorityState);
+        capture.mockReset();
+        capture.mockResolvedValue(mocks.capturedAuthority);
+        mocks.prepareUnlink.mockClear();
+        mocks.rollbackInitialLink.mockReset();
+        mocks.rollbackInitialLink.mockResolvedValue({
+          kind: 'concurrent_modification',
+          runId: RUN_ID,
+          message: `Run ${RUN_ID} was modified concurrently.`,
+        });
+      },
+      expectedWarning: `Run ${RUN_ID} was modified concurrently.`,
+      expectedPrepareCalls: 1,
+      expectedRollbackCalls: 1,
+    },
+    {
+      name: 'unexpected rollback error',
+      configure: (mocks: Awaited<ReturnType<typeof arrangeInitialLinkRollback>>): void => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+        const capture = jest.mocked(mocks.ctx.manager.captureRunAuthorityState);
+        capture.mockReset();
+        capture.mockResolvedValue(mocks.capturedAuthority);
+        mocks.prepareUnlink.mockClear();
+        mocks.rollbackInitialLink.mockReset();
+        mocks.rollbackInitialLink.mockRejectedValue(new Error('rollback storage failed'));
+      },
+      expectedWarning: 'rollback storage failed',
+      expectedPrepareCalls: 1,
+      expectedRollbackCalls: 1,
+    },
+  ])(
+    'warns and preserves the launch failure for $name',
+    async ({ configure, expectedWarning, expectedPrepareCalls, expectedRollbackCalls }) => {
+      const mocks = await arrangeInitialLinkRollback();
+      configure(mocks);
+
+      // cspell:disable-next-line
+      const result = await claimAndLaunch(mocks.ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'launch-failed',
+        code: 'RD-816',
+        cause: 'post-link startup failure',
+      });
+      expect(mocks.prepareUnlink).toHaveBeenCalledTimes(expectedPrepareCalls);
+      expect(mocks.rollbackInitialLink).toHaveBeenCalledTimes(expectedRollbackCalls);
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
+      expect(mocks.ctx.output.warning).toHaveBeenCalledWith(
+        `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: ${expectedWarning}`,
+      );
+    },
+  );
 
   it('deletes orphaned child state when afterInit throws due to claim invariant violation', async () => {
     const parentState = {
@@ -2491,13 +2817,13 @@ describe('claimAndLaunch', () => {
     jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
-    // claimRunbook returns missing-child — simulates claimChildForPipeline failure
-    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
-      committed({
-        status: 'missing-child',
-        childRunId: NEW_CHILD_ID,
-      }),
-    );
+    const mockClaimAndInitialLink = mockFn<
+      SessionService['claimAndInitialLink']
+    >().mockResolvedValue({
+      kind: 'missing',
+      runId: NEW_CHILD_ID,
+      message: `Run ${NEW_CHILD_ID} no longer exists.`,
+    });
 
     const mockDelete = mockFn<(id: RunId) => Promise<void>>().mockResolvedValue(undefined);
 
@@ -2522,7 +2848,7 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockClaimRunbook,
+        claimAndInitialLink: mockClaimAndInitialLink,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
@@ -2546,5 +2872,11 @@ describe('claimAndLaunch', () => {
 
     // The orphaned child run created by manager.create must be cleaned up
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies structural service mocks without invoking them.
+    expect(ctx.manager.captureRunAuthorityState).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies structural service mocks without invoking them.
+    expect(ctx.actorService.prepareDelegationChildUnlink).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies structural service mocks without invoking them.
+    expect(ctx.sessionService.rollbackInitialLink).not.toHaveBeenCalled();
   });
 });

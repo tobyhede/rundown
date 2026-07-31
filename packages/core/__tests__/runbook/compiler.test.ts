@@ -5,9 +5,12 @@ import * as path from 'node:path';
 import { createActor, fromPromise, waitFor } from 'xstate';
 import {
   compileRunbookToMachine,
+  DelegationChildLinkPreparationError,
+  deriveDelegationChildUnlinkedSubsteps,
   MAX_FILE_ITERATIONS,
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
+  deriveDelegationChildLinkedSubsteps,
   validateGraphForTest,
 } from '../../src/runbook/compiler.js';
 import { expandLoopVariables } from '../../src/runbook/template-renderer.js';
@@ -41,6 +44,7 @@ import type {
   RunbookState,
 } from '../../src/runbook/types.js';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { activeFrame, buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -51,6 +55,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
 
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
@@ -571,6 +576,236 @@ Review the plan manually.
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
       expect(actor.getSnapshot().context.deferredResults).toEqual(['fail', 'pass']);
+    });
+  });
+
+  describe('DELEGATION_CHILD_LINKED', () => {
+    const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+    const otherTokenHash = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+    const childRunId = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
+    const otherChildRunId = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
+    const targetFrame = buildFrameKey('1', 1);
+    const collidingFrame = buildFrameKey('1', 2);
+
+    function delegationFixture(
+      options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
+    ) {
+      const target = makeDelegatedSubstepState({
+        id: '1.1',
+        frameKey: targetFrame,
+        delegation: {
+          token: options.plaintextToken,
+          tokenHash,
+          childRunId: options.linkedChild ?? null,
+        },
+      });
+      const sameIdOtherFrame = makeDelegatedSubstepState({
+        id: '1.1',
+        frameKey: collidingFrame,
+        delegation: { tokenHash },
+      });
+      const sibling = makeDelegatedSubstepState({
+        id: '1.2',
+        frameKey: targetFrame,
+        delegation: { tokenHash },
+      });
+      return { target, sameIdOtherFrame, sibling };
+    }
+
+    function machineWithDelegations(
+      options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
+    ) {
+      const fixture = delegationFixture(options);
+      return {
+        ...fixture,
+        machine: compileRunbookToMachine(
+          inferSteps([
+            {
+              name: '1',
+              description: 'Parent',
+              transitions: DEFAULT_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+              substeps: [
+                { id: '1', description: 'First', transitions: DEFAULT_TRANSITIONS },
+                { id: '2', description: 'Second', transitions: DEFAULT_TRANSITIONS },
+              ],
+            },
+          ]),
+          {
+            substepStates: [fixture.target, fixture.sameIdOtherFrame, fixture.sibling],
+          },
+        ),
+      };
+    }
+
+    it('links only the exact step/frame/token and preserves colliding siblings', () => {
+      const { machine, target, sameIdOtherFrame, sibling } = machineWithDelegations();
+      const actor = createActor(machine);
+      const actorErrors: unknown[] = [];
+      actor.subscribe({ error: (error) => actorErrors.push(error) });
+      actor.start();
+
+      actor.send({
+        type: 'DELEGATION_CHILD_LINKED',
+        parentStepId: '1.1',
+        parentFrameKey: targetFrame,
+        tokenHash,
+        childRunId,
+      });
+
+      expect(actor.getSnapshot().context.substepStates).toEqual([
+        {
+          ...target,
+          delegation: { ...target.delegation, childRunId },
+        },
+        sameIdOtherFrame,
+        sibling,
+      ]);
+      expect(actorErrors).toEqual([]);
+      actor.stop();
+    });
+
+    it('is idempotent for the same child and refuses conflicting child or token', () => {
+      const same = machineWithDelegations({ linkedChild: childRunId });
+      const sameActor = createActor(same.machine);
+      const actorErrors: unknown[] = [];
+      sameActor.subscribe({ error: (error) => actorErrors.push(error) });
+      sameActor.start();
+      const before = sameActor.getSnapshot().context.substepStates;
+      sameActor.send({
+        type: 'DELEGATION_CHILD_LINKED',
+        parentStepId: '1.1',
+        parentFrameKey: targetFrame,
+        tokenHash,
+        childRunId,
+      });
+      expect(sameActor.getSnapshot().context.substepStates).toBe(before);
+      expect(actorErrors).toEqual([]);
+      sameActor.stop();
+
+      for (const scenario of [
+        {
+          event: {
+            type: 'DELEGATION_CHILD_LINKED' as const,
+            parentStepId: '1.1',
+            parentFrameKey: targetFrame,
+            tokenHash,
+            childRunId: otherChildRunId,
+          },
+          reason: 'concurrent_modification',
+          message: 'Delegation 1.1 is already linked to another child',
+        },
+        {
+          event: {
+            type: 'DELEGATION_CHILD_LINKED' as const,
+            parentStepId: '1.1',
+            parentFrameKey: targetFrame,
+            tokenHash: otherTokenHash,
+            childRunId,
+          },
+          reason: 'delegation_superseded',
+          message: 'Delegation 1.1 no longer matches the presented token',
+        },
+      ] as const) {
+        const { target, sameIdOtherFrame, sibling } = delegationFixture({
+          linkedChild: childRunId,
+        });
+        const initial = [target, sameIdOtherFrame, sibling];
+        try {
+          deriveDelegationChildLinkedSubsteps(initial, scenario.event);
+          throw new Error('Expected delegated-child link refusal');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
+          expect(error).toMatchObject({ reason: scenario.reason, message: scenario.message });
+        }
+        expect(initial).toEqual([target, sameIdOtherFrame, sibling]);
+      }
+    });
+
+    it('refuses a link when machine-owned substep state is absent', () => {
+      expect(() =>
+        deriveDelegationChildLinkedSubsteps(undefined, {
+          type: 'DELEGATION_CHILD_LINKED',
+          parentStepId: '1.1',
+          parentFrameKey: targetFrame,
+          tokenHash,
+          childRunId,
+        }),
+      ).toThrow(/captured frame entry/);
+    });
+
+    it('unlinks only the exact child and is idempotent once absent', () => {
+      const linked = machineWithDelegations({
+        linkedChild: childRunId,
+        plaintextToken: 'rdtk_plaintext-must-not-persist',
+      });
+      const actor = createActor(linked.machine);
+      const actorErrors: unknown[] = [];
+      actor.subscribe({ error: (error) => actorErrors.push(error) });
+      actor.start();
+      const event = {
+        type: 'DELEGATION_CHILD_UNLINKED' as const,
+        parentStepId: '1.1',
+        parentFrameKey: targetFrame,
+        tokenHash,
+        childRunId,
+      };
+      actor.send(event);
+      const { token: _plaintextToken, ...persistedDelegation } = linked.target.delegation!;
+      expect(actor.getSnapshot().context.substepStates).toEqual([
+        {
+          ...linked.target,
+          delegation: { ...persistedDelegation, childRunId: null },
+        },
+        linked.sameIdOtherFrame,
+        linked.sibling,
+      ]);
+      const unlinked = actor.getSnapshot().context.substepStates;
+      actor.send(event);
+      expect(actor.getSnapshot().context.substepStates).toBe(unlinked);
+      expect(actorErrors).toEqual([]);
+      actor.stop();
+    });
+
+    it('refuses an unlink for absent state, a changed token, or a newer child', () => {
+      const event = {
+        type: 'DELEGATION_CHILD_UNLINKED' as const,
+        parentStepId: '1.1',
+        parentFrameKey: targetFrame,
+        tokenHash,
+        childRunId,
+      };
+      const linked = machineWithDelegations({ linkedChild: childRunId });
+      const initial = [linked.target, linked.sameIdOtherFrame, linked.sibling];
+      for (const scenario of [
+        {
+          states: undefined,
+          event,
+          reason: 'delegation_superseded',
+          message: 'Delegation 1.1 no longer names the captured frame entry',
+        },
+        {
+          states: initial,
+          event: { ...event, tokenHash: otherTokenHash },
+          reason: 'delegation_superseded',
+          message: 'Delegation 1.1 no longer matches the rollback token',
+        },
+        {
+          states: initial,
+          event: { ...event, childRunId: otherChildRunId },
+          reason: 'concurrent_modification',
+          message: 'Delegation 1.1 is linked to a newer child',
+        },
+      ] as const) {
+        try {
+          deriveDelegationChildUnlinkedSubsteps(scenario.states, scenario.event);
+          throw new Error('Expected delegated-child unlink refusal');
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
+          expect(error).toMatchObject({ reason: scenario.reason, message: scenario.message });
+        }
+        if (scenario.states !== undefined) expect(scenario.states).toEqual(initial);
+      }
     });
   });
 

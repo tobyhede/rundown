@@ -802,6 +802,10 @@ Delegation semantics:
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a one-time `claim_id`; replaying the same token is
   refused.
+- `claim` creates the initial claim and parent link atomically, guarding both
+  the child and parent. Parent execution ownership refuses with
+  `EXECUTION_IN_PROGRESS`; parent recovery state refuses with
+  `RECOVERY_REQUIRED`. Neither refusal writes the claim or parent link.
 - `claim` refuses with RD-825 (`DELEGATION_SUPERSEDED`) when the parent has
   moved past the delegation — it advanced its cursor beyond the step, ended,
   reset the substep, or reissued the token — before the claim committed. A
@@ -1174,6 +1178,7 @@ JSON output compatibility:
 | `INVALID_SYNTAX`                            | `--claim-id` and `--run` supplied together on the same command                                                                                                                                                                                            | Pass either `--claim-id` or `--run`, not both — they are mutually exclusive                                                                                               |
 | `EXECUTION_IN_PROGRESS`                     | The command had to change session targeting (stack, stash slot, or a claim) for a run another process is currently executing; ownership is exclusive, so nothing was written                                                                              | Wait for the owning process to finish and retry — the command is safe to repeat                                                                                           |
 | `RECOVERY_REQUIRED`                         | The named run's last execution attempt ended without recording an outcome, so whether its effect ran is unknown. Unlike `EXECUTION_IN_PROGRESS`, no process holds it and waiting will not clear it                                                        | Resolve the interrupted attempt through recovery before retrying the command                                                                                              |
+| `CONCURRENT_MODIFICATION`                   | The parent run changed after a delegated child link was derived but before its atomic claim/link commit                                                                                                                                                   | Retry the claim; no claim or parent link was written                                                                                                                      |
 
 ### State Recovery
 

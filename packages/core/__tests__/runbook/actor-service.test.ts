@@ -24,6 +24,7 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandEffectiveVarsForTest,
@@ -33,6 +34,7 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
+import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The
@@ -1770,6 +1772,373 @@ echo ok
       });
       const persisted = await manager.load(state.id);
       expect(persisted?.lastResult).toBeUndefined();
+    });
+  });
+
+  describe('prepared delegated-child link mutation', () => {
+    async function exercisePreparedMutation(
+      scenario:
+        | 'snapshot'
+        | 'serialization'
+        | 'unlink'
+        | 'concurrent'
+        | 'supersession'
+        | 'fallbacks'
+        | 'invalid-state',
+    ): Promise<void> {
+      const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+      const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
+      const otherChildRunId = assertRunId(`rd_${'e'.repeat(32)}`);
+      const frameKey = buildFrameKey('1');
+      const steps = createRunbook(`## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+        },
+      );
+      const target = makeDelegatedSubstepState({
+        id: '1.1',
+        frameKey,
+        delegation: { tokenHash },
+      });
+      const sibling = makeDelegatedSubstepState({
+        id: '1.2',
+        frameKey,
+        delegation: { tokenHash },
+      });
+      await manager.update(state.id, {
+        substepStates: [target, sibling],
+        activeFrameKey: frameKey,
+        activeEntry: 1,
+        frameEntryCounts: replace({ [frameKey]: 1 }),
+      });
+      const before = await manager.load(state.id);
+      if (!before) throw new Error('expected persisted parent state');
+
+      const runtimeResolver = async () => null;
+      const service = new RunbookActorService(manager, {
+        resolveDelegationRunbook: runtimeResolver,
+      });
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: state.id,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: frameKey,
+        parentEntry: 1,
+        tokenHash,
+      };
+      const result = await service.prepareDelegationChildLink(before, steps, childRunId, linkage);
+      expect(result.kind).toBe('prepared');
+      if (result.kind !== 'prepared') throw new Error(`Expected prepared, got ${result.kind}`);
+      const prepared = result.prepared.mutation;
+
+      if (scenario === 'snapshot') {
+        expect(result.prepared.operation).toBe('link');
+        expect(prepared.nextState).not.toHaveProperty('type');
+        expect(prepared.nextState.substepStates).toEqual([
+          { ...target, delegation: { ...target.delegation, childRunId } },
+          sibling,
+        ]);
+        expect((await manager.load(state.id))?.substepStates).toEqual([target, sibling]);
+      }
+
+      if (scenario === 'serialization') {
+        const persistedContext = (prepared.snapshot as { readonly context?: unknown }).context;
+        const seen = new Set<unknown>();
+        const assertDataOnly = (value: unknown): void => {
+          expect(typeof value).not.toBe('function');
+          expect(value).not.toBe(manager);
+          expect(value).not.toBe(service);
+          expect(value).not.toBe(runtimeResolver);
+          if (!value || typeof value !== 'object' || seen.has(value)) return;
+          seen.add(value);
+          for (const nested of Object.values(value)) assertDataOnly(nested);
+        };
+        assertDataOnly(persistedContext);
+        const serialized = JSON.stringify(prepared.snapshot);
+        expect(serialized).toContain(childRunId);
+        expect(serialized).not.toContain(manager.cwd);
+        expect(() => JSON.parse(serialized)).not.toThrow();
+        expect((await manager.load(state.id))?.substepStates).toEqual([target, sibling]);
+      }
+
+      if (scenario === 'unlink') {
+        const unlink = await service.prepareDelegationChildUnlink(
+          prepared.nextState,
+          steps,
+          childRunId,
+          linkage,
+        );
+        expect(unlink.kind).toBe('prepared');
+        if (unlink.kind !== 'prepared') throw new Error(`Expected prepared, got ${unlink.kind}`);
+        expect(unlink.prepared.operation).toBe('unlink');
+        expect(unlink.prepared.mutation.nextState).not.toHaveProperty('type');
+        expect(unlink.prepared.mutation.nextState.substepStates).toEqual([target, sibling]);
+      }
+
+      if (scenario === 'concurrent') {
+        await expect(
+          service.prepareDelegationChildLink(prepared.nextState, steps, otherChildRunId, linkage),
+        ).resolves.toEqual({
+          kind: 'concurrent_modification',
+          runId: state.id,
+          message: 'Delegation 1.1 is already linked to another child',
+        });
+        await expect(
+          service.prepareDelegationChildUnlink(prepared.nextState, steps, otherChildRunId, linkage),
+        ).resolves.toEqual({
+          kind: 'concurrent_modification',
+          runId: state.id,
+          message: 'Delegation 1.1 is linked to a newer child',
+        });
+      }
+
+      if (scenario === 'supersession') {
+        await expect(
+          service.prepareDelegationChildLink(before, steps, childRunId, {
+            ...linkage,
+            parentEntry: 2,
+          }),
+        ).resolves.toEqual({
+          kind: 'delegation_superseded',
+          runId: state.id,
+          message: 'Delegation 1.1 no longer names parent entry 2',
+        });
+        await expect(
+          service.prepareDelegationChildLink(before, steps, childRunId, {
+            ...linkage,
+            tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+          }),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
+        await expect(
+          service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
+            ...linkage,
+            parentEntry: 2,
+          }),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
+        await expect(
+          service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
+            ...linkage,
+            tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+          }),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
+      }
+
+      const fallbackEntryState = {
+        ...before,
+        activeFrameKey: undefined,
+        activeEntry: undefined,
+      };
+      if (scenario === 'fallbacks') {
+        await expect(
+          service.prepareDelegationChildLink(fallbackEntryState, steps, childRunId, linkage),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+        await expect(
+          service.prepareDelegationChildLink(
+            { ...fallbackEntryState, frameEntryCounts: undefined },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+        await expect(
+          service.prepareDelegationChildLink(
+            { ...fallbackEntryState, frameEntryCounts: undefined },
+            steps,
+            childRunId,
+            { ...linkage, parentEntry: 2 },
+          ),
+        ).resolves.toEqual(
+          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+        );
+        await expect(
+          service.prepareDelegationChildLink(
+            {
+              ...before,
+              activeFrameKey: buildFrameKey('other'),
+              activeEntry: 2,
+              frameEntryCounts: { [frameKey]: 1 },
+            },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+        await expect(
+          service.prepareDelegationChildLink(
+            { ...before, activeEntry: 2, frameEntryCounts: { [frameKey]: 1 } },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).resolves.toEqual(
+          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+        );
+        await expect(
+          service.prepareDelegationChildLink(
+            { ...before, activeEntry: undefined, frameEntryCounts: { [frameKey]: 1 } },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+        await expect(
+          service.prepareDelegationChildUnlink(
+            { ...prepared.nextState, activeFrameKey: undefined, activeEntry: undefined },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+        await expect(
+          service.prepareDelegationChildUnlink(
+            {
+              ...prepared.nextState,
+              activeFrameKey: undefined,
+              activeEntry: undefined,
+              frameEntryCounts: undefined,
+            },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
+        await expect(
+          service.prepareDelegationChildUnlink(
+            {
+              ...prepared.nextState,
+              activeFrameKey: undefined,
+              activeEntry: undefined,
+              frameEntryCounts: undefined,
+            },
+            steps,
+            childRunId,
+            { ...linkage, parentEntry: 2 },
+          ),
+        ).resolves.toEqual(
+          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+        );
+      }
+
+      if (scenario === 'invalid-state') {
+        await expect(
+          service.prepareActorMutation(before.id, before, steps, {
+            type: 'DELEGATION_CHILD_LINKED',
+            parentStepId: linkage.parentStepId,
+            parentFrameKey: linkage.parentFrameKey,
+            tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+            childRunId,
+          }),
+        ).rejects.toThrow(`Runbook ${before.id} actor entered an error state`);
+        const unexpectedDerivationError = new Error('unexpected derivation failure');
+        const invalidSubstepStates = {
+          find: () => {
+            throw unexpectedDerivationError;
+          },
+        } as unknown as RunbookState['substepStates'];
+        await expect(
+          service.prepareDelegationChildLink(
+            { ...before, substepStates: invalidSubstepStates },
+            steps,
+            childRunId,
+            linkage,
+          ),
+        ).rejects.toBe(unexpectedDerivationError);
+        const pendingEffectParent = {
+          ...prepared.nextState,
+          snapshot: {
+            ...(prepared.snapshot as Record<string, unknown>),
+            value: { 'step::1::1': '__capture' },
+          },
+        };
+        await expect(
+          service.prepareDelegationChildUnlink(pendingEffectParent, steps, childRunId, linkage),
+        ).rejects.toThrow('Unsupported snapshot.value shape');
+      }
+    }
+
+    it('derives the exact linked snapshot without persisting it', async () => {
+      await exercisePreparedMutation('snapshot');
+    });
+
+    it('keeps the prepared snapshot data-only and JSON serializable', async () => {
+      await exercisePreparedMutation('serialization');
+    });
+
+    it('restores the original substep state with an unlink mutation', async () => {
+      await exercisePreparedMutation('unlink');
+    });
+
+    it('classifies link and unlink concurrent modifications independently', async () => {
+      await exercisePreparedMutation('concurrent');
+    });
+
+    it('classifies entry and token supersession for link and unlink', async () => {
+      await exercisePreparedMutation('supersession');
+    });
+
+    it('uses active and frame-count fallbacks when frame-entry fields are absent', async () => {
+      await exercisePreparedMutation('fallbacks');
+    });
+
+    it('rejects pending-effect and structurally invalid parent states', async () => {
+      await exercisePreparedMutation('invalid-state');
+    });
+
+    it('rejects an errored actor snapshot without persisting or leaking the actor error', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const created = await manager.create(
+        { source: 'project', path: 'errored-parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        { runbookPath: 'errored-parent.runbook.md', frontmatterOutputs: [] },
+      );
+      const before = await manager.load(created.id);
+      if (!before) throw new Error('Expected persisted parent state');
+
+      let errorObserverInstalled = false;
+      const actor = {
+        subscribe: (observer: unknown) => {
+          if (observer && typeof observer === 'object' && 'error' in observer) {
+            errorObserverInstalled = true;
+          }
+          return { unsubscribe: jest.fn() };
+        },
+        send: () => {
+          if (!errorObserverInstalled) throw new Error('unhandled synthetic actor error');
+        },
+        getSnapshot: () => ({ hasTag: () => false }),
+        getPersistedSnapshot: () => ({ status: 'error', value: 'step::1', context: {} }),
+        stop: jest.fn(),
+      } as unknown as AnyActorRef;
+      type ActorServiceInternals = {
+        createActorForState: (...args: readonly unknown[]) => AnyActorRef;
+      };
+      jest
+        .spyOn(actorService as unknown as ActorServiceInternals, 'createActorForState')
+        .mockReturnValue(actor);
+
+      await expect(
+        actorService.prepareActorMutation(created.id, before, steps, { type: 'PASS' }),
+      ).rejects.toThrow(`Runbook ${created.id} actor entered an error state`);
+      await expect(manager.load(created.id)).resolves.toEqual(before);
     });
   });
 

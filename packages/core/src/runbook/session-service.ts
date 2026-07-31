@@ -14,13 +14,20 @@ import type { RunbookStateManager, SessionData } from './state.js';
 import { isRunId, type RunId } from './run-id.js';
 import {
   parentAdvanceGuard,
+  assertExactlyOneRow,
+  classifyCommitRow,
   isOpenDelegatedChildrenError,
   type ParentAdvanceGuard,
   type SessionMutationRefusal,
   type SessionMutationResult,
   type SessionMutationTxn,
 } from './storage/runbook-store.js';
+import type { CapturedAuthority, GuardedMutationResult } from './storage/mutation-result.js';
 import type { SyncWork } from './storage/sql-driver.js';
+import type {
+  PreparedDelegationChildLink,
+  PreparedDelegationChildUnlink,
+} from './actor-service.js';
 import {
   createDelegatedChildGrants,
   createClaimRecord,
@@ -105,6 +112,54 @@ export type ActiveInlineForceTerminalPlan =
 export interface ReleaseRunbooksResult {
   readonly releasedRunIds: readonly RunId[];
   readonly nextDefaultRunbookId: RunId | null;
+}
+
+/** Machine-derived inputs committed with a delegated child's first claim. */
+export interface ClaimAndInitialLinkInput {
+  /** Child run receiving the delegated claim. */
+  readonly childRunId: RunId;
+  /** Exact delegation coordinates shared by parent, child, and claim. */
+  readonly linkage: DelegationLinkage;
+  /** Parent authority captured with the state used to derive `preparedParent`. */
+  readonly capturedParent: CapturedAuthority;
+  /** Opaque parent mutation produced by an XState delegation link transition. */
+  readonly preparedParent: PreparedDelegationChildLink;
+}
+
+/** Machine-derived inputs committed when rolling back a delegated child's initial link. */
+export interface RollbackInitialLinkInput extends Omit<ClaimAndInitialLinkInput, 'preparedParent'> {
+  /** Opaque parent mutation produced by an XState delegation unlink transition. */
+  readonly preparedParent: PreparedDelegationChildUnlink;
+}
+
+/** Atomic initial-claim/link outcome. */
+export type ClaimAndInitialLinkResult = GuardedMutationResult<ClaimRunbookResult>;
+
+/**
+ * Validate that every component of an initial-link mutation names one parent.
+ *
+ * @param input - Atomic link or rollback input to validate.
+ * @param operation - Operation named in an invariant-failure diagnostic.
+ * @returns The machine-derived next parent state.
+ * @throws {Error} When the operation is wrong or parent coordinates disagree.
+ */
+function assertInitialLinkParentCoordinates(
+  input: ClaimAndInitialLinkInput | RollbackInitialLinkInput,
+  operation: 'link' | 'rollback',
+): RunbookState {
+  const { linkage, capturedParent, preparedParent } = input;
+  const { previousState, nextState } = preparedParent.mutation;
+  if (preparedParent.operation !== (operation === 'link' ? 'link' : 'unlink')) {
+    throw new Error(`Initial delegation ${operation} received the wrong mutation operation`);
+  }
+  if (
+    capturedParent.runId !== linkage.parentRunId ||
+    previousState.id !== linkage.parentRunId ||
+    nextState.id !== linkage.parentRunId
+  ) {
+    throw new Error(`Initial delegation ${operation} names different parent runs`);
+  }
+  return nextState;
 }
 
 /**
@@ -763,138 +818,243 @@ export class SessionService {
     childRunId: RunId,
     linkage: DelegationLinkage,
   ): Promise<SessionMutationResult<ClaimRunbookResult>> {
-    return this.mutateGuarded([childRunId], (ctx): ClaimRunbookResult => {
-      const { session } = ctx;
-      const now = this.now();
+    return this.mutateGuarded([childRunId], (ctx) =>
+      this.claimRunbookInTransaction(ctx, childRunId, linkage),
+    );
+  }
 
-      // Claim-side half of the durable latch (R2). Validate the exact delegation
-      // is still live in the parent state read inside THIS transaction, before
-      // any existing-claim refresh or fresh insertion. If the parent commit that
-      // moved past this delegation already landed, refuse — the tombstoned bearer
-      // cannot be resurrected by a later reset. An unreadable parent is refused
-      // with a typed result, not thrown: it is the same FK-impossible corruption
-      // class as `missing-child` below, and `getActiveForClaimId` already reports
-      // it softly as `unlinked` / `parent-missing`. One class, one policy.
-      const parent = ctx.readState(linkage.parentRunId);
-      const liveness = classifyDelegationLiveness(parent, linkage);
-      if (liveness.kind === 'parent-unreadable') {
-        return {
-          status: 'missing-parent',
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-        };
-      }
-      // Terminal evidence outlives the parent-side delegation. Checked before
-      // classification, not after: every terminal child also reads closed on the
-      // parent side (its substep is `done`), so the order is what decides. The
-      // matching terminal-skip in `RunbookStore.invalidateClosedDelegatedClaims`
-      // (`storage/runbook-store.ts`) is what keeps such a claim active for this
-      // read, so the two orderings must stay tied together — checking liveness
-      // first reports `delegation-superseded` for a claim whose real refusal is
-      // the terminal child it can still name. Both are non-retryable; the loss is
-      // diagnostic precision, not safety. `parent-unreadable` stays ahead of
-      // this: it is a corruption signal about the state this read depends on.
-      const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
-      let existingLiveClaim:
-        | { readonly claim: ClaimRecord; readonly state: RunbookState }
-        | undefined;
-      if (existingForDelegation !== undefined) {
-        const existingState = ctx.readState(existingForDelegation.controlledRunId);
-        if (!existingState) {
-          // The claim's controlled run state cannot be read. The FK cascade
-          // (`claims.controlled_run` ON DELETE CASCADE) deletes a claim with its
-          // run, so this is not reachable through a supported delete — but the
-          // caller-visible refusal taxonomy (superseded plan Task 6) returns a
-          // typed `missing-child` rather than throwing, so a corrupted database
-          // degrades gracefully.
-          return { status: 'missing-child', childRunId: existingForDelegation.controlledRunId };
-        }
-        if (existingState.lifecycle === 'completed' || existingState.lifecycle === 'stopped') {
+  /**
+   * Atomically persist a machine-derived parent link with the child's first claim.
+   *
+   * An idempotent `already-claimed` result may still commit the derived parent
+   * link, repairing a missing link for the same child and exact delegation
+   * coordinates. All other typed refusals leave both child and parent unchanged.
+   *
+   * @param input - Captured parent authority, derived parent state, child, and linkage.
+   * @returns The committed claim result or a canonical guarded refusal.
+   * @throws {Error} When the operation is wrong or parent coordinates disagree.
+   */
+  async claimAndInitialLink(input: ClaimAndInitialLinkInput): Promise<ClaimAndInitialLinkResult> {
+    const { childRunId, linkage, capturedParent } = input;
+    const nextState = assertInitialLinkParentCoordinates(input, 'link');
+
+    const nested = await this.mutateGuarded(
+      [childRunId, linkage.parentRunId],
+      (ctx): ClaimAndInitialLinkResult => {
+        const classification = classifyCommitRow(
+          ctx.commitRow(capturedParent.runId, capturedParent.claimKey),
+          capturedParent,
+        );
+        if (classification.kind !== 'ok') return classification;
+
+        const claim = this.claimRunbookInTransaction(ctx, childRunId, linkage);
+        if (claim.status === 'missing-child') {
           return {
-            status: 'terminal-child',
-            childRunId: existingForDelegation.controlledRunId,
-            lifecycle: existingState.lifecycle,
+            kind: 'missing',
+            runId: claim.childRunId,
+            message: `Run ${claim.childRunId} no longer exists.`,
           };
         }
-        existingLiveClaim = { claim: existingForDelegation, state: existingState };
-      }
+        if (claim.status === 'already-claimed' && claim.childRunId !== childRunId) {
+          return { kind: 'committed', value: claim };
+        }
+        if (claim.status !== 'claimed' && claim.status !== 'already-claimed') {
+          return { kind: 'committed', value: claim };
+        }
 
-      if (liveness.kind === 'closed') {
-        return {
-          status: 'delegation-superseded',
-          parentRunId: linkage.parentRunId,
-          parentStepId: linkage.parentStepId,
-          childRunId,
-        };
-      }
+        assertExactlyOneRow(ctx.applyStateUpdate(capturedParent, nextState), capturedParent.runId);
+        return { kind: 'committed', value: claim };
+      },
+    );
+    return nested.kind === 'committed' ? nested.value : nested;
+  }
 
-      if (existingLiveClaim !== undefined) {
-        if (!linkageMatchesLinkage(existingLiveClaim.state.parentLinkage, linkage)) {
+  /**
+   * Atomically remove the exact initial claim/link pair after launch setup fails.
+   *
+   * @param input - Recaptured parent authority and machine-derived unlink mutation.
+   * @returns A committed rollback status or canonical guarded refusal.
+   * @throws {Error} When the operation is wrong or parent coordinates disagree.
+   */
+  async rollbackInitialLink(
+    input: RollbackInitialLinkInput,
+  ): Promise<GuardedMutationResult<{ readonly status: 'rolled-back' | 'already-absent' }>> {
+    const { childRunId, linkage, capturedParent } = input;
+    const nextState = assertInitialLinkParentCoordinates(input, 'rollback');
+    const nested = await this.mutateGuarded(
+      [childRunId, linkage.parentRunId],
+      (ctx): GuardedMutationResult<{ readonly status: 'rolled-back' | 'already-absent' }> => {
+        const classification = classifyCommitRow(
+          ctx.commitRow(capturedParent.runId, capturedParent.claimKey),
+          capturedParent,
+        );
+        if (classification.kind !== 'ok') return classification;
+        const claim = this.findClaimByDelegationLinkage(ctx.session.claims, linkage);
+        if (claim === undefined) {
+          assertExactlyOneRow(
+            ctx.applyStateUpdate(capturedParent, nextState),
+            capturedParent.runId,
+          );
+          return { kind: 'committed', value: { status: 'already-absent' } };
+        }
+        if (claim.controlledRunId !== childRunId) {
           return {
-            status: 'linkage-mismatch',
-            childRunId: existingLiveClaim.claim.controlledRunId,
-            incoming: linkage,
-            persisted: existingLiveClaim.state.parentLinkage,
+            kind: 'concurrent_modification',
+            runId: linkage.parentRunId,
+            message: `Run ${linkage.parentRunId} was modified concurrently.`,
           };
         }
+        delete ctx.session.claims[claim.claimKey];
+        assertExactlyOneRow(ctx.applyStateUpdate(capturedParent, nextState), capturedParent.runId);
+        return { kind: 'committed', value: { status: 'rolled-back' } };
+      },
+    );
+    return nested.kind === 'committed' ? nested.value : nested;
+  }
+
+  /**
+   * Claim a run using an already-open session transaction; performs no IO itself.
+   *
+   * @param ctx - Open session mutation transaction.
+   * @param childRunId - Child run receiving the claim.
+   * @param linkage - Exact live parent delegation coordinates.
+   * @returns The claim result recorded in the supplied transaction.
+   */
+  private claimRunbookInTransaction(
+    ctx: SessionMutationTxn,
+    childRunId: RunId,
+    linkage: DelegationLinkage,
+  ): ClaimRunbookResult {
+    const { session } = ctx;
+    const now = this.now();
+
+    // Claim-side half of the durable latch (R2). Validate the exact delegation
+    // is still live in the parent state read inside THIS transaction, before
+    // any existing-claim refresh or fresh insertion. If the parent commit that
+    // moved past this delegation already landed, refuse — the tombstoned bearer
+    // cannot be resurrected by a later reset. An unreadable parent is refused
+    // with a typed result, not thrown: it is the same FK-impossible corruption
+    // class as `missing-child` below, and `getActiveForClaimId` already reports
+    // it softly as `unlinked` / `parent-missing`. One class, one policy.
+    const parent = ctx.readState(linkage.parentRunId);
+    const liveness = classifyDelegationLiveness(parent, linkage);
+    if (liveness.kind === 'parent-unreadable') {
+      return {
+        status: 'missing-parent',
+        parentRunId: linkage.parentRunId,
+        parentStepId: linkage.parentStepId,
+      };
+    }
+    // Terminal evidence outlives the parent-side delegation. Checked before
+    // classification, not after: every terminal child also reads closed on the
+    // parent side (its substep is `done`), so the order is what decides. The
+    // matching terminal-skip in `RunbookStore.invalidateClosedDelegatedClaims`
+    // (`storage/runbook-store.ts`) is what keeps such a claim active for this
+    // read, so the two orderings must stay tied together — checking liveness
+    // first reports `delegation-superseded` for a claim whose real refusal is
+    // the terminal child it can still name. Both are non-retryable; the loss is
+    // diagnostic precision, not safety. `parent-unreadable` stays ahead of
+    // this: it is a corruption signal about the state this read depends on.
+    const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
+    let existingLiveClaim:
+      | { readonly claim: ClaimRecord; readonly state: RunbookState }
+      | undefined;
+    if (existingForDelegation !== undefined) {
+      const existingState = ctx.readState(existingForDelegation.controlledRunId);
+      if (!existingState) {
+        // The claim's controlled run state cannot be read. The FK cascade
+        // (`claims.controlled_run` ON DELETE CASCADE) deletes a claim with its
+        // run, so this is not reachable through a supported delete — but the
+        // caller-visible refusal taxonomy (superseded plan Task 6) returns a
+        // typed `missing-child` rather than throwing, so a corrupted database
+        // degrades gracefully.
+        return { status: 'missing-child', childRunId: existingForDelegation.controlledRunId };
+      }
+      if (existingState.lifecycle === 'completed' || existingState.lifecycle === 'stopped') {
         return {
-          status: 'already-claimed',
+          status: 'terminal-child',
+          childRunId: existingForDelegation.controlledRunId,
+          lifecycle: existingState.lifecycle,
+        };
+      }
+      existingLiveClaim = { claim: existingForDelegation, state: existingState };
+    }
+
+    if (liveness.kind === 'closed') {
+      return {
+        status: 'delegation-superseded',
+        parentRunId: linkage.parentRunId,
+        parentStepId: linkage.parentStepId,
+        childRunId,
+      };
+    }
+
+    if (existingLiveClaim !== undefined) {
+      if (!linkageMatchesLinkage(existingLiveClaim.state.parentLinkage, linkage)) {
+        return {
+          status: 'linkage-mismatch',
           childRunId: existingLiveClaim.claim.controlledRunId,
-          claim: existingLiveClaim.claim,
+          incoming: linkage,
+          persisted: existingLiveClaim.state.parentLinkage,
         };
       }
+      return {
+        status: 'already-claimed',
+        childRunId: existingLiveClaim.claim.controlledRunId,
+        claim: existingLiveClaim.claim,
+      };
+    }
 
-      const childState = ctx.readState(childRunId);
-      if (!childState) {
-        return { status: 'missing-child', childRunId };
-      }
-      if (childState.lifecycle === 'completed' || childState.lifecycle === 'stopped') {
-        return { status: 'terminal-child', childRunId, lifecycle: childState.lifecycle };
-      }
-      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
+    const childState = ctx.readState(childRunId);
+    if (!childState) {
+      return { status: 'missing-child', childRunId };
+    }
+    if (childState.lifecycle === 'completed' || childState.lifecycle === 'stopped') {
+      return { status: 'terminal-child', childRunId, lifecycle: childState.lifecycle };
+    }
+    if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
+      return {
+        status: 'linkage-mismatch',
+        childRunId,
+        incoming: linkage,
+        persisted: childState.parentLinkage,
+      };
+    }
+
+    const existing = this.findClaimByChildRunId(session.claims, childRunId);
+    if (existing !== undefined) {
+      const existingLinkage = claimRecordToDelegationLinkage(existing);
+      if (!linkageMatchesLinkage(existingLinkage, linkage)) {
         return {
           status: 'linkage-mismatch',
           childRunId,
           incoming: linkage,
-          persisted: childState.parentLinkage,
+          persisted: existingLinkage,
         };
       }
+      return { status: 'already-claimed', childRunId, claim: existing };
+    }
 
-      const existing = this.findClaimByChildRunId(session.claims, childRunId);
-      if (existing !== undefined) {
-        const existingLinkage = claimRecordToDelegationLinkage(existing);
-        if (!linkageMatchesLinkage(existingLinkage, linkage)) {
-          return {
-            status: 'linkage-mismatch',
-            childRunId,
-            incoming: linkage,
-            persisted: existingLinkage,
-          };
-        }
-        return { status: 'already-claimed', childRunId, claim: existing };
-      }
-
-      const parsed = parseClaimBearer(generateClaimBearer());
-      const delegation: DelegationClaimLinkage = {
-        childRunId,
-        tokenHash: linkage.tokenHash,
-        parentRunId: linkage.parentRunId,
-        parentStepId: linkage.parentStepId,
-        parentStep: linkage.parentStep,
-        parentFrameKey: linkage.parentFrameKey,
-        parentEntry: linkage.parentEntry,
-      };
-      const claim = createClaimRecord({
-        claimKey: parsed.claimKey,
-        secretHash: hashClaimSecret(parsed.secret),
-        controlledRunId: childRunId,
-        delegation,
-        grants: createDelegatedChildGrants({ linkage: delegation }),
-        now,
-      });
-      session.claims[claim.claimKey] = claim;
-      return { status: 'claimed', claimId: parsed.claimId, claim };
+    const parsed = parseClaimBearer(generateClaimBearer());
+    const delegation: DelegationClaimLinkage = {
+      childRunId,
+      tokenHash: linkage.tokenHash,
+      parentRunId: linkage.parentRunId,
+      parentStepId: linkage.parentStepId,
+      parentStep: linkage.parentStep,
+      parentFrameKey: linkage.parentFrameKey,
+      parentEntry: linkage.parentEntry,
+    };
+    const claim = createClaimRecord({
+      claimKey: parsed.claimKey,
+      secretHash: hashClaimSecret(parsed.secret),
+      controlledRunId: childRunId,
+      delegation,
+      grants: createDelegatedChildGrants({ linkage: delegation }),
+      now,
     });
+    session.claims[claim.claimKey] = claim;
+    return { status: 'claimed', claimId: parsed.claimId, claim };
   }
 
   /**
