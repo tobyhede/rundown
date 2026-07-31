@@ -87,6 +87,15 @@ describe('stash command', () => {
   });
 
   afterEach(async () => {
+    // Unconditional, because `restoreAllMocks()` as the last statement of a test
+    // body only runs when every assertion above it passed. The one test here that
+    // spies does so on `SessionService.prototype` — shared by every case in this
+    // file — so a single failing assertion would leak three live spies into the
+    // ~30 tests that follow, and it is the test most likely to fail that would
+    // leak them. Verified: with the spy test forced to fail, a probe asserting
+    // `jest.isMockFunction(SessionService.prototype.stash) === false` passes with
+    // this line and fails without it.
+    jest.restoreAllMocks();
     await workspace.cleanup();
   });
 
@@ -115,7 +124,6 @@ describe('stash command', () => {
       unlockedActiveReads: getActive.mock.calls.length,
       bearerBlindStashes: stashRunbook.mock.calls.length,
     }).toEqual({ atomicStash: 1, unlockedActiveReads: 0, bearerBlindStashes: 0 });
-    jest.restoreAllMocks();
   });
 
   it('moves active runbook to stashed', async () => {
