@@ -1927,6 +1927,73 @@ describe('RunbookCompletionService', () => {
       expect(acquireSpy).not.toHaveBeenCalled();
     });
 
+    describe.each([
+      {
+        label: 'a fresh target',
+        seed: (base: RunbookState): RunbookState => base,
+        expected: 'recorded',
+      },
+      {
+        label: 'a substep the cursor has already moved past',
+        seed: (base: RunbookState): RunbookState => ({
+          ...base,
+          step: '2',
+          substep: undefined,
+          substepStates: [
+            { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+          ],
+        }),
+        expected: 'duplicate',
+      },
+      {
+        label: 'a completion row that already exists',
+        seed: (base: RunbookState): RunbookState => ({
+          ...base,
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+        expected: 'duplicate',
+      },
+    ])(
+      'prepareManualCompletion agrees with recordManualCompletionUnlocked for $label',
+      ({ seed, expected }) => {
+        // The fenced seam prepares a manual completion purely, while the locking
+        // twin records it. They are two renderings of ONE decision, so they must
+        // never disagree about duplicate-vs-recorded or about the completion key
+        // — a divergence would let the same substep be resolved twice through
+        // different commands. Pins the agreement before the two share a core.
+        it('reaches the same status and key', async () => {
+          const seeded = seed(state({ substep: '1' }));
+          await manager.save(seeded);
+          const args = {
+            runbookId,
+            currentState: seeded,
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            result: 'pass' as const,
+            agentId: 'manual',
+            completedAt: '2026-01-01T00:00:00.000Z',
+          };
+
+          const prepared = service.prepareManualCompletion(args);
+          const recorded = await service.recordManualCompletionUnlocked(args);
+
+          expect(prepared.status).toBe(expected);
+          expect(recorded.status).toBe(expected);
+          expect(prepared.key).toBe(recorded.key);
+        });
+      },
+    );
+
     it('drainResolvedCompletions wraps the unlocked twin in exactly one lock scope', async () => {
       const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');

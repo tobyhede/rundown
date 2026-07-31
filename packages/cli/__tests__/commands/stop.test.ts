@@ -406,6 +406,11 @@ The result is {{ Result }}.
       expect(result.exitCode).not.toBe(0);
       const emitted = `${result.stdout}\n${result.stderr}`;
       expect(emitted).toMatch(/RECOVERY_REQUIRED/);
+      // The probe's own failure is never substituted for the real diagnosis.
+      // A recovery-phase read that blows up must not become the message the
+      // operator acts on — they would chase an IO error instead of the run
+      // that actually needs recovering.
+      expect(emitted).not.toMatch(/probe blew up/);
     });
 
     it('propagates non-invalid sendAndSync errors instead of cleaning up', async () => {

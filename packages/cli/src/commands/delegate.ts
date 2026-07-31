@@ -6,7 +6,6 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
-  CompletionLock,
   DelegationLock,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
@@ -638,7 +637,6 @@ function buildDelegateSeam(
     delegationLock: new DelegationLock(cwd),
     // Required dep. This seam never drives transitions, but a real lock is
     // harmless and avoids a stub that would lie if that ever changed.
-    completionLock: new CompletionLock(cwd),
   });
 }
 

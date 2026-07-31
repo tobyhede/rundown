@@ -448,11 +448,14 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
             epoch: attempt.epoch,
           }).changes;
         if (cleared === 0) continue;
+        // 'released', not 'committed': this attempt never crossed the effect
+        // boundary and wrote no state, so it must not satisfy the durable-commit
+        // probe. `reason` is left alone — it is a closed recovery-reason union
+        // (see `validateReason`) and a release is not a recovery.
         const closed = tx
           .prepare(
             `UPDATE execution_attempts
-                SET phase = 'committed', finished_at = :finishedAt,
-                    reason = COALESCE(reason, 'released_before_effect')
+                SET phase = 'released', finished_at = :finishedAt
               WHERE run_id = :runId AND exec_epoch = :epoch
                 AND exec_token = :hash AND phase = 'claimed'`,
           )

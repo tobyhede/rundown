@@ -1251,12 +1251,18 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     });
+    // 'stack-pop' retains the claim exactly as 'release-runbook' does: the run
+    // reached terminal under its own steam, so its bearer becomes a tombstone
+    // rather than being deleted. Pinned end-to-end against a real store by
+    // `run.test.ts` "retains the run-control claim as a terminal tombstone" —
+    // this mocked runner ignores `terminalRelease`, so it can only pin the
+    // request, never the release itself.
     expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
       expect.objectContaining({
         terminalRelease: {
           onComplete: true,
           onStopped: true,
-          retainClaimsAsTerminal: false,
+          retainClaimsAsTerminal: true,
         },
       }),
     );

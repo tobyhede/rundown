@@ -1286,11 +1286,13 @@ export class SessionService {
    * child matters. Re-arming the guard on a follow-on write would let an
    * unrelated child claiming mid-callback abort it, stranding the
    * already-committed decisive write behind a bare `open_delegated_children`
-   * refusal that reports none of the transitions it committed. Both drain loops
-   * enforce this by arming the guard on their first write only
-   * (`RunbookCompletionService.drainResolvedCompletionsUnlocked` and
-   * `LifecycleCommandService#drainSubstepObservations`), which composes to
-   * exactly one guarded write per scope however the two interleave.
+   * refusal that reports none of the transitions it committed.
+   *
+   * `RunbookCompletionService.drainResolvedCompletionsUnlocked` — the remaining
+   * multi-write callback — enforces this by arming the guard on its first write
+   * only. The lifecycle seam's fenced substep path no longer needs the rule: it
+   * prepares every apply purely and commits them in ONE owned transaction, so
+   * its callback performs exactly one guarded write by construction.
    *
    * Release steps run after the callback returns.
    *

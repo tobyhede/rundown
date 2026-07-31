@@ -3,7 +3,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  CompletionLock,
   DelegationLock,
   RunbookActorService,
   RunbookCompletionService,
@@ -112,7 +111,6 @@ describe('guarded drain composition (real store, real predicate)', () => {
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
       delegationLock: new DelegationLock(tmp),
-      completionLock: new CompletionLock(tmp),
     });
   });
 
@@ -142,7 +140,7 @@ describe('guarded drain composition (real store, real predicate)', () => {
     return key;
   }
 
-  it('commits no partial advance when a delegated child claims during preparation', async () => {
+  it('refuses with open_delegated_children and commits no partial advance', async () => {
     // A real initialised state: the machine snapshot is what lets the applies below
     // run for real instead of dying inside sendAndSync.
     const created = await manager.create(
@@ -205,7 +203,10 @@ describe('guarded drain composition (real store, real predicate)', () => {
     expect(claimedId).toBeDefined();
     expect((await sessionService.verifyClaimId(assertClaimId(claimedId!))).status).toBe('verified');
 
-    expect(outcome.kind).toBe('recovery_required');
+    // The in-transaction guard aborts before the first UPDATE, so this refusal is
+    // provably write-free — it stays the actionable `open_delegated_children`
+    // rather than being escalated into a recovery the run does not need.
+    expect(outcome.kind).toBe('open_delegated_children');
 
     // Neither prepared completion was consumed: record + drain is all-or-none.
     await expect(

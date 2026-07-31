@@ -15,7 +15,6 @@ import {
   type LifecycleTerminalReleasePolicy,
 } from '../../src/runbook/lifecycle-command-service.js';
 import { DelegationLock } from '../../src/runbook/delegation-lock.js';
-import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { claimActivity, DEFAULT_IDLE_AFTER_MS } from '../../src/runbook/claim-activity.js';
 import {
   CLAIM_ID_PREFIX,
@@ -318,7 +317,6 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
       delegationLock: new DelegationLock(testDir),
-      completionLock: new CompletionLock(testDir),
     });
     const state = await manager.create({ source: 'project', path: 'seam.md' }, mockRunbook, {
       runbookPath: 'seam.md',

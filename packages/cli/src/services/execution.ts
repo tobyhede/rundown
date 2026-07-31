@@ -191,6 +191,14 @@ interface ObserveAndOrchestrateArgs {
   command?: string;
   syncSnapshot: unknown;
   postState: RunbookState;
+  /**
+   * Whether `postState` already carries committed active-entry metadata.
+   *
+   * The fenced command path projects active-entry inside its `compute` and
+   * commits it with the state, so re-deriving here would score the SAME
+   * transition as a second frame switch and bump the entry twice.
+   */
+  entryAlreadyProjected?: boolean;
 }
 
 type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
@@ -810,8 +818,11 @@ async function observeAndOrchestrate({
   command,
   syncSnapshot,
   postState,
+  entryAlreadyProjected,
 }: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
-  const ensured = await lifecycleService.ensureActiveEntry(runbookId, currentState, postState);
+  const updatedState = entryAlreadyProjected
+    ? postState
+    : (await lifecycleService.ensureActiveEntry(runbookId, currentState, postState)).state;
 
   const orchestration = await orchestrateTransition({
     sessionService,
@@ -820,7 +831,7 @@ async function observeAndOrchestrate({
     steps,
     currentStep,
     previousState: currentState,
-    updatedState: ensured.state,
+    updatedState,
     snapshot: syncSnapshot,
     result,
     computeActionResult,
@@ -1103,6 +1114,10 @@ export async function runExecutionLoop(
   if (!state) return 'stopped';
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
+  // Unconditional, in every release mode: the terminal session release is now
+  // committed inside the fenced command mutation, so `orchestrateTransition`
+  // must not also release or the run is released twice — once inside the owned
+  // transaction and once outside it.
   const terminalPolicy = EXECUTION_TERMINAL_NO_STACK_POLICY;
 
   const commandServices =
@@ -1486,7 +1501,15 @@ export async function runExecutionLoop(
       terminalRelease: {
         onComplete: terminalReleaseMode !== 'defer-to-caller',
         onStopped: terminalReleaseMode !== 'defer-to-caller',
-        retainClaimsAsTerminal: terminalReleaseMode === 'release-runbook',
+        // Retained in BOTH releasing modes, matching the natural pass/fail
+        // release this fence replaced (`transition-orchestrator.ts`
+        // applyTerminalSideEffects). Explicit teardown — abort/stop/complete —
+        // is what deletes a claim; a run reaching terminal under its own steam
+        // leaves a tombstone so `rd pass/fail/status --claim-id` resolves
+        // `terminal` rather than `missing`. That applies to the run-control
+        // claim `rd run` mints over a 'stack-pop' root just as much as to a
+        // delegated child's bearer, so this must not be keyed on the mode.
+        retainClaimsAsTerminal: true,
       },
       compute: async (capturedState) => {
         previousState = lifecycleService.deriveActiveEntry(capturedState).state;
@@ -1584,12 +1607,34 @@ export async function runExecutionLoop(
       result: commandOutput.result,
       transitionPolicy: terminalPolicy,
       command: displayCommand,
+      // `compute` above projected and committed active-entry with the state.
+      entryAlreadyProjected: true,
     });
     if (transitionResult.status === 'done') {
       return 'done';
     }
     if (transitionResult.status === 'stopped') {
       return 'stopped';
+    }
+    // The fenced commit released this run on `state.lifecycle`, which is assigned
+    // from the snapshot VALUE alone while the orchestrated observation also
+    // demands a terminal snapshot STATUS. When only the lifecycle went terminal
+    // the loop must still stop and emit the matching terminal event — continuing
+    // would drive the next step of a run this process already released.
+    const lifecycle = cmdSync.state.lifecycle;
+    if (lifecycle === 'completed' || lifecycle === 'stopped') {
+      emitter.emit(
+        deriveTerminalDrainObservationEvent({
+          steps,
+          currentStep,
+          previousState,
+          updatedState: cmdSync.state,
+          snapshot: cmdSync.snapshot,
+          status: lifecycle === 'completed' ? 'done' : 'stopped',
+          result: commandOutput.result,
+        }),
+      );
+      return lifecycle === 'completed' ? 'done' : 'stopped';
     }
     currentState = transitionResult.state;
   }

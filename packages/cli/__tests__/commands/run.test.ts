@@ -305,6 +305,64 @@ Bundled task.
       const session = await readSession(workspace);
       expect(session.active).toBeNull();
     });
+
+    it('bumps the active entry exactly once per command-driven step advance', async () => {
+      // The fenced command commit projects active-entry metadata itself, and
+      // `observeAndOrchestrate` then calls `ensureActiveEntry` over the SAME
+      // transition. Both treat it as a frame switch, so a second bump would
+      // double-count entries and push each new frame's completion scope past the
+      // entry the machine actually recorded against it.
+      const runbook = createRunbook({
+        title: 'Entry Bump',
+        steps: [
+          { title: 'One', pass: 'CONTINUE', fail: 'STOP', command: 'rd echo --result pass' },
+          { title: 'Two', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result pass' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'entries.runbook.md'), runbook);
+
+      const result = await runCliInProcess('run runbooks/entries.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const runId = parseConcatenatedJson(result.stdout).find(
+        (event): event is Record<string, unknown> =>
+          typeof event === 'object' && event !== null && 'claim_id' in event,
+      )?.runbookId as string;
+      const state = await readRunbookState(workspace, runId);
+
+      // Exact counts, not a shape assertion: the second frame is reached by ONE
+      // frame switch, which bumps its entry to 2. A second bump over the same
+      // transition reads as a re-entry that never happened and shifts the frame's
+      // completion scope off the entry the machine recorded against it.
+      expect(state!.frameEntryCounts).toEqual({ '1|': 1, '2|': 2 });
+      expect(state!.activeEntry).toBe(2);
+    });
+
+    it('retains the run-control claim as a terminal tombstone after a command completion', async () => {
+      // `rd run` mints a run-control claim over the root run and drives the loop
+      // in 'stack-pop' mode. When a command step carries the run terminal, the
+      // release folded into that command's fenced commit must RETAIN the claim:
+      // deleting it makes a post-completion `rd pass/fail/status --claim-id`
+      // resolve `missing` instead of `terminal`, so the orchestrator can no
+      // longer confirm-or-conflict against the outcome it was handed at start.
+      const result = await runCliInProcess('run runbooks/simple.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const started = parseConcatenatedJson(result.stdout).find(
+        (event): event is Record<string, unknown> =>
+          typeof event === 'object' && event !== null && 'claim_id' in event,
+      );
+      const claimId = started?.claim_id;
+      const runId = started?.runbookId;
+      expect(typeof claimId).toBe('string');
+      expect(typeof runId).toBe('string');
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).not.toContain(runId);
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({ controlledRunId: runId }),
+      );
+    });
   });
 
   describe('option validation', () => {

@@ -4,7 +4,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { openRunbookDriver } from '../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver } from '../../src/runbook/storage/sql-driver.js';
-import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
+import {
+  OpenDelegatedChildrenError,
+  RunbookStore,
+} from '../../src/runbook/storage/runbook-store.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
 import {
   assertClaimGeneration,
@@ -274,6 +277,31 @@ describe('CoreEffectfulMutationExecutor', () => {
 
     expect(result.kind).toBe('recovery_required');
     expect((await store.readPendingRecovery(runId))?.reason).toBe('stale_commit');
+  });
+
+  it('propagates the open-children guard refusal instead of demanding recovery', async () => {
+    // `assertParentAdvanceAllowed` runs BEFORE the first UPDATE and aborts the
+    // BEGIN IMMEDIATE transaction, so this refusal is provably write-free. It is
+    // also a domain answer the caller can act on ("collect the open children
+    // first"), which `runGuardedParentAdvance` turns into `open_delegated_children`.
+    // Recording recovery here would park a run whose state never changed and
+    // replace an actionable refusal with an opaque one.
+    const { runId, state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const abandon = jest.spyOn(lease, 'abandonToRecovery');
+    const guardError = new OpenDelegatedChildrenError([]);
+
+    await expect(
+      executor.run({
+        captured,
+        compute: () => Promise.resolve(preparedStep2(state)),
+        commit: () => Promise.reject(guardError),
+      }),
+    ).rejects.toBe(guardError);
+
+    expect(abandon).not.toHaveBeenCalled();
+    expect(await store.readPendingRecovery(runId)).toBeNull();
+    expect((await store.loadRun(runId))?.step).toBe('1');
   });
 
   it('reconciles a lost response from an already durable exact commit', async () => {

@@ -38,6 +38,7 @@ import type {
 } from './storage/execution-lease.js';
 import type { RunbookStore } from './storage/runbook-store.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
+import { isOpenDelegatedChildrenError } from './storage/runbook-store.js';
 import type { ActorSyncResult } from './actor-service.js';
 import { getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
@@ -242,10 +243,21 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
         `The effect for run ${attempt.runId} completed but its refused commit could not be recorded for recovery.`,
       );
     } catch (commitError) {
-      // A thrown commit has an ambiguous durability outcome: it may have failed
-      // before commit, or committed durably before its caller observed an error.
-      // Either way the cause has no home in a refusal variant, so log it before
-      // deciding — symmetrically with the compute branch above.
+      // The one commit failure whose durability is NOT ambiguous. The open-child
+      // guard runs inside the commit transaction but strictly before its first
+      // UPDATE, and throwing aborts the BEGIN IMMEDIATE transaction, so nothing
+      // was written — by construction, not by inference. It is also a domain
+      // answer (`open_delegated_children`) that the caller acts on rather than
+      // retries, so propagating it cannot invite the effect repeat the ambiguous
+      // branch below guards against. Recording recovery instead would park a run
+      // whose state never changed and downgrade an actionable refusal to an
+      // opaque one.
+      if (isOpenDelegatedChildrenError(commitError)) throw commitError;
+      // Every other thrown commit has an ambiguous durability outcome: it may
+      // have failed before commit, or committed durably before its caller
+      // observed an error. Either way the cause has no home in a refusal
+      // variant, so log it before deciding — symmetrically with the compute
+      // branch above.
       void logger.warn('commit failed after the execution boundary', {
         runId: attempt.runId,
         epoch: attempt.epoch,
@@ -327,6 +339,9 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
         'The aggregate effect completed but its refused commit could not be recorded for recovery.',
       );
     } catch (commitError) {
+      // See the single-run branch: the open-child guard aborts before the first
+      // UPDATE, so this refusal is provably write-free and belongs to the caller.
+      if (isOpenDelegatedChildrenError(commitError)) throw commitError;
       void logger.warn('aggregate commit failed after the execution boundary', {
         runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
         reason,

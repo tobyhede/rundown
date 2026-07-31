@@ -307,6 +307,78 @@ export function deriveTerminalDrainObservationEvent(
   };
 }
 
+/** Input for reconciling a fenced observation against its committed lifecycle. */
+export interface FencedTerminalReconciliationInput {
+  /** Observation derived from the committed snapshot. */
+  readonly observation: TransitionObservation;
+  /** All resolved runbook steps. */
+  readonly steps: readonly ResolvedStep[];
+  /** Step the transition started from. */
+  readonly currentStep: ResolvedStep;
+  /** Persisted state before the machine event was sent. */
+  readonly previousState: RunbookState;
+  /** Committed state whose `lifecycle` decided the terminal release. */
+  readonly updatedState: RunbookState;
+  /** Raw XState snapshot for the committed mutation. */
+  readonly snapshot: unknown;
+  /** Result signal that triggered the machine transition. */
+  readonly result: 'pass' | 'fail';
+}
+
+/** A fenced observation aligned with the lifecycle the fence actually released on. */
+export interface ReconciledFencedTerminal {
+  /** Authoritative status: terminal whenever the committed lifecycle is terminal. */
+  readonly status: 'continue' | 'done' | 'stopped';
+  /** Observation events, topped up with the terminal event when one was missing. */
+  readonly events: readonly TransitionObservationEvent[];
+}
+
+/**
+ * Align a fenced transition's reported status with the lifecycle it released on.
+ *
+ * The execution fence folds its terminal session release into the same
+ * transaction as the state write, and decides it from the committed
+ * `state.lifecycle`. `lifecycle` is assigned from `snapshot.value` alone, while
+ * {@link deriveTransitionObservation} additionally requires
+ * `snapshot.status === 'done'`, so a snapshot that reached the terminal VALUE
+ * without settling to a terminal STATUS persists a terminal lifecycle under a
+ * non-terminal observation. Left unreconciled the caller is told execution
+ * continues on a run the fence already released.
+ *
+ * The implication only runs one way — a terminal observation always implies a
+ * terminal lifecycle — so this only ever tops the observation up, never down.
+ *
+ * @param input - The derived observation plus the context for a terminal event.
+ * @returns The authoritative status and the events to emit.
+ */
+export function reconcileFencedTerminalObservation(
+  input: FencedTerminalReconciliationInput,
+): ReconciledFencedTerminal {
+  if (input.observation.status !== 'continue') {
+    return { status: input.observation.status, events: input.observation.events };
+  }
+  const lifecycle = input.updatedState.lifecycle;
+  if (lifecycle !== 'completed' && lifecycle !== 'stopped') {
+    return { status: 'continue', events: input.observation.events };
+  }
+  const status = lifecycle === 'completed' ? 'done' : 'stopped';
+  return {
+    status,
+    events: [
+      ...input.observation.events,
+      deriveTerminalDrainObservationEvent({
+        steps: input.steps,
+        currentStep: input.currentStep,
+        previousState: input.previousState,
+        updatedState: input.updatedState,
+        snapshot: input.snapshot,
+        status,
+        result: input.result,
+      }),
+    ],
+  };
+}
+
 /** Input for deriving `rd goto` action display from core position helpers. */
 export interface GotoActionBlockInput {
   /** All resolved runbook steps, used to calculate total numbered steps. */

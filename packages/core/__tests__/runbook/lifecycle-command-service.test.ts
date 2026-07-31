@@ -12,7 +12,6 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
-  CompletionLock,
   DelegationLock,
   DelegationLockTimeoutError,
   DelegationScanService,
@@ -186,7 +185,6 @@ describe('RunbookLifecycleCommandService', () => {
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
       delegationLock: new DelegationLock(tmp),
-      completionLock: new CompletionLock(tmp),
     });
   });
 
@@ -294,7 +292,6 @@ describe('RunbookLifecycleCommandService', () => {
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
       delegationLock: new DelegationLock(tmp),
-      completionLock: new CompletionLock(tmp),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -2705,6 +2702,48 @@ describe('RunbookLifecycleCommandService', () => {
       expect(top?.step).toBe('1');
     });
 
+    it('reports terminal when the prepared lifecycle is terminal but the snapshot is not', async () => {
+      // `deriveActorStatePatch` assigns `lifecycle` from `snapshot.value` alone,
+      // while `deriveTransitionObservation` requires `snapshot.status === 'done'`
+      // AND `value === 'COMPLETE'`. The two signals are independent (see
+      // `deriveTerminalDrainObservationEvent`'s contract), so a snapshot that has
+      // reached the COMPLETE value without settling to a done status persists a
+      // terminal lifecycle under a non-terminal observation.
+      //
+      // The fenced release fires on the persisted lifecycle, so if the seam took
+      // its reported status from the observation alone it would release the run
+      // from the session while telling the caller execution continues — a
+      // released run the agent is still told to drive.
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+
+      const realPrepare = actorService.prepareActorMutation.bind(actorService);
+      jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+        const prepared = await realPrepare(...args);
+        return {
+          ...prepared,
+          nextState: { ...prepared.nextState, lifecycle: 'completed' as const },
+          snapshot: { status: 'active', value: 'COMPLETE' },
+        };
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // The release committed with the state, so the outcome must agree.
+      expect(await manager.loadSession()).toEqual(
+        expect.objectContaining({ defaultStack: expect.not.arrayContaining([namedRunId]) }),
+      );
+      expect(outcome.status).toBe('done');
+      expect(outcome.events.map((event) => event.type)).toContain('RUNBOOK_COMPLETED');
+    });
+
     it('refuses an unknown --run id with the typed unknown_run outcome', async () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState({ id: namedRunId }));
@@ -2748,7 +2787,12 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('open_delegated_children');
     });
 
-    it('requires recovery when a racing child claim lands after the effect boundary', async () => {
+    it('refuses a racing child claim through the in-transaction guard, without recovery', async () => {
+      // The claim commits after the cheap pre-check and inside the fenced
+      // preparation, so only the in-transaction guard can catch it. That guard
+      // aborts the commit transaction before its first UPDATE, so the run is
+      // provably untouched: the caller gets the actionable refusal and the run
+      // is NOT parked in recovery for a race that changed nothing.
       loadStepsImpl = () => twoSteps;
       const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac');
       const linkage = linkageFor(namedRunId, 'a');
@@ -2773,9 +2817,12 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(outcome.kind).toBe('recovery_required');
+      expect(outcome.kind).toBe('open_delegated_children');
       expect(claimResult?.kind).toBe('committed');
       expect((await manager.load(namedRunId))?.step).toBe('1');
+      // No recovery was recorded: a write-free refusal leaves the run usable.
+      const store = await getRunbookStore(tmp);
+      expect(await store.readPendingRecovery(namedRunId)).toBeNull();
     });
 
     it('commits substep recording and machine advancement as one fenced mutation', async () => {
@@ -2950,6 +2997,31 @@ describe('RunbookLifecycleCommandService', () => {
       { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
       { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
     ];
+
+    it('does not bump the active entry for a navigation within the same frame', async () => {
+      // The fenced GOTO commits active-entry metadata, and the execution loop it
+      // hands off to derives that metadata again. If the fence also scored the
+      // navigation as a frame re-entry, one `rd goto` would advance the entry
+      // twice. `activeEntry` is what an inline launch intent pins its
+      // `parentEntry` to, so an extra bump makes a recovered intent stop
+      // matching its own child's linkage (RD inline-child recovery).
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: runId }));
+      const before = await manager.load(runId);
+
+      const outcome = await seam.runNavigationMutation({
+        runId,
+        callerEvidence: runControlEvidence(runId),
+        steps: twoSteps,
+        target: { step: '1' },
+        terminalReleaseMode: 'stack-pop',
+      });
+
+      expect(outcome.kind).toBe('applied');
+      const after = await manager.load(runId);
+      expect(after?.activeEntry).toBe(before?.activeEntry ?? 1);
+      expect(after?.frameEntryCounts).toEqual(before?.frameEntryCounts ?? { '1|': 1 });
+    });
 
     it('allows bare navigation on a standalone run (stack-pop release)', async () => {
       loadStepsImpl = () => twoSteps;
@@ -4179,6 +4251,37 @@ describe('RunbookLifecycleCommandService', () => {
         expect(
           Object.keys((await manager.load(claimParentRunId))?.resolvedCompletions ?? {}),
         ).toHaveLength(1);
+      });
+
+      it('still closes a claimed child when the delegating parent holds no controlling claim', async () => {
+        // The parent is captured with the BARE `captureRunAuthorityState`, which
+        // refuses `claim_superseded` for a run with no active controlling claim.
+        // A delegating parent in that state is ordinary — its own run-control
+        // bearer may have been released or pruned while the delegation is still
+        // live — so folding it into the aggregate as a hard target strands a
+        // child that can then never be completed. The child close and its
+        // bearer's terminal answer must not depend on the parent's own claim.
+        const claimId = await setupClaim('running');
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        // Drop the parent's run-control claim, leaving the parent run row and
+        // the live delegation intact.
+        unwrapSessionMutation(await sessionService.releaseRunbook(claimParentRunId));
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        expect(out).toMatchObject({ kind: 'applied_claim', status: 'completed' });
+        expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
       });
 
       it('claim complete returns claim_grant_required when the claim lacks mutate-run grant', async () => {

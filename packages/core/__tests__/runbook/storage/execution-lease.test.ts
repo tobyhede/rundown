@@ -528,10 +528,38 @@ describe('all-or-none multi-run acquisition', () => {
         .all<{ readonly run_id: string; readonly phase: string }>(),
     );
     expect(releasedOwner).toBeNull();
+    // `a` was torn down before the boundary, so it closes as 'released'; `b` was
+    // already moved to 'committed' out from under us and is left untouched.
     expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
-      [a.state.id]: 'committed',
+      [a.state.id]: 'released',
       [b.state.id]: 'committed',
     });
+  });
+
+  it('leaves a released-before-effect attempt distinguishable from a durable commit', async () => {
+    // `releaseClaimed` closes an attempt that never crossed the effect boundary.
+    // It must not look like a durable state commit: `isExactAttemptCommitted`
+    // reads `phase = 'committed'` as proof that the prepared state was written,
+    // and it must not write a `reason` outside the closed recovery-reason union
+    // that `validateReason` accepts, or a later read of that row fails hard.
+    const a = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+
+    await lease.releaseClaimed(acquired.value);
+
+    const row = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT phase, reason, finished_at FROM execution_attempts WHERE run_id = :runId')
+        .get<{
+          readonly phase: string;
+          readonly reason: string | null;
+          readonly finished_at: string | null;
+        }>({ runId: a.state.id }),
+    );
+    expect(row?.phase).toBe('released');
+    expect(row?.reason).toBeNull();
+    expect(row?.finished_at).not.toBeNull();
   });
 
   it('abandons every effect-started attempt to recovery in one transaction', async () => {

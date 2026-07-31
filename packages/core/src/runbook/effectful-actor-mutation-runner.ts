@@ -25,6 +25,8 @@ import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import { openRunbookStore } from './storage/store-registry.js';
 import { projectRunbookRelease } from './session-service.js';
+import { getErrorMessage } from '../errors.js';
+import { logger } from '../logger.js';
 import {
   ExecutionRecoveryService,
   type RecoveryActorFactory,
@@ -82,6 +84,19 @@ export interface EffectfulActorMutationSetTarget {
   readonly runId: RunId;
   /** Presented claim authority for this run, when required. */
   readonly claimKey?: ClaimLookupKey;
+  /**
+   * Whether a capture refusal drops this target instead of refusing the set.
+   *
+   * For a target the mutation only writes opportunistically — a delegating
+   * parent receiving a terminal report — a run that cannot be captured must not veto the
+   * whole aggregate. A delegating parent legitimately has no controlling claim
+   * of its own (released or pruned while its delegation is still live), and a
+   * bare capture refuses exactly that with `claim_superseded`. Treating it as
+   * required would strand a child that can then never be closed. Dropped
+   * targets are absent from the `captured` array, so preparation sees the same
+   * shape it does when the target was never named.
+   */
+  readonly optional?: boolean;
 }
 
 /** Exact state and authority captured for one aggregate target. */
@@ -229,13 +244,25 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
 
     const { driver, store } = await openRunbookStore(this.cwd);
     const captured: CapturedActorMutationRun[] = [];
+    const droppedRunIds = new Set<RunId>();
     for (const target of input.targets) {
       const result =
         target.claimKey === undefined
           ? await store.captureRunAuthorityState(target.runId)
           : await store.captureAuthorityState(target.runId, target.claimKey);
-      if (result.kind !== 'captured') return result;
+      if (result.kind !== 'captured') {
+        if (!target.optional) return result;
+        void logger.debug('dropping optional aggregate target that could not be captured', {
+          runId: target.runId,
+          refusal: result.kind,
+        });
+        droppedRunIds.add(target.runId);
+        continue;
+      }
       captured.push({ authority: result.authority, state: result.state });
+    }
+    if (captured.length === 0) {
+      throw new Error('Aggregate actor mutation captured no required target.');
     }
 
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
@@ -258,13 +285,19 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
             next: member.nextState,
           };
         });
+        // A release names an owned member, so a dropped optional target takes
+        // its release with it — releasing a run this transaction does not own
+        // would be an unfenced session write.
+        const releases = (input.releases ?? []).filter(
+          (release) => !droppedRunIds.has(release.runId),
+        );
         const committed = await store.commitOwnedRunSet({
           members,
-          ...((input.releases?.length ?? 0) === 0
+          ...(releases.length === 0
             ? {}
             : {
                 updateSession: (session) => {
-                  for (const release of input.releases ?? []) {
+                  for (const release of releases) {
                     projectRunbookRelease(session, release.runId, {
                       retainClaimsAsTerminal: release.retainClaimsAsTerminal,
                     });
@@ -281,9 +314,26 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
     if (result.kind !== 'aggregate_recovery_required') return result;
 
     for (const interrupted of result.attempts) {
-      const outcome = await new ExecutionRecoveryService(store, (state) =>
-        input.makeRecoveryActor(interrupted.runId, state),
-      ).recover(interrupted.runId, interrupted.epoch);
+      // Best-effort per member. This loop exists to DOWNGRADE an ambiguous
+      // aggregate effect into a typed outcome that names every run needing
+      // recovery; letting one member's failure escape would replace that
+      // outcome with an opaque throw while leaving the whole set
+      // `recovery_pending` and the caller uninformed about which runs those
+      // are. The attempt stays pending either way, so a later pass — or
+      // dead-owner recovery — can still complete it.
+      let outcome: Awaited<ReturnType<ExecutionRecoveryService['recover']>>;
+      try {
+        outcome = await new ExecutionRecoveryService(store, (state) =>
+          input.makeRecoveryActor(interrupted.runId, state),
+        ).recover(interrupted.runId, interrupted.epoch);
+      } catch (recoveryError) {
+        void logger.warn('aggregate member recovery failed; attempt left pending', {
+          runId: interrupted.runId,
+          epoch: interrupted.epoch,
+          error: getErrorMessage(recoveryError),
+        });
+        continue;
+      }
       switch (outcome.kind) {
         case 'recovered':
         case 'not_pending':

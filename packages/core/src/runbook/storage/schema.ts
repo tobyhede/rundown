@@ -28,7 +28,7 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * created before that index existed would silently run without its invariant,
  * so those databases are rejected rather than migrated.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;
@@ -178,9 +178,15 @@ CREATE TABLE execution_attempts (
   exec_epoch        INTEGER NOT NULL,
   -- Hashed ExecutionToken bearer secret; never the raw token.
   exec_token        TEXT    NOT NULL,
-  -- claimed | effect_started | recovery_pending | committed
+  -- claimed | effect_started | recovery_pending | committed | released
+  --
+  -- 'committed' means the prepared state was durably written under this exact
+  -- (run, epoch, token) -- isExactAttemptCommitted reads it as exactly that
+  -- proof. 'released' is its counterpart for an attempt torn down BEFORE the
+  -- effect boundary: also closed, but with nothing written. The two must stay
+  -- distinct, or a released attempt reads as a durable commit.
   phase             TEXT    NOT NULL
-                            CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed')),
+                            CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed', 'released')),
   owner_pid         INTEGER NOT NULL,
   owner_start_id    TEXT,
   -- Closed recovery-reason union member, NULL until recovery.
