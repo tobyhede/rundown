@@ -382,12 +382,18 @@ describe('SessionService', () => {
       // the guarded write would leave them all green while restoring the #666
       // check-then-act window. `getActive` reads through `loadSession`, so
       // "zero session reads outside the transaction" is what pins atomicity.
+      // `mutateSession` is spied for the same reason even though it is not a
+      // read: a pre-read routed through it is unlocked in the sense that
+      // matters — it commits in a SEPARATE `BEGIN IMMEDIATE`, so the target it
+      // resolves can still change before the guarded write lands. Only the
+      // guarded transaction may run, and only once.
       const state = await manager.create({ source: 'project', path: 'atomic.md' }, mockRunbook, {
         runbookPath: 'atomic.md',
       });
       await sessionService.pushRunbook(state.id);
       const loadSession = jest.spyOn(manager, 'loadSession');
       const load = jest.spyOn(manager, 'load');
+      const mutateSession = jest.spyOn(manager, 'mutateSession');
       const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
 
       const result = unwrapSessionMutation(await sessionService.stash());
@@ -395,12 +401,18 @@ describe('SessionService', () => {
       expect(result.status).toBe('stashed');
       // Asserted as one named object so the failure diff says which property
       // moved: a non-zero unlocked read is a resolve-then-commit split, and a
-      // second guarded transaction is the same defect wearing a lock.
+      // second transaction of either kind is the same defect wearing a lock.
       expect({
         guardedTransactions: mutateSessionGuarded.mock.calls.length,
+        separateTransactions: mutateSession.mock.calls.length,
         unlockedSessionReads: loadSession.mock.calls.length,
         unlockedStateReads: load.mock.calls.length,
-      }).toEqual({ guardedTransactions: 1, unlockedSessionReads: 0, unlockedStateReads: 0 });
+      }).toEqual({
+        guardedTransactions: 1,
+        separateTransactions: 0,
+        unlockedSessionReads: 0,
+        unlockedStateReads: 0,
+      });
     });
   });
 
@@ -1754,6 +1766,10 @@ describe('SessionService', () => {
         // rotated between resolve and commit still stashes. That pre-read must
         // call `loadSession`, so "zero unlocked reads, one guarded
         // transaction" is the property that makes the verification atomic.
+        // `mutateSession` is spied alongside them because a pre-read routed
+        // through it would slip past a read-only spy set while still being
+        // check-then-act: it commits in its own `BEGIN IMMEDIATE`, so the
+        // bearer it verifies can still rotate before the guarded write lands.
         const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
           runbookPath: 'solo.md',
         });
@@ -1762,6 +1778,7 @@ describe('SessionService', () => {
         );
         const loadSession = jest.spyOn(manager, 'loadSession');
         const load = jest.spyOn(manager, 'load');
+        const mutateSession = jest.spyOn(manager, 'mutateSession');
         const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
 
         const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
@@ -1769,12 +1786,18 @@ describe('SessionService', () => {
         expect(result.status).toBe('stashed');
         // One named object so the failure diff says which property moved: a
         // non-zero unlocked read is a resolve-then-commit split, and a second
-        // guarded transaction is the same defect wearing a lock.
+        // transaction of either kind is the same defect wearing a lock.
         expect({
           guardedTransactions: mutateSessionGuarded.mock.calls.length,
+          separateTransactions: mutateSession.mock.calls.length,
           unlockedSessionReads: loadSession.mock.calls.length,
           unlockedStateReads: load.mock.calls.length,
-        }).toEqual({ guardedTransactions: 1, unlockedSessionReads: 0, unlockedStateReads: 0 });
+        }).toEqual({
+          guardedTransactions: 1,
+          separateTransactions: 0,
+          unlockedSessionReads: 0,
+          unlockedStateReads: 0,
+        });
       });
 
       it('stashes a run-control claim and takes its run off the default stack', async () => {
