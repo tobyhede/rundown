@@ -100,24 +100,38 @@ describe('sharedClaimRefusal', () => {
 });
 
 describe("sharedClaimRefusal's superseded arm (RD-825)", () => {
-  // `describeSupersededClaim` splits the six `ClaimSupersededReason` values
-  // into two groups that render under different codes: the four where the
-  // *parent* moved past the delegation carry the RD-825 no-retry instruction
-  // under `DELEGATION_SUPERSEDED`; the two where the claim itself was retired
+  // `describeSupersededClaim` splits `ClaimSupersededReason` into two groups
+  // that render under different codes: the ones where the *parent* moved past
+  // the delegation carry the RD-825 no-retry instruction under
+  // `DELEGATION_SUPERSEDED`; the ones where the claim itself was retired
   // (rotated, or its parent unreadable) render under the generic
   // `CLAIMED_RUNBOOK_UNAVAILABLE`. This is the most valuable split in the
   // module, so every reason is driven rather than a representative sample.
-  const reasonCases: ReadonlyArray<{
-    readonly reason: ClaimSupersededReason;
-    readonly code: 'DELEGATION_SUPERSEDED' | 'CLAIMED_RUNBOOK_UNAVAILABLE';
-  }> = [
-    { reason: 'parent-ended', code: 'DELEGATION_SUPERSEDED' },
-    { reason: 'cursor-advanced', code: 'DELEGATION_SUPERSEDED' },
-    { reason: 'resolved', code: 'DELEGATION_SUPERSEDED' },
-    { reason: 'token-reissued', code: 'DELEGATION_SUPERSEDED' },
-    { reason: 'claim-rotated', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' },
-    { reason: 'parent-unreadable', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' },
-  ];
+  //
+  // Declared as a TOTAL map over the union rather than a hand-listed array: a
+  // seventh reason added in core is then a compile error here, instead of a
+  // silently untested arm that a hand-list would never notice.
+  const REASON_CODES: Record<
+    ClaimSupersededReason,
+    'DELEGATION_SUPERSEDED' | 'CLAIMED_RUNBOOK_UNAVAILABLE'
+  > = {
+    'parent-ended': 'DELEGATION_SUPERSEDED',
+    'cursor-advanced': 'DELEGATION_SUPERSEDED',
+    resolved: 'DELEGATION_SUPERSEDED',
+    'token-reissued': 'DELEGATION_SUPERSEDED',
+    'claim-rotated': 'CLAIMED_RUNBOOK_UNAVAILABLE',
+    'parent-unreadable': 'CLAIMED_RUNBOOK_UNAVAILABLE',
+  };
+
+  // `Object.entries` widens the key back to `string`. The assertion restores
+  // only what `REASON_CODES`'s own annotation already guarantees, and it is
+  // deliberately here rather than on the declaration — putting it there is what
+  // would defeat the exhaustiveness check above.
+  const reasonCases = (
+    Object.entries(REASON_CODES) as ReadonlyArray<
+      readonly [ClaimSupersededReason, (typeof REASON_CODES)[ClaimSupersededReason]]
+    >
+  ).map(([reason, code]) => ({ reason, code }));
 
   it.each(reasonCases)('maps reason $reason to $code', ({ reason, code }) => {
     const envelope = sharedClaimRefusal(CLAIM_ID, {
