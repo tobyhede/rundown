@@ -184,6 +184,36 @@ describe('stash command', () => {
     );
   });
 
+  it('refuses to park a run whose persisted schema version is not current', async () => {
+    // The atomicity fix above replaced this path's `getActive()` pre-read — and
+    // with it `RunbookStateManager.load`'s schema-version gate, which the
+    // in-transaction `ctx.readState` did not have. Restoring the pre-read would
+    // reopen the check-then-act race, so the gate moved into
+    // `RunbookStore.readRun`; this pins the caller-visible behaviour it restores.
+    // Persisted state is never migrated: an unreadable version must be reported,
+    // not parsed (CLAUDE.md, State Persistence).
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    expect(state).not.toBeNull();
+    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+
+    const result = await runCliInProcess('stash', workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-999',
+        error: expect.stringContaining(
+          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
+        ),
+      }),
+    );
+    // The decisive assertion: the refusal wrote nothing. A gate that reports and
+    // still parks the run would leave the slot holding unreadable state.
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
+
   it('keeps claimed delegated children out of plain pop', async () => {
     const parent = createRunbook({
       title: 'Parent',
@@ -811,6 +841,33 @@ describe('pop command', () => {
     const afterSession = await readSession(workspace);
     expect(afterSession.stashed).toBeNull();
     expect(afterSession.active).toBe(runbookId);
+  });
+
+  it('refuses to restore a run whose persisted schema version is not current', async () => {
+    // The sibling of the stash case above. `pop` never had the gate — it has
+    // always read through `ctx.readState` — so this is a pre-existing hole the
+    // same `RunbookStore.readRun` check closes, not a regression on this branch.
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    expect(state).not.toBeNull();
+    await runCliInProcess('stash', workspace);
+    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+
+    const result = await runCliInProcess('pop', workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-999',
+        error: expect.stringContaining(
+          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
+        ),
+      }),
+    );
+    // The run stays parked. Recovery is explicit — prune or restart — never an
+    // unstash that makes unreadable state active again.
+    expect((await readSession(workspace)).stashed).toBe(state!.id);
   });
 
   it('emits INVALID_CLAIM_ID for invalid claim id', async () => {

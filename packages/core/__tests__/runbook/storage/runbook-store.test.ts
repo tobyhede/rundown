@@ -26,7 +26,7 @@ import {
   type CapturedAuthority,
   type ExecutionTokenHash,
 } from '../../../src/runbook/storage/mutation-result.js';
-import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { InvalidRunbookStateError, RunbookStateManager } from '../../../src/runbook/state.js';
 import { logger } from '../../../src/logger.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -205,6 +205,31 @@ describe('RunbookStore round-trip', () => {
     });
     expect(await store.listRunIds()).toEqual([b.id]);
     expect(await store.loadRun(a.id)).toBeNull();
+  });
+
+  // `readRun` is the store's only validating read, and every in-transaction
+  // reader goes through it — `ctx.readState`, and so `rundown stash`/`pop` on
+  // both their bare and `--claim-id` paths. `RunbookStateObjectSchema` leaves
+  // `schemaVersion` optional (so `RunbookStateManager.load` can parse an invalid
+  // file far enough to report it usefully), which means the Zod parse alone
+  // accepts EVERY version. Without the gate below those commands mutate state
+  // the loader refuses to load — silently adapting persisted data the
+  // no-migration rule says must be refused.
+  it.each([
+    ['a foreign schema version', { schemaVersion: 2 }],
+    ['an absent schema version', { schemaVersion: undefined }],
+  ])('refuses to read a run carrying %s, on every read seam', async (_label, overrides) => {
+    const state = await newState(overrides);
+    await store.createRun(state);
+
+    const expected = `Invalid runbook state for "${state.id}": invalid schemaVersion; expected schema version 1.`;
+    // Both seams, because pinning only `loadRun` would leave the transactional
+    // read — the one the stash/pop regression came in through — unguarded.
+    await expect(store.loadRun(state.id)).rejects.toThrow(expected);
+    await expect(store.mutateSession((ctx) => ctx.readState(state.id))).rejects.toThrow(expected);
+    // Named by type, not only by message: the CLI's cleanup paths branch on
+    // `instanceof InvalidRunbookStateError`.
+    await expect(store.loadRun(state.id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
   });
 
   it('refuses to delete a run with active execution ownership', async () => {

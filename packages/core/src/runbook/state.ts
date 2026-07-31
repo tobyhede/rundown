@@ -50,16 +50,16 @@ import {
 } from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
+import {
+  assertCurrentSchemaVersion,
+  CURRENT_SCHEMA_VERSION,
+  InvalidRunbookStateError,
+} from './state-schema-version.js';
 
-/**
- * Current persisted state schema version for the v1 release.
- *
- * Every newly derived state is stamped with this version; {@link
- * RunbookStateManager.load} rejects any persisted state carrying a different
- * one. Exported so callers deriving state outside the manager — and the tests
- * pinning that guarantee — name the version rather than hard-coding `1`.
- */
-export const CURRENT_SCHEMA_VERSION = 1;
+// Re-exported from their leaf module so this file stays the import site every
+// existing consumer already names, while `storage/runbook-store.ts` can reach
+// the same gate without closing an import cycle back through this module.
+export { CURRENT_SCHEMA_VERSION, InvalidRunbookStateError };
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -148,32 +148,6 @@ export class LegacySnapshotError extends Error {
   constructor(message: string, defect?: InvalidRunStateDefect) {
     super(message);
     this.name = 'LegacySnapshotError';
-    this.defect = defect;
-  }
-}
-
-/**
- * Thrown when persisted state does not match the current schema contract.
- */
-export class InvalidRunbookStateError extends Error {
-  /**
-   * Structured facts about the refusal, lifted from the throw site.
-   *
-   * Surfaces as RD-309's `context` so a consumer never has to parse the run id
-   * out of `message`. `undefined` only where a construction site supplies none
-   * — every production throw site does.
-   */
-  readonly defect: InvalidRunStateDefect | undefined;
-
-  /**
-   * Create a new InvalidRunbookStateError.
-   *
-   * @param message - Human-readable description of why the state is invalid
-   * @param defect - Structured facts about the refused run
-   */
-  constructor(message: string, defect?: InvalidRunStateDefect) {
-    super(message);
-    this.name = 'InvalidRunbookStateError';
     this.defect = defect;
   }
 }
@@ -336,16 +310,7 @@ export function applyRunbookStateUpdate(
   // only shape the store can hand over unvalidated — its schema leaves the field
   // optional so `load` can parse far enough to reach its own check — which makes
   // it the shape most in need of refusing, not least.
-  if (existing.schemaVersion !== CURRENT_SCHEMA_VERSION) {
-    throw new InvalidRunbookStateError(
-      `Invalid runbook state for "${existing.id}": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
-      {
-        runId: existing.id,
-        reason: 'invalid_schema_version',
-        schemaVersion: existing.schemaVersion,
-      },
-    );
-  }
+  assertCurrentSchemaVersion(existing.schemaVersion, existing.id);
   // Pull tagged-op fields out of updates so the subsequent `...updates` spread
   // does not leak the wrapper shapes into the strictly-typed RunbookState literal.
   const {
@@ -647,14 +612,7 @@ export class RunbookStateManager {
       );
     }
 
-    if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
-      throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 1.`,
-        // The found version rides in `schemaVersion` and nowhere else: the
-        // message never states it, so a consumer could not recover it at all.
-        { runId, reason: 'invalid_schema_version', schemaVersion: obj.schemaVersion },
-      );
-    }
+    assertCurrentSchemaVersion(obj.schemaVersion, id);
 
     // A current-schema row without templateVars is incompatible state. Readers
     // substitute `runbookSrc` against it on every resume; re-parsing the stored
