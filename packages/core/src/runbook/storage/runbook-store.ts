@@ -2040,6 +2040,9 @@ export class RunbookStore {
    * @param parentRunId - The advancing parent run.
    * @returns Claim records for non-terminal children still linked to this parent
    *   whose delegated substep remains unresolved.
+   * @throws {LegacySnapshotError | InvalidRunbookStateError} When the parent, or
+   *   any delegated child of it, is persisted in a shape the loader refuses —
+   *   see the note at the child read below.
    */
   private openDelegatedChildrenFor(tx: SqlTransaction, parentRunId: RunId): ClaimRecord[] {
     const parent = this.readRun(tx, parentRunId);
@@ -2054,6 +2057,18 @@ export class RunbookStore {
       if (!claim.delegation) {
         continue;
       }
+      // A validating read of someone else's run: this is the *child*, not the
+      // run this transaction is about to write. So a child the loader refuses —
+      // legacy snapshot, foreign schema version, or a row failing schema
+      // validation — aborts a perfectly valid parent's pass/fail, and the
+      // parent's operator is told to prune a run they did not name. Deliberate
+      // rather than accidental: a guard that skipped unreadable children would
+      // report "no open children" and let the parent advance past a delegation
+      // it cannot evaluate. It widens a pre-existing failure mode rather than
+      // creating one — an unparseable child already threw `ZodError` on this
+      // line before `readRun` gained its gates — but this guard is live in
+      // production (`actor-service.ts`, the parent-advance path), so the
+      // coupling is real and is recorded here rather than left to be rediscovered.
       const child = this.readRun(tx, claim.controlledRunId);
       if (!child || child.lifecycle === 'completed' || child.lifecycle === 'stopped') {
         continue;
