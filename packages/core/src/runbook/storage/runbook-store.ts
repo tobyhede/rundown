@@ -35,7 +35,7 @@ import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } fro
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
-import { assertCurrentSchemaVersion } from '../state-schema-version.js';
+import { assertLoadablePersistedRun } from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import {
   type CapturedAuthority,
@@ -2250,18 +2250,22 @@ export class RunbookStore {
   /**
    * Read and validate a run from an open transaction.
    *
-   * The schema-version gate runs BEFORE `stateSchema.parse`, mirroring
-   * {@link RunbookStateManager.load}, and for the same reason: the run schema
-   * leaves `schemaVersion` optional so an invalid file can be parsed far enough
-   * to be reported usefully, which means the parse alone accepts every version.
-   * Without this check the in-transaction readers — `ctx.readState`, and so
+   * `assertLoadablePersistedRun` runs BEFORE `stateSchema.parse`, and is the same
+   * function `RunbookStateManager.load` runs before its own parse, so both
+   * readers of persisted state refuse the same shapes with the same message.
+   * Without it the in-transaction readers — `ctx.readState`, and so
    * `rundown stash` / `pop` on both their bare and `--claim-id` paths — would
-   * mutate persisted state the loader refuses to load, silently adapting data
-   * the no-migration rule says must be refused.
+   * mutate a foreign-version run the loader refuses to load (the schema leaves
+   * `schemaVersion` optional, so the parse accepts every version), and would
+   * report a legacy dynamic-step snapshot as a bare `ZodError` — outside the
+   * three-shape taxonomy `isRecoverableActiveStackError` classifies on, and
+   * without the actionable "restart from the entrypoint" the loader gives.
    *
    * @param tx - Open transaction.
    * @param runId - Run to read.
    * @returns The validated run state, or null.
+   * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
+   *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
    * @throws {InvalidRunbookStateError} When the row carries a schema version
    *   other than `CURRENT_SCHEMA_VERSION`.
    */
@@ -2270,7 +2274,7 @@ export class RunbookStore {
     if (raw === null) {
       return null;
     }
-    assertCurrentSchemaVersion(raw.schemaVersion, runId);
+    assertLoadablePersistedRun(raw, runId);
     return this.stateSchema.parse(raw) as RunbookState;
   }
 

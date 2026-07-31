@@ -222,6 +222,40 @@ describe('stash command', () => {
     expect((await readSession(workspace)).stashed).toBeNull();
   });
 
+  // The other two shapes `RunbookStateManager.load` has always refused. Mirroring
+  // only the schema-version gate into the store left these reporting a raw
+  // `ZodError` schema dump ("No matching discriminator" / unrecognized_keys) —
+  // no restart instruction, and a class the CLI's recovery taxonomy does not
+  // recognize. Both are pinned here because a user with a pre-existing legacy
+  // run is the only person who ever sees this path.
+  it.each([
+    ['a GOTO_NEXT last action', { lastAction: { type: 'GOTO_NEXT' } }, 'GOTO_NEXT'],
+    ['an instance field', { instance: 2 }, 'instance field'],
+  ])(
+    'refuses to park a run persisted as a legacy snapshot with %s',
+    async (_label, legacyShape, shapeName) => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      await patchPersistedRunState(workspace.cwd, state!.id, legacyShape);
+
+      const result = await runCliInProcess('stash', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-999',
+          error: expect.stringContaining(
+            `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
+              'Please restart execution from the runbook entrypoint.',
+          ),
+        }),
+      );
+      expect((await readSession(workspace)).stashed).toBeNull();
+    },
+  );
+
   it('keeps claimed delegated children out of plain pop', async () => {
     const parent = createRunbook({
       title: 'Parent',
@@ -811,6 +845,47 @@ describe('stash command', () => {
     // The decisive assertion: the refusal wrote nothing.
     expect((await readSession(workspace)).stashed).toBeNull();
   });
+
+  // The claim-targeted sibling. It resolves its target through the same
+  // `ctx.readState`, so it inherits the same gate — pinned separately because
+  // `stashForClaimId` reaches that read down an entirely different branch
+  // (bearer verification, delegation liveness) than the bare path above.
+  it('refuses a claimed stash of a run persisted as a legacy snapshot', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+    await patchPersistedRunState(workspace.cwd, runId, { lastAction: { type: 'GOTO_NEXT' } });
+
+    const result = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-999',
+        error: expect.stringContaining(
+          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported.',
+        ),
+      }),
+    );
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
 });
 
 describe('pop command', () => {
@@ -876,6 +951,82 @@ describe('pop command', () => {
     // The run stays parked. Recovery is explicit — prune or restart — never an
     // unstash that makes unreadable state active again.
     expect((await readSession(workspace)).stashed).toBe(state!.id);
+  });
+
+  // The legacy-snapshot siblings, which the store's gate did not cover until the
+  // three checks became one shared function. Before that, `pop` on a pre-v1 run
+  // reported a bare `ZodError` instead of the loader's restart instruction.
+  it.each([
+    ['a GOTO_NEXT last action', { lastAction: { type: 'GOTO_NEXT' } }, 'GOTO_NEXT'],
+    ['an instance field', { instance: 2 }, 'instance field'],
+  ])(
+    'refuses to restore a run persisted as a legacy snapshot with %s',
+    async (_label, legacyShape, shapeName) => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      // Stash first, THEN corrupt: corrupting first makes the stash itself
+      // refuse, and pop then reports "nothing stashed" — a different path that
+      // looks like this one and proves nothing about it.
+      await runCliInProcess('stash', workspace);
+      await patchPersistedRunState(workspace.cwd, state!.id, legacyShape);
+
+      const result = await runCliInProcess('pop', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-999',
+          error: expect.stringContaining(
+            `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
+              'Please restart execution from the runbook entrypoint.',
+          ),
+        }),
+      );
+      expect((await readSession(workspace)).stashed).toBe(state!.id);
+    },
+  );
+
+  it('refuses a claimed restore of a run persisted as a legacy snapshot', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    const stashed = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+    expect(stashed.exitCode).toBe(0);
+    await patchPersistedRunState(workspace.cwd, runId, { instance: 2 });
+
+    const result = await runCliInProcess(['pop', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-999',
+        error: expect.stringContaining(
+          'This runbook used dynamic-step snapshots (instance field), which are no longer supported.',
+        ),
+      }),
+    );
+    // The slot is retained: an unreadable run must not become active again.
+    expect((await readSession(workspace)).stashed).toBe(runId);
   });
 
   it('emits INVALID_CLAIM_ID for invalid claim id', async () => {

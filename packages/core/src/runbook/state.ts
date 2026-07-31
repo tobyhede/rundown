@@ -52,14 +52,16 @@ import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
 import {
   assertCurrentSchemaVersion,
+  assertLoadablePersistedRun,
   CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
-} from './state-schema-version.js';
+  LegacySnapshotError,
+} from './persisted-state-guards.js';
 
 // Re-exported from their leaf module so this file stays the import site every
 // existing consumer already names, while `storage/runbook-store.ts` can reach
-// the same gate without closing an import cycle back through this module.
-export { CURRENT_SCHEMA_VERSION, InvalidRunbookStateError };
+// the same gates without closing an import cycle back through this module.
+export { CURRENT_SCHEMA_VERSION, InvalidRunbookStateError, LegacySnapshotError };
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -119,37 +121,6 @@ function assertTrustedResolvedCompletions(
     }
   }
   return completions;
-}
-
-/**
- * Thrown when persisted state uses the deprecated dynamic-step snapshot
- * shape (`GOTO_NEXT` last action or `instance` field), which the current
- * runtime rejects per the no-migration rule.
- *
- * A dedicated class so consumers (e.g. the CLI's orphaned-active-stack
- * recovery) classify by type rather than matching message wording.
- */
-export class LegacySnapshotError extends Error {
-  /**
-   * Structured facts about the refusal, lifted from the throw site.
-   *
-   * Surfaces as RD-309's `context` so a consumer never has to parse the run id
-   * out of `message`. `undefined` only where a construction site supplies none
-   * — every production throw site does.
-   */
-  readonly defect: InvalidRunStateDefect | undefined;
-
-  /**
-   * Create a new LegacySnapshotError.
-   *
-   * @param message - Human-readable description of the rejected legacy shape
-   * @param defect - Structured facts about the refused run
-   */
-  constructor(message: string, defect?: InvalidRunStateDefect) {
-    super(message);
-    this.name = 'LegacySnapshotError';
-    this.defect = defect;
-  }
 }
 
 /**
@@ -590,36 +561,18 @@ export class RunbookStateManager {
       return null;
     }
 
-    // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field.
-    const obj = raw;
-    const lastAction = obj.lastAction;
-    if (
-      typeof lastAction === 'object' &&
-      lastAction !== null &&
-      (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
-    ) {
-      throw new LegacySnapshotError(
-        'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
-          'Please restart execution from the runbook entrypoint.',
-        { runId, reason: 'legacy_dynamic_step_snapshot' },
-      );
-    }
-    if (obj.instance !== undefined) {
-      throw new LegacySnapshotError(
-        'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
-          'Please restart execution from the runbook entrypoint.',
-        { runId, reason: 'legacy_dynamic_step_snapshot' },
-      );
-    }
-
-    assertCurrentSchemaVersion(obj.schemaVersion, id);
+    // Legacy dynamic-step snapshots and foreign schema versions, in that order.
+    // Shared with `RunbookStore.readRun` so the in-transaction readers — every
+    // `ctx.readState`, and so `rundown stash`/`pop` on both their bare and
+    // `--claim-id` paths — refuse the same shapes with the same message.
+    assertLoadablePersistedRun(raw, id);
 
     // A current-schema row without templateVars is incompatible state. Readers
     // substitute `runbookSrc` against it on every resume; re-parsing the stored
     // source to stand in for it would be a silent migration. Named explicitly
     // rather than left to the schema parse below so the refusal says which field
     // is missing and what to do about it.
-    if (obj.templateVars === undefined) {
+    if (raw.templateVars === undefined) {
       throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": missing templateVars. ` +
           `Prune this run and re-run the runbook.`,
