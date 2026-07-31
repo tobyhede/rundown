@@ -30,7 +30,10 @@ import {
   findSubstepState,
 } from '../../src/runbook/targeting.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
-import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import {
+  stashRunbookUnverified,
+  unwrapSessionMutation,
+} from '../../src/testing/session-fixtures.js';
 import {
   linkageFor,
   assertClaimed,
@@ -973,7 +976,7 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
       // Hold a lease so the parent-side latch defers the tombstone: the claim row
       // stays active, so this exercises the resolution-time classification rather
       // than the tombstone lookup.
@@ -1016,7 +1019,7 @@ describe('SessionService', () => {
         const claimed = assertClaimed(
           await claimLiveDelegation(sessionService, manager, child.id, linkage),
         );
-        unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+        unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
         await manager.update(child.id, { lifecycle: childLifecycle });
         // Parent moves on: the delegation now reads closed, and the latch retains the
         // claim because its controlled child is terminal, so the row stays active.
@@ -1041,7 +1044,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
-      unwrapSessionMutation(await sessionService.stashRunbook(run.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, run.id));
 
       const resolved = await sessionService.getActiveForClaimId(claimId);
 
@@ -1096,7 +1099,7 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('unlinked');
@@ -1121,7 +1124,7 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
       await manager.update(child.id, { lifecycle: 'completed' });
       // The parent advances past the delegation. No lease needed: the parent-side
       // latch already retains a claim whose controlled child is terminal, so the
@@ -1733,8 +1736,9 @@ describe('SessionService', () => {
       it('refuses a bearer rotated after resolution and leaves the stash slot untouched', async () => {
         // The #666 interleave: resolve with the old bearer, mint a replacement
         // for the same run, then stash with the old bearer. Before this method
-        // existed the stash committed, because `stashRunbook` authorized on the
-        // run id alone and `mintRunControlClaim` keeps the run claim-targeted.
+        // existed the stash committed, because the bearer-blind session write it
+        // replaced (now `stashRunbookUnverified`, test-only) authorized on the run
+        // id alone and `mintRunControlClaim` keeps the run claim-targeted.
         const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
           runbookPath: 'solo.md',
         });
@@ -1928,8 +1932,8 @@ describe('SessionService', () => {
       it('refuses a tampered secret on an otherwise active claim without touching the slot', async () => {
         // Distinct from the unknown-bearer case above: the claim key IS active
         // in the session, but the presented secret does not verify against it —
-        // the in-transaction check that makes this method safer than
-        // `stashRunbook` on the common path (#666).
+        // the in-transaction check that makes this method safer on the common
+        // path than the bearer-blind session write it replaced (#666).
         const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
           runbookPath: 'solo.md',
         });
@@ -2100,7 +2104,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
@@ -2164,7 +2168,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
-      unwrapSessionMutation(await sessionService.stashRunbook(run.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, run.id));
       unwrapSessionMutation(await sessionService.releaseRunbook(run.id));
 
       const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimId));
@@ -2191,7 +2195,7 @@ describe('SessionService', () => {
       const terminalClaimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, terminalChild.id, terminalLinkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(terminalChild.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, terminalChild.id));
       await manager.update(terminalChild.id, { lifecycle: 'completed' });
 
       const terminal = unwrapSessionMutation(
@@ -2219,7 +2223,7 @@ describe('SessionService', () => {
       );
       await manager.update(endedParent.id, { lifecycle: 'stopped' });
       unwrapSessionMutation(await sessionService.releaseRunbook(terminalChild.id));
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       // R2: ending the parent superseded the delegated claim. `rd pop` must say
       // so — a superseded bearer reported as `missing-claim` renders "does not
@@ -2247,7 +2251,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       // Default (write) gate refuses.
       const gated = await sessionService.getActiveForClaimId(claimed.claimId);

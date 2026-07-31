@@ -90,9 +90,9 @@ describe('stash command', () => {
     // Unconditional, because `restoreAllMocks()` as the last statement of a test
     // body only runs when every assertion above it passed. The one test here that
     // spies does so on `SessionService.prototype` — shared by every case in this
-    // file — so a single failing assertion would leak three live spies into the
-    // ~30 tests that follow, and it is the test most likely to fail that would
-    // leak them. Verified: with the spy test forced to fail, a probe asserting
+    // file — so a single failing assertion would leak live spies into the ~30
+    // tests that follow, and it is the test most likely to fail that would leak
+    // them. Verified: with the spy test forced to fail, a probe asserting
     // `jest.isMockFunction(SessionService.prototype.stash) === false` passes with
     // this line and fails without it.
     jest.restoreAllMocks();
@@ -103,16 +103,20 @@ describe('stash command', () => {
     return requireFrontierToken(stdout, '1.1');
   }
 
-  it('resolves and parks the active run in one core call, never getActive + stashRunbook', async () => {
+  it('resolves and parks the active run in one core call, never getActive + a separate stash write', async () => {
     // Structural guard on the bare path's half of #666, and the only kind of
     // test that can hold it: every behavioural test here is sequential, so
-    // restoring the `getActive()` -> `stashRunbook()` pair would leave all of
+    // restoring the `getActive()` -> separate-stash-write pair would leave all of
     // them green while reopening the window where a concurrent push means the
     // run that gets parked is not the one the command resolved. Atomicity is
     // "the CLI asks core exactly once", so that is what is asserted.
+    //
+    // The bearer-blind half of the pair is no longer countable, and does not need
+    // to be: `SessionService` has no run-id-authorized stash left to call. That
+    // shape survives only as `stashRunbookUnverified` in core's testing surface,
+    // which the CLI does not depend on.
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const stash = jest.spyOn(SessionService.prototype, 'stash');
-    const stashRunbook = jest.spyOn(SessionService.prototype, 'stashRunbook');
     const getActive = jest.spyOn(SessionService.prototype, 'getActive');
 
     const result = await runCliInProcess('stash', workspace);
@@ -122,8 +126,7 @@ describe('stash command', () => {
     expect({
       atomicStash: stash.mock.calls.length,
       unlockedActiveReads: getActive.mock.calls.length,
-      bearerBlindStashes: stashRunbook.mock.calls.length,
-    }).toEqual({ atomicStash: 1, unlockedActiveReads: 0, bearerBlindStashes: 0 });
+    }).toEqual({ atomicStash: 1, unlockedActiveReads: 0 });
   });
 
   it('moves active runbook to stashed', async () => {

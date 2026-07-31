@@ -1843,66 +1843,17 @@ export class SessionService {
   }
 
   /**
-   * Stash a specific runbook id from any session targeting structure.
-   *
-   * **This method has no production caller, and a new command must not become
-   * one.** It authorizes on the run id alone: it asks only whether *some* claim
-   * controls the run or whether the run is stack resident, and never whether the
-   * caller holds the bearer for it. That is the shape of the #666 defect —
-   * `stash --claim-id` used to resolve a target through an unlocked read and
-   * commit through here, so a bearer rotated in between still parked the run.
-   *
-   * Both production paths were rewired away from it: `rundown stash` calls
-   * {@link stash}, which resolves the active run and writes the slot in one
-   * transaction, and `rundown stash --claim-id` calls {@link stashForClaimId},
-   * which verifies the presented bearer inside that same transaction. Anything
-   * new belongs on one of those two.
-   *
-   * It survives only because it is the sole way to park a **delegated child that
-   * is not on the default stack** without also asserting that the child's bearer
-   * is live: `stash()` cannot name an off-stack run, and `stashForClaimId`
-   * refuses a closed delegation. Several fixtures need exactly that — notably
-   * `unstashForClaimId distinguishes terminal child and ended parent`, which
-   * parks a child whose parent has already stopped, and `seedStashedRun` in
-   * `testing/session-fixtures.ts`. Migrating them would silently reroute the
-   * assertion onto a different branch, so the footgun is documented rather than
-   * removed.
-   *
-   * @param runbookId - Runbook id to move into the single session stash slot
-   * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
-   *   Refused `execution_in_progress` or `recovery_required` instead when the
-   *   run is execution-owned or awaiting recovery; the value is absent then.
-   */
-  async stashRunbook(runbookId: RunId): Promise<SessionMutationResult<RunId | null>> {
-    return this.mutateGuarded([runbookId], (ctx) => {
-      const { session } = ctx;
-      if (session.stashedRunbookId) return null;
-
-      const originalDefaultStackLength = session.defaultStack.length;
-      session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
-      const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
-
-      const targetedByClaim = Object.values(session.claims).some(
-        (claim) => claim.controlledRunId === runbookId,
-      );
-
-      if (!removedFromDefaultStack && !targetedByClaim) return null;
-
-      session.stashedRunbookId = runbookId;
-      return runbookId;
-    });
-  }
-
-  /**
    * Stash a claimed runbook by explicit claim id, atomically.
    *
    * The presented bearer is verified inside the same transaction that writes the
-   * stash slot. `stashRunbook` authorizes on the run id alone — it asks only
-   * whether *some* claim controls the run — so a bearer rotated between an
-   * unlocked resolve and the commit still succeeded (#666). Resolving and
-   * committing in one `mutateSessionGuarded` cycle removes that window by
+   * stash slot. The session write this replaced authorized on the run id alone —
+   * it asked only whether *some* claim controlled the run — so a bearer rotated
+   * between an unlocked resolve and the commit still succeeded (#666). Resolving
+   * and committing in one `mutateSessionGuarded` cycle removes that window by
    * construction; there is no captured generation to re-check because there is
-   * no gap for a rotation to land in.
+   * no gap for a rotation to land in. No bearer-blind stash remains on this
+   * class: the shape survives only as `stashRunbookUnverified` in
+   * `testing/session-fixtures.ts`, where product code cannot reach it.
    *
    * Unlike {@link unstashForClaimId}, the linkage and delegation-liveness checks
    * are guarded on `claim.delegation`: `stash --claim-id` accepts a run-control
@@ -1989,8 +1940,8 @@ export class SessionService {
         }
       }
 
-      // Split, where `stashRunbook` collapsed both into `null`. `already-stashed`
-      // is the caller's own controlled run already parked in the slot;
+      // Split, where the bearer-blind predecessor collapsed both into `null`.
+      // `already-stashed` is the caller's own controlled run already in the slot;
       // `slot-occupied` is a *different* run holding it. Re-parking what you
       // already parked is a different mistake from colliding with someone else's
       // parked run, and the caller needs to be told which one happened.
@@ -2013,10 +1964,11 @@ export class SessionService {
         };
       }
 
-      // `stashRunbook`'s `targetedByClaim` arm is not reproduced: the verified
-      // bearer's claim controls this run, so it is satisfied by construction.
-      // The stack filter is reproduced — a run-control-claimed run is stack
-      // resident and must leave the stack when it is parked.
+      // The predecessor's `targetedByClaim` arm — does *some* claim control this
+      // run — is not reproduced: the verified bearer's claim controls it, so the
+      // question is satisfied by construction. Its stack filter is reproduced —
+      // a run-control-claimed run is stack resident and must leave the stack
+      // when it is parked.
       session.defaultStack = session.defaultStack.filter((id) => id !== claim.controlledRunId);
       session.stashedRunbookId = claim.controlledRunId;
       return { status: 'stashed', claim: verified, state };
