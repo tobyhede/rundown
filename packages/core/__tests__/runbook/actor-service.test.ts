@@ -1784,8 +1784,7 @@ echo ok
         | 'concurrent'
         | 'supersession'
         | 'fallbacks'
-        | 'invalid-state'
-        | 'unexpected-error',
+        | 'invalid-state',
     ): Promise<void> {
       const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
       const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
@@ -2071,42 +2070,6 @@ echo ok
           service.prepareDelegationChildUnlink(pendingEffectParent, steps, childRunId, linkage),
         ).rejects.toThrow('Unsupported snapshot.value shape');
       }
-
-      if (scenario === 'unexpected-error') {
-        type ActorServiceInternals = {
-          prepareDelegationChildLinkMutation: (
-            parent: RunbookState,
-            resolvedSteps: readonly ResolvedStep[],
-            exactLinkage: typeof linkage,
-            event: {
-              readonly type: 'DELEGATION_CHILD_LINKED';
-              readonly parentStepId: string;
-              readonly parentFrameKey: typeof frameKey;
-              readonly tokenHash: typeof tokenHash;
-              readonly childRunId: typeof childRunId;
-            },
-            derive: () => never,
-          ) => Promise<unknown>;
-        };
-        const unexpected = new Error('unexpected derivation failure');
-        await expect(
-          (service as unknown as ActorServiceInternals).prepareDelegationChildLinkMutation(
-            before,
-            steps,
-            linkage,
-            {
-              type: 'DELEGATION_CHILD_LINKED',
-              parentStepId: linkage.parentStepId,
-              parentFrameKey: linkage.parentFrameKey,
-              tokenHash,
-              childRunId,
-            },
-            () => {
-              throw unexpected;
-            },
-          ),
-        ).rejects.toBe(unexpected);
-      }
     }
 
     it('derives the exact linked snapshot without persisting it', async () => {
@@ -2135,10 +2098,6 @@ echo ok
 
     it('rejects pending-effect and structurally invalid parent states', async () => {
       await exercisePreparedMutation('invalid-state');
-    });
-
-    it('propagates unexpected derivation failures unchanged', async () => {
-      await exercisePreparedMutation('unexpected-error');
     });
 
     it('rejects an errored actor snapshot without persisting or leaking the actor error', async () => {

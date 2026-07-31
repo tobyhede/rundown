@@ -57,6 +57,7 @@ import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -1124,10 +1125,7 @@ export class RunbookActorService {
   ):
     | Extract<PrepareDelegationChildLinkResult, { readonly kind: 'delegation_superseded' }>
     | undefined {
-    const observedParentEntry =
-      parent.activeFrameKey === linkage.parentFrameKey && parent.activeEntry !== undefined
-        ? parent.activeEntry
-        : (parent.frameEntryCounts?.[linkage.parentFrameKey] ?? 1);
+    const observedParentEntry = inferFrameEntryFromState(parent, linkage.parentFrameKey);
     return observedParentEntry !== linkage.parentEntry
       ? {
           kind: 'delegation_superseded',
@@ -1450,10 +1448,7 @@ export class RunbookActorService {
             ...entry,
             inlineLaunch: {
               ...intent,
-              parentEntry:
-                state.activeFrameKey === intent.parentFrameKey && state.activeEntry
-                  ? state.activeEntry
-                  : (state.frameEntryCounts?.[intent.parentFrameKey as FrameKey] ?? 1),
+              parentEntry: inferFrameEntryFromState(state, intent.parentFrameKey as FrameKey),
             },
           }
         : entry;

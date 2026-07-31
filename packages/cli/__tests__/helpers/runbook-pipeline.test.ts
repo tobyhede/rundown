@@ -58,6 +58,7 @@ import {
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
 const {
+  inferFrameEntryFromState: realInferFrameEntryFromState,
   isDelegationToken: realIsDelegationToken,
   isJsonArrayStream: realIsJsonArrayStream,
   RunbookRefSchema: realRunbookRefSchema,
@@ -221,6 +222,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, iteration?: number) =>
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
   ),
+  inferFrameEntryFromState: jest.fn(realInferFrameEntryFromState),
   parseStepIdFromString: jest.fn(),
   // Defaults to live so the 4a′ latch precheck is a no-op here; the precheck
   // only short-circuits on { kind: 'closed', reason: 'cursor-advanced' }, and
@@ -654,6 +656,9 @@ beforeEach(() => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     );
   jest.mocked(core.getActiveForContext).mockReturnValue(undefined);
+  jest
+    .mocked(core.inferFrameEntryFromState)
+    .mockImplementation((state, frameKey) => realInferFrameEntryFromState(state, frameKey));
   jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
   jest
     .mocked(createBridgedEmitter)
@@ -870,6 +875,10 @@ describe('inferEntryFromState', () => {
     }) as unknown as RunbookState;
     // Pins the `activeFrameKey === frameKey && activeEntry` active-frame branch.
     expect(inferEntryFromState(state, FRAME_KEY)).toBe(7);
+    expect(core.inferFrameEntryFromState as unknown as jest.Mock).toHaveBeenCalledWith(
+      state,
+      FRAME_KEY,
+    );
   });
 
   it('returns the recorded frame entry count when the frame is not the active frame', () => {

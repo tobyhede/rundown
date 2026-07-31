@@ -341,6 +341,7 @@ export {
   type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
+export { inferFrameEntryFromState } from './frame-entry.js';
 export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,
