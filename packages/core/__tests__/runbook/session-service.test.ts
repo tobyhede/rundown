@@ -3,9 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { RunbookStateManager, type SessionData } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import { SessionService } from '../../src/runbook/session-service.js';
+import { SessionService, projectRunbookRelease } from '../../src/runbook/session-service.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import {
   assertClaimId,
   type ClaimRunbookResult,
@@ -2706,5 +2707,76 @@ describe('SessionService', () => {
       const result = await sessionService.resolveActiveInlineForceTerminalPlan('complete');
       expect(result).toEqual({ status: 'none', kind: 'complete' });
     });
+  });
+});
+
+describe('projectRunbookRelease', () => {
+  // The in-memory half of a terminal release. The fence applies this projection
+  // to a session snapshot INSIDE the same transaction as the state write, so it
+  // is exercised here directly rather than through a store round trip.
+  const RUN_ID = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
+  const OTHER_RUN_ID = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
+
+  function session(overrides: Partial<SessionData> = {}): SessionData {
+    return { defaultStack: [], claims: {}, ...overrides };
+  }
+
+  it('clears a stashed run and reports it released', async () => {
+    // The stash is a third place a run id can be parked, alongside the default
+    // stack and the claim table. Leaving it behind would strand `rundown pop` on
+    // a terminal run.
+    const data = session({ stashedRunbookId: RUN_ID });
+
+    const result = projectRunbookRelease(data, RUN_ID);
+
+    expect(result.status).toBe('released');
+    expect(data.stashedRunbookId).toBeUndefined();
+  });
+
+  it('leaves a stash belonging to a different run untouched', async () => {
+    // Anti-vacuity for the case above: an unconditional clear would also pass it.
+    const data = session({ stashedRunbookId: OTHER_RUN_ID, defaultStack: [RUN_ID] });
+
+    projectRunbookRelease(data, RUN_ID);
+
+    expect(data.stashedRunbookId).toBe(OTHER_RUN_ID);
+  });
+
+  it('reports not-found when the run is in no session structure at all', async () => {
+    const data = session({ defaultStack: [OTHER_RUN_ID] });
+
+    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
+      status: 'not-found',
+      runbookId: RUN_ID,
+    });
+    expect(data.defaultStack).toEqual([OTHER_RUN_ID]);
+  });
+
+  it('pops the run from the default stack and names the next default', async () => {
+    const data = session({ defaultStack: [OTHER_RUN_ID, RUN_ID] });
+
+    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
+      status: 'released',
+      runbookId: RUN_ID,
+      removedFromDefaultStack: true,
+      nextDefaultRunbookId: OTHER_RUN_ID,
+    });
+    expect(data.defaultStack).toEqual([OTHER_RUN_ID]);
+  });
+
+  it('deletes controlling claims by default but retains them as terminal tombstones on request', async () => {
+    // Retention is what lets `rundown pass --claim-id` on a finished run resolve
+    // `terminal` instead of `missing`, so the two modes must stay distinguishable.
+    const claim = makeClaimRecord({ controlledRunId: RUN_ID });
+    const deleted = session({ claims: { [claim.claimKey]: claim } });
+    const retained = session({ claims: { [claim.claimKey]: claim } });
+
+    expect(projectRunbookRelease(deleted, RUN_ID).status).toBe('released');
+    expect(deleted.claims).toEqual({});
+
+    expect(projectRunbookRelease(retained, RUN_ID, { retainClaimsAsTerminal: true }).status).toBe(
+      'released',
+    );
+    expect(retained.claims[claim.claimKey]).toEqual(claim);
   });
 });

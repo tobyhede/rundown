@@ -3,6 +3,8 @@ import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import {
   deriveGotoActionBlock,
   deriveTransitionObservation,
+  reconcileFencedTerminalObservation,
+  type TransitionObservation,
 } from '../../src/events/transition-observation.js';
 
 const steps = [
@@ -429,6 +431,130 @@ describe('deriveTransitionObservation', () => {
         aggregated: true,
       },
     });
+  });
+});
+
+describe('reconcileFencedTerminalObservation', () => {
+  // The fence decides its terminal session release from the committed
+  // `state.lifecycle`, while the observation reads the snapshot's top-level
+  // status. These are independent signals, so every case below pairs a
+  // lifecycle with a deliberately disagreeing observation status.
+  const continueObservation = {
+    status: 'continue',
+    state: state({ step: '2', stepName: 'Deploy' }),
+    action: 'CONTINUE',
+    from: '1',
+    at: '2',
+    events: [
+      {
+        type: 'STEP_TRANSITIONED',
+        payload: { action: 'CONTINUE', from: '1', at: '2', result: 'PASS' },
+      },
+    ],
+  } as unknown as TransitionObservation;
+
+  it('leaves an already-terminal observation alone, even against a disagreeing lifecycle', () => {
+    // Tops UP only. A `done` observation against a `stopped` commit must not be
+    // rewritten to `stopped` — the guard exists to add a missing terminal, never
+    // to overrule one the snapshot already reported.
+    const observation = {
+      status: 'done',
+      action: 'COMPLETE',
+      from: '2',
+      at: '2',
+      message: 'Ship it',
+      events: [
+        {
+          type: 'RUNBOOK_COMPLETED',
+          payload: { message: 'Ship it', finalPosition: { current: '2', total: 2 } },
+        },
+      ],
+    } as unknown as TransitionObservation;
+
+    const reconciled = reconcileFencedTerminalObservation({
+      observation,
+      steps,
+      currentStep: steps[1],
+      previousState: state({ step: '2' }),
+      updatedState: state({ step: '2', lifecycle: 'stopped' }),
+      snapshot: { status: 'done', value: 'STOPPED', context: { lastMessage: 'Halted' } },
+      result: 'pass',
+    });
+
+    expect(reconciled.status).toBe('done');
+    expect(reconciled.events).toEqual(observation.events);
+  });
+
+  it('leaves a continuing observation alone when the committed lifecycle is not terminal', () => {
+    const reconciled = reconcileFencedTerminalObservation({
+      observation: continueObservation,
+      steps,
+      currentStep,
+      previousState: state({ step: '1' }),
+      updatedState: state({ step: '2', stepName: 'Deploy', lifecycle: 'running' }),
+      snapshot: { value: { 'step::2': 'idle' }, context: {} },
+      result: 'pass',
+    });
+
+    expect(reconciled).toEqual({ status: 'continue', events: continueObservation.events });
+  });
+
+  it('tops a continuing observation up to done when the fence committed completed', () => {
+    const reconciled = reconcileFencedTerminalObservation({
+      observation: continueObservation,
+      steps,
+      currentStep: steps[1],
+      previousState: state({ step: '2' }),
+      updatedState: state({ step: '2', lifecycle: 'completed' }),
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lifecycle: 'completed', lastMessage: 'Ship it' },
+      },
+      result: 'pass',
+    });
+
+    expect(reconciled.status).toBe('done');
+    expect(reconciled.events).toEqual([
+      ...continueObservation.events,
+      {
+        type: 'RUNBOOK_COMPLETED',
+        payload: { message: 'Ship it', finalPosition: { current: '2', total: 2 } },
+      },
+    ]);
+  });
+
+  it('tops a continuing observation up to stopped when the fence committed stopped', () => {
+    const reconciled = reconcileFencedTerminalObservation({
+      observation: continueObservation,
+      steps,
+      currentStep,
+      previousState: state({ step: '1' }),
+      updatedState: state({ step: '1', lifecycle: 'stopped' }),
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lifecycle: 'stopped',
+          lastAction: { type: 'STOP', origin: 'direct' },
+          lastMessage: 'Halted',
+        },
+      },
+      result: 'fail',
+    });
+
+    expect(reconciled.status).toBe('stopped');
+    expect(reconciled.events).toEqual([
+      ...continueObservation.events,
+      {
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          message: 'Halted',
+          position: { current: '1', total: 2 },
+          reason: 'fail_transition',
+        },
+      },
+    ]);
   });
 });
 

@@ -710,6 +710,62 @@ describe('runSeamTransition — refusal render table', () => {
     expect(code).toBe('CLAIM_GRANT_REQUIRED');
     expect(result.exitError).toBe(true);
   });
+
+  // The fenced-mutation refusals. Core owns the discriminants; the seam owns the
+  // symbolic code an agent branches on, and each arm maps to a DIFFERENT code —
+  // so a table that only asserted `exitError` would pass with every arm folded
+  // into one envelope.
+  it.each([
+    {
+      label: 'a vanished run target',
+      kind: 'missing' as const,
+      message: 'Run rd_… does not exist.',
+      code: 'RUN_TARGET_UNAVAILABLE',
+    },
+    {
+      label: 'a superseded claim',
+      kind: 'claim_superseded' as const,
+      message: 'A newer claim controls this run.',
+      code: 'STALE_CLAIM',
+    },
+    {
+      label: 'a concurrent state change',
+      kind: 'concurrent_modification' as const,
+      message: 'The run changed while this command was deciding.',
+      code: 'CONCURRENT_MODIFICATION',
+    },
+    {
+      label: 'an unknown run selector',
+      kind: 'unknown_run' as const,
+      message: 'No run matches that selector.',
+      code: 'RUN_TARGET_UNAVAILABLE',
+    },
+    {
+      label: 'an in-flight execution',
+      kind: 'execution_in_progress' as const,
+      message: 'Another actor owns this run.',
+      code: 'EXECUTION_IN_PROGRESS',
+    },
+    {
+      label: 'an interrupted execution',
+      kind: 'recovery_required' as const,
+      message: 'The execution outcome is unknown and requires recovery.',
+      code: 'RECOVERY_REQUIRED',
+    },
+  ])('renders $label as $code', async ({ kind, message, code }) => {
+    const output = makeOutput();
+    mockRunTransition.mockResolvedValue({
+      kind,
+      runId: PARENT_RUN_ID,
+      epoch: 4,
+      message,
+    } as unknown as LifecycleTransitionOutcome);
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+    expect(output.error).toHaveBeenCalledWith(message, code);
+    expect(result.exitError).toBe(true);
+  });
 });
 
 describe('runSeamTransition — applied render (buildActionSink / renderTransitionEvents)', () => {
@@ -845,8 +901,36 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     const loopArgs = mockRunExecutionLoop.mock.calls[0];
     // The seam directive's terminalReleaseMode + output are forwarded verbatim.
     expect(loopArgs[6]).toEqual({ terminalReleaseMode: 'release-runbook', output });
+    // A bare caller presented no bearer, so the key must be ABSENT rather than
+    // present-and-undefined: the loop spreads this object into the fence input,
+    // where an explicit `claimKey: undefined` is a different request from no key.
+    expect(Object.hasOwn(loopArgs[6] as object, 'claimKey')).toBe(false);
     expect(result.applied).toEqual({ status: 'stopped', runId: PARENT_RUN_ID });
     expect(result.exitError).toBe(true);
+  });
+
+  it('threads the presented bearer into the execution loop as a lookup key', async () => {
+    // The bearer is what lets the loop's fenced command mutation commit under the
+    // caller's authority. Derived once here — never forwarded as the raw bearer,
+    // which would push a credential down into the loop's options.
+    const output = makeOutput();
+    mockRunTransition.mockResolvedValue(
+      appliedOutcome({
+        loop: { kind: 'run', prompted: false },
+        terminalReleaseMode: 'release-runbook',
+      }),
+    );
+
+    await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {
+      claimId: TEST_CLAIM_ID,
+    });
+
+    const loopArgs = mockRunExecutionLoop.mock.calls[0];
+    expect(loopArgs[6]).toEqual({
+      terminalReleaseMode: 'release-runbook',
+      claimKey: TEST_CLAIM_KEY,
+      output,
+    });
   });
 
   it('routes a manual-completion drain through the emitter-bridged sink, not the action sink', async () => {

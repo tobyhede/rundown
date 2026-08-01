@@ -1633,6 +1633,19 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('done');
       expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
       expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+      // The release is folded INTO the fenced command mutation, so "the caller
+      // owns it" has to be visible in the request the fence received — not only
+      // in the absence of a separate session call, which would also hold if the
+      // fence had released it inside its own transaction.
+      expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalRelease: {
+            onComplete: false,
+            onStopped: false,
+            retainClaimsAsTerminal: true,
+          },
+        }),
+      );
     });
 
     it('drives a run to stopped without releasing', async () => {
@@ -1735,6 +1748,112 @@ describe('runExecutionLoop', () => {
 
       expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
       expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('claim authority threaded into the fenced command mutation', () => {
+    /** Drive one command step and return the fence input the loop built. */
+    async function fenceInputForCommand(
+      options: Record<string, unknown> = {},
+    ): Promise<Record<string, unknown>> {
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'done',
+          variables: {},
+          runbookPath: '/tmp/test.md',
+        },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
+        },
+        effects: [commandCompletedEffect('pass')],
+      });
+
+      await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        options,
+      );
+
+      return mockActorMutationRunner.run.mock.calls[0][0];
+    }
+
+    it('presents the caller claim key as the fence authority when one was supplied', async () => {
+      // A delegated child runs its commands under its bearer. Losing the key here
+      // downgrades the commit to a bare capture, which resolves whatever claim
+      // currently controls the run rather than the one the caller presented.
+      const claimKey = 'rdclk_11111111111111111111111111111111';
+
+      const input = await fenceInputForCommand({ claimKey });
+
+      expect(input.claimKey).toBe(claimKey);
+    });
+
+    it('omits the key entirely for a bare caller rather than presenting undefined', async () => {
+      const input = await fenceInputForCommand();
+
+      expect(Object.hasOwn(input, 'claimKey')).toBe(false);
+    });
+
+    // `displayCommand` is what the operator sees attributed to the step, while
+    // `command` stays the string actually executed. An `rd echo` wrapper is
+    // scaffolding, so the display strips it — unless stripping leaves nothing,
+    // in which case showing an empty command is worse than showing the wrapper.
+    it.each([
+      {
+        label: 'strips an rd echo wrapper for display',
+        code: 'rd echo --result pass npm run build',
+        displayCommand: 'npm run build',
+      },
+      {
+        label: 'falls back to the raw command when stripping leaves nothing',
+        code: 'rd echo --result pass',
+        displayCommand: 'rd echo --result pass',
+      },
+    ])('$label', async ({ code, displayCommand }) => {
+      const commandSteps = [{ ...steps[0], command: { code, lang: 'sh' } }, steps[1]];
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'done',
+          variables: {},
+          runbookPath: '/tmp/test.md',
+        },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
+        },
+        effects: [commandCompletedEffect('pass')],
+      });
+
+      await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(commandSteps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(mockActorService.prepareActorMutation).toHaveBeenCalledWith(
+        runbookId,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ type: 'EXECUTE_COMMAND', command: code, displayCommand }),
+      );
     });
   });
 

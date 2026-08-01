@@ -622,14 +622,50 @@ describe('executeGoto', () => {
     };
   }
 
-  it('returns a typed error when the fenced core mutation refuses', async () => {
+  // Every refusal the fenced navigation mutation can return, each mapped to its
+  // own symbolic code. The codes are the branch an agent acts on — re-claim,
+  // re-read, wait, recover, or give up — so the table asserts the message is
+  // forwarded verbatim alongside the code, not merely that the goto failed.
+  it.each([
+    {
+      label: 'a vanished run target',
+      kind: 'missing' as const,
+      message: 'run disappeared',
+      code: 'RUN_TARGET_UNAVAILABLE',
+    },
+    {
+      label: 'a superseded claim',
+      kind: 'claim_superseded' as const,
+      message: 'A newer claim controls this run.',
+      code: 'STALE_CLAIM',
+    },
+    {
+      label: 'a concurrent state change',
+      kind: 'concurrent_modification' as const,
+      message: 'The run changed while this goto was deciding.',
+      code: 'CONCURRENT_MODIFICATION',
+    },
+    {
+      label: 'an in-flight execution',
+      kind: 'execution_in_progress' as const,
+      message: 'Another actor owns this run.',
+      code: 'EXECUTION_IN_PROGRESS',
+    },
+    {
+      label: 'an interrupted execution',
+      kind: 'recovery_required' as const,
+      message: 'The execution outcome is unknown and requires recovery.',
+      code: 'RECOVERY_REQUIRED',
+    },
+  ])('returns $code when the fenced core mutation refuses with $label', async (refusal) => {
     const update = mockFn<RunbookStateManager['update']>();
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
     runNavigationMutation.mockResolvedValue({
-      kind: 'missing',
+      kind: refusal.kind,
       runId: DEFAULT_RUNBOOK_ID,
-      message: 'run disappeared',
-    });
+      epoch: 4,
+      message: refusal.message,
+    } as unknown as Awaited<ReturnType<RunbookLifecycleCommandService['runNavigationMutation']>>);
 
     const ctx = {
       output: {
@@ -652,8 +688,12 @@ describe('executeGoto', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RUN_TARGET_UNAVAILABLE');
+      expect(result.code).toBe(refusal.code);
+      expect(result.error).toBe(refusal.message);
     }
+    // A refused navigation must not write: the fence owns the commit, so a CLI
+    // fallback write would be the shadow persistence path the fence replaced.
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('returns ok with loop result on success', async () => {
@@ -701,6 +741,16 @@ describe('executeGoto', () => {
     }
     expect(action).toHaveBeenCalled();
     expect(runNavigationMutation).toHaveBeenCalledTimes(1);
+    // The seam decides authority, target, and release policy from this input
+    // alone — the CLI performs no navigation write of its own — so an input that
+    // silently lost a field would hand the fence a different mutation.
+    expect(runNavigationMutation).toHaveBeenCalledWith({
+      runId: DEFAULT_RUNBOOK_ID,
+      callerEvidence: { kind: 'direct_cli' },
+      steps: ctx.steps,
+      target,
+      terminalReleaseMode: 'stack-pop',
+    });
     expect(update).not.toHaveBeenCalledWith(
       DEFAULT_RUNBOOK_ID,
       expect.objectContaining({ lastAction: expect.anything() }),

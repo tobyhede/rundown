@@ -1882,6 +1882,114 @@ describe('RunbookCompletionService', () => {
       await expect(manager.load(runbookId)).resolves.toEqual(before);
     });
 
+    describe('prepareChildCompletion no-write outcomes', () => {
+      // The pure twin an aggregate terminal workflow calls against a captured
+      // parent state, BEFORE any lease is crossed. Each no-write outcome is a
+      // distinct instruction to the caller — drop the target, refuse the whole
+      // aggregate, or report cancellation — so they must stay distinguishable.
+      it('is not-applicable for a child with no parent linkage', () => {
+        const child = state({ id: childRunId });
+
+        expect(
+          service.prepareChildCompletion({ childState: child, result: 'pass' }, state()),
+        ).toEqual({ kind: 'not-applicable' });
+      });
+
+      it('is not-applicable when the captured parent is a different run', () => {
+        // The aggregate captures several runs; preparing a child against the
+        // wrong member must write nothing rather than record onto a stranger.
+        const child = makeChildWithDelegationLinkage();
+        const stranger = { ...makeParentWithDelegation(), id: childRunId };
+
+        expect(
+          service.prepareChildCompletion({ childState: child, result: 'pass' }, stranger),
+        ).toEqual({ kind: 'not-applicable' });
+      });
+
+      it('is not-applicable while the child has not reached a terminal outcome', () => {
+        const child = { ...makeChildWithDelegationLinkage(), lifecycle: 'running' as const };
+
+        expect(
+          service.prepareChildCompletion({ childState: child }, makeParentWithDelegation()),
+        ).toEqual({ kind: 'not-applicable' });
+      });
+
+      it('is blocked when the child stopped on infrastructure rather than a runbook result', () => {
+        // A policy denial is not a delegated `fail`: reporting it as one would
+        // record an operator-meaningful outcome for a command that never ran.
+        const child = {
+          ...makeChildWithDelegationLinkage(),
+          lifecycle: 'stopped' as const,
+          lastAction: {
+            type: 'POLICY_DENIED' as const,
+            origin: 'direct' as const,
+            message: 'blocked by policy',
+          },
+        };
+
+        expect(
+          service.prepareChildCompletion({ childState: child }, makeParentWithDelegation()),
+        ).toEqual({ kind: 'blocked' });
+      });
+
+      it('is not-applicable when the parent substep holds a different delegation token', () => {
+        // Token divergence means this report belongs to a superseded issuance —
+        // the parent has since re-delegated, and the stale child must not resolve
+        // the new one's substep.
+        const parent = makeParentWithDelegation();
+        const reissued = {
+          ...parent,
+          substepStates: parent.substepStates?.map((entry) => ({
+            ...entry,
+            delegation: entry.delegation && {
+              ...entry.delegation,
+              tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            },
+          })),
+        } as RunbookState;
+
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+            reissued,
+          ),
+        ).toEqual({ kind: 'not-applicable' });
+      });
+
+      it('reports a cancelled delegation, and records it anyway when cancellation is ignored', () => {
+        // `--force`-style teardown passes ignoreCancellation so an aborted
+        // delegation can still be closed out; the default must not.
+        const cancelled = makeParentWithDelegation('2026-01-01T00:00:01.000Z');
+        const child = makeChildWithDelegationLinkage();
+
+        expect(
+          service.prepareChildCompletion({ childState: child, result: 'pass' }, cancelled),
+        ).toEqual({ kind: 'cancelled' });
+        expect(
+          service.prepareChildCompletion(
+            { childState: child, result: 'pass', ignoreCancellation: true },
+            cancelled,
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      it('prepares the parent state without touching the store', async () => {
+        const parent = makeParentWithDelegation();
+        await manager.save(parent);
+        const before = await manager.load(runbookId);
+
+        const prepared = service.prepareChildCompletion(
+          { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+          parent,
+        );
+
+        expect(prepared.kind).toBe('recorded');
+        // Purity is the contract: an aggregate commits this state itself, inside
+        // its own transaction. A write here would be a second, unfenced one.
+        await expect(manager.load(runbookId)).resolves.toEqual(before);
+      });
+    });
+
     it('duplicate child completion with different result does not overwrite parent substep state', async () => {
       const parent = makeParentWithDelegation();
       await manager.save(parent);
