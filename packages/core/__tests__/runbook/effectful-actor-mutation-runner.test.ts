@@ -211,6 +211,27 @@ describe('createEffectfulActorMutationRunner', () => {
       await lease.releaseClaimed([requiredOwner.value]);
     });
 
+    it('refuses with the capture outcome when every optional target is dropped', async () => {
+      // Dropping optional targets can empty the owned set. That is a refusal the
+      // caller can render and act on, not an invariant violation — throwing
+      // would turn a legible "this run's authority is gone" into an opaque crash
+      // at a seam whose whole contract is typed refusals.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const only = await seedRun('only.runbook.md');
+      unwrapSessionMutation(await sessionService.releaseRunbook(only.id));
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: only.id, optional: true }],
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result.kind).toBe('claim_superseded');
+      expect(compute).not.toHaveBeenCalled();
+    });
+
     it('still refuses when a REQUIRED target cannot be captured', async () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const required = await seedRun('required.runbook.md');

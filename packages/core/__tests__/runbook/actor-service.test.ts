@@ -3763,15 +3763,20 @@ echo ok
 `);
       const recovery = harness.service.createRecoveryActor(harness.state, harness.steps);
       try {
-        expect(recovery.hasTag(RECOVERY_TAG)).toBe(false);
-        expect(recovery.hasTag('unrelated')).toBe(false);
+        // Asks one question and answers it from the live snapshot. The previous
+        // `hasTag(tag)` shape took a tag it discarded — it returned false for
+        // every tag but RECOVERY_TAG whether or not the snapshot carried it —
+        // so an assertion like `hasTag('unrelated') === false` passed without
+        // consulting the machine at all and could not tell a correct
+        // implementation from a broken one.
+        expect(recovery.isInRecoveryState()).toBe(false);
         recovery.send({
           type: 'EXECUTION_OUTCOME_UNKNOWN',
           epoch: assertExecutionEpoch(1),
           reason: 'effect_boundary_crossed',
           interruptedStepId: '1',
         });
-        expect(recovery.hasTag(RECOVERY_TAG)).toBe(true);
+        expect(recovery.isInRecoveryState()).toBe(true);
         expect(recovery.getPersistedSnapshot()).toBeDefined();
       } finally {
         recovery.stop();

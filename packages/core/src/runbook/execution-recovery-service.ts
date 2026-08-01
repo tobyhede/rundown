@@ -23,7 +23,6 @@ import type { RunbookState, ExecutionRecoveryReason, ExecutionRecoveryEvent } fr
 import type { RunbookStore } from './storage/runbook-store.js';
 import type { ExecutionEpoch, GuardedMutationResult } from './storage/mutation-result.js';
 import { InvalidRunbookStateError } from './state.js';
-import { RECOVERY_TAG } from './compiler.js';
 
 /**
  * Minimal machine-actor surface the recovery service drives. Rehydrated at the
@@ -43,12 +42,16 @@ export interface RecoveryActor {
    */
   getPersistedSnapshot(): unknown;
   /**
-   * Test whether the live recovered snapshot carries a machine tag.
+   * Whether the live snapshot has reached the machine's recovery state.
    *
-   * @param tag - Machine tag to inspect.
-   * @returns Whether the current snapshot carries the tag.
+   * Deliberately a single predicate rather than a general `hasTag(tag)`: this
+   * seam only ever asks the one question, and a tag-taking signature invites
+   * an implementation that answers for exactly one tag while appearing to
+   * answer for all of them.
+   *
+   * @returns Whether the current snapshot carries the machine's `RECOVERY_TAG`.
    */
-  hasTag(tag: string): boolean;
+  isInRecoveryState(): boolean;
   /** Stop the actor, releasing any resources. */
   stop(): void;
 }
@@ -136,7 +139,7 @@ export class ExecutionRecoveryService {
         reason,
         interruptedStepId: state.step,
       });
-      if (!actor.hasTag(RECOVERY_TAG)) {
+      if (!actor.isInRecoveryState()) {
         throw new InvalidRunbookStateError(
           `Recovery for run ${runId} did not enter the machine recovery state.`,
         );

@@ -21,7 +21,7 @@ import type { RunbookState } from './types.js';
 import { SqliteExecutionLeaseService, type LeaseWaitPolicy } from './storage/execution-lease.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { CapturedAuthority } from './storage/mutation-result.js';
-import type { ParentAdvanceGuard } from './storage/runbook-store.js';
+import type { CapturedRunStateResult, ParentAdvanceGuard } from './storage/runbook-store.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import { openRunbookStore } from './storage/store-registry.js';
 import { projectRunbookRelease } from './session-service.js';
@@ -246,6 +246,10 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
     const { driver, store } = await openRunbookStore(this.cwd);
     const captured: CapturedActorMutationRun[] = [];
     const droppedRunIds = new Set<RunId>();
+    // Retained so an all-optional set can refuse with a real capture outcome
+    // instead of a synthesized one — the caller sees why the run could
+    // not be captured, not merely that the set came out empty.
+    let lastDropped: Exclude<CapturedRunStateResult, { readonly kind: 'captured' }> | undefined;
     for (const target of input.targets) {
       const result =
         target.claimKey === undefined
@@ -258,12 +262,22 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
           refusal: result.kind,
         });
         droppedRunIds.add(target.runId);
+        lastDropped = result;
         continue;
       }
       captured.push({ authority: result.authority, state: result.state });
     }
     if (captured.length === 0) {
-      throw new Error('Aggregate actor mutation captured no required target.');
+      // Every target was optional and none survived capture. There is nothing to
+      // own and nothing to commit, but this is an ordinary refusal the caller can
+      // render — not an invariant violation — so it must not throw out of a seam
+      // whose contract is typed outcomes. `lastDropped` is always set here: an
+      // empty `captured` with no drop would require zero targets, which the
+      // length check above already rejected.
+      if (lastDropped === undefined) {
+        throw new Error('Aggregate actor mutation captured no target and recorded no refusal.');
+      }
+      return lastDropped;
     }
 
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));

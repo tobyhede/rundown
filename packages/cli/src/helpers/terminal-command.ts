@@ -220,7 +220,13 @@ export async function renderTerminalOutcome(
     case 'recovery_required':
       return renderSessionMutationRefusal(output, outcome);
     case 'aggregate_recovery_required':
-      output.error(outcome.message, 'RECOVERY_REQUIRED');
+      // Name the exact set. A multi-run force-terminal is the one command that
+      // can leave several runs recovery-pending at once, and the outcome already
+      // carries every (runId, epoch); rendering the message alone tells the
+      // operator recovery is needed while withholding what to recover.
+      output.error(outcome.message, 'RECOVERY_REQUIRED', {
+        runs: outcome.attempts.map(({ runId, epoch }) => ({ runId, epoch: Number(epoch) })),
+      });
       return true;
     case 'claim_superseded':
       output.error(outcome.message, 'STALE_CLAIM');

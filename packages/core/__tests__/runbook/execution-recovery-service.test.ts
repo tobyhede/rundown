@@ -85,7 +85,7 @@ function makeActor(state: RunbookState): RecoveryActor {
       actor.send(event);
     },
     getPersistedSnapshot: () => actor.getPersistedSnapshot(),
-    hasTag: (tag) => tag === 'recovery' && actor.getSnapshot().hasTag(tag),
+    isInRecoveryState: () => actor.getSnapshot().hasTag('recovery'),
     stop: () => actor.stop(),
   };
 }
@@ -240,7 +240,7 @@ describe('ExecutionRecoveryService', () => {
           actor.send(event);
         },
         getPersistedSnapshot: () => actor.getPersistedSnapshot(),
-        hasTag: (tag) => tag === 'recovery' && actor.getSnapshot().hasTag(tag),
+        isInRecoveryState: () => actor.getSnapshot().hasTag('recovery'),
         stop: () => actor.stop(),
       };
     };

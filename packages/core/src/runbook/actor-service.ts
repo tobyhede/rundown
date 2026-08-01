@@ -768,9 +768,13 @@ export class RunbookActorService {
         actor.send(event);
       },
       getPersistedSnapshot: () => actor.getPersistedSnapshot(),
-      hasTag: (tag) => {
+      isInRecoveryState: () => {
+        // `createActorForState` erases the snapshot type, so narrow to the one
+        // member this predicate needs. The cast is over the SHAPE only — the
+        // question asked is fixed at RECOVERY_TAG and answered from the live
+        // snapshot, never short-circuited on the caller's behalf.
         const snapshot = actor.getSnapshot() as { hasTag(candidate: string): boolean };
-        return tag === RECOVERY_TAG && snapshot.hasTag(RECOVERY_TAG);
+        return snapshot.hasTag(RECOVERY_TAG);
       },
       stop: () => {
         actor.stop();
