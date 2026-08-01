@@ -328,6 +328,31 @@ describe('PID-aware dead-owner recovery', () => {
     expect(owner).toBeNull();
   });
 
+  it('closes the exact reclaimed pre-effect attempt as released', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await setOwnerPid(state.id, deadPid());
+
+    const recovered = await lease.recoverDeadOwner(state.id);
+
+    expect(recovered.kind).toBe('reclaimed_pre_effect');
+    const row = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId AND exec_epoch = :epoch`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({
+          runId: state.id,
+          epoch: acquired.value.epoch,
+        }),
+    );
+    expect(row?.phase).toBe('released');
+    expect(row?.finished_at).not.toBeNull();
+  });
+
   it('marks a dead effect_started owner recovery_pending, never reclaiming it', async () => {
     const { state, captured } = await preparedRun();
     const acquired = await lease.acquire(captured, process.pid);
@@ -437,6 +462,36 @@ describe('PID-aware dead-owner recovery', () => {
     );
     expect(owner?.exec_token).not.toBeNull();
     expect(owner?.exec_pid).toBe(process.pid);
+  });
+
+  it('refuses to reclaim an attempt that crosses the effect boundary after the liveness read', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const dead = deadPid();
+    await setOwnerPid(state.id, dead);
+    const recorder = recordDriverCalls(driver);
+    recorder.afterRead(1, async () => {
+      const marked = await lease.markEffectStarted(acquired.value);
+      expect(marked.kind).toBe('committed');
+    });
+
+    const recovered = await lease.recoverDeadOwner(state.id);
+
+    expect(recovered).toEqual({ kind: 'alive', runId: state.id, ownerPid: dead });
+    const persisted = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT r.exec_token, a.phase
+             FROM runs r
+             JOIN execution_attempts a
+               ON a.run_id = r.id AND a.exec_epoch = r.exec_epoch
+            WHERE r.id = :runId`,
+        )
+        .get<{ readonly exec_token: string | null; readonly phase: string }>({ runId: state.id }),
+    );
+    expect(persisted?.exec_token).not.toBeNull();
+    expect(persisted?.phase).toBe('effect_started');
   });
 });
 
@@ -890,7 +945,8 @@ describe('default contention policy and finite wait', () => {
 
   it('retries a reclaimed dead pre-effect owner immediately, free of charge', async () => {
     const { state, captured } = await preparedRun();
-    await lease.acquire(captured, process.pid);
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
     await setOwnerPid(state.id, deadPid());
     const recap = await store.captureAuthority(state.id, captured.claimKey);
     if (recap.kind !== 'captured') throw new Error('recapture failed');
@@ -903,8 +959,31 @@ describe('default contention policy and finite wait', () => {
     });
 
     expect(result.kind).toBe('committed');
+    if (result.kind !== 'committed') return;
     // Refused attempt → recovery probe → reclaim CAS → winning attempt.
     expect(recorder.calls).toEqual(['immediate', 'read', 'immediate', 'immediate']);
+    const attempts = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT exec_epoch, phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId
+            ORDER BY exec_epoch`,
+        )
+        .all<{
+          readonly exec_epoch: number;
+          readonly phase: string;
+          readonly finished_at: string | null;
+        }>({ runId: state.id }),
+    );
+    expect(attempts).toEqual([
+      {
+        exec_epoch: acquired.value.epoch,
+        phase: 'released',
+        finished_at: expect.any(String),
+      },
+      { exec_epoch: result.value.epoch, phase: 'claimed', finished_at: null },
+    ]);
     // The reclaim consumed neither an attempt nor any budget.
     expect(progress).toEqual([]);
     expect(clock.sleeps).toEqual([]);

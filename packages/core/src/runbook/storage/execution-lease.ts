@@ -607,16 +607,32 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     owner: OwnerRow,
     epoch: ExecutionEpoch,
   ): Promise<DeadOwnerRecovery> {
-    const changes = await this.driver.immediate(
-      (tx) =>
-        tx
-          .prepare(
-            `UPDATE runs
-                SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
-              WHERE id = :runId AND exec_pid = :pid AND exec_token = :hash AND exec_epoch = :epoch`,
-          )
-          .run({ runId, pid: owner.execPid, hash: owner.execTokenHash, epoch }).changes,
-    );
+    const finishedAt = new Date().toISOString();
+    const changes = await this.driver.immediate((tx) => {
+      const cleared = tx
+        .prepare(
+          `UPDATE runs
+              SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
+            WHERE id = :runId AND exec_pid = :pid AND exec_token = :hash AND exec_epoch = :epoch
+              AND EXISTS (
+                SELECT 1 FROM execution_attempts
+                 WHERE run_id = :runId AND exec_epoch = :epoch
+                   AND exec_token = :hash AND phase = 'claimed'
+              )`,
+        )
+        .run({ runId, pid: owner.execPid, hash: owner.execTokenHash, epoch }).changes;
+      if (cleared === 0) return 0;
+      const closed = tx
+        .prepare(
+          `UPDATE execution_attempts
+              SET phase = 'released', finished_at = :finishedAt
+            WHERE run_id = :runId AND exec_epoch = :epoch
+              AND exec_token = :hash AND phase = 'claimed'`,
+        )
+        .run({ finishedAt, runId, epoch, hash: owner.execTokenHash }).changes;
+      assertExactlyOneRow(closed, runId);
+      return cleared;
+    });
     if (changes !== 1) {
       // Another process reclaimed or reissued the lease between the read and the
       // CAS; do not steal a newer lease.

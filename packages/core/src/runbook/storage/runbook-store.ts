@@ -60,7 +60,13 @@ const CLAIM_STATUSES = ['active', 'superseded'] as const;
 /** Persisted claim status: authority, or a retained tombstone. */
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
-const EXECUTION_PHASES = ['claimed', 'effect_started', 'recovery_pending', 'committed'] as const;
+const EXECUTION_PHASES = [
+  'claimed',
+  'effect_started',
+  'recovery_pending',
+  'committed',
+  'released',
+] as const;
 
 /** Execution phases persisted in `execution_attempts.phase`. */
 export type ExecutionPhase = (typeof EXECUTION_PHASES)[number];
