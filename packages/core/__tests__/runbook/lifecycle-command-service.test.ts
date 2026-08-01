@@ -2703,17 +2703,19 @@ describe('RunbookLifecycleCommandService', () => {
     });
 
     it('reports terminal when the prepared lifecycle is terminal but the snapshot is not', async () => {
-      // `deriveActorStatePatch` assigns `lifecycle` from `snapshot.value` alone,
-      // while `deriveTransitionObservation` requires `snapshot.status === 'done'`
-      // AND `value === 'COMPLETE'`. The two signals are independent (see
-      // `deriveTerminalDrainObservationEvent`'s contract), so a snapshot that has
-      // reached the COMPLETE value without settling to a done status persists a
-      // terminal lifecycle under a non-terminal observation.
+      // INJECTED, not naturally reachable through this path: the snapshot below
+      // is stubbed. `COMPLETE`/`STOPPED` are top-level `type: 'final'` states
+      // whose entry actions assign `context.lifecycle`, so a real actor sets the
+      // terminal value, the terminal status, and the context field together and
+      // the two signals agree. (They DO diverge on the drain path — see
+      // `deriveTerminalDrainObservationEvent` — which is why the reconciliation
+      // exists at all.)
       //
-      // The fenced release fires on the persisted lifecycle, so if the seam took
-      // its reported status from the observation alone it would release the run
-      // from the session while telling the caller execution continues — a
-      // released run the agent is still told to drive.
+      // What this pins is the seam's consistency invariant: the fenced release
+      // fires on the persisted `lifecycle`, so the reported status must follow
+      // the same signal. Were they ever to part, taking the status from the
+      // observation alone would release the run from the session while telling
+      // the caller execution continues — a released run the agent still drives.
       loadStepsImpl = () => twoSteps;
       await activate(baseState({ id: namedRunId }));
 

@@ -339,9 +339,10 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
         'The aggregate effect completed but its refused commit could not be recorded for recovery.',
       );
     } catch (commitError) {
-      // See the single-run branch: the open-child guard aborts before the first
-      // UPDATE, so this refusal is provably write-free and belongs to the caller.
-      if (isOpenDelegatedChildrenError(commitError)) throw commitError;
+      // No open-child guard escape hatch here, deliberately: unlike the
+      // single-run path, an aggregate commit takes no `ParentAdvanceGuard` —
+      // `commitOwnedRunSet` has no guard parameter — so that error cannot
+      // reach this catch. Add the check here only alongside a guard.
       void logger.warn('aggregate commit failed after the execution boundary', {
         runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
         reason,

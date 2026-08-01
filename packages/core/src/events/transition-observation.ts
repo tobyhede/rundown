@@ -337,16 +337,27 @@ export interface ReconciledFencedTerminal {
  * Align a fenced transition's reported status with the lifecycle it released on.
  *
  * The execution fence folds its terminal session release into the same
- * transaction as the state write, and decides it from the committed
- * `state.lifecycle`. `lifecycle` is assigned from `snapshot.value` alone, while
- * {@link deriveTransitionObservation} additionally requires
- * `snapshot.status === 'done'`, so a snapshot that reached the terminal VALUE
- * without settling to a terminal STATUS persists a terminal lifecycle under a
- * non-terminal observation. Left unreconciled the caller is told execution
- * continues on a run the fence already released.
+ * transaction as the state write and decides it from the committed
+ * `state.lifecycle`, while the reported status comes from
+ * {@link deriveTransitionObservation}, which reads the snapshot's top-level
+ * `status`/`value`. This keeps the two answers consistent: whatever the fence
+ * released on is what the caller is told.
  *
- * The implication only runs one way — a terminal observation always implies a
- * terminal lifecycle — so this only ever tops the observation up, never down.
+ * Reachability differs by caller, and the guard is deliberately kept at all of
+ * them rather than only where divergence is proven:
+ *
+ * - Drain callers: divergence is real and documented. See
+ *   {@link deriveTerminalDrainObservationEvent} — a drain derives terminal from
+ *   the applied completion's `state.lifecycle` while the observation derives it
+ *   from the snapshot, and the two are independent signals.
+ * - Direct actor callers (`PASS`/`FAIL`/`EXECUTE_COMMAND`): not known to be
+ *   reachable. `COMPLETE`/`STOPPED` are top-level `type: 'final'` states whose
+ *   entry actions assign `context.lifecycle`, so entering them sets the
+ *   terminal value, the terminal status, and the context field together. The
+ *   guard asserts that invariant rather than repairing an observed defect.
+ *
+ * Only ever tops the observation UP to terminal, never down, so a caller whose
+ * signals already agree is unaffected.
  *
  * @param input - The derived observation plus the context for a terminal event.
  * @returns The authoritative status and the events to emit.
