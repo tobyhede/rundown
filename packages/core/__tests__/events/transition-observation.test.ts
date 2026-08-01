@@ -451,7 +451,7 @@ describe('reconcileFencedTerminalObservation', () => {
         payload: { action: 'CONTINUE', from: '1', at: '2', result: 'PASS' },
       },
     ],
-  } as unknown as TransitionObservation;
+  } satisfies TransitionObservation;
 
   it('leaves an already-terminal observation alone, even against a disagreeing lifecycle', () => {
     // Tops UP only. A `done` observation against a `stopped` commit must not be
@@ -469,7 +469,7 @@ describe('reconcileFencedTerminalObservation', () => {
           payload: { message: 'Ship it', finalPosition: { current: '2', total: 2 } },
         },
       ],
-    } as unknown as TransitionObservation;
+    } satisfies TransitionObservation;
 
     const reconciled = reconcileFencedTerminalObservation({
       observation,

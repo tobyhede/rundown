@@ -2716,6 +2716,7 @@ describe('projectRunbookRelease', () => {
   // is exercised here directly rather than through a store round trip.
   const RUN_ID = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
   const OTHER_RUN_ID = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
+  const THIRD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
 
   function session(overrides: Partial<SessionData> = {}): SessionData {
     return { defaultStack: [], claims: {}, ...overrides };
@@ -2727,9 +2728,13 @@ describe('projectRunbookRelease', () => {
     // a terminal run.
     const data = session({ stashedRunbookId: RUN_ID });
 
-    const result = projectRunbookRelease(data, RUN_ID);
-
-    expect(result.status).toBe('released');
+    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
+      status: 'released',
+      runbookId: RUN_ID,
+      // Released on the strength of the stash alone: the stack never held it.
+      removedFromDefaultStack: false,
+      nextDefaultRunbookId: null,
+    });
     expect(data.stashedRunbookId).toBeUndefined();
   });
 
@@ -2752,8 +2757,11 @@ describe('projectRunbookRelease', () => {
     expect(data.defaultStack).toEqual([OTHER_RUN_ID]);
   });
 
-  it('pops the run from the default stack and names the next default', async () => {
-    const data = session({ defaultStack: [OTHER_RUN_ID, RUN_ID] });
+  it('pops the run from the default stack and names the new top as the next default', async () => {
+    // Three deep, and the released run is NOT on top: the next default has to be
+    // the last remaining entry, so a projection that returned the first entry —
+    // or the one that happened to sit under the released run — is caught.
+    const data = session({ defaultStack: [THIRD_RUN_ID, RUN_ID, OTHER_RUN_ID] });
 
     expect(projectRunbookRelease(data, RUN_ID)).toEqual({
       status: 'released',
@@ -2761,7 +2769,19 @@ describe('projectRunbookRelease', () => {
       removedFromDefaultStack: true,
       nextDefaultRunbookId: OTHER_RUN_ID,
     });
-    expect(data.defaultStack).toEqual([OTHER_RUN_ID]);
+    expect(data.defaultStack).toEqual([THIRD_RUN_ID, OTHER_RUN_ID]);
+  });
+
+  it('names a null next default when the released run emptied the stack', async () => {
+    const data = session({ defaultStack: [RUN_ID] });
+
+    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
+      status: 'released',
+      runbookId: RUN_ID,
+      removedFromDefaultStack: true,
+      nextDefaultRunbookId: null,
+    });
+    expect(data.defaultStack).toEqual([]);
   });
 
   it('deletes controlling claims by default but retains them as terminal tombstones on request', async () => {
@@ -2771,12 +2791,21 @@ describe('projectRunbookRelease', () => {
     const deleted = session({ claims: { [claim.claimKey]: claim } });
     const retained = session({ claims: { [claim.claimKey]: claim } });
 
-    expect(projectRunbookRelease(deleted, RUN_ID).status).toBe('released');
+    // Released on the strength of the claim alone, with the stack untouched.
+    expect(projectRunbookRelease(deleted, RUN_ID)).toEqual({
+      status: 'released',
+      runbookId: RUN_ID,
+      removedFromDefaultStack: false,
+      nextDefaultRunbookId: null,
+    });
     expect(deleted.claims).toEqual({});
 
-    expect(projectRunbookRelease(retained, RUN_ID, { retainClaimsAsTerminal: true }).status).toBe(
-      'released',
-    );
+    expect(projectRunbookRelease(retained, RUN_ID, { retainClaimsAsTerminal: true })).toEqual({
+      status: 'released',
+      runbookId: RUN_ID,
+      removedFromDefaultStack: false,
+      nextDefaultRunbookId: null,
+    });
     expect(retained.claims[claim.claimKey]).toEqual(claim);
   });
 });

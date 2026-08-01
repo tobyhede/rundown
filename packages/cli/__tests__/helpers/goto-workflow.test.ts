@@ -2,6 +2,8 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
   ClaimId,
+  ExecutionEpoch,
+  LifecycleNavigationMutationOutcome,
   RunbookLifecycleCommandService,
   RunbookState,
   RunbookStateManager,
@@ -23,6 +25,13 @@ const CLAIMED_RUNBOOK_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 // Branded by cast rather than assertClaimId: core is mocked in this suite, so
 // the real validator is unavailable and only the value's identity matters here.
 const CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as unknown as ClaimId;
+
+/** The refusal half of a fenced navigation outcome, minus the applied arm. */
+type NavigationRefusal = Exclude<LifecycleNavigationMutationOutcome, { kind: 'applied' }>;
+
+// Branded by cast for the same reason as CLAIM_ID above: core is mocked here, so
+// `assertExecutionEpoch` is unavailable and only the value's identity matters.
+const TEST_EPOCH = 4 as ExecutionEpoch;
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -633,46 +642,63 @@ describe('executeGoto', () => {
   // own symbolic code. The codes are the branch an agent acts on — re-claim,
   // re-read, wait, recover, or give up — so the table asserts the message is
   // forwarded verbatim alongside the code, not merely that the goto failed.
-  it.each([
+  //
+  // Each outcome is typed as the concrete union member rather than cast, so the
+  // fixtures are checked against the contract they stand in for: only
+  // `recovery_required` carries an epoch, and a row that drifted from core's
+  // shape would fail to compile instead of silently testing a shape core never
+  // produces.
+  it.each<{
+    readonly label: string;
+    readonly outcome: NavigationRefusal;
+    readonly code: string;
+  }>([
     {
       label: 'a vanished run target',
-      kind: 'missing' as const,
-      message: 'run disappeared',
+      outcome: { kind: 'missing', runId: DEFAULT_RUNBOOK_ID, message: 'run disappeared' },
       code: 'RUN_TARGET_UNAVAILABLE',
     },
     {
       label: 'a superseded claim',
-      kind: 'claim_superseded' as const,
-      message: 'A newer claim controls this run.',
+      outcome: {
+        kind: 'claim_superseded',
+        runId: DEFAULT_RUNBOOK_ID,
+        message: 'A newer claim controls this run.',
+      },
       code: 'STALE_CLAIM',
     },
     {
       label: 'a concurrent state change',
-      kind: 'concurrent_modification' as const,
-      message: 'The run changed while this goto was deciding.',
+      outcome: {
+        kind: 'concurrent_modification',
+        runId: DEFAULT_RUNBOOK_ID,
+        message: 'The run changed while this goto was deciding.',
+      },
       code: 'CONCURRENT_MODIFICATION',
     },
     {
       label: 'an in-flight execution',
-      kind: 'execution_in_progress' as const,
-      message: 'Another actor owns this run.',
+      outcome: {
+        kind: 'execution_in_progress',
+        runId: DEFAULT_RUNBOOK_ID,
+        message: 'Another actor owns this run.',
+      },
       code: 'EXECUTION_IN_PROGRESS',
     },
     {
       label: 'an interrupted execution',
-      kind: 'recovery_required' as const,
-      message: 'The execution outcome is unknown and requires recovery.',
+      outcome: {
+        kind: 'recovery_required',
+        runId: DEFAULT_RUNBOOK_ID,
+        epoch: TEST_EPOCH,
+        message: 'The execution outcome is unknown and requires recovery.',
+      },
       code: 'RECOVERY_REQUIRED',
     },
   ])('returns $code when the fenced core mutation refuses with $label', async (refusal) => {
     const update = mockFn<RunbookStateManager['update']>();
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-    runNavigationMutation.mockResolvedValue({
-      kind: refusal.kind,
-      runId: DEFAULT_RUNBOOK_ID,
-      epoch: 4,
-      message: refusal.message,
-    } as unknown as Awaited<ReturnType<RunbookLifecycleCommandService['runNavigationMutation']>>);
+    runNavigationMutation.mockResolvedValue(refusal.outcome);
 
     const ctx = {
       output: {
@@ -696,7 +722,7 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe(refusal.code);
-      expect(result.error).toBe(refusal.message);
+      expect(result.error).toBe(refusal.outcome.message);
     }
     // A refused navigation must not write: the fence owns the commit, so a CLI
     // fallback write would be the shadow persistence path the fence replaced.

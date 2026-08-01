@@ -475,6 +475,80 @@ describe('CoreEffectfulMutationExecutor.runAll', () => {
     expect(result).toMatchObject({ kind: 'aggregate_recovery_required' });
   });
 
+  // Acquisition happens in a retry loop, because a refused OPTIONAL target is
+  // dropped and the whole set re-acquired rather than the aggregate failing. The
+  // required/optional split is the difference between "close what you can" and
+  // "change nothing", so both directions are driven here.
+  it('drops a refused optional target and retries the acquisition without it', async () => {
+    const refusal = {
+      kind: 'claim_superseded',
+      runId: OTHER_RUN_ID,
+      message: 'The optional target lost its claim.',
+    } as const;
+    lease.acquireAll
+      .mockResolvedValueOnce(refusal)
+      .mockResolvedValueOnce({ kind: 'committed', value: [attempt()] });
+
+    const result = await executor.runAll({
+      captured: [captured(), captured(OTHER_RUN_ID)],
+      optionalRunIds: [OTHER_RUN_ID],
+      compute: async () => PREPARED,
+      commit: async () => committedResult,
+    });
+
+    expect(result).toEqual(committedResult);
+    expect(lease.acquireAll).toHaveBeenCalledTimes(2);
+    // The retry names only the required run — the dropped target is absent from
+    // the captured set, so preparation sees the shape it would have seen had the
+    // target never been named.
+    expect(lease.acquireAll.mock.calls[1][0]).toEqual([captured()]);
+  });
+
+  it('refuses without running the effect when a required target cannot be acquired', async () => {
+    const refusal = {
+      kind: 'claim_superseded',
+      runId: RUN_ID,
+      message: 'The required target lost its claim.',
+    } as const;
+    lease.acquireAll.mockResolvedValue(refusal);
+    const compute = jest.fn(async () => PREPARED);
+
+    const result = await executor.runAll({
+      captured: [captured(), captured(OTHER_RUN_ID)],
+      optionalRunIds: [OTHER_RUN_ID],
+      compute,
+      commit: async () => committedResult,
+    });
+
+    expect(result).toEqual(refusal);
+    expect(compute).not.toHaveBeenCalled();
+    expect(lease.acquireAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the already-acquired attempts when the effect boundary cannot be marked', async () => {
+    // Nothing external ran, so the claimed attempts must be handed back rather
+    // than left owned until dead-owner recovery reclaims them.
+    const refusal = {
+      kind: 'concurrent_modification',
+      runId: RUN_ID,
+      message: 'The run changed before the boundary.',
+    } as const;
+    const claimed = [attempt()];
+    lease.acquireAll.mockResolvedValue({ kind: 'committed', value: claimed });
+    lease.markEffectStartedAll.mockResolvedValue(refusal);
+    const compute = jest.fn(async () => PREPARED);
+
+    const result = await executor.runAll({
+      captured: [captured()],
+      compute,
+      commit: async () => committedResult,
+    });
+
+    expect(result).toEqual(refusal);
+    expect(compute).not.toHaveBeenCalled();
+    expect(lease.releaseClaimed).toHaveBeenCalledWith(claimed);
+  });
+
   it('rejects an empty captured set', async () => {
     await expect(
       executor.runAll({

@@ -9,6 +9,7 @@ import type {
   CommandTargetResolution,
   DelegationTokenHash,
   EffectfulActorMutationRunner,
+  ExecutionEpoch,
   FrameKey,
   LifecycleTransitionOutcome,
   RunId,
@@ -34,6 +35,9 @@ const CHILD_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as RunId;
 const TEST_CLAIM_ID =
   'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_' as ClaimId;
 const TEST_CLAIM_KEY = 'rdclk_11111111111111111111111111111111' as ClaimLookupKey;
+// Branded by cast like the ids above: core is mocked in this suite, so
+// `assertExecutionEpoch` is unavailable and only the value's identity matters.
+const TEST_EPOCH = 4 as ExecutionEpoch;
 
 const mockRunTransition = mockFn<(args: unknown) => Promise<LifecycleTransitionOutcome>>();
 const mockManagerLoad = mockFn<(id: RunId) => Promise<RunbookState | null>>();
@@ -727,55 +731,86 @@ describe('runSeamTransition — refusal render table', () => {
   // symbolic code an agent branches on, and each arm maps to a DIFFERENT code —
   // so a table that only asserted `exitError` would pass with every arm folded
   // into one envelope.
-  it.each([
+  //
+  // Each outcome is typed as the concrete union member rather than cast, so the
+  // fixtures are checked against the contract they stand in for: only
+  // `recovery_required` carries an epoch, and a row that drifted from core's
+  // shape would fail to compile instead of silently testing a shape core never
+  // produces.
+  it.each<{
+    readonly label: string;
+    readonly outcome: Extract<
+      LifecycleTransitionOutcome,
+      {
+        kind:
+          | 'missing'
+          | 'claim_superseded'
+          | 'concurrent_modification'
+          | 'unknown_run'
+          | 'execution_in_progress'
+          | 'recovery_required';
+      }
+    >;
+    readonly code: string;
+  }>([
     {
       label: 'a vanished run target',
-      kind: 'missing' as const,
-      message: 'Run rd_… does not exist.',
+      outcome: { kind: 'missing', runId: PARENT_RUN_ID, message: 'Run rd_… does not exist.' },
       code: 'RUN_TARGET_UNAVAILABLE',
     },
     {
       label: 'a superseded claim',
-      kind: 'claim_superseded' as const,
-      message: 'A newer claim controls this run.',
+      outcome: {
+        kind: 'claim_superseded',
+        runId: PARENT_RUN_ID,
+        message: 'A newer claim controls this run.',
+      },
       code: 'STALE_CLAIM',
     },
     {
       label: 'a concurrent state change',
-      kind: 'concurrent_modification' as const,
-      message: 'The run changed while this command was deciding.',
+      outcome: {
+        kind: 'concurrent_modification',
+        runId: PARENT_RUN_ID,
+        message: 'The run changed while this command was deciding.',
+      },
       code: 'CONCURRENT_MODIFICATION',
     },
     {
       label: 'an unknown run selector',
-      kind: 'unknown_run' as const,
-      message: 'No run matches that selector.',
+      outcome: {
+        kind: 'unknown_run',
+        runId: PARENT_RUN_ID,
+        message: 'No run matches that selector.',
+      },
       code: 'RUN_TARGET_UNAVAILABLE',
     },
     {
       label: 'an in-flight execution',
-      kind: 'execution_in_progress' as const,
-      message: 'Another actor owns this run.',
+      outcome: {
+        kind: 'execution_in_progress',
+        runId: PARENT_RUN_ID,
+        message: 'Another actor owns this run.',
+      },
       code: 'EXECUTION_IN_PROGRESS',
     },
     {
       label: 'an interrupted execution',
-      kind: 'recovery_required' as const,
-      message: 'The execution outcome is unknown and requires recovery.',
+      outcome: {
+        kind: 'recovery_required',
+        runId: PARENT_RUN_ID,
+        epoch: TEST_EPOCH,
+        message: 'The execution outcome is unknown and requires recovery.',
+      },
       code: 'RECOVERY_REQUIRED',
     },
-  ])('renders $label as $code', async ({ kind, message, code }) => {
+  ])('renders $label as $code', async ({ outcome, code }) => {
     const output = makeOutput();
-    mockRunTransition.mockResolvedValue({
-      kind,
-      runId: PARENT_RUN_ID,
-      epoch: 4,
-      message,
-    } as unknown as LifecycleTransitionOutcome);
+    mockRunTransition.mockResolvedValue(outcome);
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
-    expect(output.error).toHaveBeenCalledWith(message, code);
+    expect(output.error).toHaveBeenCalledWith(outcome.message, code);
     expect(result.exitError).toBe(true);
   });
 });

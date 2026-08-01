@@ -381,49 +381,67 @@ describe('createEffectfulActorMutationRunner', () => {
       return { committed, session, claim: presented, runId: state.id };
     }
 
-    it('releases a completed run from the session when onComplete is set', async () => {
-      const { committed, session, claim, runId } = await releaseTerminal('pass', {
-        onComplete: true,
-        onStopped: true,
-      });
+    // The two flags are deliberately driven ASYMMETRICALLY. Setting both to the
+    // same value would leave the pair indistinguishable: a fence that consulted
+    // `onStopped` for a completion (or swapped the two) would satisfy every
+    // both-true and both-false case. Each row therefore enables exactly the flag
+    // that must NOT govern the lifecycle under test, or exactly the one that must.
+    it.each([
+      {
+        label: 'releases a completed run when onComplete alone is set',
+        result: 'pass' as const,
+        release: { onComplete: true, onStopped: false },
+        released: true,
+      },
+      {
+        label: 'leaves a completed run alone when only onStopped is set',
+        result: 'pass' as const,
+        release: { onComplete: false, onStopped: true },
+        released: false,
+      },
+      {
+        label: 'releases a stopped run when onStopped alone is set',
+        result: 'fail' as const,
+        release: { onComplete: false, onStopped: true },
+        released: true,
+      },
+      {
+        label: 'leaves a stopped run alone when only onComplete is set',
+        result: 'fail' as const,
+        release: { onComplete: true, onStopped: false },
+        released: false,
+      },
+    ])('$label', async ({ result, release, released }) => {
+      const { committed, session, runId } = await releaseTerminal(result, release);
 
       expect(committed.kind).toBe('committed');
+      if (released) {
+        expect(session.defaultStack).not.toContain(runId);
+      } else {
+        expect(session.defaultStack).toContain(runId);
+      }
+    });
+
+    it('retires the bearer as a superseded tombstone on a default release', async () => {
+      const { session, claim, runId } = await releaseTerminal('pass', {
+        onComplete: true,
+        onStopped: false,
+      });
+
       expect(session.defaultStack).not.toContain(runId);
       // Default mode retires the bearer: the row survives only as a superseded
       // tombstone, so a later `--claim-id` resolves stale rather than terminal.
       expect(claim?.status).toBe('superseded');
     });
 
-    it('leaves a completed run on the session when onComplete is not set', async () => {
-      // Anti-vacuity for the case above, and the `defer-to-caller` contract: the
-      // caller owns the release, so the fence must not perform it early.
-      const { committed, session, runId } = await releaseTerminal('pass', {
-        onComplete: false,
-        onStopped: false,
-      });
+    it('releases neither lifecycle when both flags are clear (defer-to-caller)', async () => {
+      // The `defer-to-caller` contract: the caller owns the single terminal
+      // release, so the fence must not perform it early for either outcome.
+      const completed = await releaseTerminal('pass', { onComplete: false, onStopped: false });
+      const stopped = await releaseTerminal('fail', { onComplete: false, onStopped: false });
 
-      expect(committed.kind).toBe('committed');
-      expect(session.defaultStack).toContain(runId);
-    });
-
-    it('releases a stopped run from the session when onStopped is set', async () => {
-      const { committed, session, runId } = await releaseTerminal('fail', {
-        onComplete: true,
-        onStopped: true,
-      });
-
-      expect(committed.kind).toBe('committed');
-      expect(session.defaultStack).not.toContain(runId);
-    });
-
-    it('leaves a stopped run on the session when onStopped is not set', async () => {
-      const { committed, session, runId } = await releaseTerminal('fail', {
-        onComplete: false,
-        onStopped: false,
-      });
-
-      expect(committed.kind).toBe('committed');
-      expect(session.defaultStack).toContain(runId);
+      expect(completed.session.defaultStack).toContain(completed.runId);
+      expect(stopped.session.defaultStack).toContain(stopped.runId);
     });
 
     it('retains the controlling claim as a terminal tombstone when asked', async () => {
