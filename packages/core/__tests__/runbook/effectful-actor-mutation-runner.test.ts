@@ -326,4 +326,147 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(compute).not.toHaveBeenCalled();
     });
   });
+
+  describe('terminal session release', () => {
+    // The release is folded into the SAME transaction as the state write, which
+    // is the whole point of the fence: a run cannot be terminal on disk while the
+    // session still routes commands to it. These drive a real actor to a terminal
+    // lifecycle and read the committed session back.
+    const TERMINAL_RUNBOOK = `## 1. Only
+- PASS COMPLETE
+- FAIL STOP
+`;
+
+    /** Drive one run to a terminal lifecycle under the given release plan. */
+    async function releaseTerminal(
+      result: 'pass' | 'fail',
+      terminalRelease?: {
+        readonly onComplete: boolean;
+        readonly onStopped: boolean;
+        readonly retainClaimsAsTerminal?: boolean;
+      },
+    ) {
+      steps = createRunbook(TERMINAL_RUNBOOK);
+      const runner = createEffectfulActorMutationRunner(dir);
+      // Seeded the way `rd run` starts a run — on the default stack AND holding a
+      // run-control bearer — so both halves of a release are observable.
+      const created = await manager.create(
+        { source: 'project', path: 'terminal.runbook.md' },
+        { title: 'Test', description: 'A test', steps: [...steps] },
+        { runbookPath: 'terminal.runbook.md' },
+      );
+      await actorService.initializeState(created.id, steps);
+      const { claim } = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(created.id),
+      );
+      const state = await manager.load(created.id);
+      if (state === null) throw new Error('seed failed');
+      const claimKey = claim.claimKey;
+
+      const committed = await runner.run({
+        runId: state.id,
+        ...(terminalRelease === undefined ? {} : { terminalRelease }),
+        compute: (capturedState) =>
+          actorService.prepareActorMutation(state.id, capturedState, steps, {
+            type: result === 'pass' ? 'PASS' : 'FAIL',
+          }),
+        makeRecoveryActor: (recoveryState) =>
+          actorService.createRecoveryActor(recoveryState, steps),
+      });
+
+      const session = await manager.loadSession();
+      // loadSession surfaces only ACTIVE claims, so a retained tombstone has to be
+      // read by key — which is exactly how a presented bearer resolves it.
+      const presented = await manager.loadClaim(claimKey);
+      return { committed, session, claim: presented, runId: state.id };
+    }
+
+    // The two flags are deliberately driven ASYMMETRICALLY. Setting both to the
+    // same value would leave the pair indistinguishable: a fence that consulted
+    // `onStopped` for a completion (or swapped the two) would satisfy every
+    // both-true and both-false case. Each row therefore enables exactly the flag
+    // that must NOT govern the lifecycle under test, or exactly the one that must.
+    it.each([
+      {
+        label: 'releases a completed run when onComplete alone is set',
+        result: 'pass' as const,
+        release: { onComplete: true, onStopped: false },
+        released: true,
+      },
+      {
+        label: 'leaves a completed run alone when only onStopped is set',
+        result: 'pass' as const,
+        release: { onComplete: false, onStopped: true },
+        released: false,
+      },
+      {
+        label: 'releases a stopped run when onStopped alone is set',
+        result: 'fail' as const,
+        release: { onComplete: false, onStopped: true },
+        released: true,
+      },
+      {
+        label: 'leaves a stopped run alone when only onComplete is set',
+        result: 'fail' as const,
+        release: { onComplete: true, onStopped: false },
+        released: false,
+      },
+    ])('$label', async ({ result, release, released }) => {
+      const { committed, session, runId } = await releaseTerminal(result, release);
+
+      expect(committed.kind).toBe('committed');
+      if (released) {
+        expect(session.defaultStack).not.toContain(runId);
+      } else {
+        expect(session.defaultStack).toContain(runId);
+      }
+    });
+
+    it('retires the bearer as a superseded tombstone on a default release', async () => {
+      const { session, claim, runId } = await releaseTerminal('pass', {
+        onComplete: true,
+        onStopped: false,
+      });
+
+      expect(session.defaultStack).not.toContain(runId);
+      // Default mode retires the bearer: the row survives only as a superseded
+      // tombstone, so a later `--claim-id` resolves stale rather than terminal.
+      expect(claim?.status).toBe('superseded');
+    });
+
+    it('releases neither lifecycle when both flags are clear (defer-to-caller)', async () => {
+      // The `defer-to-caller` contract: the caller owns the single terminal
+      // release, so the fence must not perform it early for either outcome.
+      const completed = await releaseTerminal('pass', { onComplete: false, onStopped: false });
+      const stopped = await releaseTerminal('fail', { onComplete: false, onStopped: false });
+
+      expect(completed.session.defaultStack).toContain(completed.runId);
+      expect(stopped.session.defaultStack).toContain(stopped.runId);
+    });
+
+    it('retains the controlling claim as a terminal tombstone when asked', async () => {
+      // Retention is what lets `rundown pass --claim-id` on a finished run resolve
+      // `terminal` rather than `missing`; the stack entry still goes.
+      const { session, claim, runId } = await releaseTerminal('pass', {
+        onComplete: true,
+        onStopped: true,
+        retainClaimsAsTerminal: true,
+      });
+
+      expect(session.defaultStack).not.toContain(runId);
+      // Retention is the whole difference: the claim stays ACTIVE against a
+      // finished run, which is what lets `rundown pass --claim-id` resolve
+      // `terminal` instead of `missing`.
+      expect(claim?.status).toBe('active');
+      expect(claim?.record.controlledRunId).toBe(runId);
+    });
+
+    it('performs no release at all when no terminal release is requested', async () => {
+      const { committed, session, claim, runId } = await releaseTerminal('pass');
+
+      expect(committed.kind).toBe('committed');
+      expect(session.defaultStack).toContain(runId);
+      expect(claim?.status).toBe('active');
+    });
+  });
 });

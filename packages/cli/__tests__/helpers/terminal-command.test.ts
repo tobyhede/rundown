@@ -113,6 +113,13 @@ function codeOf(calls: Recorded[], method: string): string | undefined {
   return call?.args[1] as string | undefined;
 }
 
+// ACCEPTED MUTATION SURVIVORS in terminal-command.ts (#485).
+//
+//  - The `default:` arm of `renderTerminalOutcome`'s switch
+//    (`terminal-command.ts:240`), `ConditionalExpression` + `BlockStatement`.
+//    Unreachable by construction: it binds `const _exhaustive: never = outcome`,
+//    so reaching it is a compile error rather than a runtime state.
+
 describe('runSeamTerminal claim-target coupling (#613)', () => {
   /**
    * Drive `runSeamTerminal` against a stub seam and return the input it built.
@@ -200,6 +207,55 @@ describe('renderTerminalOutcome', () => {
     });
     expect(exitError).toBe(true);
     expect(codeOf(calls, 'error')).toBe('DELEGATION_SUPERSEDED');
+  });
+
+  // The single-run fenced-mutation refusals. Each carries its own symbolic code
+  // because an agent branches on them differently: STALE_CLAIM means re-claim,
+  // CONCURRENT_MODIFICATION means re-read and retry, RUN_TARGET_UNAVAILABLE means
+  // the target is gone. Folding them into one envelope would erase that.
+  it.each([
+    {
+      label: 'a superseded claim',
+      kind: 'claim_superseded' as const,
+      message: 'A newer claim controls this run.',
+      code: 'STALE_CLAIM',
+    },
+    {
+      label: 'a concurrent state change',
+      kind: 'concurrent_modification' as const,
+      message: 'The run changed while this command was deciding.',
+      code: 'CONCURRENT_MODIFICATION',
+    },
+    {
+      label: 'a vanished run target',
+      kind: 'missing' as const,
+      message: 'Run rd_… does not exist.',
+      code: 'RUN_TARGET_UNAVAILABLE',
+    },
+    {
+      label: 'an in-flight execution',
+      kind: 'execution_in_progress' as const,
+      message: 'Another actor owns this run.',
+      code: 'EXECUTION_IN_PROGRESS',
+    },
+    {
+      label: 'an interrupted execution',
+      kind: 'recovery_required' as const,
+      message: 'The execution outcome is unknown and requires recovery.',
+      code: 'RECOVERY_REQUIRED',
+    },
+  ])('renders $label as $code and exits non-zero', async ({ kind, message, code }) => {
+    const { exitError, calls } = await render({
+      kind,
+      runId: RUN_ID,
+      epoch: assertExecutionEpoch(4),
+      message,
+    });
+
+    expect(exitError).toBe(true);
+    const errorCall = calls.find((c) => c.method === 'error');
+    expect(errorCall?.args[0]).toBe(message);
+    expect(codeOf(calls, 'error')).toBe(code);
   });
 
   it('names every run needing recovery in an aggregate_recovery_required envelope', async () => {
