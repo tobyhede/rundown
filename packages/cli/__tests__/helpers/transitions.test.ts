@@ -245,6 +245,18 @@ beforeEach(() => {
   mockRunExecutionLoop.mockResolvedValue('done');
 });
 
+// ACCEPTED MUTATION SURVIVORS in transitions.ts (#485).
+//
+//  - The `default:` arm of `renderRefusal`'s switch (`transitions.ts:512`),
+//    `ConditionalExpression` + `BlockStatement`. Unreachable by construction: it
+//    binds `const _exhaustive: never = outcome`, so reaching it is a compile
+//    error rather than a runtime state.
+//  - `case 'unknown_run':` (`transitions.ts:497`), `ConditionalExpression`.
+//    Equivalent: the adjacent `case 'missing':` emits the identical
+//    `RUN_TARGET_UNAVAILABLE` envelope, so a mutant merging the two arms
+//    produces the same output for every input. Both are covered below; the
+//    survivor reflects that core, not the CLI, is where the two kinds differ.
+
 describe('createPassTransitionConfig', () => {
   it('maps RETRY and STOP results to a false action-result but CONTINUE/NEXT to true', () => {
     const config = createPassTransitionConfig();

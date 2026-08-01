@@ -232,6 +232,20 @@ const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
   e as unknown as ExecutionEventEmitterType;
 const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
 
+// KNOWN UNCOVERED MUTANTS in the fenced command block of execution.ts (#485).
+// Recorded rather than accepted: both are reachable, and neither is equivalent.
+//
+//  - `makeRecoveryActor: (state) => ...` (`execution.ts:1500`), `ArrowFunction ->
+//    () => undefined`. Only an interrupted command whose fence actually recovers
+//    distinguishes the two, which this suite's mocked runner never reaches. The
+//    factory's own outcomes are pinned in core by
+//    `effectful-actor-mutation-runner.test.ts`.
+//  - `deriveActiveEntry(..., true)` (`execution.ts:1528`), `BooleanLiteral ->
+//    false`. The flag only changes the projection when the command re-enters the
+//    SAME frame under a GOTO/RETRY last action; on an ordinary advance the frame
+//    key already differs, so both values bump the entry identically. Needs a
+//    retry-driven loop scenario.
+
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;

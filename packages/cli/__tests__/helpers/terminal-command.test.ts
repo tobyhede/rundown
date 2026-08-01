@@ -113,6 +113,13 @@ function codeOf(calls: Recorded[], method: string): string | undefined {
   return call?.args[1] as string | undefined;
 }
 
+// ACCEPTED MUTATION SURVIVORS in terminal-command.ts (#485).
+//
+//  - The `default:` arm of `renderTerminalOutcome`'s switch
+//    (`terminal-command.ts:240`), `ConditionalExpression` + `BlockStatement`.
+//    Unreachable by construction: it binds `const _exhaustive: never = outcome`,
+//    so reaching it is a compile error rather than a runtime state.
+
 describe('runSeamTerminal claim-target coupling (#613)', () => {
   /**
    * Drive `runSeamTerminal` against a stub seam and return the input it built.

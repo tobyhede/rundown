@@ -182,6 +182,13 @@ beforeEach(() => {
   jest.mocked(runExecutionLoop).mockResolvedValue('done');
 });
 
+// ACCEPTED MUTATION SURVIVORS in goto-workflow.ts (#485).
+//
+//  - The `default:` arm of `executeGoto`'s refusal switch (`goto-workflow.ts:394`),
+//    `ConditionalExpression` + `BlockStatement`. Unreachable by construction: the
+//    arm exists only to bind `const _exhaustive: never = mutation`, so reaching it
+//    is a compile error, not a runtime state a test could drive.
+
 describe('buildGotoContext claim-target coupling (#613)', () => {
   /**
    * Pin that goto derives caller evidence and the target selector from the SAME

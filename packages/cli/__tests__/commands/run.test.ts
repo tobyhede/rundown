@@ -21,6 +21,18 @@ import {
 } from '../helpers/test-utils.js';
 import { textModeAgentAdvisory } from '../../src/commands/run.js';
 
+// ACCEPTED MUTATION SURVIVOR in run.ts (#485).
+//
+//  - `callerEvidence: { kind: 'direct_cli' }` on the `--prompted --step` goto
+//    context (`run.ts:312`), `ObjectLiteral -> {}`. Equivalent, not a gap:
+//    `runNavigationMutation` reads the evidence through exactly one predicate,
+//    `input.callerEvidence.kind === 'claim_bearer'`, so `{}` and `direct_cli`
+//    take the same branch and commit the same mutation. Confirmed against the
+//    broad (`--findRelatedTests`) tier, so this is not the dedicated-tier
+//    artifact — the integration path in `explicit-run-targeting.test.ts` does
+//    exercise this line. Killing it would mean asserting an object literal's
+//    shape rather than any behaviour it produces.
+
 describe('textModeAgentAdvisory', () => {
   it('warns when --text is captured (non-terminal stdout — the agent case)', () => {
     const advisory = textModeAgentAdvisory({ text: true }, undefined);
