@@ -110,4 +110,58 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(await store.readPendingRecovery(b.id)).toBeNull();
     });
   });
+
+  describe('optional aggregate targets', () => {
+    it('commits the required target when an optional one cannot be captured', async () => {
+      // A delegating parent is an opportunistic write target: it legitimately
+      // holds no controlling claim of its own, which the bare capture refuses
+      // `claim_superseded`. Marked optional it is dropped, and the required
+      // member still commits — otherwise a child whose parent lost its bearer
+      // could never be closed.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const optional = await seedRun('optional.runbook.md');
+      // Strip the optional run's controlling claim so its capture refuses.
+      unwrapSessionMutation(await sessionService.releaseRunbook(optional.id));
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: required.id }, { runId: optional.id, optional: true }],
+        releases: [{ runId: optional.id }],
+        compute: (captured) => {
+          // The dropped target is absent, so preparation sees exactly the shape
+          // it would have seen had the target never been named.
+          expect(captured).toHaveLength(1);
+          expect(captured[0].state.id).toBe(required.id);
+          return Promise.resolve({
+            members: [{ runId: required.id, nextState: { ...captured[0].state, step: '2' } }],
+            value: 'done',
+          });
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'done' });
+      const store = await getRunbookStore(dir);
+      expect((await store.loadRun(required.id))?.step).toBe('2');
+    });
+
+    it('still refuses when a REQUIRED target cannot be captured', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const other = await seedRun('other.runbook.md');
+      unwrapSessionMutation(await sessionService.releaseRunbook(other.id));
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: required.id }, { runId: other.id }],
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result.kind).toBe('claim_superseded');
+      expect(compute).not.toHaveBeenCalled();
+    });
+  });
 });

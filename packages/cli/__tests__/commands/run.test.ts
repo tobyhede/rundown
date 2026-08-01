@@ -362,6 +362,14 @@ Bundled task.
       expect(Object.values(session.claims)).toContainEqual(
         expect.objectContaining({ controlledRunId: runId }),
       );
+
+      // The retention only matters if the bearer still RESOLVES, so drive the
+      // real command surface rather than trusting the session row: a tombstone
+      // that no longer answers `--claim-id` is the same failure as deletion.
+      const status = await runCliInProcess(['status', '--claim-id', String(claimId)], workspace);
+      expect(status.exitCode).toBe(0);
+      expect(status.stdout).not.toMatch(/CLAIM_NOT_FOUND|STALE_CLAIM/);
+      expect(status.stdout).toContain(String(runId));
     });
   });
 

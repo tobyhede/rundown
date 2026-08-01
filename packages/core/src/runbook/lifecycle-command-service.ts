@@ -2073,17 +2073,7 @@ export class RunbookLifecycleCommandService {
       // controlling claim of its own still must not veto closing this child.
       ...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }]),
     ];
-    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
-    // Parse each run's steps at most once: the pre-pass primes the map so
-    // `makeRecoveryActor` can rebuild any member's graph, and preparation below
-    // reads back through the same memo instead of re-parsing.
-    const stepsFor = async (target: RunbookState): Promise<readonly ResolvedStep[]> => {
-      const cached = stepsByRun.get(target.id);
-      if (cached !== undefined) return cached;
-      const loaded = await this.#deps.loadSteps(target);
-      stepsByRun.set(target.id, loaded);
-      return loaded;
-    };
+    const { stepsByRun, stepsFor } = this.#createStepsMemo();
     for (const target of targets) {
       const targetState =
         target.runId === state.id ? state : await this.#deps.loadRun(target.runId);
@@ -2335,16 +2325,7 @@ export class RunbookLifecycleCommandService {
         ? []
         : [{ runId: externalParentRunId, optional: true }]),
     ];
-    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
-    // Memoised as in the claim path: one parse per run, shared by the recovery
-    // factory and the preparation below.
-    const stepsFor = async (target: RunbookState): Promise<readonly ResolvedStep[]> => {
-      const cached = stepsByRun.get(target.id);
-      if (cached !== undefined) return cached;
-      const loaded = await this.#deps.loadSteps(target);
-      stepsByRun.set(target.id, loaded);
-      return loaded;
-    };
+    const { stepsByRun, stepsFor } = this.#createStepsMemo();
     for (const target of targets) {
       const targetState =
         plan.forceOrder.find(({ id }) => id === target.runId) ??
@@ -3172,6 +3153,27 @@ export class RunbookLifecycleCommandService {
       );
     }
     await this.#deps.persistIssuedSubstep(runId, issued);
+  }
+
+  // Per-run step memo shared by both aggregate terminal paths. The map is what
+  // `makeRecoveryActor` reads to rebuild an interrupted member's graph, and the
+  // accessor is what preparation uses, so a run's steps are parsed at most once
+  // however the two interleave.
+  #createStepsMemo(): {
+    readonly stepsByRun: Map<RunId, readonly ResolvedStep[]>;
+    readonly stepsFor: (target: RunbookState) => Promise<readonly ResolvedStep[]>;
+  } {
+    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
+    return {
+      stepsByRun,
+      stepsFor: async (target) => {
+        const cached = stepsByRun.get(target.id);
+        if (cached !== undefined) return cached;
+        const loaded = await this.#deps.loadSteps(target);
+        stepsByRun.set(target.id, loaded);
+        return loaded;
+      },
+    };
   }
 
   // Find a step by name, throwing on a corrupted state/steps mismatch.

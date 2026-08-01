@@ -366,8 +366,14 @@ function assertCompleteParentLinkage(
 /**
  * Find an already-resolved completion for a target inside a state blob.
  *
- * Matches the key exactly, or any recorded completion already pointing at the
- * same (frame, substep) under a different key.
+ * The in-state twin of {@link RunbookCompletionService.findExistingCompletion},
+ * and deliberately entry-PRECISE for a frame that carries one. Completion keys
+ * embed the entry, and a RETRY/GOTO that re-opens a substep bumps it, so a row
+ * left by an earlier entry on the same frame is not a duplicate of this one —
+ * matching on `frameKey` + `substep` alone would refuse the legitimate
+ * re-completion and strand the re-entered substep with no way to resolve it.
+ * Only a sentinel-entry frame, which names no entry, falls back to the
+ * frame-wide match.
  *
  * @param state - State whose `resolvedCompletions` map is searched.
  * @param targetFrame - Frame the completion targets.
@@ -379,12 +385,17 @@ function findCompletionKeyInState(
   targetFrame: Frame,
   targetSubstep: string,
 ): string | undefined {
-  const exactKey = buildCompletionKey(targetFrame, targetSubstep);
-  return Object.entries(state.resolvedCompletions ?? {}).find(
-    ([key, completion]) =>
-      key === exactKey ||
-      (completion.targetFrameKey === targetFrame.frameKey &&
-        completion.targetSubstep === targetSubstep),
+  const existing = state.resolvedCompletions ?? {};
+  if (frameHasExactEntry(targetFrame)) {
+    const exactKey = buildCompletionKey(targetFrame, targetSubstep);
+    if (Object.hasOwn(existing, exactKey)) return exactKey;
+    const sentinelKey = buildCompletionKey(inactiveFrame(targetFrame.frameKey), targetSubstep);
+    return Object.hasOwn(existing, sentinelKey) ? sentinelKey : undefined;
+  }
+  return Object.entries(existing).find(
+    ([, completion]) =>
+      completion.targetFrameKey === targetFrame.frameKey &&
+      completion.targetSubstep === targetSubstep,
   )?.[0];
 }
 
@@ -537,11 +548,17 @@ export class RunbookCompletionService {
         ? activeFrame(linkage.parentFrameKey, activeParentEntry)
         : exactFrame(linkage.parentFrameKey, linkage.parentEntry);
     const key = buildCompletionKey(targetFrame, linkage.parentStepId);
-    // Same duplicate scan as the manual path — one implementation, so a target
-    // already resolved under a different key is recognized identically here.
-    if (findCompletionKeyInState(parentState, targetFrame, linkage.parentStepId) !== undefined) {
-      return { kind: 'duplicate' };
-    }
+    // Frame-WIDE on purpose, unlike the entry-precise manual lookup above: a
+    // delegated child reports against the linkage it was issued under, so any
+    // recorded outcome for this parent substep — whatever entry it carries —
+    // already answers this report. `recordChildCompletion` uses the same rule.
+    const duplicate = Object.entries(parentState.resolvedCompletions ?? {}).some(
+      ([existingKey, completion]) =>
+        existingKey === key ||
+        (completion.targetFrameKey === linkage.parentFrameKey &&
+          completion.targetSubstep === linkage.parentStepId),
+    );
+    if (duplicate) return { kind: 'duplicate' };
 
     const completion = buildResolvedCompletion({
       agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',

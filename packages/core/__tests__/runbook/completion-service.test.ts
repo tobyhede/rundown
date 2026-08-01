@@ -21,6 +21,7 @@ import {
   buildResolvedCompletion,
   exactFrame,
   inactiveFrame,
+  type Frame,
 } from '../../src/runbook/targeting.js';
 import {
   brandEffectiveVarsForTest,
@@ -1962,9 +1963,41 @@ describe('RunbookCompletionService', () => {
         }),
         expected: 'duplicate',
       },
+      {
+        // The completion key embeds the entry, so a row left by an EARLIER entry
+        // on the same frame is not a duplicate of this one: a RETRY/GOTO that
+        // re-opens a substep bumps the entry, and resolving the re-opened cursor
+        // is a legitimate re-completion. A lookup that matched on
+        // frameKey+substep alone would refuse it and strand the re-entered
+        // substep with no way to resolve it.
+        label: 'a completion row left behind by an earlier entry on the same frame',
+        seed: (base: RunbookState): RunbookState => ({
+          ...base,
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+        targetFrame: activeFrame(buildFrameKey('1'), 2),
+        expected: 'recorded',
+      },
     ])(
       'prepareManualCompletion agrees with recordManualCompletionUnlocked for $label',
-      ({ seed, expected }) => {
+      ({
+        seed,
+        expected,
+        targetFrame,
+      }: {
+        seed: (b: RunbookState) => RunbookState;
+        expected: string;
+        targetFrame?: Frame;
+      }) => {
         // The fenced seam prepares a manual completion purely, while the locking
         // twin records it. They are two renderings of ONE decision, so they must
         // never disagree about duplicate-vs-recorded or about the completion key
@@ -1978,7 +2011,7 @@ describe('RunbookCompletionService', () => {
             currentState: seeded,
             targetStep: '1',
             targetSubstep: '1',
-            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            targetFrame: targetFrame ?? activeFrame(buildFrameKey('1'), 1),
             result: 'pass' as const,
             agentId: 'manual',
             completedAt: '2026-01-01T00:00:00.000Z',
