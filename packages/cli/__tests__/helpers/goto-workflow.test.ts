@@ -2,7 +2,6 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
   ClaimId,
-  RunbookActorService,
   RunbookLifecycleCommandService,
   RunbookState,
   RunbookStateManager,
@@ -28,7 +27,6 @@ const CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as unknown as ClaimId;
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
-  RunbookActorService: jest.fn(),
   SessionService: jest.fn(),
   // Statically imported by delegation-completion.js (pulled in via executeGoto's
   // propagateDrivenRunTerminal call); the ESM link check needs the names, but the
@@ -84,7 +82,8 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
 
-// Mock actor-service factory to keep this unit test on structural service doubles.
+// Delegation completion still imports this factory transitively; keep that
+// collaborator structural even though GotoContext no longer carries it.
 jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
   createCliRunbookActorService: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
@@ -641,7 +640,6 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: {} as RunbookActorService,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
@@ -683,7 +681,6 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: {} as RunbookActorService,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
@@ -734,7 +731,6 @@ describe('executeGoto', () => {
       manager: {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: {} as RunbookActorService,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
@@ -782,7 +778,6 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      actorService: {} as RunbookActorService,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),

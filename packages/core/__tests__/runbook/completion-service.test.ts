@@ -11,6 +11,7 @@ import {
   RunbookStateManager,
   type RunbookState,
   type ResolvedStep,
+  type RecordCompletionResult,
 } from '../../src/runbook/index.js';
 import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -1830,6 +1831,57 @@ describe('RunbookCompletionService', () => {
       expect(second).toBe('duplicate');
     });
 
+    it('classifies a consumed child completion with a matching done substep as duplicate', async () => {
+      const parent = makeParentWithDelegation();
+      const consumed = {
+        ...parent,
+        step: '2',
+        substep: undefined,
+        activeFrameKey: buildFrameKey('2'),
+        substepStates: parent.substepStates?.map((entry) => ({
+          ...entry,
+          status: 'done' as const,
+          result: 'pass' as const,
+        })),
+      };
+      await manager.save(consumed);
+      const before = await manager.load(runbookId);
+      const child = makeChildWithDelegationLinkage();
+
+      expect(
+        service.prepareChildCompletion({ childState: child, result: 'pass' }, consumed),
+      ).toEqual({ kind: 'duplicate' });
+      await expect(
+        service.recordChildCompletionUnlocked({ childState: child, result: 'pass' }),
+      ).resolves.toBe('duplicate');
+      await expect(manager.load(runbookId)).resolves.toEqual(before);
+    });
+
+    it('treats a consumed child report from an earlier entry of the active frame as duplicate', async () => {
+      const parent = makeParentWithDelegation();
+      const reentered = {
+        ...parent,
+        activeEntry: 2,
+        frameEntryCounts: { [buildFrameKey('1')]: 2 },
+        substepStates: parent.substepStates?.map((entry) => ({
+          ...entry,
+          status: 'done' as const,
+          result: 'pass' as const,
+        })),
+      };
+      await manager.save(reentered);
+      const before = await manager.load(runbookId);
+      const child = makeChildWithDelegationLinkage();
+
+      expect(
+        service.prepareChildCompletion({ childState: child, result: 'pass' }, reentered),
+      ).toEqual({ kind: 'duplicate' });
+      await expect(
+        service.recordChildCompletionUnlocked({ childState: child, result: 'pass' }),
+      ).resolves.toBe('duplicate');
+      await expect(manager.load(runbookId)).resolves.toEqual(before);
+    });
+
     it('duplicate child completion with different result does not overwrite parent substep state', async () => {
       const parent = makeParentWithDelegation();
       await manager.save(parent);
@@ -1928,7 +1980,12 @@ describe('RunbookCompletionService', () => {
       expect(acquireSpy).not.toHaveBeenCalled();
     });
 
-    describe.each([
+    describe.each<{
+      label: string;
+      seed: (base: RunbookState) => RunbookState;
+      expected: RecordCompletionResult['status'];
+      targetFrame?: Frame;
+    }>([
       {
         label: 'a fresh target',
         seed: (base: RunbookState): RunbookState => base,
@@ -1995,7 +2052,7 @@ describe('RunbookCompletionService', () => {
         targetFrame,
       }: {
         seed: (b: RunbookState) => RunbookState;
-        expected: string;
+        expected: RecordCompletionResult['status'];
         targetFrame?: Frame;
       }) => {
         // The fenced seam prepares a manual completion purely, while the locking

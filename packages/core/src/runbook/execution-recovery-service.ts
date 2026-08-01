@@ -65,7 +65,14 @@ export interface RecoveryActor {
  */
 export type RecoveryActorFactory = (state: RunbookState) => RecoveryActor;
 
-/** Outcome of a recovery attempt. */
+/**
+ * Outcome of a persisted execution-recovery attempt.
+ *
+ * `recovered` committed the recovery snapshot; `missing`, `not_pending`, and
+ * `superseded` report why no recovery write was needed. `recovery_required`
+ * means the persisted snapshot is incompatible with automatic recovery and an
+ * operator must stop, prune, or restart the run.
+ */
 export type RecoveryOutcome =
   | { readonly kind: 'recovered'; readonly runId: RunId; readonly epoch: ExecutionEpoch }
   | { readonly kind: 'missing'; readonly runId: RunId }
@@ -74,7 +81,8 @@ export type RecoveryOutcome =
       readonly kind: 'superseded';
       readonly runId: RunId;
       readonly message: string;
-    };
+    }
+  | Extract<GuardedMutationResult<never>, { readonly kind: 'recovery_required' }>;
 
 /** Default recovery reason when the attempt row recorded none. */
 const DEFAULT_REASON: ExecutionRecoveryReason = 'owner_dead';
@@ -130,9 +138,10 @@ export class ExecutionRecoveryService {
     const reason = validateReason(pending.reason);
 
     // Rehydrate, send ONLY the pure recovery event, capture the new snapshot.
-    const actor = this.makeActor(state);
+    let actor: RecoveryActor | undefined;
     let snapshot: unknown;
     try {
+      actor = this.makeActor(state);
       actor.send({
         type: 'EXECUTION_OUTCOME_UNKNOWN',
         epoch: pending.epoch,
@@ -145,8 +154,18 @@ export class ExecutionRecoveryService {
         );
       }
       snapshot = actor.getPersistedSnapshot();
+    } catch (error) {
+      if (error instanceof InvalidRunbookStateError) {
+        return {
+          kind: 'recovery_required',
+          runId,
+          epoch: pending.epoch,
+          message: `Run ${runId} needs recovery: ${error.message}`,
+        };
+      }
+      throw error;
     } finally {
-      actor.stop();
+      actor?.stop();
     }
 
     const next: RunbookState = {

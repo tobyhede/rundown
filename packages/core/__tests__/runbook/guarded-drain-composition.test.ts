@@ -25,6 +25,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
+import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { createRunbook } from './fixtures.js';
 import { assertClaimed, linkageFor, seedLiveDelegation } from './claim-test-helpers.js';
@@ -207,6 +208,7 @@ describe('guarded drain composition (real store, real predicate)', () => {
     // provably write-free — it stays the actionable `open_delegated_children`
     // rather than being escalated into a recovery the run does not need.
     expect(outcome.kind).toBe('open_delegated_children');
+    await expect((await getRunbookStore(tmp)).readPendingRecovery(parentRunId)).resolves.toBeNull();
 
     // Neither prepared completion was consumed: record + drain is all-or-none.
     await expect(

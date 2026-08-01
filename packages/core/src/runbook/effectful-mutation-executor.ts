@@ -201,7 +201,14 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     const marked = await this.lease.markEffectStarted(acquired.value);
     if (marked.kind !== 'committed') {
       // Ownership lost before the boundary; nothing external ran. Refuse.
-      await this.lease.releaseClaimed([acquired.value]);
+      try {
+        await this.lease.releaseClaimed([acquired.value]);
+      } catch (releaseError) {
+        void logger.warn('releasing claimed execution attempts failed', {
+          runs: [acquired.value.runId],
+          error: getErrorMessage(releaseError),
+        });
+      }
       return marked;
     }
     const attempt = marked.value;
@@ -255,7 +262,15 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
       // whose state never changed and downgrade an actionable refusal to an
       // opaque one.
       if (isOpenDelegatedChildrenError(commitError)) {
-        await this.lease.releaseEffectStarted(attempt);
+        try {
+          await this.lease.releaseEffectStarted(attempt);
+        } catch (releaseError) {
+          void logger.warn('releasing effect-started execution attempt failed', {
+            runId: attempt.runId,
+            epoch: attempt.epoch,
+            error: getErrorMessage(releaseError),
+          });
+        }
         throw commitError;
       }
       // Every other thrown commit has an ambiguous durability outcome: it may
@@ -331,7 +346,14 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
         attempts = marked.value;
         break;
       }
-      await this.lease.releaseClaimed(acquired.value);
+      try {
+        await this.lease.releaseClaimed(acquired.value);
+      } catch (releaseError) {
+        void logger.warn('releasing claimed execution attempts failed', {
+          runs: acquired.value.map(({ runId }) => runId),
+          error: getErrorMessage(releaseError),
+        });
+      }
       if (optionalRunIds.has(marked.runId)) {
         activeCaptured = activeCaptured.filter(({ runId }) => runId !== marked.runId);
         continue;
@@ -357,6 +379,7 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     try {
       const committed = await input.commit(attempts, prepared);
       if (committed.kind === 'committed') return committed;
+      if (committed.kind === 'recovery_required') return committed;
       const recovery = await this.recordSetRecovery(attempts, reason);
       if (recovery.kind === 'aggregate_recovery_required') return recovery;
       throw new Error(
@@ -443,7 +466,16 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     reason: ExecutionRecoveryReason,
   ): Promise<AbandonedAttemptSetOutcome | { readonly kind: 'not_recorded' }> {
     try {
-      return await this.lease.abandonAllToRecovery(attempts, reason);
+      const recovery = await this.lease.abandonAllToRecovery(attempts, reason);
+      if (recovery.kind === 'execution_in_progress') {
+        void logger.warn('guarded aggregate abandon refused; no recovery was recorded', {
+          runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+          refusedRunId: recovery.runId,
+          outcome: recovery.kind,
+          refusal: recovery.message,
+        });
+      }
+      return recovery;
     } catch (abandonError) {
       void logger.warn(
         'recording aggregate recovery failed; attempts left to dead-owner recovery',

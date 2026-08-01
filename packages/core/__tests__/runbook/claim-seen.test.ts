@@ -415,11 +415,31 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   });
 
   it('records liveness before a post-authorization mutation enters recovery', async () => {
+    sessionService = serviceWithClock(manager, [
+      '2026-07-17T12:00:00.000Z',
+      '2026-07-17T12:00:05.000Z',
+    ]);
+    const lifecycleService = new ExecutionLifecycleService(manager);
+    seam = new RunbookLifecycleCommandService({
+      sessionService,
+      actorService,
+      lifecycleService,
+      completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+      actorMutationRunner: createEffectfulActorMutationRunner(testDir),
+      loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
+      loadSteps: () => seamSteps,
+      resolveChildRunbook: async () => undefined,
+      persistIssuedSubstep: async () => {},
+      findDelegationByToken: async () => undefined,
+      delegationLock: new DelegationLock(testDir),
+    });
     const { claimId, claim } = unwrapSessionMutation(
       await sessionService.issueRunControlClaim(runId),
     );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
-    await new Promise((resolve) => setTimeout(resolve, 5));
     jest
       .spyOn(actorService, 'prepareActorMutation')
       .mockRejectedValueOnce(new Error('dispatch exploded'));

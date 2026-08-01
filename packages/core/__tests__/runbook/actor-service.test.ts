@@ -25,7 +25,7 @@ import type { RunbookContext } from '../../src/runbook/compiler.js';
 import {
   compileRunbookToMachine,
   PENDING_MACHINE_EFFECT_TAG,
-  RECOVERY_TAG,
+  RECOVERY_REQUIRED_STATE_NAME,
 } from '../../src/runbook/compiler.js';
 import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
@@ -3777,9 +3777,12 @@ echo ok
           interruptedStepId: '1',
         });
         expect(recovery.isInRecoveryState()).toBe(true);
-        expect(recovery.getPersistedSnapshot()).toBeDefined();
+        expect(recovery.getPersistedSnapshot()).toMatchObject({
+          value: RECOVERY_REQUIRED_STATE_NAME,
+        });
       } finally {
         recovery.stop();
+        harness.service.stopActor(harness.actor);
         await rm(harness.testDir, { recursive: true, force: true });
       }
     });

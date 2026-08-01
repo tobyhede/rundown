@@ -169,7 +169,8 @@ The result is {{ Result }}.
       const result = await runCliInProcess(['stop', 'race', '--text'], workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(prepareSpy.mock.calls[0]?.[3]).toEqual({
+      const forceStopCall = prepareSpy.mock.calls.find((call) => call[3].type === 'FORCE_STOP');
+      expect(forceStopCall?.[3]).toEqual({
         type: 'FORCE_STOP',
         message: 'race',
       });

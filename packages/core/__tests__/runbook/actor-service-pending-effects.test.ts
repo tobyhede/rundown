@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assign, fromPromise, setup } from 'xstate';
+import type * as CompilerModule from '../../src/runbook/compiler.js';
 import type { ResolvedRunbook, ResolvedStep } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
@@ -32,7 +33,8 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
   PENDING_MACHINE_EFFECT_TAG: pendingTag,
   PENDING_COMMAND_EXECUTION_TAG: pendingCommandTag,
-  RECOVERY_TAG: 'recovery',
+  RECOVERY_TAG: jest.requireActual<typeof CompilerModule>('../../src/runbook/compiler.js')
+    .RECOVERY_TAG,
   RECOVERY_REQUIRED_STATE_NAME: 'recoveryRequired',
   DelegationChildLinkPreparationError: class DelegationChildLinkPreparationError extends Error {
     constructor(

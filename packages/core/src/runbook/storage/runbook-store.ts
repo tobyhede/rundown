@@ -1935,10 +1935,10 @@ export class RunbookStore {
   /**
    * Run the common bookkeeping an authoritative run-state write owes.
    *
-   * Invoked exactly once by each of the three authoritative commit sites — the
-   * owned-lease commit in {@link commitOwnedState}, the CAS write behind
-   * {@link mutateState}, and the captured-authority write behind
-   * {@link saveState} — after a run UPDATE changes exactly one row, never on a
+   * Invoked exactly once by each authoritative commit site — the shared owned
+   * write in {@link writeOwnedState}, the CAS write behind {@link mutateState},
+   * and the captured-authority write behind {@link saveState} — after a run
+   * UPDATE changes exactly one row, never on a
    * zero-row/stale/owned outcome, so the resolved-completion projection and the
    * delegated-claim supersession latch stay in lockstep with the committed
    * state. This is the single home for the parent half of R2's two-sided
@@ -1947,9 +1947,11 @@ export class RunbookStore {
    * {@link commitRecovery} is deliberately NOT one of those sites: it restores
    * the interrupted attempt's own snapshot under the same lifecycle rather than
    * moving a cursor or ending a run, so it can close no delegation. Any cursor
-   * movement that follows recovery commits through one of the three sites above
+   * movement that follows recovery commits through one of the sites above
    * and invalidates there. Do not read the phrase "every state write" literally
-   * — `state_json` is written on four paths, and this hook covers three.
+   * — `state_json` is written through recovery plus the single-run and aggregate
+   * owned paths, CAS mutation, and captured-authority save; this hook covers all
+   * authoritative paths except recovery.
    *
    * @param tx - Open write transaction.
    * @param next - The run state just committed.

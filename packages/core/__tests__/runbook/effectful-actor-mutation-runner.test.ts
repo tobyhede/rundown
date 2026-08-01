@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
@@ -63,7 +63,60 @@ async function seedRun(runbookPath: string): Promise<RunbookState> {
 }
 
 describe('createEffectfulActorMutationRunner', () => {
+  it('returns actionable recovery detail when the persisted snapshot is incompatible', async () => {
+    const runner = createEffectfulActorMutationRunner(dir);
+    const state = await seedRun('invalid-recovery.runbook.md');
+
+    const result = await runner.run({
+      runId: state.id,
+      compute: () => Promise.reject(new Error('effect failed')),
+      makeRecoveryActor: () => {
+        throw new InvalidRunbookStateError('snapshot incompatible');
+      },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: 'recovery_required',
+        runId: state.id,
+        message: expect.stringContaining('snapshot incompatible'),
+      }),
+    );
+  });
+
   describe('runAll aggregate recovery', () => {
+    it('rejects an execution attempt that is paired with a different captured run', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const a = await seedRun('a.runbook.md');
+      const b = await seedRun('b.runbook.md');
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realMark = SqliteExecutionLeaseService.prototype.markEffectStartedAll;
+      jest
+        .spyOn(SqliteExecutionLeaseService.prototype, 'markEffectStartedAll')
+        .mockImplementation(async function (this: SqliteExecutionLeaseService, attempts) {
+          const marked = await realMark.call(this, attempts);
+          return marked.kind === 'committed'
+            ? { kind: 'committed', value: [...marked.value].reverse() }
+            : marked;
+        });
+      jest
+        .spyOn(SqliteExecutionLeaseService.prototype, 'abandonAllToRecovery')
+        .mockRejectedValue(new Error('leave invariant error observable'));
+
+      await expect(
+        runner.runAll({
+          targets: [{ runId: a.id }, { runId: b.id }],
+          compute: (captured) =>
+            Promise.resolve({
+              members: captured.map(({ state }) => ({ runId: state.id, nextState: state })),
+              value: 'done',
+            }),
+          makeRecoveryActor: (_runId, state) => actorService.createRecoveryActor(state, steps),
+        }),
+      ).rejects.toThrow('Aggregate execution order does not match the captured targets.');
+    });
+
     it('still reports aggregate recovery when a member cannot build a recovery actor', async () => {
       // The recovery loop exists to degrade an ambiguous aggregate effect into a
       // typed, recoverable outcome. A throwing `makeRecoveryActor` — the seams
@@ -94,6 +147,29 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(
         warn.mock.calls.some((call) => JSON.stringify(call[1] ?? {}).includes('Missing recovery')),
       ).toBe(true);
+    });
+
+    it('logs actionable detail when an aggregate member has an incompatible snapshot', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const state = await seedRun('invalid-aggregate-recovery.runbook.md');
+      const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: state.id }],
+        compute: () => Promise.reject(new Error('aggregate effect failed')),
+        makeRecoveryActor: () => {
+          throw new InvalidRunbookStateError('aggregate snapshot incompatible');
+        },
+      });
+
+      expect(result.kind).toBe('aggregate_recovery_required');
+      expect(warn).toHaveBeenCalledWith(
+        'aggregate member recovery remains required',
+        expect.objectContaining({
+          runId: state.id,
+          message: expect.stringContaining('aggregate snapshot incompatible'),
+        }),
+      );
     });
 
     it('recovers every interrupted member when recovery actors are available', async () => {

@@ -1914,6 +1914,7 @@ export class RunbookLifecycleCommandService {
    *
    * @param input - Selected run, caller evidence, parsed steps, and validated target.
    * @returns Applied transition data or a typed capture/execution refusal.
+   * @throws {Error} When a committed mutation has no captured previous state.
    */
   async runNavigationMutation(
     input: LifecycleNavigationMutationInput,
@@ -2228,7 +2229,9 @@ export class RunbookLifecycleCommandService {
       // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
       // bearer receives the same outcome without mutating the resolved chain.
       if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
-        const release = await sessionService.releaseRunbooks(plan.releaseRunIds);
+        const release = await sessionService.releaseRunbooks(plan.releaseRunIds, {
+          retainClaimsAsTerminalRunId: plan.targetState.id,
+        });
         if (release.kind !== 'committed') return release;
       }
       return {
@@ -2334,7 +2337,9 @@ export class RunbookLifecycleCommandService {
         (await this.#deps.loadRun(target.runId));
       if (targetState !== undefined) await stepsFor(targetState);
     }
-    const aggregate = await this.#deps.actorMutationRunner.runAll({
+    const aggregate = await this.#deps.actorMutationRunner.runAll<
+      Extract<LifecycleTerminalOutcome, { readonly kind: 'already_terminal' | 'applied_bare' }>
+    >({
       targets,
       releases: plan.releaseRunIds.map((runId) => ({
         runId,
@@ -2346,6 +2351,23 @@ export class RunbookLifecycleCommandService {
           throw new Error(`Missing recovery steps for aggregate run ${runId}.`);
         }
         return actorService.createRecoveryActor(recoveryState, recoverySteps);
+      },
+      beforeEffect: (captured) => {
+        const root = captured.find(({ state }) => state.id === plan.targetState.id)?.state;
+        if (root === undefined) {
+          throw new Error(`Aggregate force-${input.command} did not capture its root run.`);
+        }
+        return root.lifecycle === 'running'
+          ? { kind: 'continue' as const }
+          : {
+              kind: 'return' as const,
+              value: {
+                kind: 'already_terminal' as const,
+                targetRunId: root.id,
+                lifecycle:
+                  root.lifecycle === 'stopped' ? ('stopped' as const) : ('completed' as const),
+              },
+            };
       },
       compute: async (captured) => {
         const events: AttributedTerminalObservation[] = [];
@@ -2434,7 +2456,14 @@ export class RunbookLifecycleCommandService {
         };
       },
     });
-    return aggregate.kind === 'committed' ? aggregate.value : aggregate;
+    if (aggregate.kind !== 'committed') return aggregate;
+    if (aggregate.value.kind === 'already_terminal') {
+      const release = await sessionService.releaseRunbooks(plan.releaseRunIds, {
+        retainClaimsAsTerminalRunId: plan.targetState.id,
+      });
+      if (release.kind !== 'committed') return release;
+    }
+    return aggregate.value;
   }
 
   // Resolve the issuance anchor run via the shared `resolveIssuanceAnchor` seam

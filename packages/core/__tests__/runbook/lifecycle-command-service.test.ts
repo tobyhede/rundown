@@ -4578,6 +4578,42 @@ describe('RunbookLifecycleCommandService', () => {
         expect(releaseSpy).toHaveBeenCalled();
       });
 
+      it('returns already_terminal before the effect boundary when the captured root became terminal', async () => {
+        const root = baseState({ id: ROOT });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [root]);
+        const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
+        jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
+          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          return await runAll(input);
+        });
+        const prepare = jest.spyOn(actorService, 'prepareActorMutation');
+        const release = jest.spyOn(sessionService, 'releaseRunbooks');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+        });
+        expect(prepare).not.toHaveBeenCalled();
+        expect(release).toHaveBeenCalledWith([ROOT], {
+          retainClaimsAsTerminalRunId: ROOT,
+        });
+        const attempts = await (await getRunbookStore(tmp)).read((txn) =>
+          txn.tx
+            .prepare('SELECT COUNT(*) AS count FROM execution_attempts WHERE run_id = :runId')
+            .get<{ readonly count: number }>({ runId: ROOT }),
+        );
+        expect(attempts?.count).toBe(0);
+      });
+
       it('preserves already_terminal without releasing for a foreign run-control bearer', async () => {
         const root = baseState({ id: ROOT, lifecycle: 'completed' });
         await manager.save(root);

@@ -1418,22 +1418,26 @@ export class SessionService {
    * mutation, composed from {@link releaseFromSession} in a single transaction.
    *
    * Used by the inline force-terminal cascade to tear down the whole active
-   * inline chain after every member reached terminal lifecycle. This is explicit
-   * teardown of default-stack inline composition, not natural claim completion,
-   * so `retainClaimsAsTerminal` is intentionally not applied here.
+   * inline chain after every member reached terminal lifecycle. Callers may
+   * retain the terminal root's claim while still deleting descendant claims.
    *
    * @param runbookIds - Run ids to release, in descendant-to-root order.
+   * @param options - Aggregate terminal-claim retention policy.
+   * @param options.retainClaimsAsTerminalRunId - Root run whose matching claims remain terminal.
    * @returns The released run ids and the next default-stack runbook id, if any.
    *   Refused `execution_in_progress` or `recovery_required` instead when the
    *   run is execution-owned or awaiting recovery; the value is absent then.
    */
   async releaseRunbooks(
     runbookIds: readonly RunId[],
+    options: { readonly retainClaimsAsTerminalRunId?: RunId } = {},
   ): Promise<SessionMutationResult<ReleaseRunbooksResult>> {
     return this.mutateGuarded(runbookIds, (ctx) => {
       const releasedRunIds: RunId[] = [];
       for (const runbookId of runbookIds) {
-        const released = this.releaseFromSession(ctx.session, runbookId);
+        const released = this.releaseFromSession(ctx.session, runbookId, {
+          retainClaimsAsTerminal: runbookId === options.retainClaimsAsTerminalRunId,
+        });
         if (released.status === 'released') {
           releasedRunIds.push(runbookId);
         }

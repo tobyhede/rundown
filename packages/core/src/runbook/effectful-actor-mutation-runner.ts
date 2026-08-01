@@ -132,10 +132,17 @@ export interface AggregateTerminalRelease {
   readonly retainClaimsAsTerminal?: boolean;
 }
 
-/** Input to {@link EffectfulActorMutationRunner.runAll}. */
+/** Public contract for one dependency-ordered aggregate actor mutation. */
 export interface EffectfulActorMutationSetRunnerInput<TResult> {
   /** Dependency-ordered affected runs. */
   readonly targets: readonly EffectfulActorMutationSetTarget[];
+  /** Return a captured-state no-op before acquiring or crossing an effect boundary. */
+  readonly beforeEffect?: (
+    captured: readonly CapturedActorMutationRun[],
+  ) =>
+    | { readonly kind: 'continue' }
+    | { readonly kind: 'return'; readonly value: TResult }
+    | Promise<{ readonly kind: 'continue' } | { readonly kind: 'return'; readonly value: TResult }>;
   /** Prepare every state from the exact captured set. */
   readonly compute: (
     captured: readonly CapturedActorMutationRun[],
@@ -214,6 +221,8 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
         // Recovery either committed here or another exact recovery already won.
         // Preserve the no-retry command outcome in every case.
         return result;
+      case 'recovery_required':
+        return recovered;
       case 'missing':
         return {
           kind: 'missing',
@@ -280,6 +289,11 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
       return lastDropped;
     }
 
+    const beforeEffect = await input.beforeEffect?.(captured);
+    if (beforeEffect?.kind === 'return') {
+      return { kind: 'committed', value: beforeEffect.value };
+    }
+
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
     let activeCaptured = captured;
     const result = await executor.runAll({
@@ -302,6 +316,9 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
           const attempt = attempts[index];
           if (member.runId !== exact.state.id) {
             throw new Error('Aggregate preparation order does not match the captured targets.');
+          }
+          if (attempt.runId !== exact.state.id) {
+            throw new Error('Aggregate execution order does not match the captured targets.');
           }
           return {
             captured: exact.authority,
@@ -362,6 +379,13 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
         case 'recovered':
         case 'not_pending':
         case 'superseded':
+          break;
+        case 'recovery_required':
+          void logger.warn('aggregate member recovery remains required', {
+            runId: interrupted.runId,
+            epoch: interrupted.epoch,
+            message: outcome.message,
+          });
           break;
         case 'missing':
           return {

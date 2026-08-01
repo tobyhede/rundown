@@ -181,6 +181,13 @@ export {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
   type EffectfulActorMutationRunnerInput,
+  type EffectfulActorMutationSetRunnerInput,
+  type EffectfulActorMutationSetRunnerResult,
+  type EffectfulActorMutationSetTarget,
+  type CapturedActorMutationRun,
+  type PreparedActorMutationSet,
+  type PreparedActorMutationSetMember,
+  type AggregateTerminalRelease,
 } from './effectful-actor-mutation-runner.js';
 export {
   RunbookCompletionService,

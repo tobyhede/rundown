@@ -1,7 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
   ExecutionEventEmitter,
+  ExecutionLifecycleService,
   ReleaseRunbookResult,
+  RunbookActorService,
   RunbookStateManager,
   RunId,
   SessionMutationResult,
@@ -41,14 +43,7 @@ const mockActorService = {
   observeExecutionUnitEntry: mockFn<
     (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
   >() as any,
-  prepareActorMutation: mockFn<
-    (
-      id: string,
-      previousState: Record<string, unknown>,
-      steps: unknown,
-      event: unknown,
-    ) => Promise<Record<string, unknown>>
-  >() as any,
+  prepareActorMutation: mockFn<RunbookActorService['prepareActorMutation']>(),
 };
 
 const mockActorMutationRunner = {
@@ -111,7 +106,7 @@ const mockCompletionService = {
 const mockLifecycleService = {
   setLastResult: jest.fn() as any,
   ensureActiveEntry: ensureActiveEntryFn,
-  deriveActiveEntry: jest.fn() as any,
+  deriveActiveEntry: mockFn<ExecutionLifecycleService['deriveActiveEntry']>(),
   listResolvedCompletions: listResolvedCompletionsFn,
   consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
@@ -382,16 +377,18 @@ describe('runExecutionLoop', () => {
       }),
     );
     mockLifecycleService.deriveActiveEntry.mockReset();
-    mockLifecycleService.deriveActiveEntry.mockImplementation((state: Record<string, unknown>) => {
-      const step = typeof state.step === 'string' ? state.step : '1';
+    mockLifecycleService.deriveActiveEntry.mockImplementation((state) => {
+      const step = state.step;
+      const frameKey = actualCore.buildFrameKey(step);
+      const entry = state.activeEntry ?? 1;
       return {
         state: {
           ...state,
-          activeEntry: state.activeEntry ?? 1,
-          activeFrameKey: `${step}|`,
+          activeEntry: entry,
+          activeFrameKey: frameKey,
         },
-        frameKey: `${step}|`,
-        entry: state.activeEntry ?? 1,
+        frameKey,
+        entry,
       };
     });
     mockLifecycleService.listResolvedCompletions.mockReset();
@@ -411,12 +408,7 @@ describe('runExecutionLoop', () => {
     mockActorService.sendAndSync.mockReset();
     mockActorService.prepareActorMutation.mockReset();
     mockActorService.prepareActorMutation.mockImplementation(
-      async (
-        id: string,
-        previousState: Record<string, unknown>,
-        actorSteps: unknown,
-        event: unknown,
-      ) => {
+      async (id, previousState, actorSteps, event) => {
         const synchronized = await mockActorService.sendAndSync(id, actorSteps, event);
         if (!synchronized) throw new Error('Actor synchronization failed');
         return {

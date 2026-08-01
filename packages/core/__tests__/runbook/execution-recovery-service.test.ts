@@ -396,6 +396,27 @@ describe('ExecutionRecoveryService', () => {
     const outcome = await service.recover('rd_00000000000000000000000000000000' as RunId);
     expect(outcome.kind).toBe('missing');
   });
+
+  it('returns recovery_required and leaves the attempt pending for an invalid recovery actor', async () => {
+    const runId = await intoRecoveryPending();
+    const service = new ExecutionRecoveryService(store, () => {
+      throw new InvalidRunbookStateError('snapshot incompatible');
+    });
+    const pending = await store.readPendingRecovery(runId);
+    expect(pending).not.toBeNull();
+
+    const outcome = await service.recover(runId);
+
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'recovery_required',
+        runId,
+        epoch: pending!.epoch,
+        message: expect.stringContaining('snapshot incompatible'),
+      }),
+    );
+    await expect(store.readPendingRecovery(runId)).resolves.not.toBeNull();
+  });
 });
 
 describe('validateReason', () => {

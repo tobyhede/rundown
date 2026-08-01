@@ -13,7 +13,6 @@ import {
   stepIdToString,
   deriveGotoActionBlock,
   type RunbookStateManager,
-  type RunbookActorService,
   type LifecycleNavigationOutcome,
   type ResolvedStep,
   type StepId,
@@ -32,7 +31,6 @@ import {
   propagationRequiresFailureExit,
   type DrivenRunPropagation,
 } from './delegation-completion.js';
-import { createCliRunbookActorService } from './actor-service-factory.js';
 import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
@@ -51,8 +49,6 @@ export interface GotoContext {
   output: OutputEmitter;
   /** State manager for persisting runbook state changes */
   manager: RunbookStateManager;
-  /** Actor service for managing XState actor lifecycle */
-  actorService: RunbookActorService;
   /** Core lifecycle seam that owns the decisive GOTO mutation. */
   seam: RunbookLifecycleCommandService;
   /** Evidence already accepted by the navigation policy seam. */
@@ -258,7 +254,6 @@ export async function buildGotoContext(
     ctx: {
       output,
       manager,
-      actorService: createCliRunbookActorService(manager),
       seam,
       callerEvidence,
       state: outcome.state,

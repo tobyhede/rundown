@@ -483,6 +483,40 @@ function classifyManualCompletionTarget(
 }
 
 /**
+ * Whether a delegated child report has already been resolved by its parent.
+ *
+ * @param state - Exact parent state being classified.
+ * @param targetFrame - Frame entry named by the child linkage.
+ * @param targetSubstep - Parent substep named by the child linkage.
+ * @returns Whether an outcome row or a non-active done substep makes the report duplicate.
+ */
+function isDuplicateChildCompletion(
+  state: RunbookState,
+  targetFrame: Frame,
+  targetSubstep: string,
+): boolean {
+  const hasRecordedOutcome = Object.values(state.resolvedCompletions ?? {}).some(
+    (completion) =>
+      completion.targetFrameKey === targetFrame.frameKey &&
+      completion.targetSubstep === targetSubstep,
+  );
+  if (hasRecordedOutcome) return true;
+
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  const activeEntry = state.activeEntry ?? 1;
+  const isActiveCursorTarget =
+    targetFrame.kind === 'active' &&
+    targetFrame.entry === activeEntry &&
+    targetSubstep === state.substep &&
+    targetFrame.frameKey === activeFrameKey;
+  return (
+    !isActiveCursorTarget &&
+    findSubstepState(state.substepStates ?? [], targetSubstep, targetFrame.frameKey)?.status ===
+      'done'
+  );
+}
+
+/**
  * Core service for recording and applying resolved runbook completions.
  */
 export class RunbookCompletionService {
@@ -552,13 +586,9 @@ export class RunbookCompletionService {
     // delegated child reports against the linkage it was issued under, so any
     // recorded outcome for this parent substep — whatever entry it carries —
     // already answers this report. `recordChildCompletion` uses the same rule.
-    const duplicate = Object.entries(parentState.resolvedCompletions ?? {}).some(
-      ([existingKey, completion]) =>
-        existingKey === key ||
-        (completion.targetFrameKey === linkage.parentFrameKey &&
-          completion.targetSubstep === linkage.parentStepId),
-    );
-    if (duplicate) return { kind: 'duplicate' };
+    if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
+      return { kind: 'duplicate' };
+    }
 
     const completion = buildResolvedCompletion({
       agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
@@ -921,6 +951,9 @@ export class RunbookCompletionService {
       frameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
         ? activeFrame(frameKey, activeParentEntry)
         : exactFrame(frameKey, linkage.parentEntry);
+    if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
+      return 'duplicate';
+    }
     const recorded = await this.recordManualCompletion({
       runbookId: linkage.parentRunId,
       currentState: parentState,

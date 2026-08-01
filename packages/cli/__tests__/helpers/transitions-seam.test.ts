@@ -8,6 +8,7 @@ import type {
   ClaimRecord,
   CommandTargetResolution,
   DelegationTokenHash,
+  EffectfulActorMutationRunner,
   FrameKey,
   LifecycleTransitionOutcome,
   RunId,
@@ -38,6 +39,11 @@ const mockRunTransition = mockFn<(args: unknown) => Promise<LifecycleTransitionO
 const mockManagerLoad = mockFn<(id: RunId) => Promise<RunbookState | null>>();
 const mockResolveCommandTarget = mockFn<(...args: unknown[]) => Promise<CommandTargetResolution>>();
 const mockResolveTransitionTarget = mockFn<(...args: unknown[]) => Promise<unknown>>();
+const mockActorMutationRun = mockFn<EffectfulActorMutationRunner['run']>().mockResolvedValue({
+  kind: 'execution_in_progress',
+  runId: PARENT_RUN_ID,
+  message: 'execution owned elsewhere',
+});
 
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn().mockImplementation(() => ({ load: mockManagerLoad })),
@@ -49,7 +55,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn().mockImplementation(() => ({})),
   ExecutionLifecycleService: jest.fn().mockImplementation(() => ({})),
   createEffectfulActorMutationRunner: jest.fn().mockReturnValue({
-    run: jest.fn(),
+    run: mockActorMutationRun,
     runAll: jest.fn(),
   }),
   // `buildNonDelegatingLifecycleSeam` (via transitions.ts) statically imports
