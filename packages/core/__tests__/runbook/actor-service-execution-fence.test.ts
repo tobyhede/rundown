@@ -4,7 +4,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { openRunbookDriver } from '../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver } from '../../src/runbook/storage/sql-driver.js';
-import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
+import {
+  OpenDelegatedChildrenError,
+  RunbookStore,
+} from '../../src/runbook/storage/runbook-store.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
 import {
   assertClaimGeneration,
@@ -98,6 +101,17 @@ function preparedStep2(state: RunbookState): PreparedActorMutation {
 }
 
 describe('CoreEffectfulMutationExecutor', () => {
+  it('captures presented-claim authority and state in one read', async () => {
+    const { state, captured } = await seedOwnableRun();
+
+    const result = await store.captureAuthorityState(state.id, captured.claimKey);
+
+    expect(result.kind).toBe('captured');
+    if (result.kind !== 'captured') return;
+    expect(result.authority).toEqual(captured);
+    expect(result.state.id).toBe(state.id);
+  });
+
   it('acquires, marks the effect, commits, and clears ownership on success', async () => {
     const { runId, state, captured } = await seedOwnableRun();
     const executor = new CoreEffectfulMutationExecutor(lease);
@@ -265,7 +279,72 @@ describe('CoreEffectfulMutationExecutor', () => {
     expect((await store.readPendingRecovery(runId))?.reason).toBe('stale_commit');
   });
 
-  it('preserves the commit exception when guarded abandon sees a durable commit', async () => {
+  it('propagates the open-children guard refusal instead of demanding recovery', async () => {
+    // `assertParentAdvanceAllowed` runs BEFORE the first UPDATE and aborts the
+    // BEGIN IMMEDIATE transaction, so this refusal is provably write-free. It is
+    // also a domain answer the caller can act on ("collect the open children
+    // first"), which `runGuardedParentAdvance` turns into `open_delegated_children`.
+    // Recording recovery here would park a run whose state never changed and
+    // replace an actionable refusal with an opaque one.
+    const { runId, state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const abandon = jest.spyOn(lease, 'abandonToRecovery');
+    const guardError = new OpenDelegatedChildrenError([]);
+
+    await expect(
+      executor.run({
+        captured,
+        compute: () => Promise.resolve(preparedStep2(state)),
+        commit: () => Promise.reject(guardError),
+      }),
+    ).rejects.toBe(guardError);
+
+    expect(abandon).not.toHaveBeenCalled();
+    expect(await store.readPendingRecovery(runId)).toBeNull();
+    expect((await store.loadRun(runId))?.step).toBe('1');
+    const ownership = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :runId')
+        .get<{ readonly exec_token: string | null }>({ runId }),
+    );
+    expect(ownership?.exec_token).toBeNull();
+    const attempt = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId
+            ORDER BY exec_epoch DESC
+            LIMIT 1`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({ runId }),
+    );
+    expect(attempt?.phase).toBe('released');
+    expect(attempt?.finished_at).not.toBeNull();
+  });
+
+  it('preserves an open-children refusal when effect-started cleanup fails', async () => {
+    const { state, captured } = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const guardError = new OpenDelegatedChildrenError([]);
+    const cleanupError = new Error('release failed');
+    jest.spyOn(lease, 'releaseEffectStarted').mockRejectedValue(cleanupError);
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+
+    await expect(
+      executor.run({
+        captured,
+        compute: () => Promise.resolve(preparedStep2(state)),
+        commit: () => Promise.reject(guardError),
+      }),
+    ).rejects.toBe(guardError);
+    expect(warn).toHaveBeenCalledWith(
+      'releasing effect-started execution attempt failed',
+      expect.objectContaining({ runId: state.id, error: cleanupError.message }),
+    );
+  });
+
+  it('reconciles a lost response from an already durable exact commit', async () => {
     const { runId, state, captured } = await seedOwnableRun();
     const executor = new CoreEffectfulMutationExecutor(lease);
     const committer = new RunbookStoreActorCommitter(store, captured);
@@ -273,33 +352,26 @@ describe('CoreEffectfulMutationExecutor', () => {
     const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
     const commitError = new Error('response lost after durable commit');
 
-    await expect(
-      executor.run({
-        captured,
-        compute: () => Promise.resolve(preparedStep2(state)),
-        commit: async (attempt, prepared) => {
-          const committed = await committer.commit(attempt, prepared);
-          expect(committed.kind).toBe('committed');
-          throw commitError;
-        },
-      }),
-    ).rejects.toBe(commitError);
+    let commitCalls = 0;
+    const result = await executor.run({
+      captured,
+      compute: () => Promise.resolve(preparedStep2(state)),
+      commit: async (attempt, prepared) => {
+        commitCalls += 1;
+        const committed = await committer.commit(attempt, prepared);
+        expect(committed.kind).toBe('committed');
+        if (commitCalls === 1) throw commitError;
+        return committed;
+      },
+    });
 
-    // In THIS branch `execution_in_progress` is ambiguous in a way it is not
-    // after a failed compute: `commitOwnedState` moves the very same
-    // (run, epoch, token) tuple to `committed`, so the refusal conflates "another
-    // actor is recovering" with "WE committed durably and lost the response".
-    // Returning it as a typed refusal would tell the caller the mutation did not
-    // happen when it did — and because a durable commit CLEARS ownership, a
-    // caller retrying on that signal would acquire a fresh attempt and re-run the
-    // effect. That is the ambiguous-effect repeat this fence exists to forbid, so
-    // the branch throws instead. The compute branch, where our commit provably
-    // never ran, returns the refusal.
-    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(result.kind).toBe('committed');
+    expect(commitCalls).toBe(2);
+    expect(abandon).not.toHaveBeenCalled();
     expect((await store.loadRun(runId))?.step).toBe('2');
     expect(await store.readPendingRecovery(runId)).toBeNull();
-    // The cause is still logged even though the caller now receives it, so the
-    // durable-commit case is attributable from the log alone.
+    // The lost response remains attributable even though exact reconciliation
+    // proves the durable outcome to the caller.
     expect(
       warn.mock.calls.filter((call) => {
         const payload = JSON.stringify(call[1] ?? {});
@@ -498,6 +570,316 @@ describe('CoreEffectfulMutationExecutor', () => {
     expect(result.kind).toBe('execution_in_progress');
     // Acquisition was refused before the boundary — the effect never ran.
     expect(computeCalls).toBe(0);
+  });
+
+  it('runs an aggregate effect once under one all-or-none run-set boundary', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    let computeCalls = 0;
+    let commitCalls = 0;
+
+    const result = await executor.runAll({
+      captured: [a.captured, b.captured],
+      compute: () => {
+        computeCalls += 1;
+        return Promise.resolve('prepared');
+      },
+      commit: (attempts, prepared) => {
+        commitCalls += 1;
+        expect(attempts.map((attempt) => attempt.phase)).toEqual([
+          'effect_started',
+          'effect_started',
+        ]);
+        expect(prepared).toBe('prepared');
+        return Promise.resolve({ kind: 'committed', value: 'done' });
+      },
+    });
+
+    expect(result).toEqual({ kind: 'committed', value: 'done' });
+    expect(computeCalls).toBe(1);
+    expect(commitCalls).toBe(1);
+  });
+
+  it('drops an optional member that loses ownership before the aggregate effect boundary', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const realMark = lease.markEffectStartedAll.bind(lease);
+    const mark = jest.spyOn(lease, 'markEffectStartedAll');
+    mark
+      .mockResolvedValueOnce({
+        kind: 'execution_in_progress',
+        runId: b.runId,
+        message: `Run ${b.runId} lost ownership before the boundary.`,
+      })
+      .mockImplementation(realMark);
+
+    const result = await executor.runAll({
+      captured: [a.captured, b.captured],
+      optionalRunIds: [b.runId],
+      compute: (captured) => {
+        expect(captured.map(({ runId }) => runId)).toEqual([a.runId]);
+        return Promise.resolve('prepared');
+      },
+      commit: async (attempts) => {
+        expect(attempts.map(({ runId }) => runId)).toEqual([a.runId]);
+        await lease.releaseEffectStarted(attempts[0]);
+        return { kind: 'committed', value: 'done' };
+      },
+    });
+
+    expect(result).toEqual({ kind: 'committed', value: 'done' });
+    expect(mark).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a required member mark refusal without running the aggregate effect', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    jest.spyOn(lease, 'markEffectStartedAll').mockResolvedValue({
+      kind: 'execution_in_progress',
+      runId: a.runId,
+      message: `Run ${a.runId} lost ownership before the boundary.`,
+    });
+    const cleanupError = new Error('aggregate release claimed failed');
+    jest.spyOn(lease, 'releaseClaimed').mockRejectedValue(cleanupError);
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+    const compute = jest.fn();
+
+    const result = await executor.runAll({
+      captured: [a.captured, b.captured],
+      optionalRunIds: [b.runId],
+      compute: compute as never,
+      commit: () => Promise.resolve({ kind: 'committed', value: 'unreachable' }),
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    if (result.kind !== 'execution_in_progress') return;
+    expect(result.runId).toBe(a.runId);
+    expect(compute).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      'releasing claimed execution attempts failed',
+      expect.objectContaining({ runs: [a.runId, b.runId], error: cleanupError.message }),
+    );
+  });
+
+  it('preserves a pre-effect mark refusal when claimed cleanup fails', async () => {
+    const a = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const refusal: GuardedMutationResult<ExecutionAttempt> = {
+      kind: 'execution_in_progress',
+      runId: a.runId,
+      message: 'ownership lost before the boundary',
+    };
+    jest.spyOn(lease, 'markEffectStarted').mockResolvedValue(refusal);
+    const cleanupError = new Error('release claimed failed');
+    jest.spyOn(lease, 'releaseClaimed').mockRejectedValue(cleanupError);
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+    const compute = jest.fn(() => Promise.resolve('unreachable'));
+
+    const result = await executor.run({
+      captured: a.captured,
+      compute,
+      commit: () => Promise.resolve({ kind: 'committed', value: 'unreachable' }),
+    });
+
+    expect(result).toEqual(refusal);
+    expect(compute).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      'releasing claimed execution attempts failed',
+      expect.objectContaining({ runs: [a.runId], error: cleanupError.message }),
+    );
+  });
+
+  it('preserves a typed recovery_required aggregate commit outcome', async () => {
+    const a = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const abandon = jest.spyOn(lease, 'abandonAllToRecovery');
+
+    const result = await executor.runAll({
+      captured: [a.captured],
+      compute: () => Promise.resolve('prepared'),
+      commit: (attempts) =>
+        Promise.resolve({
+          kind: 'recovery_required',
+          runId: a.runId,
+          epoch: attempts[0].epoch,
+          message: 'store observed recovery',
+        }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({ kind: 'recovery_required', runId: a.runId }));
+    expect(abandon).not.toHaveBeenCalled();
+  });
+
+  it('logs an aggregate guarded-abandon refusal before returning it', async () => {
+    const a = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+    jest.spyOn(lease, 'abandonAllToRecovery').mockResolvedValue({
+      kind: 'execution_in_progress',
+      runId: a.runId,
+      message: 'attempt no longer owned',
+    });
+
+    const result = await executor.runAll({
+      captured: [a.captured],
+      compute: () => Promise.reject(new Error('effect failed')),
+      commit: () => Promise.resolve({ kind: 'committed', value: 'unreachable' }),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ kind: 'execution_in_progress', runId: a.runId }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      'guarded aggregate abandon refused; no recovery was recorded',
+      expect.objectContaining({
+        runs: [expect.objectContaining({ runId: a.runId })],
+        refusal: 'attempt no longer owned',
+      }),
+    );
+  });
+
+  it('rejects empty and duplicate aggregate scopes before acquisition', async () => {
+    const a = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const compute = jest.fn(() => Promise.resolve('prepared'));
+    const commit = jest.fn(() => Promise.resolve({ kind: 'committed' as const, value: 'done' }));
+
+    await expect(executor.runAll({ captured: [], compute, commit })).rejects.toThrow(
+      'requires at least one captured run',
+    );
+    await expect(
+      executor.runAll({ captured: [a.captured, a.captured], compute, commit }),
+    ).rejects.toThrow('repeats a captured run');
+    await expect(
+      executor.runAll({
+        captured: [a.captured],
+        optionalRunIds: [a.runId],
+        compute,
+        commit,
+      }),
+    ).rejects.toThrow('requires at least one required run');
+    expect(compute).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('abandons the exact aggregate attempt set when compute fails', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const effectError = new Error('aggregate effect failed');
+    const abandon = jest.spyOn(lease, 'abandonAllToRecovery');
+
+    const result = await executor.runAll({
+      captured: [a.captured, b.captured],
+      compute: () => Promise.reject(effectError),
+      commit: () => Promise.reject(new Error('commit must be unreachable')),
+    });
+
+    expect(result.kind).toBe('aggregate_recovery_required');
+    if (result.kind !== 'aggregate_recovery_required') return;
+    expect(result.attempts).toHaveLength(2);
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(abandon.mock.calls[0][0].map((attempt) => attempt.runId)).toEqual([a.runId, b.runId]);
+  });
+
+  it('commits every owned run state in one transaction', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+
+    const result = await store.commitOwnedRunSet({
+      members: [
+        {
+          captured: a.captured,
+          execution: marked.value[0],
+          next: { ...a.state, step: '2', updatedAt: '2026-03-05T00:00:00.000Z' },
+        },
+        {
+          captured: b.captured,
+          execution: marked.value[1],
+          next: { ...b.state, step: '2', updatedAt: '2026-03-05T00:00:00.000Z' },
+        },
+      ],
+    });
+
+    expect(result.kind).toBe('committed');
+    expect((await store.loadRun(a.runId))?.step).toBe('2');
+    expect((await store.loadRun(b.runId))?.step).toBe('2');
+  });
+
+  it('rejects an empty aggregate owned-state commit', () => {
+    expect(() => store.commitOwnedRunSet({ members: [] })).toThrow('requires at least one member');
+  });
+
+  it('writes no aggregate member when one owned attempt was superseded', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'recovery_pending' WHERE run_id = :runId")
+        .run({ runId: b.runId });
+    });
+
+    const result = await store.commitOwnedRunSet({
+      members: [
+        {
+          captured: a.captured,
+          execution: marked.value[0],
+          next: { ...a.state, step: '2', updatedAt: '2026-03-05T00:00:00.000Z' },
+        },
+        {
+          captured: b.captured,
+          execution: marked.value[1],
+          next: { ...b.state, step: '2', updatedAt: '2026-03-05T00:00:00.000Z' },
+        },
+      ],
+    });
+
+    expect(result.kind).toBe('recovery_required');
+    expect((await store.loadRun(a.runId))?.step).toBe('1');
+    expect((await store.loadRun(b.runId))?.step).toBe('1');
+  });
+
+  it('rolls back aggregate state commits when the session projection throws', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+    const boom = new Error('session projection failed');
+
+    await expect(
+      store.commitOwnedRunSet({
+        members: [
+          {
+            captured: a.captured,
+            execution: marked.value[0],
+            next: { ...a.state, step: '2', updatedAt: '2026-03-05T00:00:00.000Z' },
+          },
+          {
+            captured: b.captured,
+            execution: marked.value[1],
+            next: { ...b.state, step: '2', updatedAt: '2026-03-05T00:00:00.000Z' },
+          },
+        ],
+        updateSession: () => {
+          throw boom;
+        },
+      }),
+    ).rejects.toBe(boom);
+    expect((await store.loadRun(a.runId))?.step).toBe('1');
+    expect((await store.loadRun(b.runId))?.step).toBe('1');
   });
 });
 

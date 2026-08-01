@@ -1,6 +1,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import {
   assertClaimId,
+  assertExecutionEpoch,
   assertRunId,
   InvalidRunbookStateError,
   parseClaimBearer,
@@ -44,6 +45,7 @@ const { buildNonDelegatingLifecycleSeam } = await import(
 
 const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const PARENT_ID = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+const OTHER_RUN_ID = assertRunId('rd_cccccccccccccccccccccccccccccccc');
 const CLAIM_ID = assertClaimId(
   'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
 );
@@ -198,6 +200,32 @@ describe('renderTerminalOutcome', () => {
     });
     expect(exitError).toBe(true);
     expect(codeOf(calls, 'error')).toBe('DELEGATION_SUPERSEDED');
+  });
+
+  it('names every run needing recovery in an aggregate_recovery_required envelope', async () => {
+    // A multi-run force-terminal is the one command that can leave several runs
+    // recovery-pending at once, and the outcome already carries the exact
+    // (runId, epoch) set. Rendering only the generic message tells the operator
+    // that recovery is required while withholding the one fact they need to act
+    // on it — which runs.
+    const { exitError, calls } = await render({
+      kind: 'aggregate_recovery_required',
+      attempts: [
+        { runId: RUN_ID, epoch: assertExecutionEpoch(4) },
+        { runId: OTHER_RUN_ID, epoch: assertExecutionEpoch(1) },
+      ],
+      message: 'The aggregate execution outcome is unknown and requires recovery.',
+    });
+
+    expect(exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('RECOVERY_REQUIRED');
+    const errorCall = calls.find((c) => c.method === 'error');
+    expect(errorCall?.args[2]).toEqual({
+      runs: [
+        { runId: RUN_ID, epoch: 4 },
+        { runId: OTHER_RUN_ID, epoch: 1 },
+      ],
+    });
   });
 
   it('renders actor_context_required as ACTOR_CONTEXT_REQUIRED and exits non-zero', async () => {

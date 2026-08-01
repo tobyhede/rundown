@@ -284,6 +284,38 @@ describe('effect boundary', () => {
     );
     expect(phase).toBe('claimed');
   });
+
+  it('releases an exact effect-started attempt idempotently after a write-free refusal', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const marked = await lease.markEffectStarted(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('mark failed');
+
+    await lease.releaseEffectStarted(marked.value);
+
+    const owner = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :runId')
+        .get<{ readonly exec_token: string | null }>({ runId: state.id }),
+    );
+    expect(owner?.exec_token).toBeNull();
+    const attempt = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId AND exec_epoch = :epoch`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({
+          runId: state.id,
+          epoch: marked.value.epoch,
+        }),
+    );
+    expect(attempt?.phase).toBe('released');
+    expect(attempt?.finished_at).not.toBeNull();
+    await expect(lease.releaseEffectStarted(marked.value)).resolves.toBeUndefined();
+  });
 });
 
 describe('PID-aware dead-owner recovery', () => {
@@ -326,6 +358,31 @@ describe('PID-aware dead-owner recovery', () => {
           .get<{ readonly exec_token: string | null }>({ id: state.id })?.exec_token,
     );
     expect(owner).toBeNull();
+  });
+
+  it('closes the exact reclaimed pre-effect attempt as released', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await setOwnerPid(state.id, deadPid());
+
+    const recovered = await lease.recoverDeadOwner(state.id);
+
+    expect(recovered.kind).toBe('reclaimed_pre_effect');
+    const row = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId AND exec_epoch = :epoch`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({
+          runId: state.id,
+          epoch: acquired.value.epoch,
+        }),
+    );
+    expect(row?.phase).toBe('released');
+    expect(row?.finished_at).not.toBeNull();
   });
 
   it('marks a dead effect_started owner recovery_pending, never reclaiming it', async () => {
@@ -438,6 +495,36 @@ describe('PID-aware dead-owner recovery', () => {
     expect(owner?.exec_token).not.toBeNull();
     expect(owner?.exec_pid).toBe(process.pid);
   });
+
+  it('refuses to reclaim an attempt that crosses the effect boundary after the liveness read', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const dead = deadPid();
+    await setOwnerPid(state.id, dead);
+    const recorder = recordDriverCalls(driver);
+    recorder.afterRead(1, async () => {
+      const marked = await lease.markEffectStarted(acquired.value);
+      expect(marked.kind).toBe('committed');
+    });
+
+    const recovered = await lease.recoverDeadOwner(state.id);
+
+    expect(recovered).toEqual({ kind: 'alive', runId: state.id, ownerPid: dead });
+    const persisted = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT r.exec_token, a.phase
+             FROM runs r
+             JOIN execution_attempts a
+               ON a.run_id = r.id AND a.exec_epoch = r.exec_epoch
+            WHERE r.id = :runId`,
+        )
+        .get<{ readonly exec_token: string | null; readonly phase: string }>({ runId: state.id }),
+    );
+    expect(persisted?.exec_token).not.toBeNull();
+    expect(persisted?.phase).toBe('effect_started');
+  });
 });
 
 describe('all-or-none multi-run acquisition', () => {
@@ -460,6 +547,148 @@ describe('all-or-none multi-run acquisition', () => {
           .get<{ readonly exec_token: string | null }>({ id: c.state.id })?.exec_token,
     );
     expect(cOwner).toBeNull();
+  });
+
+  it('marks every acquired attempt effect-started in one transaction', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+
+    const marked = await lease.markEffectStartedAll(acquired.value);
+
+    expect(marked.kind).toBe('committed');
+    if (marked.kind !== 'committed') return;
+    expect(marked.value.map((attempt) => attempt.phase)).toEqual([
+      'effect_started',
+      'effect_started',
+    ]);
+  });
+
+  it('rolls back every effect-start marker when one attempt was superseded', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId")
+        .run({ runId: b.state.id });
+    });
+
+    const marked = await lease.markEffectStartedAll(acquired.value);
+
+    expect(marked.kind).toBe('execution_in_progress');
+    const phases = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT run_id, phase FROM execution_attempts ORDER BY run_id')
+        .all<{ readonly run_id: string; readonly phase: string }>(),
+    );
+    expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
+      [a.state.id]: 'claimed',
+      [b.state.id]: 'committed',
+    });
+  });
+
+  it('releases every still-owned claimed attempt after a boundary-mark refusal', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId")
+        .run({ runId: b.state.id });
+    });
+
+    await lease.releaseClaimed(acquired.value);
+
+    const releasedOwner = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT exec_token FROM runs WHERE id = :id')
+          .get<{ readonly exec_token: string | null }>({ id: a.state.id })?.exec_token,
+    );
+    const phases = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT run_id, phase FROM execution_attempts ORDER BY run_id')
+        .all<{ readonly run_id: string; readonly phase: string }>(),
+    );
+    expect(releasedOwner).toBeNull();
+    // `a` was torn down before the boundary, so it closes as 'released'; `b` was
+    // already moved to 'committed' out from under us and is left untouched.
+    expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
+      [a.state.id]: 'released',
+      [b.state.id]: 'committed',
+    });
+  });
+
+  it('leaves a released-before-effect attempt distinguishable from a durable commit', async () => {
+    // `releaseClaimed` closes an attempt that never crossed the effect boundary.
+    // It must not look like a durable state commit: `isExactAttemptCommitted`
+    // reads `phase = 'committed'` as proof that the prepared state was written,
+    // and it must not write a `reason` outside the closed recovery-reason union
+    // that `validateReason` accepts, or a later read of that row fails hard.
+    const a = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+
+    await lease.releaseClaimed(acquired.value);
+
+    const row = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT phase, reason, finished_at FROM execution_attempts WHERE run_id = :runId')
+        .get<{
+          readonly phase: string;
+          readonly reason: string | null;
+          readonly finished_at: string | null;
+        }>({ runId: a.state.id }),
+    );
+    expect(row?.phase).toBe('released');
+    expect(row?.reason).toBeNull();
+    expect(row?.finished_at).not.toBeNull();
+  });
+
+  it('abandons every effect-started attempt to recovery in one transaction', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+
+    const abandoned = await lease.abandonAllToRecovery(marked.value, 'effect_boundary_crossed');
+
+    expect(abandoned.kind).toBe('aggregate_recovery_required');
+    if (abandoned.kind !== 'aggregate_recovery_required') return;
+    expect(abandoned.attempts).toEqual(marked.value.map(({ runId, epoch }) => ({ runId, epoch })));
+  });
+
+  it('rolls back every recovery marker when one attempt was superseded', async () => {
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const acquired = await lease.acquireAll([a.captured, b.captured], process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquireAll failed');
+    const marked = await lease.markEffectStartedAll(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('markEffectStartedAll failed');
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare("UPDATE execution_attempts SET phase = 'committed' WHERE run_id = :runId")
+        .run({ runId: b.state.id });
+    });
+
+    const abandoned = await lease.abandonAllToRecovery(marked.value, 'effect_boundary_crossed');
+
+    expect(abandoned.kind).toBe('execution_in_progress');
+    const phases = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT run_id, phase FROM execution_attempts ORDER BY run_id')
+        .all<{ readonly run_id: string; readonly phase: string }>(),
+    );
+    expect(Object.fromEntries(phases.map((row) => [row.run_id, row.phase]))).toEqual({
+      [a.state.id]: 'effect_started',
+      [b.state.id]: 'committed',
+    });
   });
 
   it('acquires an empty set trivially', async () => {
@@ -748,7 +977,8 @@ describe('default contention policy and finite wait', () => {
 
   it('retries a reclaimed dead pre-effect owner immediately, free of charge', async () => {
     const { state, captured } = await preparedRun();
-    await lease.acquire(captured, process.pid);
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
     await setOwnerPid(state.id, deadPid());
     const recap = await store.captureAuthority(state.id, captured.claimKey);
     if (recap.kind !== 'captured') throw new Error('recapture failed');
@@ -761,8 +991,31 @@ describe('default contention policy and finite wait', () => {
     });
 
     expect(result.kind).toBe('committed');
+    if (result.kind !== 'committed') return;
     // Refused attempt → recovery probe → reclaim CAS → winning attempt.
     expect(recorder.calls).toEqual(['immediate', 'read', 'immediate', 'immediate']);
+    const attempts = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT exec_epoch, phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId
+            ORDER BY exec_epoch`,
+        )
+        .all<{
+          readonly exec_epoch: number;
+          readonly phase: string;
+          readonly finished_at: string | null;
+        }>({ runId: state.id }),
+    );
+    expect(attempts).toEqual([
+      {
+        exec_epoch: acquired.value.epoch,
+        phase: 'released',
+        finished_at: expect.any(String),
+      },
+      { exec_epoch: result.value.epoch, phase: 'claimed', finished_at: null },
+    ]);
     // The reclaim consumed neither an attempt nor any budget.
     expect(progress).toEqual([]);
     expect(clock.sleeps).toEqual([]);

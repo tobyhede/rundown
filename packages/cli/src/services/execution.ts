@@ -1,5 +1,6 @@
 import {
   type RunId,
+  type ClaimLookupKey,
   assertRunId,
   buildStepVariables,
   buildStepPosition,
@@ -55,6 +56,8 @@ import {
   expandLoopVariables,
   expandLoopVariablesForCommand,
   deriveTerminalDrainObservationEvent,
+  createEffectfulActorMutationRunner,
+  type EffectfulActorMutationRunner,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps, type OutputDeclaration } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -188,6 +191,14 @@ interface ObserveAndOrchestrateArgs {
   command?: string;
   syncSnapshot: unknown;
   postState: RunbookState;
+  /**
+   * Whether `postState` already carries committed active-entry metadata.
+   *
+   * The fenced command path projects active-entry inside its `compute` and
+   * commits it with the state, so re-deriving here would score the SAME
+   * transition as a second frame switch and bump the entry twice.
+   */
+  entryAlreadyProjected?: boolean;
 }
 
 type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
@@ -201,15 +212,6 @@ interface RenderTerminalObservationArgs {
   snapshot: unknown;
   position: ReturnType<typeof buildStepPosition>;
 }
-
-const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
-  onComplete: {
-    releaseRunbook: true,
-  },
-  onStopped: {
-    releaseRunbook: true,
-  },
-};
 
 const EXECUTION_TERMINAL_NO_STACK_POLICY: TransitionOrchestrationPolicy = {
   onComplete: {
@@ -242,6 +244,10 @@ export interface ExecutionLoopOptions {
   readonly terminalReleaseMode?: ExecutionTerminalReleaseMode;
   /** Optional actor service test seam. */
   readonly actorService?: RunbookActorService;
+  /** Exact claim authority retained by a claim-authenticated continuation. */
+  readonly claimKey?: ClaimLookupKey;
+  /** Optional core mutation runner test seam. */
+  readonly actorMutationRunner?: EffectfulActorMutationRunner;
   /** Optional command services test seam. */
   readonly commandServices?: CommandExecutionServices;
   /** Runtime-only routing for command subprocess stdout/stderr. */
@@ -812,8 +818,11 @@ async function observeAndOrchestrate({
   command,
   syncSnapshot,
   postState,
+  entryAlreadyProjected,
 }: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
-  const ensured = await lifecycleService.ensureActiveEntry(runbookId, currentState, postState);
+  const updatedState = entryAlreadyProjected
+    ? postState
+    : (await lifecycleService.ensureActiveEntry(runbookId, currentState, postState)).state;
 
   const orchestration = await orchestrateTransition({
     sessionService,
@@ -822,7 +831,7 @@ async function observeAndOrchestrate({
     steps,
     currentStep,
     previousState: currentState,
-    updatedState: ensured.state,
+    updatedState,
     snapshot: syncSnapshot,
     result,
     computeActionResult,
@@ -1105,15 +1114,18 @@ export async function runExecutionLoop(
   if (!state) return 'stopped';
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
-  const terminalPolicy =
-    terminalReleaseMode === 'stack-pop'
-      ? EXECUTION_TERMINAL_POLICY
-      : EXECUTION_TERMINAL_NO_STACK_POLICY;
+  // Unconditional, in every release mode: the terminal session release is now
+  // committed inside the fenced command mutation, so `orchestrateTransition`
+  // must not also release or the run is released twice — once inside the owned
+  // transaction and once outside it.
+  const terminalPolicy = EXECUTION_TERMINAL_NO_STACK_POLICY;
 
   const commandServices =
     options.commandServices ?? createCliCommandServices(options.commandStreamOptions);
   const actorService =
     options.actorService ?? createCliRunbookActorService(manager, commandServices);
+  const actorMutationRunner =
+    options.actorMutationRunner ?? createEffectfulActorMutationRunner(cwd);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
@@ -1476,41 +1488,86 @@ export async function runExecutionLoop(
     rdInjected.RD_RUNBOOK_REF = currentState.runbook.path;
     rdInjected.RD_RUNBOOK_SOURCE = currentState.runbook.source;
 
-    // Execute command (unchanged — still routed via internal vs spawn)
+    // Execute the command actor through the core-owned execution fence. The
+    // external command runs in `prepareActorMutation`; persistence happens only
+    // under the exact captured authority and execution attempt.
     const extracted = extractDisplayCommand(expandedCommandCode);
     const displayCommand = extracted || expandedCommandCode;
-    const previousState = currentState;
-    const cmdSync = await actorService.sendAndSync(runbookId, steps, {
-      type: 'EXECUTE_COMMAND',
-      command: expandedCommandCode,
-      displayCommand,
-      runbookPath: currentState.runbookPath,
-      outputScope,
-      nakedOutputs,
-      rdInjected,
+    let previousState = currentState;
+    const fencedCommand = await actorMutationRunner.run({
+      runId: runbookId,
+      ...(options.claimKey === undefined ? {} : { claimKey: options.claimKey }),
+      makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
+      terminalRelease: {
+        onComplete: terminalReleaseMode !== 'defer-to-caller',
+        onStopped: terminalReleaseMode !== 'defer-to-caller',
+        // Retained in BOTH releasing modes, matching the natural pass/fail
+        // release this fence replaced (`transition-orchestrator.ts`
+        // applyTerminalSideEffects). Explicit teardown — abort/stop/complete —
+        // is what deletes a claim; a run reaching terminal under its own steam
+        // leaves a tombstone so `rd pass/fail/status --claim-id` resolves
+        // `terminal` rather than `missing`. That applies to the run-control
+        // claim `rd run` mints over a 'stack-pop' root just as much as to a
+        // delegated child's bearer, so this must not be keyed on the mode.
+        retainClaimsAsTerminal: true,
+      },
+      compute: async (capturedState) => {
+        previousState = lifecycleService.deriveActiveEntry(capturedState).state;
+        const prepared = await actorService.prepareActorMutation(runbookId, previousState, steps, {
+          type: 'EXECUTE_COMMAND',
+          command: expandedCommandCode,
+          displayCommand,
+          runbookPath: capturedState.runbookPath,
+          outputScope,
+          nakedOutputs,
+          rdInjected,
+        });
+        const projected = lifecycleService.deriveActiveEntry(
+          prepared.nextState,
+          previousState,
+          true,
+        );
+        return { ...prepared, previousState, nextState: projected.state };
+      },
     });
-    if (!cmdSync) {
+    if (fencedCommand.kind !== 'committed') {
+      const code = (() => {
+        switch (fencedCommand.kind) {
+          case 'claim_superseded':
+            return 'STALE_CLAIM';
+          case 'concurrent_modification':
+            return 'CONCURRENT_MODIFICATION';
+          case 'execution_in_progress':
+            return 'EXECUTION_IN_PROGRESS';
+          case 'recovery_required':
+            return 'RECOVERY_REQUIRED';
+          case 'missing':
+            return 'RUN_TARGET_UNAVAILABLE';
+          default: {
+            const _exhaustive: never = fencedCommand;
+            return _exhaustive;
+          }
+        }
+      })();
       emitter.emit({
         type: 'ERROR_OCCURRED',
         payload: {
-          message: 'Failed to synchronize runbook state after EXECUTE_COMMAND',
+          message: fencedCommand.message,
+          code,
         },
       });
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
         payload: {
           position: stepPosition,
-          message: 'Runbook state synchronization failed',
+          message: 'Runbook command execution was not committed',
         },
       });
-      return await applyExecutionTerminalRelease(
-        sessionService,
-        runbookId,
-        terminalReleaseMode,
-        emitter,
-        'stopped',
-      );
+      // This invocation did not commit and therefore owns no terminal cleanup.
+      // Releasing here would let a stale claimant remove the winner's run.
+      return 'stopped';
     }
+    const cmdSync = fencedCommand.value;
     const syncEffects = cmdSync.effects;
     for (const effect of syncEffects) {
       emitter.emit(effect.event);
@@ -1534,13 +1591,7 @@ export async function runExecutionLoop(
         snapshot: cmdSync.snapshot,
         position: stepPosition,
       });
-      return await applyExecutionTerminalRelease(
-        sessionService,
-        runbookId,
-        terminalReleaseMode,
-        emitter,
-        'stopped',
-      );
+      return 'stopped';
     }
 
     const transitionResult = await observeCommandTransition({
@@ -1556,33 +1607,34 @@ export async function runExecutionLoop(
       result: commandOutput.result,
       transitionPolicy: terminalPolicy,
       command: displayCommand,
+      // `compute` above projected and committed active-entry with the state.
+      entryAlreadyProjected: true,
     });
     if (transitionResult.status === 'done') {
-      if (terminalReleaseMode === 'release-runbook') {
-        return await applyExecutionTerminalRelease(
-          sessionService,
-          runbookId,
-          terminalReleaseMode,
-          emitter,
-          'done',
-          // orchestrateTransition already announced the completion under the
-          // no-release policy, so a refusal needs the corrective stop.
-          stepPosition,
-        );
-      }
       return 'done';
     }
     if (transitionResult.status === 'stopped') {
-      if (terminalReleaseMode === 'release-runbook') {
-        return await applyExecutionTerminalRelease(
-          sessionService,
-          runbookId,
-          terminalReleaseMode,
-          emitter,
-          'stopped',
-        );
-      }
       return 'stopped';
+    }
+    // The fenced commit released this run on `state.lifecycle`, which is assigned
+    // from the snapshot VALUE alone while the orchestrated observation also
+    // demands a terminal snapshot STATUS. When only the lifecycle went terminal
+    // the loop must still stop and emit the matching terminal event — continuing
+    // would drive the next step of a run this process already released.
+    const lifecycle = cmdSync.state.lifecycle;
+    if (lifecycle === 'completed' || lifecycle === 'stopped') {
+      emitter.emit(
+        deriveTerminalDrainObservationEvent({
+          steps,
+          currentStep,
+          previousState,
+          updatedState: cmdSync.state,
+          snapshot: cmdSync.snapshot,
+          status: lifecycle === 'completed' ? 'done' : 'stopped',
+          result: commandOutput.result,
+        }),
+      );
+      return lifecycle === 'completed' ? 'done' : 'stopped';
     }
     currentState = transitionResult.state;
   }

@@ -2532,6 +2532,23 @@ describe('SessionService', () => {
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([sibling.id]);
     });
+
+    it('releaseRunbooks can retain the terminal root claim while removing descendant claims', async () => {
+      const root = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'completed' });
+      const leaf = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'completed' });
+      const rootClaim = unwrapSessionMutation(await sessionService.issueRunControlClaim(root.id));
+      const leafClaim = unwrapSessionMutation(await sessionService.issueRunControlClaim(leaf.id));
+
+      unwrapSessionMutation(
+        await sessionService.releaseRunbooks([leaf.id, root.id], {
+          retainClaimsAsTerminalRunId: root.id,
+        }),
+      );
+
+      const session = await manager.loadSession();
+      expect(session.claims[rootClaim.claim.claimKey]).toBeDefined();
+      expect(session.claims[leafClaim.claim.claimKey]).toBeUndefined();
+    });
   });
 
   describe('resolveActiveInlineForceTerminalPlan', () => {

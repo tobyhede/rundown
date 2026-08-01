@@ -8,13 +8,13 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { createEffectfulActorMutationRunner } from '../../src/runbook/effectful-actor-mutation-runner.js';
 import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
 import {
   RunbookLifecycleCommandService,
   type LifecycleTerminalReleasePolicy,
 } from '../../src/runbook/lifecycle-command-service.js';
 import { DelegationLock } from '../../src/runbook/delegation-lock.js';
-import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { claimActivity, DEFAULT_IDLE_AFTER_MS } from '../../src/runbook/claim-activity.js';
 import {
   CLAIM_ID_PREFIX,
@@ -307,6 +307,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       actorService,
       lifecycleService,
       completionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       deleteRun: async (id) => {
         await manager.delete(id);
@@ -316,7 +317,6 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
       delegationLock: new DelegationLock(testDir),
-      completionLock: new CompletionLock(testDir),
     });
     const state = await manager.create({ source: 'project', path: 'seam.md' }, mockRunbook, {
       runbookPath: 'seam.md',
@@ -414,22 +414,43 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
   });
 
-  it('records liveness before a post-authorization mutation dispatch throws', async () => {
+  it('records liveness before a post-authorization mutation enters recovery', async () => {
+    sessionService = serviceWithClock(manager, [
+      '2026-07-17T12:00:00.000Z',
+      '2026-07-17T12:00:05.000Z',
+    ]);
+    const lifecycleService = new ExecutionLifecycleService(manager);
+    seam = new RunbookLifecycleCommandService({
+      sessionService,
+      actorService,
+      lifecycleService,
+      completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+      actorMutationRunner: createEffectfulActorMutationRunner(testDir),
+      loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      deleteRun: async (id) => {
+        await manager.delete(id);
+      },
+      loadSteps: () => seamSteps,
+      resolveChildRunbook: async () => undefined,
+      persistIssuedSubstep: async () => {},
+      findDelegationByToken: async () => undefined,
+      delegationLock: new DelegationLock(testDir),
+    });
     const { claimId, claim } = unwrapSessionMutation(
       await sessionService.issueRunControlClaim(runId),
     );
     const before = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    jest.spyOn(actorService, 'sendAndSync').mockRejectedValueOnce(new Error('dispatch exploded'));
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockRejectedValueOnce(new Error('dispatch exploded'));
 
-    await expect(
-      seam.runTransition({
-        command: 'pass',
-        callerEvidence: { kind: 'claim_bearer', claimId },
-        targetSelector: { kind: 'claim', claimId },
-        terminalPolicy: releasePolicy,
-      }),
-    ).rejects.toThrow('dispatch exploded');
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: releasePolicy,
+    });
+    expect(outcome.kind).toBe('recovery_required');
 
     const after = (await manager.loadSession()).claims[claim.claimKey].lastSeenAt;
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));

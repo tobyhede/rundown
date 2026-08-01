@@ -41,6 +41,17 @@ export interface RecoveryActor {
    * @returns The serialized machine snapshot.
    */
   getPersistedSnapshot(): unknown;
+  /**
+   * Whether the live snapshot has reached the machine's recovery state.
+   *
+   * Deliberately a single predicate rather than a general `hasTag(tag)`: this
+   * seam only ever asks the one question, and a tag-taking signature invites
+   * an implementation that answers for exactly one tag while appearing to
+   * answer for all of them.
+   *
+   * @returns Whether the current snapshot carries the machine's `RECOVERY_TAG`.
+   */
+  isInRecoveryState(): boolean;
   /** Stop the actor, releasing any resources. */
   stop(): void;
 }
@@ -54,7 +65,14 @@ export interface RecoveryActor {
  */
 export type RecoveryActorFactory = (state: RunbookState) => RecoveryActor;
 
-/** Outcome of a recovery attempt. */
+/**
+ * Outcome of a persisted execution-recovery attempt.
+ *
+ * `recovered` committed the recovery snapshot; `missing`, `not_pending`, and
+ * `superseded` report why no recovery write was needed. `recovery_required`
+ * means the persisted snapshot is incompatible with automatic recovery and an
+ * operator must stop, prune, or restart the run.
+ */
 export type RecoveryOutcome =
   | { readonly kind: 'recovered'; readonly runId: RunId; readonly epoch: ExecutionEpoch }
   | { readonly kind: 'missing'; readonly runId: RunId }
@@ -63,7 +81,8 @@ export type RecoveryOutcome =
       readonly kind: 'superseded';
       readonly runId: RunId;
       readonly message: string;
-    };
+    }
+  | Extract<GuardedMutationResult<never>, { readonly kind: 'recovery_required' }>;
 
 /** Default recovery reason when the attempt row recorded none. */
 const DEFAULT_REASON: ExecutionRecoveryReason = 'owner_dead';
@@ -97,9 +116,10 @@ export class ExecutionRecoveryService {
    * Recover an interrupted run.
    *
    * @param runId - Run to recover.
+   * @param expectedEpoch - Exact interrupted attempt requested by the caller.
    * @returns The recovery outcome.
    */
-  async recover(runId: RunId): Promise<RecoveryOutcome> {
+  async recover(runId: RunId, expectedEpoch?: ExecutionEpoch): Promise<RecoveryOutcome> {
     const state = await this.store.loadRun(runId);
     if (state === null) {
       return { kind: 'missing', runId };
@@ -108,21 +128,44 @@ export class ExecutionRecoveryService {
     if (pending === null) {
       return { kind: 'not_pending', runId };
     }
+    if (expectedEpoch !== undefined && pending.epoch !== expectedEpoch) {
+      return {
+        kind: 'superseded',
+        runId,
+        message: `Recovery epoch ${String(expectedEpoch)} for run ${runId} was superseded by epoch ${String(pending.epoch)}.`,
+      };
+    }
     const reason = validateReason(pending.reason);
 
     // Rehydrate, send ONLY the pure recovery event, capture the new snapshot.
-    const actor = this.makeActor(state);
+    let actor: RecoveryActor | undefined;
     let snapshot: unknown;
     try {
+      actor = this.makeActor(state);
       actor.send({
         type: 'EXECUTION_OUTCOME_UNKNOWN',
         epoch: pending.epoch,
         reason,
         interruptedStepId: state.step,
       });
+      if (!actor.isInRecoveryState()) {
+        throw new InvalidRunbookStateError(
+          `Recovery for run ${runId} did not enter the machine recovery state.`,
+        );
+      }
       snapshot = actor.getPersistedSnapshot();
+    } catch (error) {
+      if (error instanceof InvalidRunbookStateError) {
+        return {
+          kind: 'recovery_required',
+          runId,
+          epoch: pending.epoch,
+          message: `Run ${runId} needs recovery: ${error.message}`,
+        };
+      }
+      throw error;
     } finally {
-      actor.stop();
+      actor?.stop();
     }
 
     const next: RunbookState = {

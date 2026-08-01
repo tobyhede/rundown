@@ -307,6 +307,89 @@ export function deriveTerminalDrainObservationEvent(
   };
 }
 
+/** Input for reconciling a fenced observation against its committed lifecycle. */
+export interface FencedTerminalReconciliationInput {
+  /** Observation derived from the committed snapshot. */
+  readonly observation: TransitionObservation;
+  /** All resolved runbook steps. */
+  readonly steps: readonly ResolvedStep[];
+  /** Step the transition started from. */
+  readonly currentStep: ResolvedStep;
+  /** Persisted state before the machine event was sent. */
+  readonly previousState: RunbookState;
+  /** Committed state whose `lifecycle` decided the terminal release. */
+  readonly updatedState: RunbookState;
+  /** Raw XState snapshot for the committed mutation. */
+  readonly snapshot: unknown;
+  /** Result signal that triggered the machine transition. */
+  readonly result: 'pass' | 'fail';
+}
+
+/** A fenced observation aligned with the lifecycle the fence actually released on. */
+export interface ReconciledFencedTerminal {
+  /** Authoritative status: terminal whenever the committed lifecycle is terminal. */
+  readonly status: 'continue' | 'done' | 'stopped';
+  /** Observation events, topped up with the terminal event when one was missing. */
+  readonly events: readonly TransitionObservationEvent[];
+}
+
+/**
+ * Align a fenced transition's reported status with the lifecycle it released on.
+ *
+ * The execution fence folds its terminal session release into the same
+ * transaction as the state write and decides it from the committed
+ * `state.lifecycle`, while the reported status comes from
+ * {@link deriveTransitionObservation}, which reads the snapshot's top-level
+ * `status`/`value`. This keeps the two answers consistent: whatever the fence
+ * released on is what the caller is told.
+ *
+ * Reachability differs by caller, and the guard is deliberately kept at all of
+ * them rather than only where divergence is proven:
+ *
+ * - Drain callers: divergence is real and documented. See
+ *   {@link deriveTerminalDrainObservationEvent} — a drain derives terminal from
+ *   the applied completion's `state.lifecycle` while the observation derives it
+ *   from the snapshot, and the two are independent signals.
+ * - Direct actor callers (`PASS`/`FAIL`/`EXECUTE_COMMAND`): not known to be
+ *   reachable. `COMPLETE`/`STOPPED` are top-level `type: 'final'` states whose
+ *   entry actions assign `context.lifecycle`, so entering them sets the
+ *   terminal value, the terminal status, and the context field together. The
+ *   guard asserts that invariant rather than repairing an observed defect.
+ *
+ * Only ever tops the observation UP to terminal, never down, so a caller whose
+ * signals already agree is unaffected.
+ *
+ * @param input - The derived observation plus the context for a terminal event.
+ * @returns The authoritative status and the events to emit.
+ */
+export function reconcileFencedTerminalObservation(
+  input: FencedTerminalReconciliationInput,
+): ReconciledFencedTerminal {
+  if (input.observation.status !== 'continue') {
+    return { status: input.observation.status, events: input.observation.events };
+  }
+  const lifecycle = input.updatedState.lifecycle;
+  if (lifecycle !== 'completed' && lifecycle !== 'stopped') {
+    return { status: 'continue', events: input.observation.events };
+  }
+  const status = lifecycle === 'completed' ? 'done' : 'stopped';
+  return {
+    status,
+    events: [
+      ...input.observation.events,
+      deriveTerminalDrainObservationEvent({
+        steps: input.steps,
+        currentStep: input.currentStep,
+        previousState: input.previousState,
+        updatedState: input.updatedState,
+        snapshot: input.snapshot,
+        status,
+        result: input.result,
+      }),
+    ],
+  };
+}
+
 /** Input for deriving `rd goto` action display from core position helpers. */
 export interface GotoActionBlockInput {
   /** All resolved runbook steps, used to calculate total numbered steps. */

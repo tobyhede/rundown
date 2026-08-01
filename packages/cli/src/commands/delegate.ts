@@ -6,12 +6,12 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
-  CompletionLock,
   DelegationLock,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
   replaceSubstepStateEntry,
+  createEffectfulActorMutationRunner,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -612,6 +612,7 @@ function buildDelegateSeam(
     actorService,
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+    actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     deleteRun: async (id) => {
       await manager.delete(id);
@@ -634,9 +635,6 @@ function buildDelegateSeam(
     // Real per-parent-run lock: fresh issuance and --retry run their
     // read-modify-write under it, serialized against claim/abort/completion.
     delegationLock: new DelegationLock(cwd),
-    // Required dep. This seam never drives transitions, but a real lock is
-    // harmless and avoids a stub that would lie if that ever changed.
-    completionLock: new CompletionLock(cwd),
   });
 }
 

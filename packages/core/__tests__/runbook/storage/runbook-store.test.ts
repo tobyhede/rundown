@@ -2126,7 +2126,7 @@ describe('commitRecovery', () => {
 });
 
 describe('assertExecutionPhase', () => {
-  it.each(['claimed', 'effect_started', 'recovery_pending', 'committed'])(
+  it.each(['claimed', 'effect_started', 'recovery_pending', 'committed', 'released'])(
     'returns the recognized phase %s unchanged',
     (phase) => {
       expect(assertExecutionPhase(phase)).toBe(phase);

@@ -178,6 +178,18 @@ export {
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
+  createEffectfulActorMutationRunner,
+  type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
+  type EffectfulActorMutationSetRunnerInput,
+  type EffectfulActorMutationSetRunnerResult,
+  type EffectfulActorMutationSetTarget,
+  type CapturedActorMutationRun,
+  type PreparedActorMutationSet,
+  type PreparedActorMutationSetMember,
+  type AggregateTerminalRelease,
+} from './effectful-actor-mutation-runner.js';
+export {
   RunbookCompletionService,
   brandCurrentCursorResolvedCompletionForTest,
   lifecycleToDelegationOutcome,
@@ -234,6 +246,8 @@ export {
   type ForceAbortLinkedChildCleanupResult,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
+  type LifecycleNavigationMutationInput,
+  type LifecycleNavigationMutationOutcome,
   type LifecycleNavigationOutcome,
   type LifecycleTerminalInput,
   type LifecycleTerminalOutcome,

@@ -60,7 +60,13 @@ const CLAIM_STATUSES = ['active', 'superseded'] as const;
 /** Persisted claim status: authority, or a retained tombstone. */
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
-const EXECUTION_PHASES = ['claimed', 'effect_started', 'recovery_pending', 'committed'] as const;
+const EXECUTION_PHASES = [
+  'claimed',
+  'effect_started',
+  'recovery_pending',
+  'committed',
+  'released',
+] as const;
 
 /** Execution phases persisted in `execution_attempts.phase`. */
 export type ExecutionPhase = (typeof EXECUTION_PHASES)[number];
@@ -326,6 +332,37 @@ export interface ExecutionExpectation {
   readonly token: ExecutionToken;
   /** Epoch the owner must match. */
   readonly epoch: ExecutionEpoch;
+}
+
+/** One dependency-ordered member of an aggregate owned-state commit. */
+export interface OwnedRunSetMember {
+  /** Authority captured before the aggregate effect. */
+  readonly captured: CapturedAuthority;
+  /** Exact effect-started attempt owning this member. */
+  readonly execution: ExecutionExpectation & { readonly runId: RunId };
+  /** Prepared machine-derived state to persist. */
+  readonly next: RunbookState;
+}
+
+/** Input to {@link RunbookStore.commitOwnedRunSet}. */
+export interface CommitOwnedRunSetInput {
+  /** Members in dependency order: descendants before roots before external parents. */
+  readonly members: readonly OwnedRunSetMember[];
+  /**
+   * Optional pure projection over the transaction's session snapshot.
+   *
+   * The caller owns release semantics; the repository only persists the
+   * projected snapshot after every run owner has been cleared.
+   */
+  readonly updateSession?: (session: SessionData) => SyncWork<void>;
+}
+
+/** Optional projections applied by a single owned-state commit. */
+export interface CommitOwnedStateOptions {
+  /** Open-child guard checked before the authoritative state write. */
+  readonly guard?: ParentAdvanceGuard;
+  /** Pure projection over the transaction's session snapshot. */
+  readonly updateSession?: (session: SessionData) => SyncWork<void>;
 }
 
 /** Result of classifying a commit row. `ok` means the authoritative write may proceed. */
@@ -888,6 +925,26 @@ export class RunbookStore {
   }
 
   /**
+   * Capture a presented claim's authority and target state in one read transaction.
+   *
+   * @param runId - Target run.
+   * @param claimKey - Lookup key derived from the presented bearer.
+   * @returns Captured authority plus the exact state it describes, or a typed refusal.
+   * @throws {Error} When the captured run's persisted state fails validation.
+   */
+  captureAuthorityState(runId: RunId, claimKey: ClaimLookupKey): Promise<CapturedRunStateResult> {
+    return this.driver.read((tx) => {
+      const captured = captureAuthority(tx, runId, claimKey);
+      if (captured.kind !== 'captured') return captured;
+      const state = this.readRun(tx, runId);
+      if (state === null) {
+        return { kind: 'missing' as const, runId, message: `Run ${runId} does not exist.` };
+      }
+      return { ...captured, state };
+    });
+  }
+
+  /**
    * Capture authority for a run whose caller presented no claim.
    *
    * Resolves the run's active controlling claim and captures against it in one
@@ -1003,52 +1060,90 @@ export class RunbookStore {
    * @param execution - The owning attempt's raw token and epoch.
    * @param next - The new run state to persist (already reflecting any consumed
    *   resolved completion).
+   * @param options - Optional guards and session projection for the owned commit.
    * @returns The committed state, or a typed refusal.
    */
   commitOwnedState(
     captured: CapturedAuthority,
     execution: ExecutionExpectation,
     next: RunbookState,
+    options: CommitOwnedStateOptions = {},
   ): Promise<GuardedMutationResult<RunbookState>> {
-    const hash = hashExecutionToken(execution.token);
     return this.transaction((txn) => {
       const row = txn.commitRow(captured.runId, captured.claimKey);
       const classification = classifyCommitRow(row, captured, execution);
       if (classification.kind !== 'ok') {
+        if (this.isExactAttemptCommitted(txn.tx, captured.runId, execution)) {
+          return { kind: 'committed', value: next };
+        }
         return classificationToResult(classification);
       }
-      const changes = txn.tx
-        .prepare(
-          `UPDATE runs
-              SET state_json = :stateJson,
-                  lifecycle  = :lifecycle,
-                  updated_at = :updatedAt,
-                  exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
-            WHERE id = :id
-              AND state_version = :stateVersion
-              AND exec_token = :hash
-              AND exec_epoch = :epoch`,
-        )
-        .run({
-          id: captured.runId,
-          stateJson: serializeStateJson(next),
-          lifecycle: next.lifecycle ?? 'running',
-          updatedAt: next.updatedAt,
-          stateVersion: captured.stateVersion,
-          hash,
-          epoch: execution.epoch,
-        }).changes;
-      assertExactlyOneRow(changes, captured.runId);
-      this.afterAuthoritativeStateWrite(txn.tx, next);
-      txn.tx
-        .prepare(
-          `UPDATE execution_attempts
-              SET phase = 'committed', finished_at = :now
-            WHERE run_id = :runId AND exec_epoch = :epoch
-              AND exec_token = :hash AND phase = 'effect_started'`,
-        )
-        .run({ now: next.updatedAt, runId: captured.runId, epoch: execution.epoch, hash });
+      this.assertParentAdvanceAllowed(txn.tx, captured.runId, options.guard);
+      this.writeOwnedState(txn.tx, captured, execution, next);
+      if (options.updateSession !== undefined) {
+        const session = this.readSession(txn.tx);
+        options.updateSession(session);
+        this.applySession(txn, session);
+      }
       return { kind: 'committed', value: next };
+    });
+  }
+
+  /**
+   * Commit an aggregate effect's prepared run states and session projection.
+   *
+   * Every member is classified before the first write. Members are then written
+   * in caller-supplied dependency order, after which the optional session
+   * projection is applied while all affected execution owners are already
+   * cleared. Any refusal writes nothing; any thrown projection rolls the entire
+   * transaction back.
+   *
+   * @param input - Dependency-ordered owned states and optional session projection.
+   * @returns Every committed state, or the first typed refusal.
+   * @throws {Error} When the input repeats a run or its identities disagree.
+   */
+  commitOwnedRunSet(
+    input: CommitOwnedRunSetInput,
+  ): Promise<GuardedMutationResult<readonly RunbookState[]>> {
+    if (input.members.length === 0) {
+      throw new Error('Aggregate owned-state commit requires at least one member.');
+    }
+    const seen = new Set<RunId>();
+    for (const member of input.members) {
+      const runId = member.captured.runId;
+      if (seen.has(runId)) {
+        throw new Error(`Aggregate owned-state commit repeats run ${runId}.`);
+      }
+      if (member.execution.runId !== runId || member.next.id !== runId) {
+        throw new Error(`Aggregate owned-state identities disagree for run ${runId}.`);
+      }
+      seen.add(runId);
+    }
+
+    return this.transaction((txn) => {
+      const alreadyCommitted = input.members.every((member) =>
+        this.isExactAttemptCommitted(txn.tx, member.captured.runId, member.execution),
+      );
+      if (alreadyCommitted) {
+        return { kind: 'committed', value: input.members.map((member) => member.next) };
+      }
+      for (const member of input.members) {
+        const row = txn.commitRow(member.captured.runId, member.captured.claimKey);
+        const classification = classifyCommitRow(row, member.captured, member.execution);
+        if (classification.kind !== 'ok') {
+          return classificationToResult(classification);
+        }
+      }
+
+      for (const member of input.members) {
+        this.writeOwnedState(txn.tx, member.captured, member.execution, member.next);
+      }
+      if (input.updateSession !== undefined) {
+        const session = this.readSession(txn.tx);
+        input.updateSession(session);
+        this.applySession(txn, session);
+      }
+      return { kind: 'committed', value: input.members.map((member) => member.next) };
     });
   }
 
@@ -1413,19 +1508,7 @@ export class RunbookStore {
     next: RunbookState,
     guard?: ParentAdvanceGuard,
   ): 'committed' | 'stale' | 'owned' | 'missing' {
-    if (guard !== undefined) {
-      // Defensive invariant: the guard only applies to its own parent's advance.
-      if (guard.parentRunId !== runId) {
-        throw new Error(
-          `Parent-advance guard for ${guard.parentRunId} misapplied to write of ${runId}.`,
-        );
-      }
-      const open = this.openDelegatedChildrenFor(tx, runId);
-      if (open.length > 0) {
-        // Aborts the BEGIN IMMEDIATE transaction (ROLLBACK) before any UPDATE.
-        throw new OpenDelegatedChildrenError(open);
-      }
-    }
+    this.assertParentAdvanceAllowed(tx, runId, guard);
     const changes = tx
       .prepare(
         `UPDATE runs
@@ -1454,6 +1537,31 @@ export class RunbookStore {
       return 'missing';
     }
     return row.exec_token !== null ? 'owned' : 'stale';
+  }
+
+  /**
+   * Assert an optional parent-advance guard inside the decisive transaction.
+   *
+   * @param tx - Open write transaction containing the decisive state update.
+   * @param runId - Run receiving the guarded update.
+   * @param guard - Optional parent-advance guard to evaluate.
+   * @throws {Error} When the guard targets another run or open delegated children remain.
+   */
+  private assertParentAdvanceAllowed(
+    tx: SqlTransaction,
+    runId: RunId,
+    guard?: ParentAdvanceGuard,
+  ): void {
+    if (guard === undefined) return;
+    if (guard.parentRunId !== runId) {
+      throw new Error(
+        `Parent-advance guard for ${guard.parentRunId} misapplied to write of ${runId}.`,
+      );
+    }
+    const open = this.openDelegatedChildrenFor(tx, runId);
+    if (open.length > 0) {
+      throw new OpenDelegatedChildrenError(open);
+    }
   }
 
   /**
@@ -1677,6 +1785,82 @@ export class RunbookStore {
   }
 
   /**
+   * Write one already-classified owned state and close its exact attempt.
+   *
+   * @param tx - Open aggregate/single-run transaction.
+   * @param captured - Authority already classified in this transaction.
+   * @param execution - Exact effect-started owner.
+   * @param next - Prepared state to persist.
+   */
+  private writeOwnedState(
+    tx: SqlTransaction,
+    captured: CapturedAuthority,
+    execution: ExecutionExpectation,
+    next: RunbookState,
+  ): void {
+    const hash = hashExecutionToken(execution.token);
+    const changes = tx
+      .prepare(
+        `UPDATE runs
+            SET state_json = :stateJson,
+                lifecycle  = :lifecycle,
+                updated_at = :updatedAt,
+                exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
+          WHERE id = :id
+            AND state_version = :stateVersion
+            AND exec_token = :hash
+            AND exec_epoch = :epoch`,
+      )
+      .run({
+        id: captured.runId,
+        stateJson: serializeStateJson(next),
+        lifecycle: next.lifecycle ?? 'running',
+        updatedAt: next.updatedAt,
+        stateVersion: captured.stateVersion,
+        hash,
+        epoch: execution.epoch,
+      }).changes;
+    assertExactlyOneRow(changes, captured.runId);
+    this.afterAuthoritativeStateWrite(tx, next);
+    const attemptChanges = tx
+      .prepare(
+        `UPDATE execution_attempts
+            SET phase = 'committed', finished_at = :now
+          WHERE run_id = :runId AND exec_epoch = :epoch
+            AND exec_token = :hash AND phase = 'effect_started'`,
+      )
+      .run({ now: next.updatedAt, runId: captured.runId, epoch: execution.epoch, hash }).changes;
+    assertExactlyOneRow(attemptChanges, captured.runId);
+  }
+
+  /**
+   * Test whether an exact secret execution identity already committed durably.
+   *
+   * @param tx - Open transaction used to inspect the attempt row.
+   * @param runId - Run whose attempt is being inspected.
+   * @param execution - Exact execution token and epoch to match.
+   * @returns Whether that exact attempt is durably committed.
+   */
+  private isExactAttemptCommitted(
+    tx: SqlTransaction,
+    runId: RunId,
+    execution: ExecutionExpectation,
+  ): boolean {
+    const row = tx
+      .prepare(
+        `SELECT 1 AS committed FROM execution_attempts
+          WHERE run_id = :runId AND exec_epoch = :epoch
+            AND exec_token = :hash AND phase = 'committed'`,
+      )
+      .get<{ readonly committed: 1 }>({
+        runId,
+        epoch: execution.epoch,
+        hash: hashExecutionToken(execution.token),
+      });
+    return row !== undefined;
+  }
+
+  /**
    * Apply a guarded, unowned state update under the captured CAS.
    *
    * The `WHERE` requires the captured `state_version` and `claim_generation` and
@@ -1751,10 +1935,10 @@ export class RunbookStore {
   /**
    * Run the common bookkeeping an authoritative run-state write owes.
    *
-   * Invoked exactly once by each of the three authoritative commit sites — the
-   * owned-lease commit in {@link commitOwnedState}, the CAS write behind
-   * {@link mutateState}, and the captured-authority write behind
-   * {@link saveState} — after a run UPDATE changes exactly one row, never on a
+   * Invoked exactly once by each authoritative commit site — the shared owned
+   * write in {@link writeOwnedState}, the CAS write behind {@link mutateState},
+   * and the captured-authority write behind {@link saveState} — after a run
+   * UPDATE changes exactly one row, never on a
    * zero-row/stale/owned outcome, so the resolved-completion projection and the
    * delegated-claim supersession latch stay in lockstep with the committed
    * state. This is the single home for the parent half of R2's two-sided
@@ -1763,9 +1947,11 @@ export class RunbookStore {
    * {@link commitRecovery} is deliberately NOT one of those sites: it restores
    * the interrupted attempt's own snapshot under the same lifecycle rather than
    * moving a cursor or ending a run, so it can close no delegation. Any cursor
-   * movement that follows recovery commits through one of the three sites above
+   * movement that follows recovery commits through one of the sites above
    * and invalidates there. Do not read the phrase "every state write" literally
-   * — `state_json` is written on four paths, and this hook covers three.
+   * — `state_json` is written through recovery plus the single-run and aggregate
+   * owned paths, CAS mutation, and captured-authority save; this hook covers all
+   * authoritative paths except recovery.
    *
    * @param tx - Open write transaction.
    * @param next - The run state just committed.

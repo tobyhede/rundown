@@ -25,6 +25,7 @@ import {
   type RunbookState,
   type ClaimId,
   type ClaimLookupKey,
+  claimKeyFromBearer,
   type RunId,
   type CommandExecutionStreamOptions,
   type LifecycleTransitionOutcome,
@@ -496,6 +497,15 @@ function renderRefusal(
     case 'unknown_run':
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;
+    case 'missing':
+      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
+    case 'claim_superseded':
+      output.error(outcome.message, 'STALE_CLAIM');
+      return true;
+    case 'concurrent_modification':
+      output.error(outcome.message, 'CONCURRENT_MODIFICATION');
+      return true;
     case 'execution_in_progress':
     case 'recovery_required':
       return renderSessionMutationRefusal(output, outcome);
@@ -516,6 +526,7 @@ async function renderApplied(
   manager: RunbookStateManager,
   outcome: Extract<LifecycleTransitionOutcome, { kind: 'applied' }>,
   commandStreamOptions?: CommandExecutionStreamOptions,
+  claimKey?: ClaimLookupKey,
 ): Promise<{ readonly status: 'continue' | 'stopped'; readonly runId: RunId }> {
   if (outcome.duplicate) {
     output.status(config.commandName, `Completion already recorded for ${outcome.duplicate.at}`, {
@@ -560,6 +571,7 @@ async function renderApplied(
         emitter,
         {
           terminalReleaseMode: outcome.terminalReleaseMode,
+          ...(claimKey === undefined ? {} : { claimKey }),
           output,
           commandStreamOptions,
         },
@@ -660,6 +672,7 @@ export async function runSeamTransition(
     manager,
     outcome,
     options.commandStreamOptions,
+    options.claimId === undefined ? undefined : claimKeyFromBearer(options.claimId),
   );
   output.flush();
   return { manager, applied, exitError: applied.status === 'stopped' };

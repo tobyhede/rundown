@@ -46,12 +46,14 @@ import {
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
   RECOVERY_REQUIRED_STATE_NAME,
+  RECOVERY_TAG,
   DelegationChildLinkPreparationError,
   deriveDelegationChildLinkedSubsteps,
   deriveDelegationChildUnlinkedSubsteps,
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
+import type { RecoveryActor } from './execution-recovery-service.js';
 import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
@@ -744,6 +746,41 @@ export class RunbookActorService {
     private readonly manager: RunbookStateManager,
     private readonly options: RunbookActorServiceOptions = {},
   ) {}
+
+  /**
+   * Rehydrate a recovery-only actor with every external callable inert.
+   *
+   * @param state - Persisted interrupted run state.
+   * @param steps - Parsed steps used to rebuild the machine graph.
+   * @returns A minimal actor that can accept only the pure recovery transition.
+   */
+  createRecoveryActor(state: RunbookState, steps: readonly ResolvedStep[]): RecoveryActor {
+    const neverCompletes = (): Promise<never> => new Promise(() => undefined);
+    const recoveryOnly = new RunbookActorService(this.manager, {
+      commandServices: { runExternalCommand: neverCompletes },
+      helpers: new Map(),
+      resolveDelegationRunbook: neverCompletes,
+      resolveInlineRunbook: neverCompletes,
+    });
+    const actor = recoveryOnly.createActorForState(state.id, state, steps);
+    return {
+      send: (event) => {
+        actor.send(event);
+      },
+      getPersistedSnapshot: () => actor.getPersistedSnapshot(),
+      isInRecoveryState: () => {
+        // `createActorForState` erases the snapshot type, so narrow to the one
+        // member this predicate needs. The cast is over the SHAPE only — the
+        // question asked is fixed at RECOVERY_TAG and answered from the live
+        // snapshot, never short-circuited on the caller's behalf.
+        const snapshot = actor.getSnapshot() as { hasTag(candidate: string): boolean };
+        return snapshot.hasTag(RECOVERY_TAG);
+      },
+      stop: () => {
+        actor.stop();
+      },
+    };
+  }
 
   private assertFreshSnapshotValue(
     id: string,

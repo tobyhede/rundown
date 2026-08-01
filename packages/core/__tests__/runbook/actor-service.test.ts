@@ -22,7 +22,12 @@ import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
-import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
+import {
+  compileRunbookToMachine,
+  PENDING_MACHINE_EFFECT_TAG,
+  RECOVERY_REQUIRED_STATE_NAME,
+} from '../../src/runbook/compiler.js';
+import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { createRunbook } from './fixtures.js';
@@ -3748,6 +3753,38 @@ echo ok
 
       expect('enteredArtifacts' in state).toBe(false);
       expect(JSON.stringify(state.snapshot)).toContain('enteredArtifacts');
+    });
+  });
+  describe('createRecoveryActor', () => {
+    it('enters the tagged recovery state through the pure recovery event', async () => {
+      const harness = await createLifecycleHarness(`## 1. First
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const recovery = harness.service.createRecoveryActor(harness.state, harness.steps);
+      try {
+        // Asks one question and answers it from the live snapshot. The previous
+        // `hasTag(tag)` shape took a tag it discarded — it returned false for
+        // every tag but RECOVERY_TAG whether or not the snapshot carried it —
+        // so an assertion like `hasTag('unrelated') === false` passed without
+        // consulting the machine at all and could not tell a correct
+        // implementation from a broken one.
+        expect(recovery.isInRecoveryState()).toBe(false);
+        recovery.send({
+          type: 'EXECUTION_OUTCOME_UNKNOWN',
+          epoch: assertExecutionEpoch(1),
+          reason: 'effect_boundary_crossed',
+          interruptedStepId: '1',
+        });
+        expect(recovery.isInRecoveryState()).toBe(true);
+        expect(recovery.getPersistedSnapshot()).toMatchObject({
+          value: RECOVERY_REQUIRED_STATE_NAME,
+        });
+      } finally {
+        recovery.stop();
+        harness.service.stopActor(harness.actor);
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
     });
   });
 });

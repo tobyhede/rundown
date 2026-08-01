@@ -4,7 +4,7 @@ import { DelegationLock } from './delegation-lock.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
 import { merge } from './state-update-ops.js';
-import type { RunbookStateManager } from './state.js';
+import { applyRunbookStateUpdate, type RunbookStateManager } from './state.js';
 import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import {
   SENTINEL_ENTRY,
@@ -27,6 +27,7 @@ import type {
   ResolvedStep,
   RunId,
   RunbookState,
+  SubstepState,
 } from './types.js';
 import type { VariableValue } from './effective-vars.js';
 
@@ -215,6 +216,12 @@ export type RecordCompletionResult =
       readonly key: string;
     };
 
+/** Pure manual-completion preparation for a fenced state commit. */
+export type PreparedManualCompletion = RecordCompletionResult & {
+  /** Parent state after the completion projection, unchanged for duplicates. */
+  readonly nextState: RunbookState;
+};
+
 /** Arguments for recording a manual parent/substep completion. */
 export interface RecordManualCompletionArgs {
   /** Run id of the parent state owning the lifecycle row. */
@@ -257,6 +264,17 @@ export interface RecordChildCompletionArgs {
    */
   readonly ignoreCancellation?: boolean;
 }
+
+/** Pure preparation result for an aggregate child-terminal report. */
+export type PreparedChildCompletion =
+  | {
+      readonly kind: 'recorded';
+      readonly key: string;
+      readonly nextParentState: RunbookState;
+    }
+  | {
+      readonly kind: 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked';
+    };
 
 /** Arguments for draining persisted completions into the current machine cursor. */
 export interface DrainResolvedCompletionsArgs {
@@ -346,6 +364,159 @@ function assertCompleteParentLinkage(
 }
 
 /**
+ * Find an already-resolved completion for a target inside a state blob.
+ *
+ * The in-state twin of {@link RunbookCompletionService.findExistingCompletion},
+ * and deliberately entry-PRECISE for a frame that carries one. Completion keys
+ * embed the entry, and a RETRY/GOTO that re-opens a substep bumps it, so a row
+ * left by an earlier entry on the same frame is not a duplicate of this one —
+ * matching on `frameKey` + `substep` alone would refuse the legitimate
+ * re-completion and strand the re-entered substep with no way to resolve it.
+ * Only a sentinel-entry frame, which names no entry, falls back to the
+ * frame-wide match.
+ *
+ * @param state - State whose `resolvedCompletions` map is searched.
+ * @param targetFrame - Frame the completion targets.
+ * @param targetSubstep - Substep the completion targets.
+ * @returns The existing key, or `undefined` when the target is unresolved.
+ */
+function findCompletionKeyInState(
+  state: RunbookState,
+  targetFrame: Frame,
+  targetSubstep: string,
+): string | undefined {
+  const existing = state.resolvedCompletions ?? {};
+  if (frameHasExactEntry(targetFrame)) {
+    const exactKey = buildCompletionKey(targetFrame, targetSubstep);
+    if (Object.hasOwn(existing, exactKey)) return exactKey;
+    const sentinelKey = buildCompletionKey(inactiveFrame(targetFrame.frameKey), targetSubstep);
+    return Object.hasOwn(existing, sentinelKey) ? sentinelKey : undefined;
+  }
+  return Object.entries(existing).find(
+    ([, completion]) =>
+      completion.targetFrameKey === targetFrame.frameKey &&
+      completion.targetSubstep === targetSubstep,
+  )?.[0];
+}
+
+/** State the manual-completion decision reads, supplied by each caller. */
+interface ManualCompletionEvidence {
+  /** State whose cursor decides whether the target is the live one. */
+  readonly cursorState: RunbookState;
+  /** Substep states searched for a prior `done` resolution. */
+  readonly substepStates: readonly SubstepState[];
+  /** Key of an already-recorded completion for this target; nullish when unresolved. */
+  readonly existingKey: string | null | undefined;
+}
+
+/** The single decision behind recording or preparing a manual completion. */
+type ManualCompletionDecision =
+  | { readonly status: 'duplicate'; readonly key: string }
+  | {
+      readonly status: 'recorded';
+      readonly key: string;
+      readonly completion: ResolvedCompletion;
+    };
+
+/**
+ * Decide whether a manual completion is a duplicate, and build it when it is not.
+ *
+ * The sole owner of the duplicate rule, shared by the locking recorder and the
+ * fenced pure preparation so the two can never disagree about whether a substep
+ * has already been resolved. Evidence is passed in rather than read here: the
+ * recorder classifies against the freshest persisted state, while the fenced
+ * twin must classify against the exact state captured under its lease.
+ *
+ * @param args - Manual completion target and result.
+ * @param evidence - Cursor state, substep states, and any existing completion key.
+ * @returns The duplicate verdict, or the key and completion to persist.
+ */
+function classifyManualCompletionTarget(
+  args: RecordManualCompletionArgs,
+  evidence: ManualCompletionEvidence,
+): ManualCompletionDecision {
+  const key = buildCompletionKey(args.targetFrame, args.targetSubstep);
+  // Nullish, not falsy-in-general: the store lookup answers `null` for "not
+  // found" while the in-state scan answers `undefined`, and an empty-string key
+  // is not representable.
+  if (evidence.existingKey != null) {
+    return { status: 'duplicate', key: evidence.existingKey };
+  }
+
+  // A consumed completion leaves no resolved-completion row behind (the actor
+  // deletes it on sync), so `substepStates` is the only persistent record that
+  // a substep was already resolved. Use it to detect a genuine duplicate — a
+  // caller resolving a substep the cursor has already moved past.
+  //
+  // This must NOT fire when the cursor is currently positioned on the target
+  // substep: a RETRY/GOTO that re-opens a substep leaves its prior `done`
+  // status in place (the machine does not reset it), and the next resolution
+  // of the now-active cursor is a legitimate re-completion, not a duplicate.
+  const activeFrameKey =
+    evidence.cursorState.activeFrameKey ?? deriveActiveFrame(evidence.cursorState).frameKey;
+  const isActiveCursorTarget =
+    args.targetSubstep === evidence.cursorState.substep &&
+    args.targetFrame.frameKey === activeFrameKey;
+  if (!isActiveCursorTarget) {
+    const existingSubstepState = findSubstepState(
+      evidence.substepStates,
+      args.targetSubstep,
+      args.targetFrame.frameKey,
+    );
+    if (existingSubstepState?.status === 'done') return { status: 'duplicate', key };
+  }
+
+  return {
+    status: 'recorded',
+    key,
+    completion: buildResolvedCompletion({
+      agentId: args.agentId,
+      result: args.result,
+      targetStep: args.targetStep,
+      targetSubstep: args.targetSubstep,
+      targetIteration: args.targetIteration,
+      targetFrame: args.targetFrame,
+      finalVars: args.finalVars,
+      completedAt: args.completedAt,
+    }),
+  };
+}
+
+/**
+ * Whether a delegated child report has already been resolved by its parent.
+ *
+ * @param state - Exact parent state being classified.
+ * @param targetFrame - Frame entry named by the child linkage.
+ * @param targetSubstep - Parent substep named by the child linkage.
+ * @returns Whether an outcome row or a non-active done substep makes the report duplicate.
+ */
+function isDuplicateChildCompletion(
+  state: RunbookState,
+  targetFrame: Frame,
+  targetSubstep: string,
+): boolean {
+  const hasRecordedOutcome = Object.values(state.resolvedCompletions ?? {}).some(
+    (completion) =>
+      completion.targetFrameKey === targetFrame.frameKey &&
+      completion.targetSubstep === targetSubstep,
+  );
+  if (hasRecordedOutcome) return true;
+
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  const activeEntry = state.activeEntry ?? 1;
+  const isActiveCursorTarget =
+    targetFrame.kind === 'active' &&
+    targetFrame.entry === activeEntry &&
+    targetSubstep === state.substep &&
+    targetFrame.frameKey === activeFrameKey;
+  return (
+    !isActiveCursorTarget &&
+    findSubstepState(state.substepStates ?? [], targetSubstep, targetFrame.frameKey)?.status ===
+      'done'
+  );
+}
+
+/**
  * Core service for recording and applying resolved runbook completions.
  */
 export class RunbookCompletionService {
@@ -361,6 +532,140 @@ export class RunbookCompletionService {
     private readonly lifecycleService: ExecutionLifecycleService,
     private readonly actorService: RunbookActorService,
   ) {}
+
+  /**
+   * Prepare a delegated child report against an exact captured parent state.
+   *
+   * This performs no IO. Aggregate terminal workflows can include the returned
+   * parent state in the same owned run-set commit as the child terminal state.
+   *
+   * @param args - Terminal child report input.
+   * @param parentState - Exact captured delegating parent state.
+   * @returns Prepared parent state or a typed no-write outcome.
+   */
+  prepareChildCompletion(
+    args: RecordChildCompletionArgs,
+    parentState: RunbookState,
+  ): PreparedChildCompletion {
+    if (!args.childState.parentLinkage) return { kind: 'not-applicable' };
+    const linkage = assertCompleteParentLinkage(args.childState);
+    if (parentState.id !== linkage.parentRunId) return { kind: 'not-applicable' };
+    const projection = projectDelegationTerminalOutcome(args.childState, args.result);
+    if (projection.kind === 'not_terminal') return { kind: 'not-applicable' };
+    if (projection.kind === 'command_infrastructure') return { kind: 'blocked' };
+
+    const activeParentFrameKey =
+      parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey;
+    const activeParentEntry = parentState.activeEntry ?? 1;
+    const substepState = findSubstepState(
+      parentState.substepStates ?? [],
+      linkage.parentStepId,
+      linkage.parentFrameKey,
+    );
+    if (
+      linkage.kind === 'delegation' &&
+      substepState?.delegation?.tokenHash !== undefined &&
+      substepState.delegation.tokenHash !== linkage.tokenHash
+    ) {
+      return { kind: 'not-applicable' };
+    }
+    if (
+      linkage.kind === 'delegation' &&
+      substepState?.delegation?.cancelledAt &&
+      !args.ignoreCancellation
+    ) {
+      return { kind: 'cancelled' };
+    }
+
+    const targetFrame =
+      linkage.parentFrameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
+        ? activeFrame(linkage.parentFrameKey, activeParentEntry)
+        : exactFrame(linkage.parentFrameKey, linkage.parentEntry);
+    const key = buildCompletionKey(targetFrame, linkage.parentStepId);
+    // Frame-WIDE on purpose, unlike the entry-precise manual lookup above: a
+    // delegated child reports against the linkage it was issued under, so any
+    // recorded outcome for this parent substep — whatever entry it carries —
+    // already answers this report. `recordChildCompletion` uses the same rule.
+    if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
+      return { kind: 'duplicate' };
+    }
+
+    const completion = buildResolvedCompletion({
+      agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
+      result: projection.result,
+      targetStep: linkage.parentStep,
+      targetSubstep: linkage.parentStepId,
+      targetFrame,
+      finalVars: args.childState.finalVars,
+      completedAt: args.completedAt,
+    });
+    const nextParentState = applyRunbookStateUpdate(
+      parentState,
+      {
+        resolvedCompletions: merge({ [key]: completion }),
+        substepStates: upsertSubstepState(
+          parentState.substepStates ?? [],
+          linkage.parentStepId,
+          linkage.parentFrameKey,
+          { status: 'done', result: projection.result },
+        ),
+      },
+      args.completedAt ?? new Date().toISOString(),
+    );
+    return { kind: 'recorded', key, nextParentState };
+  }
+
+  /**
+   * Prepare one manual completion against an exact captured state without IO.
+   *
+   * @param args - Manual completion target and result.
+   * @returns Duplicate/recorded status plus the prepared parent state.
+   */
+  prepareManualCompletion(args: RecordManualCompletionArgs): PreparedManualCompletion {
+    const decision = classifyManualCompletionTarget(args, {
+      cursorState: args.currentState,
+      substepStates: args.currentState.substepStates ?? [],
+      existingKey: findCompletionKeyInState(
+        args.currentState,
+        args.targetFrame,
+        args.targetSubstep,
+      ),
+    });
+    if (decision.status === 'duplicate') {
+      return { status: 'duplicate', key: decision.key, nextState: args.currentState };
+    }
+    const { key, completion } = decision;
+    const nextState = applyRunbookStateUpdate(
+      args.currentState,
+      {
+        resolvedCompletions: merge({ [key]: completion }),
+        substepStates: upsertSubstepState(
+          args.currentState.substepStates ?? [],
+          args.targetSubstep,
+          args.targetFrame.frameKey,
+          { status: 'done', result: args.result },
+        ),
+      },
+      args.completedAt ?? new Date().toISOString(),
+    );
+    return { status: 'recorded', key, nextState };
+  }
+
+  /**
+   * Validate a completion against the live in-memory cursor.
+   *
+   * @param state - Current prepared state.
+   * @param completion - Completion candidate.
+   * @param entry - Live active entry.
+   * @returns Branded current-cursor completion or mismatch.
+   */
+  validateCurrentCompletion(
+    state: RunbookState,
+    completion: ResolvedCompletion,
+    entry: number,
+  ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
+    return this.resolveAgainstCurrentCursor(state, completion, { entry });
+  }
 
   private async findExistingCompletion(
     runbookId: RunId,
@@ -512,51 +817,21 @@ export class RunbookCompletionService {
     args: RecordManualCompletionArgs,
     options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<RecordCompletionResult> {
-    const existingKey = await this.findExistingCompletion(args.runbookId, {
-      frame: args.targetFrame,
-      substep: args.targetSubstep,
-    });
-    if (existingKey) return { status: 'duplicate', key: existingKey };
-
-    // A consumed completion leaves no resolved-completion row behind (the actor
-    // deletes it on sync), so `substepStates` is the only persistent record that
-    // a substep was already resolved. Use it to detect a genuine duplicate — a
-    // caller resolving a substep the cursor has already moved past.
-    //
-    // This must NOT fire when the cursor is currently positioned on the target
-    // substep: a RETRY/GOTO that re-opens a substep leaves its prior `done`
-    // status in place (the machine does not reset it), and the next resolution
-    // of the now-active cursor is a legitimate re-completion, not a duplicate.
+    // The one difference from the pure twin, and the reason the shared decision
+    // takes its inputs rather than reading them: this path re-reads the freshest
+    // persisted state, while the fenced twin must classify against the exact
+    // state it captured under its lease.
     const freshState = await this.manager.load(args.runbookId);
-    const cursorState = freshState ?? args.currentState;
-    const activeFrameKey = cursorState.activeFrameKey ?? deriveActiveFrame(cursorState).frameKey;
-    const isActiveCursorTarget =
-      args.targetSubstep === cursorState.substep && args.targetFrame.frameKey === activeFrameKey;
-    if (!isActiveCursorTarget) {
-      const existingSubstepState = findSubstepState(
-        freshState?.substepStates ?? args.currentState.substepStates ?? [],
-        args.targetSubstep,
-        args.targetFrame.frameKey,
-      );
-      if (existingSubstepState?.status === 'done') {
-        return {
-          status: 'duplicate',
-          key: buildCompletionKey(args.targetFrame, args.targetSubstep),
-        };
-      }
-    }
-
-    const key = buildCompletionKey(args.targetFrame, args.targetSubstep);
-    const completion = buildResolvedCompletion({
-      agentId: args.agentId,
-      result: args.result,
-      targetStep: args.targetStep,
-      targetSubstep: args.targetSubstep,
-      targetIteration: args.targetIteration,
-      targetFrame: args.targetFrame,
-      finalVars: args.finalVars,
-      completedAt: args.completedAt,
+    const decision = classifyManualCompletionTarget(args, {
+      cursorState: freshState ?? args.currentState,
+      substepStates: freshState?.substepStates ?? args.currentState.substepStates ?? [],
+      existingKey: await this.findExistingCompletion(args.runbookId, {
+        frame: args.targetFrame,
+        substep: args.targetSubstep,
+      }),
     });
+    if (decision.status === 'duplicate') return { status: 'duplicate', key: decision.key };
+    const { key, completion } = decision;
 
     // Persist the resolved completion row and its mirrored substep state in a
     // single locked read-modify-write. Splitting these into two writes (e.g. via
@@ -676,6 +951,9 @@ export class RunbookCompletionService {
       frameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
         ? activeFrame(frameKey, activeParentEntry)
         : exactFrame(frameKey, linkage.parentEntry);
+    if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
+      return 'duplicate';
+    }
     const recorded = await this.recordManualCompletion({
       runbookId: linkage.parentRunId,
       currentState: parentState,

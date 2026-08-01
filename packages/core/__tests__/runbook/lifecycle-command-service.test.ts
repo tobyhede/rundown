@@ -12,8 +12,6 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
-  CompletionLock,
-  CompletionLockTimeoutError,
   DelegationLock,
   DelegationLockTimeoutError,
   DelegationScanService,
@@ -30,6 +28,7 @@ import {
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  createEffectfulActorMutationRunner,
   inactiveFrame,
   replaceSubstepStateEntry,
   type CallerEvidence,
@@ -46,7 +45,6 @@ import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
-import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import {
@@ -56,7 +54,6 @@ import {
   seedLiveDelegation,
 } from './claim-test-helpers.js';
 import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
-import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
@@ -144,6 +141,7 @@ describe('RunbookLifecycleCommandService', () => {
   let actorService: RunbookActorService;
   let lifecycleService: ExecutionLifecycleService;
   let completionService: RunbookCompletionService;
+  let actorMutationRunner: ReturnType<typeof createEffectfulActorMutationRunner>;
   let sessionService: SessionService;
   let seam: RunbookLifecycleCommandService;
   // Test-controlled `loadSteps`: each drive test sets `loadStepsImpl` to the steps
@@ -162,6 +160,7 @@ describe('RunbookLifecycleCommandService', () => {
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    actorMutationRunner = createEffectfulActorMutationRunner(tmp);
     sessionService = new SessionService(manager);
     loadStepsImpl = () => [];
     loadStepsArgs = [];
@@ -171,6 +170,7 @@ describe('RunbookLifecycleCommandService', () => {
       actorService,
       lifecycleService,
       completionService,
+      actorMutationRunner,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       deleteRun: async (id) => {
         await manager.delete(id);
@@ -185,7 +185,6 @@ describe('RunbookLifecycleCommandService', () => {
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
       delegationLock: new DelegationLock(tmp),
-      completionLock: new CompletionLock(tmp),
     });
   });
 
@@ -271,6 +270,7 @@ describe('RunbookLifecycleCommandService', () => {
       actorService,
       lifecycleService,
       completionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       deleteRun: async (id) => {
         await manager.delete(id);
@@ -292,7 +292,6 @@ describe('RunbookLifecycleCommandService', () => {
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
       delegationLock: new DelegationLock(tmp),
-      completionLock: new CompletionLock(tmp),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -2348,16 +2347,7 @@ describe('RunbookLifecycleCommandService', () => {
         },
       ];
       loadStepsImpl = () => forSteps;
-      const recordSpy = jest
-        .spyOn(completionService, 'recordManualCompletionUnlocked')
-        .mockResolvedValue({ status: 'recorded', key: 'k' });
-      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
-        status: 'not_active',
-        frameKey: buildFrameKey('1', 5),
-        activeFrameKey: buildFrameKey('1', 1),
-        unresolved: 1,
-        applied: [],
-      });
+      const recordSpy = jest.spyOn(completionService, 'prepareManualCompletion');
       await activate(
         baseState({
           step: '1',
@@ -2712,6 +2702,50 @@ describe('RunbookLifecycleCommandService', () => {
       expect(top?.step).toBe('1');
     });
 
+    it('reports terminal when the prepared lifecycle is terminal but the snapshot is not', async () => {
+      // INJECTED, not naturally reachable through this path: the snapshot below
+      // is stubbed. `COMPLETE`/`STOPPED` are top-level `type: 'final'` states
+      // whose entry actions assign `context.lifecycle`, so a real actor sets the
+      // terminal value, the terminal status, and the context field together and
+      // the two signals agree. (They DO diverge on the drain path — see
+      // `deriveTerminalDrainObservationEvent` — which is why the reconciliation
+      // exists at all.)
+      //
+      // What this pins is the seam's consistency invariant: the fenced release
+      // fires on the persisted `lifecycle`, so the reported status must follow
+      // the same signal. Were they ever to part, taking the status from the
+      // observation alone would release the run from the session while telling
+      // the caller execution continues — a released run the agent still drives.
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+
+      const realPrepare = actorService.prepareActorMutation.bind(actorService);
+      jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+        const prepared = await realPrepare(...args);
+        return {
+          ...prepared,
+          nextState: { ...prepared.nextState, lifecycle: 'completed' as const },
+          snapshot: { status: 'active', value: 'COMPLETE' },
+        };
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(namedRunId),
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // The release committed with the state, so the outcome must agree.
+      expect(await manager.loadSession()).toEqual(
+        expect.objectContaining({ defaultStack: expect.not.arrayContaining([namedRunId]) }),
+      );
+      expect(outcome.status).toBe('done');
+      expect(outcome.events.map((event) => event.type)).toContain('RUNBOOK_COMPLETED');
+    });
+
     it('refuses an unknown --run id with the typed unknown_run outcome', async () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState({ id: namedRunId }));
@@ -2755,12 +2789,12 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('open_delegated_children');
     });
 
-    it('refuses a racing claim through the top-level production path (sendAndSync)', async () => {
-      // A claim that commits INSIDE the guarded advance window — after the cheap
-      // pre-check, before the decisive sendAndSync write — must refuse the advance
-      // via the in-transaction guard, preserving the bearer. Drives the real
-      // LifecycleCommandService -> sendAndSync -> updateFromActor -> manager.update
-      // forwarding: fails if any layer drops the guard.
+    it('refuses a racing child claim through the in-transaction guard, without recovery', async () => {
+      // The claim commits after the cheap pre-check and inside the fenced
+      // preparation, so only the in-transaction guard can catch it. That guard
+      // aborts the commit transaction before its first UPDATE, so the run is
+      // provably untouched: the caller gets the actionable refusal and the run
+      // is NOT parked in recovery for a race that changed nothing.
       loadStepsImpl = () => twoSteps;
       const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac');
       const linkage = linkageFor(namedRunId, 'a');
@@ -2771,16 +2805,11 @@ describe('RunbookLifecycleCommandService', () => {
       await seedLiveDelegation(manager, linkage);
 
       const claimant = new SessionService(new RunbookStateManager(tmp));
-      const realSendAndSync = actorService.sendAndSync.bind(actorService);
-      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
-      jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (...args) => {
-        // Inject on the FIRST call only: the claim must land inside the first
-        // guarded window, and re-claiming on later calls would mask a guard that
-        // refused for the wrong reason.
-        claimed ??= assertClaimed(
-          unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
-        );
-        return realSendAndSync(...args);
+      const realPrepare = actorService.prepareActorMutation.bind(actorService);
+      let claimResult: Awaited<ReturnType<SessionService['claimRunbook']>> | undefined;
+      jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+        claimResult ??= await claimant.claimRunbook(childRunId, linkage);
+        return realPrepare(...args);
       });
 
       const outcome = await seam.runTransition({
@@ -2791,197 +2820,33 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome.kind).toBe('open_delegated_children');
-      // The injection actually ran — without this an unasserted spy that silently
-      // stopped firing would leave the test passing while racing nothing.
-      expect(claimed).toBeDefined();
-      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
-        'verified',
-      );
+      expect(claimResult?.kind).toBe('committed');
       expect((await manager.load(namedRunId))?.step).toBe('1');
+      // No recovery was recorded: a write-free refusal leaves the run usable.
+      const store = await getRunbookStore(tmp);
+      expect(await store.readPendingRecovery(namedRunId)).toBeNull();
     });
 
-    it('refuses a racing claim through the substep production path (recordManualCompletion)', async () => {
-      // Same race as the top-level test, but through #driveSubstep ->
-      // recordManualCompletion -> recordManualCompletionUnlocked ->
-      // manager.updateWithState. Fails if any of those layers drops the guard.
+    it('commits substep recording and machine advancement as one fenced mutation', async () => {
       const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') }],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
         { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
       ];
       loadStepsImpl = () => substepSteps;
-      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad');
-      const linkage = linkageFor(namedRunId, 'a');
-      await activate(baseState({ id: namedRunId, substep: '1' }));
-      await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
-      );
-      await seedLiveDelegation(manager, linkage);
-
-      const claimant = new SessionService(new RunbookStateManager(tmp));
-      const realRecord = completionService.recordManualCompletion.bind(completionService);
-      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
-      jest
-        .spyOn(completionService, 'recordManualCompletion')
-        .mockImplementation(async (...args) => {
-          // First call only — see the sendAndSync spy above.
-          claimed ??= assertClaimed(
-            unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
-          );
-          return realRecord(...args);
-        });
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(namedRunId),
-        targetSelector: { kind: 'run', runId: namedRunId },
-        terminalPolicy: RELEASE_POLICY,
-      });
-
-      expect(outcome.kind).toBe('open_delegated_children');
-      // The injection actually ran — without this an unasserted spy that silently
-      // stopped firing would leave the test passing while racing nothing.
-      expect(claimed).toBeDefined();
-      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
-        'verified',
-      );
-      // Exact post-rollback value: `not.toBe('done')` would also pass if the parent
-      // failed to load or the substep vanished. seedLiveDelegation left it 'running'.
-      const parentAfter = await manager.load(namedRunId);
-      expect(parentAfter).toBeDefined();
-      expect(
-        findSubstepState(
-          parentAfter?.substepStates ?? [],
-          linkage.parentStepId,
-          linkage.parentFrameKey,
-        )?.status,
-      ).toBe('running');
-    });
-
-    it('refuses a racing claim when the substep completion was already recorded', async () => {
-      // Same race as the test above, with one difference: the completion row already
-      // exists, so recordManualCompletionUnlocked short-circuits on `duplicate`
-      // BEFORE reaching any store write. The guard threaded into it is therefore
-      // never evaluated, and the decisive write moves to the drain below — which
-      // must carry the guard itself, or a claim landing in the window advances the
-      // parent past a live delegated child.
-      const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md')]),
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => substepSteps;
-      // The drain is stubbed inert (as in the exemption test below): these
-      // hand-seeded states carry no actor snapshot, so a real drain dies inside
-      // sendAndSync. That only makes the assertion STRICTER — with the drain unable
-      // to advance anything, `applied` can only mean the guard failed to refuse.
-      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
-        status: 'not_active',
-        frameKey: buildFrameKey('1'),
-        activeFrameKey: buildFrameKey('1'),
-        unresolved: 1,
-        applied: [],
-      });
-      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae');
-      const linkage = linkageFor(namedRunId, 'a');
-      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await activate(
         baseState({
           id: namedRunId,
+          step: '1',
+          stepName: 'Substeps',
           substep: '1',
-          // An undrained completion: recorded, then the process died before the drain.
-          // `agentId: 'manual'` is load-bearing — a 'delegation' row would trip
-          // runGuardedParentAdvance's collection-pending refusal before the callback
-          // ever runs, hiding the branch under test.
-          resolvedCompletions: {
-            [completionKey]: buildResolvedCompletion({
-              agentId: 'manual',
-              result: 'pass',
-              targetStep: '1',
-              targetSubstep: '1',
-              targetFrame: activeFrame(buildFrameKey('1'), 1),
-              completedAt: '2026-06-28T00:00:00.000Z',
-            }),
-          },
-        }),
-      );
-      await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
-      );
-      await seedLiveDelegation(manager, linkage);
-
-      const claimant = new SessionService(new RunbookStateManager(tmp));
-      const realRecord = completionService.recordManualCompletion.bind(completionService);
-      let claimed: Extract<ClaimRunbookResult, { status: 'claimed' }> | undefined;
-      jest
-        .spyOn(completionService, 'recordManualCompletion')
-        .mockImplementation(async (...args) => {
-          // First call only — see the sendAndSync spy above.
-          claimed ??= assertClaimed(
-            unwrapSessionMutation(await claimant.claimRunbook(childRunId, linkage)),
-          );
-          return realRecord(...args);
-        });
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(namedRunId),
-        targetSelector: { kind: 'run', runId: namedRunId },
-        terminalPolicy: RELEASE_POLICY,
-      });
-
-      expect(outcome.kind).toBe('open_delegated_children');
-      // The injection actually ran — without this an unasserted spy that silently
-      // stopped firing would leave the test passing while racing nothing.
-      expect(claimed).toBeDefined();
-      expect((await claimant.verifyClaimId(assertClaimId(claimed!.claimId))).status).toBe(
-        'verified',
-      );
-      // Exact post-rollback value: `not.toBe('done')` would also pass if the parent
-      // failed to load or the substep vanished. seedLiveDelegation left it 'running'.
-      const parentAfter = await manager.load(namedRunId);
-      expect(parentAfter).toBeDefined();
-      expect(
-        findSubstepState(
-          parentAfter?.substepStates ?? [],
-          linkage.parentStepId,
-          linkage.parentFrameKey,
-        )?.status,
-      ).toBe('running');
-    });
-
-    it('threads a real guard into the drain and proceeds when no child is live', async () => {
-      // The non-refusing arm of the guarded drain, and the only test that actually
-      // INVOKES its callback: the duplicate race test above refuses at this guarded
-      // advance's own pre-check (the claim is already committed by then), so it never
-      // reaches the callback that threads the guard. Without this, the wiring inside
-      // that branch is unexercised and the refusal check is trivially always-true.
-      const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md')]),
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => substepSteps;
-      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
-        status: 'not_active',
-        frameKey: buildFrameKey('1'),
-        activeFrameKey: buildFrameKey('1'),
-        unresolved: 1,
-        applied: [],
-      });
-      const drainSpy = jest.spyOn(completionService, 'drainResolvedCompletions');
-      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await activate(
-        baseState({
-          id: namedRunId,
-          substep: '1',
-          resolvedCompletions: {
-            [completionKey]: buildResolvedCompletion({
-              agentId: 'manual',
-              result: 'pass',
-              targetStep: '1',
-              targetSubstep: '1',
-              targetFrame: activeFrame(buildFrameKey('1'), 1),
-              completedAt: '2026-06-28T00:00:00.000Z',
-            }),
-          },
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
         }),
       );
 
@@ -2992,230 +2857,11 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      // No live delegated child, so the guarded drain commits rather than refusing.
       expect(outcome.kind).toBe('applied');
-      expect(drainSpy).toHaveBeenCalled();
-      // ...and it was handed a real guard naming this parent, not undefined.
-      for (const [args] of drainSpy.mock.calls) {
-        expect(args.guard).toEqual(parentAdvanceGuard(namedRunId));
-      }
-    });
-
-    it('leaves the follow-on drain unguarded when the record actually committed', async () => {
-      // The complement of the duplicate test: a `recorded` result means the decisive
-      // write already committed under its own guard, so the drain that follows must
-      // NOT be re-guarded. Re-guarding it would let an unrelated live child abort the
-      // drain and strand a recorded-but-undrained completion — manufacturing the very
-      // state the duplicate defect exploits.
-      const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md')]),
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => substepSteps;
-      const drainSpy = jest
-        .spyOn(completionService, 'drainResolvedCompletionsUnlocked')
-        .mockResolvedValue({
-          status: 'not_active',
-          frameKey: buildFrameKey('1'),
-          activeFrameKey: buildFrameKey('1'),
-          unresolved: 1,
-          applied: [],
-        });
-      await activate(baseState({ id: namedRunId, substep: '1' }));
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(namedRunId),
-        targetSelector: { kind: 'run', runId: namedRunId },
-        terminalPolicy: RELEASE_POLICY,
-      });
-
-      expect(outcome.kind).toBe('applied');
-      expect(drainSpy).toHaveBeenCalled();
-      for (const [args] of drainSpy.mock.calls) {
-        expect(args.guard).toBeUndefined();
-      }
-    });
-
-    it('guards only the first drain call when the drain loop applies several completions', async () => {
-      // `#drainSubstepObservations` loops, one apply per call, until nothing is
-      // queued — so a guarded scope spans several independently-committing
-      // transactions. Only the first is decisive. Re-arming the guard on a later
-      // iteration lets a child claiming mid-drain abort it, and because the
-      // accumulated `drainEvents` are discarded with the throw, the caller sees a
-      // bare refusal with zero events while the first apply stays committed.
-      const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md')]),
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => substepSteps;
-      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      const undrained = buildResolvedCompletion({
-        agentId: 'manual',
-        result: 'pass',
-        targetStep: '1',
-        targetSubstep: '1',
-        targetFrame: activeFrame(buildFrameKey('1'), 1),
-        completedAt: '2026-06-28T00:00:00.000Z',
-      });
-      // An undrained completion makes the record short-circuit `duplicate`, which
-      // is what moves the decisive write into the drain and arms the guard.
-      const activeState = baseState({
-        id: namedRunId,
-        substep: '1',
-        resolvedCompletions: { [completionKey]: undrained },
-      });
-      await activate(activeState);
-
-      const appliedRow = {
-        key: completionKey,
-        completion: brandCurrentCursorResolvedCompletionForTest({
-          ...undrained,
-          targetSubstep: undrained.targetSubstep ?? '1',
-        }),
-        stateBefore: activeState,
-        stateAfter: activeState,
-        // Snapshot stays active so `deriveTransitionObservation` reports
-        // `continue` and the loop takes another iteration instead of breaking.
-        snapshot: { status: 'active', value: '1' },
-      };
-      let calls = 0;
-      const drainSpy = jest
-        .spyOn(completionService, 'drainResolvedCompletions')
-        .mockImplementation(async () => {
-          calls += 1;
-          // Two applies, then nothing queued — `applied: []` ends the loop.
-          return calls <= 2
-            ? { status: 'continue', state: activeState, unresolved: 1, applied: [appliedRow] }
-            : { status: 'continue', state: activeState, unresolved: 0, applied: [] };
-        });
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(namedRunId),
-        targetSelector: { kind: 'run', runId: namedRunId },
-        terminalPolicy: RELEASE_POLICY,
-      });
-
-      expect(outcome.kind).toBe('applied');
-      // The loop really did iterate — otherwise there is no follow-on call to check
-      // and the assertion below would hold vacuously.
-      expect(drainSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(drainSpy.mock.calls[0]?.[0].guard).toEqual(parentAdvanceGuard(namedRunId));
-      for (const [args] of drainSpy.mock.calls.slice(1)) {
-        expect(args.guard).toBeUndefined();
-      }
-    });
-
-    it('reports the observation events for every completion applied in one drain pass', async () => {
-      // The other half of the guarded-drain defect: `drainEvents` accumulates in a
-      // local across loop iterations, so anything that drops the prefix — an early
-      // exit that discards it, or returning only the last observation — reports a
-      // committed advance as though nothing happened. An agent that trusts an
-      // event-free envelope then retries against a cursor that already moved.
-      const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md'), delegateSubstep('2', 'child.md')]),
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => substepSteps;
-      const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      const completionFor = (substep: string) =>
-        brandCurrentCursorResolvedCompletionForTest({
-          ...buildResolvedCompletion({
-            agentId: 'manual',
-            result: 'pass',
-            targetStep: '1',
-            targetSubstep: substep,
-            targetFrame: activeFrame(buildFrameKey('1'), 1),
-            completedAt: '2026-06-28T00:00:00.000Z',
-          }),
-          targetSubstep: substep,
-        });
-      const activeState = baseState({
-        id: namedRunId,
-        substep: '1',
-        resolvedCompletions: { [firstKey]: completionFor('1') },
-      });
-      await activate(activeState);
-
-      // Each pass advances the cursor one substep, so both applies produce a
-      // distinct STEP_TRANSITIONED rather than two views of the same move.
-      const rowFor = (from: string, to: string) => ({
-        key: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), from),
-        completion: completionFor(from),
-        stateBefore: baseState({ id: namedRunId, substep: from }),
-        stateAfter: baseState({ id: namedRunId, substep: to }),
-        snapshot: { status: 'active', value: '1' },
-      });
-      const passes = [rowFor('1', '2'), rowFor('2', '3')] as const;
-      let calls = 0;
-      jest.spyOn(completionService, 'drainResolvedCompletions').mockImplementation(async () => {
-        const index = calls;
-        calls += 1;
-        if (index >= passes.length) {
-          return { status: 'continue', state: activeState, unresolved: 0, applied: [] };
-        }
-        const row = passes[index];
-        return { status: 'continue', state: row.stateAfter, unresolved: 1, applied: [row] };
-      });
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(namedRunId),
-        targetSelector: { kind: 'run', runId: namedRunId },
-        terminalPolicy: RELEASE_POLICY,
-      });
-
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      // Two applies committed, so two transitions must be observable — not just
-      // the last one.
-      expect(outcome.events.filter((e) => e.type === 'STEP_TRANSITIONED')).toHaveLength(2);
-    });
-
-    it('keeps the targeted exemption for run+step over pending outcomes (sanctioned operator recovery)', async () => {
-      const substepSteps: ResolvedStep[] = [
-        delegateStep('1', [delegateSubstep('1', 'child.md')]),
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => substepSteps;
-      jest
-        .spyOn(completionService, 'recordManualCompletionUnlocked')
-        .mockResolvedValue({ status: 'recorded', key: 'k' });
-      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
-        status: 'not_active',
-        frameKey: buildFrameKey('1'),
-        activeFrameKey: buildFrameKey('1'),
-        unresolved: 1,
-        applied: [],
-      });
-      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await activate(
-        baseState({
-          id: namedRunId,
-          substep: '1',
-          resolvedCompletions: {
-            [completionKey]: buildResolvedCompletion({
-              agentId: 'delegation',
-              result: 'pass',
-              targetStep: '1',
-              targetSubstep: '1',
-              targetFrame: activeFrame(buildFrameKey('1'), 1),
-              completedAt: '2026-06-28T00:00:00.000Z',
-            }),
-          },
-        }),
-      );
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(namedRunId),
-        targetSelector: { kind: 'run', runId: namedRunId },
-        terminalPolicy: RELEASE_POLICY,
-        explicitTarget: { stepId: '1.1' },
-      });
-
-      expect(outcome.kind).toBe('applied');
+      const persisted = await manager.load(namedRunId);
+      expect(persisted?.step).toBe('2');
+      expect(persisted?.substep).toBeUndefined();
+      expect(persisted?.resolvedCompletions).toEqual({});
     });
 
     it('mints a run-targeted delegation against the named run, not the stack top', async () => {
@@ -3354,6 +3000,31 @@ describe('RunbookLifecycleCommandService', () => {
       { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
     ];
 
+    it('does not bump the active entry for a navigation within the same frame', async () => {
+      // The fenced GOTO commits active-entry metadata, and the execution loop it
+      // hands off to derives that metadata again. If the fence also scored the
+      // navigation as a frame re-entry, one `rd goto` would advance the entry
+      // twice. `activeEntry` is what an inline launch intent pins its
+      // `parentEntry` to, so an extra bump makes a recovered intent stop
+      // matching its own child's linkage (RD inline-child recovery).
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: runId }));
+      const before = await manager.load(runId);
+
+      const outcome = await seam.runNavigationMutation({
+        runId,
+        callerEvidence: runControlEvidence(runId),
+        steps: twoSteps,
+        target: { step: '1' },
+        terminalReleaseMode: 'stack-pop',
+      });
+
+      expect(outcome.kind).toBe('applied');
+      const after = await manager.load(runId);
+      expect(after?.activeEntry).toBe(before?.activeEntry ?? 1);
+      expect(after?.frameEntryCounts).toEqual(before?.frameEntryCounts ?? { '1|': 1 });
+    });
+
     it('allows bare navigation on a standalone run (stack-pop release)', async () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState());
@@ -3455,6 +3126,7 @@ describe('RunbookLifecycleCommandService', () => {
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
+      const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -3470,6 +3142,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.loop).toEqual({ kind: 'run', prompted: false });
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
+      expect(fenced).toHaveBeenCalledTimes(1);
     });
 
     it('applies a PASS COMPLETE as a terminal done with no loop', async () => {
@@ -3503,6 +3176,7 @@ describe('RunbookLifecycleCommandService', () => {
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
+      const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
         command: 'fail',
@@ -3521,18 +3195,14 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
       expect(persisted?.lastResult).toBe('fail');
+      expect(fenced).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('terminal release side effects', () => {
-    // `#applyTerminalSideEffects` is the seam-owned terminal release: on a
-    // terminal `done`/`stopped` it calls `sessionService.releaseRunbook(runId,
-    // { retainClaimsAsTerminal: true })`, gated per-status by the terminal
-    // policy (`onComplete` for `done`, `onStopped` for `stopped`). These pin that
-    // the release fires with the exact args on each status, that the per-status
-    // `releaseRunbook: false` opt-out suppresses it, and that the two statuses
-    // route through their own policy branch (a `false` on the *other* branch must
-    // not leak).
+    // Top-level terminal release is projected inside the fenced owned-state
+    // commit. These tests pin that no follow-on SessionService write occurs and
+    // that the durable session projection follows the per-status policy.
 
     it('releases the runbook with retainClaimsAsTerminal on a terminal done (onComplete branch)', async () => {
       const steps: ResolvedStep[] = [
@@ -3541,6 +3211,7 @@ describe('RunbookLifecycleCommandService', () => {
       loadStepsImpl = () => steps;
       await activate(baseState());
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+      const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -3552,8 +3223,17 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('done');
-      expect(releaseSpy).toHaveBeenCalledTimes(1);
-      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
+      expect(releaseSpy).not.toHaveBeenCalled();
+      expect(await sessionService.getActive()).toBeNull();
+      expect(fenced).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalRelease: {
+            onComplete: true,
+            onStopped: true,
+            retainClaimsAsTerminal: true,
+          },
+        }),
+      );
     });
 
     it('releases the runbook with retainClaimsAsTerminal on a terminal stopped (onStopped branch)', async () => {
@@ -3563,6 +3243,7 @@ describe('RunbookLifecycleCommandService', () => {
       loadStepsImpl = () => steps;
       await activate(baseState());
       const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+      const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -3574,8 +3255,17 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('stopped');
-      expect(releaseSpy).toHaveBeenCalledTimes(1);
-      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
+      expect(releaseSpy).not.toHaveBeenCalled();
+      expect(await sessionService.getActive()).toBeNull();
+      expect(fenced).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalRelease: {
+            onComplete: true,
+            onStopped: true,
+            retainClaimsAsTerminal: true,
+          },
+        }),
+      );
     });
 
     it('does not release a terminal done when onComplete opts out (releaseRunbook: false)', async () => {
@@ -3866,7 +3556,6 @@ describe('RunbookLifecycleCommandService', () => {
         ...built,
         targetSubstep: built.targetSubstep ?? '1',
       });
-      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
       jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
         status: 'stopped',
         unresolved: 0,
@@ -3898,450 +3587,136 @@ describe('RunbookLifecycleCommandService', () => {
       // terminal envelope derived from the drain's authoritative status.
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.events.some((e) => e.type === 'RUNBOOK_STOPPED')).toBe(true);
-      // The drain-stopped exit applies the seam-owned terminal release.
-      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
+      // Terminal state and session release are one owned-store commit.
+      expect((await manager.load(runId))?.lifecycle).toBe('stopped');
+      expect(await sessionService.getActive()).toBeNull();
     });
   });
 
-  describe('explicit-target completion lock span (#500)', () => {
-    afterEach(() => {
-      // Prototype spies (CompletionLock) must not leak into other
-      // tests in this file; instance spies die with the beforeEach services.
-      jest.restoreAllMocks();
-    });
-
-    const spanSteps: ResolvedStep[] = [
+  describe('fenced explicit-target substep completion', () => {
+    const fencedSteps: ResolvedStep[] = [
       {
         kind: 'substeps',
         name: '1',
         description: 'Substeps',
         aggregation: { strategy: 'ALL' },
         substeps: [
-          { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
-          { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+          { id: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+          { id: '2', description: 'two', transitions: tx('CONTINUE', 'STOP') },
         ],
         transitions: tx('CONTINUE', 'STOP'),
       },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      { kind: 'base', name: '2', description: 'done', transitions: tx('COMPLETE', 'STOP') },
     ];
 
-    type MutableSpanDeps = {
-      completionLock: RunbookLifecycleCommandServiceDependencies['completionLock'];
-      loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
-      loadSteps: RunbookLifecycleCommandServiceDependencies['loadSteps'];
-    };
-
-    function buildSpanSeam(steps: readonly ResolvedStep[] = spanSteps): {
-      seam: RunbookLifecycleCommandService;
-      deps: RunbookLifecycleCommandServiceDependencies & MutableSpanDeps;
-    } {
-      const deps: RunbookLifecycleCommandServiceDependencies & MutableSpanDeps = {
-        sessionService,
-        actorService,
-        lifecycleService,
-        completionService,
-        loadRun: async (id) => (await manager.load(id)) ?? undefined,
-        deleteRun: async (id) => {
-          await manager.delete(id);
-        },
-        loadSteps: () => steps,
-        resolveChildRunbook: async () => undefined,
-        persistIssuedSubstep: async () => {},
-        findDelegationByToken: async () => undefined,
-        delegationLock: new DelegationLock(tmp),
-        completionLock: new CompletionLock(tmp),
-      };
-      return { seam: new RunbookLifecycleCommandService(deps), deps };
-    }
-
-    function substepRunning(overrides: Partial<RunbookState> = {}): RunbookState {
-      return baseState({
-        step: '1',
-        stepName: 'Substeps',
-        substep: '1',
-        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
-        ...overrides,
-      });
-    }
-
-    const explicitPass = (
-      localSeam: RunbookLifecycleCommandService,
-      stepId = '1.1',
-    ): ReturnType<RunbookLifecycleCommandService['runTransition']> =>
-      localSeam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(runId),
-        targetSelector: { kind: 'explicit-step', step: stepId },
-        terminalPolicy: RELEASE_POLICY,
-        explicitTarget: { stepId },
-      });
-
-    it('spans acquire → locked re-read → record → drain → release in one lock scope', async () => {
-      const { seam: localSeam, deps } = buildSpanSeam();
-      await activate(substepRunning());
-      const calls: string[] = [];
-      deps.completionLock = {
-        acquire: async () => {
-          calls.push('acquire');
-        },
-        release: async () => {
-          calls.push('release');
-        },
-      };
-      const innerLoadRun = deps.loadRun;
-      deps.loadRun = async (id) => {
-        calls.push('loadRun');
-        return innerLoadRun(id);
-      };
-      const realRecord = completionService.recordManualCompletionUnlocked.bind(completionService);
-      jest
-        .spyOn(completionService, 'recordManualCompletionUnlocked')
-        .mockImplementation(async (args) => {
-          calls.push('record');
-          return realRecord(args);
-        });
-      const realDrain = completionService.drainResolvedCompletionsUnlocked.bind(completionService);
-      jest
-        .spyOn(completionService, 'drainResolvedCompletionsUnlocked')
-        .mockImplementation(async (args) => {
-          calls.push('drain');
-          return realDrain(args);
-        });
-
-      const outcome = await explicitPass(localSeam);
-
-      expect(outcome.kind).toBe('applied');
-      // The pre-span #drive resolution may loadRun before the lock; the span's
-      // authoritative re-read is the loadRun AFTER acquire.
-      expect(calls.indexOf('acquire')).toBeGreaterThanOrEqual(0);
-      expect(calls.lastIndexOf('loadRun')).toBeGreaterThan(calls.indexOf('acquire'));
-      expect(calls.indexOf('record')).toBeGreaterThan(calls.indexOf('acquire'));
-      expect(calls.indexOf('drain')).toBeGreaterThan(calls.indexOf('record'));
-      expect(calls.lastIndexOf('drain')).toBeLessThan(calls.indexOf('release'));
-      expect(calls.at(-1)).toBe('release');
+    beforeEach(() => {
+      loadStepsImpl = () => fencedSteps;
     });
 
-    it('decides from the locked re-read: a concurrent advance during the lock wait yields a duplicate, not an orphan row', async () => {
-      // The #500 regression. Pre-fix, the cursor was resolved from a pre-lock
-      // snapshot: a concurrent bare `rd pass` landing while this explicit-target
-      // transition waited for the lock left the recorded row keyed to a cursor
-      // the drain could no longer match — an orphaned resolvedCompletions row and
-      // a silent no-op. Post-fix the seam derives the cursor from the locked
-      // re-read, sees the substep already done, and reports an idempotent
-      // duplicate with no row written.
-      const { seam: localSeam, deps } = buildSpanSeam();
-      const initial = substepRunning();
-      await activate(initial);
-      deps.completionLock = {
-        acquire: async () => {
-          // Simulate the concurrent winner committing while we wait: substep 1
-          // resolved, cursor advanced to sibling substep 2 (same frame + entry).
-          const current = await manager.load(initial.id);
-          if (!current) throw new Error('run vanished');
-          await manager.save({
-            ...current,
-            substep: '2',
-            substepStates: [
-              { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
-              { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
-            ],
-          });
-        },
-        release: async () => {},
-      };
+    it('drains the exact current-entry completion before an older completion on the same frame', async () => {
+      const frameKey = buildFrameKey('1');
+      const staleKey = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey, status: 'running' }],
+          frameEntryCounts: { [frameKey]: 2 },
+          activeFrameKey: frameKey,
+          activeEntry: 2,
+          resolvedCompletions: {
+            [staleKey]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(frameKey, 1),
+              completedAt: '2026-06-27T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
 
-      const outcome = await explicitPass(localSeam, '1.1');
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId: '1.1' },
+      });
 
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      expect(outcome.duplicate?.at).toBe('1.1');
-      expect(outcome.updatedState).toBeUndefined();
-
+      expect(outcome.updatedState?.substep).toBe('2');
       const persisted = await manager.load(runId);
-      // No orphaned resolved-completion row, no cursor movement.
+      expect(persisted?.substep).toBe('2');
+      // The old row remains historical evidence; only the exact entry-2 row was
+      // selected and consumed by this transition.
+      expect(persisted?.resolvedCompletions?.[staleKey]?.targetEntry).toBe(1);
+    });
+
+    it('allows exactly one concurrent owner and leaves no orphaned completion row', async () => {
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+
+      const transition = () =>
+        seam.runTransition({
+          command: 'pass',
+          callerEvidence: runControlEvidence(runId),
+          targetSelector: { kind: 'explicit-step', step: '1.1' },
+          terminalPolicy: RELEASE_POLICY,
+          explicitTarget: { stepId: '1.1' },
+        });
+      const outcomes = await Promise.all([transition(), transition()]);
+
+      expect(outcomes.filter(({ kind }) => kind === 'applied')).toHaveLength(1);
+      expect(outcomes.filter(({ kind }) => kind === 'execution_in_progress')).toHaveLength(1);
+      const persisted = await manager.load(runId);
       expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
       expect(persisted?.substep).toBe('2');
     });
 
-    it('serializes concurrent explicit-target transitions with the real CompletionLock: both apply, no orphaned rows', async () => {
-      const { seam: localSeam } = buildSpanSeam();
-      await activate(substepRunning());
-
-      const [a, b] = await Promise.all([
-        explicitPass(localSeam, '1.1'),
-        explicitPass(localSeam, '1.2'),
-      ]);
-
-      expect(a.kind).toBe('applied');
-      expect(b.kind).toBe('applied');
-      const persisted = await manager.load(runId);
-      // Every recorded row was drained (no orphans) and the winner's + loser's
-      // completions advanced the run out of the substep step.
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
-      expect(persisted?.step).toBe('2');
-      expect(persisted?.substep).toBeUndefined();
-    }, 20000); // Real-lock contention: the CompletionLock retry deadline is 5s.
-
-    it('propagates a completion-lock timeout without recording', async () => {
-      const { seam: localSeam, deps } = buildSpanSeam();
-      await activate(substepRunning());
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletionUnlocked');
-      deps.completionLock = {
-        acquire: async () => {
-          throw new CompletionLockTimeoutError(runId, '/unused/lock/path');
-        },
-        release: async () => {
-          throw new Error('release must not be called when acquire failed');
-        },
-      };
-
-      await expect(explicitPass(localSeam)).rejects.toThrow(CompletionLockTimeoutError);
-      expect(recordSpy).not.toHaveBeenCalled();
-    });
-
-    it('refuses in-lock when the run advanced off the target step (derive-or-refuse)', async () => {
-      // Replaces the pre-span unlocked step guard ("no longer matches the
-      // resolved run's active step"): the cursor is now derived inside the lock,
-      // so a run that advanced to step 2 refuses via the resolver's step-match
-      // check and nothing is recorded.
-      const twoSubstepSteps: ResolvedStep[] = [
-        spanSteps[0],
-        { ...spanSteps[0], name: '2', description: 'Substeps two' },
-      ];
-      const { seam: localSeam } = buildSpanSeam(twoSubstepSteps);
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletionUnlocked');
-      await activate(
-        substepRunning({
-          step: '2',
-          substepStates: [{ id: '1', frameKey: buildFrameKey('2'), status: 'running' }],
-          frameEntryCounts: { [buildFrameKey('2')]: 1 },
-          activeFrameKey: buildFrameKey('2'),
-        }),
-      );
-
-      await expect(explicitPass(localSeam, '1.1')).rejects.toThrow(
-        'targets step "1" but the active step is "2"',
-      );
-      expect(recordSpy).not.toHaveBeenCalled();
-      const persisted = await manager.load(runId);
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
-    });
-
-    it('records at the live entry after a concurrent frame re-entry (derived in-lock, no orphan possible)', async () => {
-      // Replaces the pre-span active-frame entry guard. The cursor frame is now
-      // derived from the locked re-read, so a GOTO/RETRY entry bump can no longer
-      // produce a stale-entry row: the completion records at the live entry and
-      // the drain consumes it.
-      const { seam: localSeam } = buildSpanSeam();
-      await activate(
-        substepRunning({
-          frameEntryCounts: { [buildFrameKey('1')]: 2 },
-          activeEntry: 2,
-        }),
-      );
-
-      const outcome = await explicitPass(localSeam, '1.1');
-
-      expect(outcome.kind).toBe('applied');
-      const persisted = await manager.load(runId);
-      // Consumed by the drain in the same lock scope — no orphaned row.
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
-    });
-
-    it('derives the cursor from the locked re-read: an entry bump during the lock wait records at the live entry, not the pre-lock one', async () => {
-      // Kills the stale-cursor-derivation mutant (code-review warning): if the
-      // in-lock resolver were fed the pre-lock activeState instead of the locked
-      // re-read, the completion row would be keyed at the departed entry 1 while
-      // the drain filters on the live entry 2 — an orphaned resolvedCompletions
-      // row and no substep completion. The entry bump is injected inside the
-      // fake lock's acquire, exactly the interleave window #500 closes.
-      const { seam: localSeam, deps } = buildSpanSeam();
-      const initial = substepRunning();
-      await activate(initial);
-      deps.completionLock = {
-        acquire: async () => {
-          // Simulate a concurrent GOTO/RETRY re-entering the frame while we
-          // wait for the lock: entry counter bumps 1 → 2, substep still running.
-          const current = await manager.load(initial.id);
-          if (!current) throw new Error('run vanished');
-          await manager.save({
-            ...current,
-            frameEntryCounts: { [buildFrameKey('1')]: 2 },
-            activeEntry: 2,
-          });
-        },
-        release: async () => {},
-      };
-
-      const outcome = await explicitPass(localSeam, '1.1');
-
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      // A fresh entry has no prior completion: this must be a real completion,
-      // not an idempotent duplicate.
-      expect(outcome.duplicate).toBeUndefined();
-
-      const persisted = await manager.load(runId);
-      // Recorded at the live entry and consumed by the in-scope drain — the
-      // stale-derivation mutant leaves an entry-1 row the entry-2 drain cannot
-      // consume, failing this assertion.
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
-      const substepOne = persisted?.substepStates?.find(
-        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1'),
-      );
-      expect(substepOne?.status).toBe('done');
-    });
-
-    it('records active-kind FOR frameKey drift at the LIVE active frame (live-target semantics)', async () => {
-      // Disclosed behavior pin (plan amendment 3): the run advanced to a
-      // different FOR iteration of the same step before the lock. The cursor is
-      // derived in-lock, so the completion records at the LIVE active frame
-      // (iteration 2), not the departed iteration — same live-target semantics
-      // as the entry-bump pin above. Asserted via the persisted completion
-      // row's frame key: the target substep ('2') is not the drain cursor
-      // ('1'), so the row survives the drain pass for inspection.
-      const forSpanSteps: ResolvedStep[] = [
-        {
-          kind: 'for',
-          name: '1',
-          description: 'FOR step',
-          forClause: { variable: 'i', start: 1, end: 5 },
-          substeps: [
-            { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
-            { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
-          ],
-          transitions: tx('CONTINUE', 'STOP'),
-        },
-      ];
-      const { seam: localSeam } = buildSpanSeam(forSpanSteps);
-      const liveFrameKey = buildFrameKey('1', 2);
-      await activate(
-        substepRunning({
-          forStack: [
-            {
-              stepId: '1',
-              iteration: 2,
-              start: 1,
-              end: 5,
-              variable: 'i',
-              implicit: false,
-              source: { kind: 'range' },
-            },
-          ],
-          activeFrameKey: liveFrameKey,
-          frameEntryCounts: { [liveFrameKey]: 1 },
-          substepStates: [{ id: '1', frameKey: liveFrameKey, status: 'running' }],
-        }),
-      );
-
-      const outcome = await explicitPass(localSeam, '1.2');
-
-      expect(outcome.kind).toBe('applied');
-      const persisted = await manager.load(runId);
-      // The row is keyed to the LIVE frame (iteration 2), not a stale one.
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([
-        buildCompletionKey(activeFrame(liveFrameKey, 1), '2'),
-      ]);
-    });
-
-    it('applies terminal side effects only after the completion-lock scope closes', async () => {
-      // Plan-review error-level fix: the drain reaching terminal must NOT run
-      // #applyTerminalSideEffects → releaseRunbook → the session write inside the
-      // CompletionLock scope. Originally this pinned an ABBA inversion against
-      // SessionLock; the session side is now a short store transaction rather than
-      // a held file lock, so the deadlock edge is gone — but the ordering it
-      // enforced is still the property worth keeping: the completion span must not
-      // stay open across an unrelated session write. Pinned on the session
-      // mutation that now carries it.
-      const terminalSteps: ResolvedStep[] = [
+    it('commits terminal session release with the terminal run state', async () => {
+      loadStepsImpl = () => [
         {
           kind: 'substeps',
           name: '1',
           description: 'Substeps',
           aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Only', transitions: tx('COMPLETE', 'STOP') }],
+          substeps: [{ id: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') }],
           transitions: tx('COMPLETE', 'STOP'),
         },
       ];
-      const { seam: localSeam } = buildSpanSeam(terminalSteps);
-      await activate(substepRunning());
-
-      // Pass-through spies: jest records a global invocation order. The first
-      // session mutation is the pre-dispatch liveness mark; the last is terminal
-      // release. Pin both sides of CompletionLock so the recorder cannot become
-      // reentrant and terminal release cannot move back inside the span.
-      const completionAcquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
-      const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
-      // Two spies because the two writes now take different manager methods: the
-      // liveness mark is an unguarded `mutateSession`, terminal release is the
-      // ownership-guarded variant. The ordering property is unchanged.
-      const sessionAcquireSpy = jest.spyOn(manager, 'mutateSession');
-      const guardedSessionAcquireSpy = jest.spyOn(manager, 'mutateSessionGuarded');
-      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
-
-      const outcome = await explicitPass(localSeam, '1.1');
-
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      expect(outcome.status).toBe('done');
-      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
-      // Recording writes the session before the completion span; terminal release
-      // writes it only after that span closes.
-      const completionAcquire = completionAcquireSpy.mock.invocationCallOrder[0];
-      const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
-      const recordingSessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
-      const releaseSessionAcquire = guardedSessionAcquireSpy.mock.invocationCallOrder.at(-1);
-      expect(completionAcquire).toBeDefined();
-      expect(completionRelease).toBeDefined();
-      expect(recordingSessionAcquire).toBeDefined();
-      expect(releaseSessionAcquire).toBeDefined();
-      expect(recordingSessionAcquire).toBeLessThan(completionAcquire);
-      expect(releaseSessionAcquire).toBeGreaterThan(completionRelease);
-    });
-
-    it('reaches terminal without a lock timeout while a bare guarded write contends', async () => {
-      // The ABBA partner: runGuardedParentAdvance used to hold the SessionLock while
-      // its decisive write waits on the CompletionLock. Pre-fix (terminal side
-      // effects inside the span) this interleaving deadlocked into 5s lock
-      // timeouts; post-fix both operations complete.
-      const terminalSteps: ResolvedStep[] = [
-        {
-          kind: 'substeps',
-          name: '1',
-          description: 'Substeps',
-          aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Only', transitions: tx('COMPLETE', 'STOP') }],
-          transitions: tx('COMPLETE', 'STOP'),
-        },
-      ];
-      const { seam: localSeam } = buildSpanSeam(terminalSteps);
-      const initial = substepRunning();
-      await activate(initial);
-
-      const [outcome, guarded] = await Promise.all([
-        explicitPass(localSeam, '1.1'),
-        sessionService.runGuardedParentAdvance(runId, () =>
-          completionService.recordManualCompletion({
-            runbookId: runId,
-            currentState: initial,
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(buildFrameKey('1'), 1),
-            result: 'pass',
-            agentId: 'manual',
-          }),
-        ),
-      ]);
-
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      expect(outcome.status).toBe('done');
-      // The guarded contender resolves (advanced or refused) — never a lock
-      // timeout throw.
-      expect(['advanced', 'open_delegated_children', 'delegation_collection_pending']).toContain(
-        guarded.kind,
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
       );
-    }, 20000); // Real-lock contention: both lock deadlines are 5s.
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId: '1.1' },
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('done');
+      expect((await manager.load(runId))?.lifecycle).toBe('completed');
+      expect(await sessionService.getActive()).toBeNull();
+    });
   });
 
   describe('bare inline-child reactivation', () => {
@@ -4416,7 +3791,7 @@ describe('RunbookLifecycleCommandService', () => {
       await activate(parentAtSubstep());
 
       const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+      const recordSpy = jest.spyOn(completionService, 'prepareManualCompletion');
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -4446,7 +3821,7 @@ describe('RunbookLifecycleCommandService', () => {
     it('records a completion when there is no running inline child', async () => {
       await activate(parentAtSubstep(false));
 
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+      const recordSpy = jest.spyOn(completionService, 'prepareManualCompletion');
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -4461,15 +3836,13 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.updatedState?.step).toBe('2');
     });
 
-    it('records a completion when the running child linkage does not match the parent cursor', async () => {
+    it('does not reactivate a child whose linkage does not match the parent cursor', async () => {
       // Linkage points at a different parent entry, so it is not the inline child
       // of this cursor: the seam must record, not reactivate.
       await manager.save(childState({ parentEntry: 2 }));
       await activate(parentAtSubstep());
 
       const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
-
       await seam.runTransition({
         command: 'pass',
         callerEvidence: runControlEvidence(runId),
@@ -4477,7 +3850,6 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(recordSpy).toHaveBeenCalledTimes(1);
       expect(pushSpy).not.toHaveBeenCalledWith(childRunId);
     });
 
@@ -4486,9 +3858,6 @@ describe('RunbookLifecycleCommandService', () => {
       await activate(parentAtSubstep());
 
       const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
-      // The explicit path records via the unlocked twin inside its own lock scope.
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletionUnlocked');
-
       await seam.runTransition({
         command: 'pass',
         callerEvidence: runControlEvidence(runId),
@@ -4497,7 +3866,6 @@ describe('RunbookLifecycleCommandService', () => {
         explicitTarget: { stepId: '1.1' },
       });
 
-      expect(recordSpy).toHaveBeenCalledTimes(1);
       expect(pushSpy).not.toHaveBeenCalledWith(childRunId);
     });
   });
@@ -4713,6 +4081,7 @@ describe('RunbookLifecycleCommandService', () => {
       async function setupClaim(childLifecycle: RunbookState['lifecycle']) {
         await manager.save(baseState({ id: claimParentRunId }));
         await sessionService.pushRunbook(claimParentRunId);
+        await issueRunControlClaimFor(claimParentRunId);
         const childBase = {
           id: claimChildRunId,
           runbook: { source: 'project', path: 'claim-child.md' } as const,
@@ -4792,7 +4161,7 @@ describe('RunbookLifecycleCommandService', () => {
         expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
       });
 
-      it('claim stop on a running child forces FAIL, records before release, derives outcome', async () => {
+      it('claim stop atomically forces, reports, and releases the running child', async () => {
         const claimId = await setupClaim('running');
         loadStepsImpl = () => [
           {
@@ -4802,40 +4171,20 @@ describe('RunbookLifecycleCommandService', () => {
             transitions: tx('COMPLETE', 'STOP'),
           },
         ];
-        const order: string[] = [];
-        const recordSpy = jest
-          .spyOn(completionService, 'recordChildCompletion')
-          .mockImplementation(async () => {
-            order.push('record');
-            return 'recorded';
-          });
-        const releaseSpy = jest
-          .spyOn(sessionService, 'releaseRunbook')
-          .mockImplementation(async () => {
-            order.push('release');
-            return {
-              kind: 'committed',
-              value: {
-                status: 'released',
-                runbookId: claimChildRunId,
-                removedFromDefaultStack: false,
-                nextDefaultRunbookId: null,
-              },
-            };
-          });
+        const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
         const out = await seam.runTerminal({
           command: 'stop',
           callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
         expect(out).toMatchObject({ kind: 'applied_claim', status: 'stopped' });
-        // Record BEFORE release (decision #4).
-        expect(order).toEqual(['record', 'release']);
-        // recordChildCompletion called with NO explicit result (core derives fail).
-        expect(recordSpy).toHaveBeenCalledWith({
-          childState: expect.objectContaining({ id: claimChildRunId }),
-        });
-        expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
+        expect(aggregate).toHaveBeenCalledTimes(1);
+        expect((await manager.load(claimChildRunId))?.lifecycle).toBe('stopped');
+        expect(
+          Object.keys((await manager.load(claimParentRunId))?.resolvedCompletions ?? {}),
+        ).toHaveLength(1);
+        expect(releaseSpy).not.toHaveBeenCalled();
       });
 
       it('routes a claim without a delegation linkage through the bare inline cascade', async () => {
@@ -4885,19 +4234,7 @@ describe('RunbookLifecycleCommandService', () => {
             transitions: tx('COMPLETE', 'STOP'),
           },
         ];
-        const realSend = actorService.sendAndSync.bind(actorService);
-        const sendSpy = jest
-          .spyOn(actorService, 'sendAndSync')
-          .mockImplementation(async (id, steps, ev) => realSend(id, steps, ev));
-        jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
-          kind: 'committed',
-          value: {
-            status: 'released',
-            runbookId: claimChildRunId,
-            removedFromDefaultStack: false,
-            nextDefaultRunbookId: null,
-          },
-        });
+        const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation');
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -4909,10 +4246,12 @@ describe('RunbookLifecycleCommandService', () => {
         // complete → FORCE_COMPLETE (not FORCE_STOP), status derived completed.
         expect(out).toMatchObject({ kind: 'applied_claim', status: 'completed' });
         // The message is forwarded into the FORCE event (not dropped).
-        expect(sendSpy).toHaveBeenCalledWith(claimChildRunId, expect.anything(), {
-          type: 'FORCE_COMPLETE',
-          message: 'wrap up',
-        });
+        expect(prepareSpy).toHaveBeenCalledWith(
+          claimChildRunId,
+          expect.anything(),
+          expect.anything(),
+          { type: 'FORCE_COMPLETE', message: 'wrap up' },
+        );
       });
 
       it('routes a delegated child to the report path even when it also holds a collect-for-run grant', async () => {
@@ -4938,18 +4277,7 @@ describe('RunbookLifecycleCommandService', () => {
             transitions: tx('COMPLETE', 'STOP'),
           },
         ];
-        const recordSpy = jest
-          .spyOn(completionService, 'recordChildCompletion')
-          .mockResolvedValue('recorded');
-        jest.spyOn(sessionService, 'releaseRunbook').mockResolvedValue({
-          kind: 'committed',
-          value: {
-            status: 'released',
-            runbookId: claimChildRunId,
-            removedFromDefaultStack: false,
-            nextDefaultRunbookId: null,
-          },
-        });
+        const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
 
         const out = await seam.runTerminal({
           command: 'stop',
@@ -4964,9 +4292,41 @@ describe('RunbookLifecycleCommandService', () => {
           status: 'stopped',
           reported: 'recorded',
         });
-        expect(recordSpy).toHaveBeenCalledWith({
-          childState: expect.objectContaining({ id: claimChildRunId }),
+        expect(aggregate).toHaveBeenCalledTimes(1);
+        expect(
+          Object.keys((await manager.load(claimParentRunId))?.resolvedCompletions ?? {}),
+        ).toHaveLength(1);
+      });
+
+      it('still closes a claimed child when the delegating parent holds no controlling claim', async () => {
+        // The parent is captured with the BARE `captureRunAuthorityState`, which
+        // refuses `claim_superseded` for a run with no active controlling claim.
+        // A delegating parent in that state is ordinary — its own run-control
+        // bearer may have been released or pruned while the delegation is still
+        // live — so folding it into the aggregate as a hard target strands a
+        // child that can then never be completed. The child close and its
+        // bearer's terminal answer must not depend on the parent's own claim.
+        const claimId = await setupClaim('running');
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        // Drop the parent's run-control claim, leaving the parent run row and
+        // the live delegation intact.
+        unwrapSessionMutation(await sessionService.releaseRunbook(claimParentRunId));
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
         });
+
+        expect(out).toMatchObject({ kind: 'applied_claim', status: 'completed' });
+        expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
       });
 
       it('claim complete returns claim_grant_required when the claim lacks mutate-run grant', async () => {
@@ -5033,6 +4393,7 @@ describe('RunbookLifecycleCommandService', () => {
         ];
         const root = baseState({ id: ROOT });
         await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
         const out = await seam.runTerminal({
           command: 'complete',
@@ -5152,50 +4513,37 @@ describe('RunbookLifecycleCommandService', () => {
         expect(out).toEqual({ kind: 'actor_context_required' });
       });
 
-      it('bare complete forces the chain descendant-to-root and records the root before release', async () => {
-        const childState = baseState({ id: CHILD });
+      it('bare complete atomically forces and releases the chain descendant-to-root', async () => {
+        const childState = baseState({
+          id: CHILD,
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: ROOT,
+            parentStep: '1',
+            parentStepId: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+          },
+        });
         const rootState = baseState({ id: ROOT });
         await manager.save(childState);
         await manager.save(rootState);
+        await issueRunControlClaimFor(CHILD);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
           { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
         ];
         installResolvedPlan(rootState, [childState, rootState]);
 
-        const order: string[] = [];
-        const realSend = actorService.sendAndSync.bind(actorService);
-        jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (id, steps, ev) => {
-          order.push(`force:${id === ROOT ? 'ROOT' : 'CHILD'}`);
-          return realSend(id, steps, ev);
+        const prepared: RunId[] = [];
+        const realPrepare = actorService.prepareActorMutation.bind(actorService);
+        jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+          prepared.push(assertRunId(args[0]));
+          return realPrepare(...args);
         });
-        jest.spyOn(completionService, 'recordChildCompletion').mockImplementation(async () => {
-          order.push('record');
-          return 'not-applicable';
-        });
-        const releaseDescendantsSpy = jest
-          .spyOn(sessionService, 'releaseRunbooks')
-          .mockImplementation(async () => {
-            order.push('release-descendants');
-            return {
-              kind: 'committed',
-              value: { releasedRunIds: [CHILD], nextDefaultRunbookId: null },
-            };
-          });
-        const releaseRootSpy = jest
-          .spyOn(sessionService, 'releaseRunbook')
-          .mockImplementation(async () => {
-            order.push('release-root');
-            return {
-              kind: 'committed',
-              value: {
-                status: 'released',
-                runbookId: ROOT,
-                removedFromDefaultStack: false,
-                nextDefaultRunbookId: null,
-              },
-            };
-          });
+        const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
+        const releaseDescendantsSpy = jest.spyOn(sessionService, 'releaseRunbooks');
+        const releaseRootSpy = jest.spyOn(sessionService, 'releaseRunbook');
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -5203,16 +4551,12 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
         expect(out).toMatchObject({ kind: 'applied_bare', rootRunId: ROOT, status: 'completed' });
-        expect(order).toEqual([
-          'force:CHILD',
-          'force:ROOT',
-          'record',
-          'release-descendants',
-          'release-root',
-        ]);
-        // Root released WITH retain; descendants WITHOUT.
-        expect(releaseRootSpy).toHaveBeenCalledWith(ROOT, { retainClaimsAsTerminal: true });
-        expect(releaseDescendantsSpy).toHaveBeenCalledWith([CHILD]);
+        expect(prepared).toEqual([CHILD, ROOT]);
+        expect(aggregate).toHaveBeenCalledTimes(1);
+        expect((await manager.load(CHILD))?.lifecycle).toBe('completed');
+        expect((await manager.load(ROOT))?.lifecycle).toBe('completed');
+        expect(releaseRootSpy).not.toHaveBeenCalled();
+        expect(releaseDescendantsSpy).not.toHaveBeenCalled();
       });
 
       it('bare stop maps a non-running resolved root to already_terminal', async () => {
@@ -5232,6 +4576,42 @@ describe('RunbookLifecycleCommandService', () => {
           lifecycle: 'completed',
         });
         expect(releaseSpy).toHaveBeenCalled();
+      });
+
+      it('returns already_terminal before the effect boundary when the captured root became terminal', async () => {
+        const root = baseState({ id: ROOT });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [root]);
+        const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
+        jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
+          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          return await runAll(input);
+        });
+        const prepare = jest.spyOn(actorService, 'prepareActorMutation');
+        const release = jest.spyOn(sessionService, 'releaseRunbooks');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+        });
+        expect(prepare).not.toHaveBeenCalled();
+        expect(release).toHaveBeenCalledWith([ROOT], {
+          retainClaimsAsTerminalRunId: ROOT,
+        });
+        const attempts = await (await getRunbookStore(tmp)).read((txn) =>
+          txn.tx
+            .prepare('SELECT COUNT(*) AS count FROM execution_attempts WHERE run_id = :runId')
+            .get<{ readonly count: number }>({ runId: ROOT }),
+        );
+        expect(attempts?.count).toBe(0);
       });
 
       it('preserves already_terminal without releasing for a foreign run-control bearer', async () => {
@@ -5276,10 +4656,22 @@ describe('RunbookLifecycleCommandService', () => {
       it('skips a non-running descendant in the force loop but still forces the root', async () => {
         // A descendant already terminal (lifecycle !== 'running') is skipped by the
         // in-loop guard; pins `if (state.lifecycle !== 'running') continue;`.
-        const childState = baseState({ id: CHILD, lifecycle: 'completed' });
+        const childState = baseState({
+          id: CHILD,
+          lifecycle: 'completed',
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: ROOT,
+            parentStep: '1',
+            parentStepId: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+          },
+        });
         const rootState = baseState({ id: ROOT });
         await manager.save(childState);
         await manager.save(rootState);
+        await issueRunControlClaimFor(CHILD);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
           { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
@@ -5287,10 +4679,10 @@ describe('RunbookLifecycleCommandService', () => {
         installResolvedPlan(rootState, [childState, rootState]);
 
         const forced: string[] = [];
-        const realSend = actorService.sendAndSync.bind(actorService);
-        jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (id, steps, ev) => {
+        const realPrepare = actorService.prepareActorMutation.bind(actorService);
+        jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (id, ...args) => {
           forced.push(id === ROOT ? 'ROOT' : 'CHILD');
-          return realSend(id, steps, ev);
+          return realPrepare(id, ...args);
         });
 
         const out = await seam.runTerminal({
@@ -5363,7 +4755,7 @@ describe('RunbookLifecycleCommandService', () => {
         });
       });
 
-      it('bare complete surfaces root-unavailable when the root races to null mid-loop', async () => {
+      it('bare complete surfaces a typed missing refusal when aggregate capture loses the root', async () => {
         const rootState = baseState({ id: ROOT });
         await manager.save(rootState);
         await issueRunControlClaimFor(ROOT);
@@ -5371,22 +4763,24 @@ describe('RunbookLifecycleCommandService', () => {
           { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
         ];
         installResolvedPlan(rootState, [rootState]);
-        // Plan resolves (root running) but the root's sendAndSync races to null, so
-        // forcedRunIds never includes the root → dedicated non-terminal outcome.
-        jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+        jest.spyOn(actorMutationRunner, 'runAll').mockResolvedValue({
+          kind: 'missing',
+          runId: ROOT,
+          message: `Run ${ROOT} does not exist.`,
+        });
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: runControlEvidence(ROOT),
           targetSelector: { kind: 'default' },
         });
-        expect(out).toMatchObject({
-          kind: 'inline_plan_unavailable',
-          reason: 'root-unavailable',
-          code: 'RUNBOOK_STATE_CHANGED',
+        expect(out).toEqual({
+          kind: 'missing',
+          runId: ROOT,
+          message: `Run ${ROOT} does not exist.`,
         });
       });
 
-      it('skips a descendant that races to null but still forces the root', async () => {
+      it('writes no root state when aggregate capture loses a descendant', async () => {
         const childState = baseState({ id: CHILD });
         const rootState = baseState({ id: ROOT });
         await manager.save(childState);
@@ -5397,16 +4791,11 @@ describe('RunbookLifecycleCommandService', () => {
         ];
         installResolvedPlan(rootState, [childState, rootState]);
 
-        // The descendant races to null (skipped via `continue`) while the root
-        // forces for real. This pins the `if (!result) continue;` skip: a
-        // `continue`→`break` mutant would abort the loop at the descendant,
-        // leaving the root unforced → `inline_plan_unavailable` (root-unavailable).
-        const realSend = actorService.sendAndSync.bind(actorService);
-        jest
-          .spyOn(actorService, 'sendAndSync')
-          .mockImplementation(async (id, steps, ev) =>
-            id === CHILD ? null : realSend(id, steps, ev),
-          );
+        jest.spyOn(actorMutationRunner, 'runAll').mockResolvedValue({
+          kind: 'missing',
+          runId: CHILD,
+          message: `Run ${CHILD} does not exist.`,
+        });
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -5414,15 +4803,12 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
 
-        if (out.kind !== 'applied_bare') {
-          throw new Error(`expected applied_bare, got ${out.kind}`);
-        }
-        expect(out).toMatchObject({ rootRunId: ROOT, status: 'completed' });
-        // Only the root was forced; the raced-to-null descendant is absent.
-        expect(out.forcedRunIds).toEqual([ROOT]);
-        // Every streamed event is attributed to the root, none to the skipped child.
-        expect(out.events.every((e) => e.runId === ROOT)).toBe(true);
-        expect(out.events.some((e) => e.runId === CHILD)).toBe(false);
+        expect(out).toEqual({
+          kind: 'missing',
+          runId: CHILD,
+          message: `Run ${CHILD} does not exist.`,
+        });
+        expect((await manager.load(ROOT))?.lifecycle).toBe('running');
       });
     });
   });

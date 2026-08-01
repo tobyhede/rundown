@@ -26,15 +26,19 @@
  */
 
 import type { RunbookState, ExecutionRecoveryReason } from './types.js';
+import type { SessionData } from './state.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import type { CapturedAuthority, GuardedMutationResult } from './storage/mutation-result.js';
 import type {
   AbandonedAttemptOutcome,
+  AbandonedAttemptSetOutcome,
   ExecutionAttempt,
   ExecutionLeaseService,
   LeaseWaitPolicy,
 } from './storage/execution-lease.js';
 import type { RunbookStore } from './storage/runbook-store.js';
+import type { ParentAdvanceGuard } from './storage/runbook-store.js';
+import { isOpenDelegatedChildrenError } from './storage/runbook-store.js';
 import type { ActorSyncResult } from './actor-service.js';
 import { getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
@@ -97,6 +101,30 @@ export interface EffectfulMutationInput<TPrepared, TResult> {
   readonly wait?: LeaseWaitPolicy;
 }
 
+/** Inputs describing one aggregate effectful mutation over a captured run set. */
+export interface EffectfulMutationSetInput<TPrepared, TResult> {
+  /** Authority captured for every affected run, in dependency order. */
+  readonly captured: readonly CapturedAuthority[];
+  /** Captured runs that may be dropped when lease acquisition refuses them. */
+  readonly optionalRunIds?: readonly CapturedAuthority['runId'][];
+  /** Run the aggregate external effect and prepare all not-yet-committed changes. */
+  readonly compute: (captured: readonly CapturedAuthority[]) => Promise<TPrepared>;
+  /** Atomically persist the prepared run set under every exact owning attempt. */
+  readonly commit: (
+    attempts: readonly ExecutionAttempt[],
+    prepared: TPrepared,
+  ) => Promise<GuardedMutationResult<TResult>>;
+  /** Recovery cause recorded when the aggregate outcome becomes ambiguous. */
+  readonly recoveryReason?: ExecutionRecoveryReason;
+  /** Optional finite wait policy for run-set contention. */
+  readonly wait?: LeaseWaitPolicy;
+}
+
+/** Result of an aggregate effect, retaining every exact recovery identity. */
+export type EffectfulMutationSetResult<TResult> =
+  | GuardedMutationResult<TResult>
+  | AbandonedAttemptSetOutcome;
+
 /** The sole core owner of capture/acquire/mark-effect/compute/commit/recovery. */
 export interface EffectfulMutationExecutor {
   /**
@@ -114,6 +142,16 @@ export interface EffectfulMutationExecutor {
   run<TPrepared, TResult>(
     input: EffectfulMutationInput<TPrepared, TResult>,
   ): Promise<GuardedMutationResult<TResult>>;
+  /**
+   * Run one aggregate mutation through an all-or-none run-set fence.
+   *
+   * @param input - Captured run set plus aggregate compute and commit steps.
+   * @returns The committed/refused result, retaining every recovery identity.
+   * @throws {unknown} The primary compute or commit error when recovery could not be recorded.
+   */
+  runAll<TPrepared, TResult>(
+    input: EffectfulMutationSetInput<TPrepared, TResult>,
+  ): Promise<EffectfulMutationSetResult<TResult>>;
 }
 
 /** Default recovery cause for an ambiguous failure after the effect boundary. */
@@ -163,6 +201,14 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     const marked = await this.lease.markEffectStarted(acquired.value);
     if (marked.kind !== 'committed') {
       // Ownership lost before the boundary; nothing external ran. Refuse.
+      try {
+        await this.lease.releaseClaimed([acquired.value]);
+      } catch (releaseError) {
+        void logger.warn('releasing claimed execution attempts failed', {
+          runs: [acquired.value.runId],
+          error: getErrorMessage(releaseError),
+        });
+      }
       return marked;
     }
     const attempt = marked.value;
@@ -197,18 +243,59 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     }
 
     try {
-      return await input.commit(attempt, prepared);
+      const committed = await input.commit(attempt, prepared);
+      if (committed.kind === 'committed') return committed;
+      if (committed.kind === 'recovery_required') return committed;
+      const recovery = await this.recordRecovery(attempt, reason);
+      if (recovery.kind === 'recovery_required') return recovery;
+      throw new Error(
+        `The effect for run ${attempt.runId} completed but its refused commit could not be recorded for recovery.`,
+      );
     } catch (commitError) {
-      // A thrown commit has an ambiguous durability outcome: it may have failed
-      // before commit, or committed durably before its caller observed an error.
-      // Either way the cause has no home in a refusal variant, so log it before
-      // deciding — symmetrically with the compute branch above.
+      // The one commit failure whose durability is NOT ambiguous. The open-child
+      // guard runs inside the commit transaction but strictly before its first
+      // UPDATE, and throwing aborts the BEGIN IMMEDIATE transaction, so nothing
+      // was written — by construction, not by inference. It is also a domain
+      // answer (`open_delegated_children`) that the caller acts on rather than
+      // retries, so propagating it cannot invite the effect repeat the ambiguous
+      // branch below guards against. Recording recovery instead would park a run
+      // whose state never changed and downgrade an actionable refusal to an
+      // opaque one.
+      if (isOpenDelegatedChildrenError(commitError)) {
+        try {
+          await this.lease.releaseEffectStarted(attempt);
+        } catch (releaseError) {
+          void logger.warn('releasing effect-started execution attempt failed', {
+            runId: attempt.runId,
+            epoch: attempt.epoch,
+            error: getErrorMessage(releaseError),
+          });
+        }
+        throw commitError;
+      }
+      // Every other thrown commit has an ambiguous durability outcome: it may
+      // have failed before commit, or committed durably before its caller
+      // observed an error. Either way the cause has no home in a refusal
+      // variant, so log it before deciding — symmetrically with the compute
+      // branch above.
       void logger.warn('commit failed after the execution boundary', {
         runId: attempt.runId,
         epoch: attempt.epoch,
         reason,
         error: getErrorMessage(commitError),
       });
+      try {
+        const reconciled = await input.commit(attempt, prepared);
+        if (reconciled.kind === 'committed' || reconciled.kind === 'recovery_required') {
+          return reconciled;
+        }
+      } catch (reconcileError) {
+        void logger.warn('exact commit reconciliation failed', {
+          runId: attempt.runId,
+          epoch: attempt.epoch,
+          error: getErrorMessage(reconcileError),
+        });
+      }
       const recovery = await this.recordRecovery(attempt, reason);
       if (recovery.kind === 'recovery_required') {
         return recovery;
@@ -225,6 +312,102 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
       // is the ambiguous-effect repeat this fence exists to forbid. Distinguishing
       // the two needs a lease outcome that reports the observed phase; until then
       // the exception is the only signal that does not invite a retry.
+      throw commitError;
+    }
+  }
+
+  async runAll<TPrepared, TResult>(
+    input: EffectfulMutationSetInput<TPrepared, TResult>,
+  ): Promise<EffectfulMutationSetResult<TResult>> {
+    if (input.captured.length === 0) {
+      throw new Error('Aggregate effectful mutation requires at least one captured run.');
+    }
+    const runIds = new Set(input.captured.map(({ runId }) => runId));
+    if (runIds.size !== input.captured.length) {
+      throw new Error('Aggregate effectful mutation repeats a captured run.');
+    }
+    const optionalRunIds = new Set(input.optionalRunIds ?? []);
+    if (input.captured.every(({ runId }) => optionalRunIds.has(runId))) {
+      throw new Error('Aggregate effectful mutation requires at least one required run.');
+    }
+    let activeCaptured = [...input.captured];
+    let attempts: readonly ExecutionAttempt[];
+    for (;;) {
+      const acquired = await this.lease.acquireAll(activeCaptured, this.ownerPid, input.wait);
+      if (acquired.kind !== 'committed') {
+        if (optionalRunIds.has(acquired.runId)) {
+          activeCaptured = activeCaptured.filter(({ runId }) => runId !== acquired.runId);
+          continue;
+        }
+        return acquired;
+      }
+      const marked = await this.lease.markEffectStartedAll(acquired.value);
+      if (marked.kind === 'committed') {
+        attempts = marked.value;
+        break;
+      }
+      try {
+        await this.lease.releaseClaimed(acquired.value);
+      } catch (releaseError) {
+        void logger.warn('releasing claimed execution attempts failed', {
+          runs: acquired.value.map(({ runId }) => runId),
+          error: getErrorMessage(releaseError),
+        });
+      }
+      if (optionalRunIds.has(marked.runId)) {
+        activeCaptured = activeCaptured.filter(({ runId }) => runId !== marked.runId);
+        continue;
+      }
+      return marked;
+    }
+    const reason = input.recoveryReason ?? DEFAULT_MID_EFFECT_REASON;
+
+    let prepared: TPrepared;
+    try {
+      prepared = await input.compute(activeCaptured);
+    } catch (effectError) {
+      void logger.warn('aggregate effect failed after the execution boundary', {
+        runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+        reason,
+        error: getErrorMessage(effectError),
+      });
+      const recovery = await this.recordSetRecovery(attempts, reason);
+      if (recovery.kind !== 'not_recorded') return recovery;
+      throw effectError;
+    }
+
+    try {
+      const committed = await input.commit(attempts, prepared);
+      if (committed.kind === 'committed') return committed;
+      if (committed.kind === 'recovery_required') return committed;
+      const recovery = await this.recordSetRecovery(attempts, reason);
+      if (recovery.kind === 'aggregate_recovery_required') return recovery;
+      throw new Error(
+        'The aggregate effect completed but its refused commit could not be recorded for recovery.',
+      );
+    } catch (commitError) {
+      // No open-child guard escape hatch here, deliberately: unlike the
+      // single-run path, an aggregate commit takes no `ParentAdvanceGuard` —
+      // `commitOwnedRunSet` has no guard parameter — so that error cannot
+      // reach this catch. Add the check here only alongside a guard.
+      void logger.warn('aggregate commit failed after the execution boundary', {
+        runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+        reason,
+        error: getErrorMessage(commitError),
+      });
+      try {
+        const reconciled = await input.commit(attempts, prepared);
+        if (reconciled.kind === 'committed') return reconciled;
+      } catch (reconcileError) {
+        void logger.warn('exact aggregate commit reconciliation failed', {
+          runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+          error: getErrorMessage(reconcileError),
+        });
+      }
+      const recovery = await this.recordSetRecovery(attempts, reason);
+      if (recovery.kind === 'aggregate_recovery_required') return recovery;
+      // As for the single-run path, a thrown commit may already be durable. A
+      // contention-shaped result would invite an unsafe repeat of the effect.
       throw commitError;
     }
   }
@@ -270,6 +453,40 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
       return { kind: 'not_recorded' };
     }
   }
+
+  /**
+   * Best-effort all-or-none recovery recording for an aggregate effect.
+   *
+   * @param attempts - Exact effect-started attempts owned by the aggregate mutation.
+   * @param reason - Recovery cause to record on every attempt.
+   * @returns The aggregate recovery outcome, or `not_recorded` when recording threw.
+   */
+  private async recordSetRecovery(
+    attempts: readonly ExecutionAttempt[],
+    reason: ExecutionRecoveryReason,
+  ): Promise<AbandonedAttemptSetOutcome | { readonly kind: 'not_recorded' }> {
+    try {
+      const recovery = await this.lease.abandonAllToRecovery(attempts, reason);
+      if (recovery.kind === 'execution_in_progress') {
+        void logger.warn('guarded aggregate abandon refused; no recovery was recorded', {
+          runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+          refusedRunId: recovery.runId,
+          outcome: recovery.kind,
+          refusal: recovery.message,
+        });
+      }
+      return recovery;
+    } catch (abandonError) {
+      void logger.warn(
+        'recording aggregate recovery failed; attempts left to dead-owner recovery',
+        {
+          runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+          error: getErrorMessage(abandonError),
+        },
+      );
+      return { kind: 'not_recorded' };
+    }
+  }
 }
 
 /**
@@ -284,10 +501,17 @@ export class RunbookStoreActorCommitter implements ActorMutationCommitter {
    *
    * @param store - The transactional runbook store.
    * @param captured - Authority captured before the effect.
+   * @param guard - Optional open-child guard for the decisive state commit.
+   * @param updateSession - Optional synchronous session projection committed with the state.
    */
   constructor(
     private readonly store: RunbookStore,
     private readonly captured: CapturedAuthority,
+    private readonly guard?: ParentAdvanceGuard,
+    private readonly updateSession?: (
+      prepared: PreparedActorMutation,
+      session: SessionData,
+    ) => void,
   ) {}
 
   async commit(
@@ -298,6 +522,12 @@ export class RunbookStoreActorCommitter implements ActorMutationCommitter {
       this.captured,
       { token: attempt.token, epoch: attempt.epoch },
       prepared.nextState,
+      {
+        ...(this.guard === undefined ? {} : { guard: this.guard }),
+        ...(this.updateSession === undefined
+          ? {}
+          : { updateSession: (session: SessionData) => this.updateSession?.(prepared, session) }),
+      },
     );
     if (result.kind !== 'committed') {
       return result;

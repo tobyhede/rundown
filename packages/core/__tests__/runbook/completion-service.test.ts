@@ -11,6 +11,7 @@ import {
   RunbookStateManager,
   type RunbookState,
   type ResolvedStep,
+  type RecordCompletionResult,
 } from '../../src/runbook/index.js';
 import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -21,6 +22,7 @@ import {
   buildResolvedCompletion,
   exactFrame,
   inactiveFrame,
+  type Frame,
 } from '../../src/runbook/targeting.js';
 import {
   brandEffectiveVarsForTest,
@@ -1829,6 +1831,57 @@ describe('RunbookCompletionService', () => {
       expect(second).toBe('duplicate');
     });
 
+    it('classifies a consumed child completion with a matching done substep as duplicate', async () => {
+      const parent = makeParentWithDelegation();
+      const consumed = {
+        ...parent,
+        step: '2',
+        substep: undefined,
+        activeFrameKey: buildFrameKey('2'),
+        substepStates: parent.substepStates?.map((entry) => ({
+          ...entry,
+          status: 'done' as const,
+          result: 'pass' as const,
+        })),
+      };
+      await manager.save(consumed);
+      const before = await manager.load(runbookId);
+      const child = makeChildWithDelegationLinkage();
+
+      expect(
+        service.prepareChildCompletion({ childState: child, result: 'pass' }, consumed),
+      ).toEqual({ kind: 'duplicate' });
+      await expect(
+        service.recordChildCompletionUnlocked({ childState: child, result: 'pass' }),
+      ).resolves.toBe('duplicate');
+      await expect(manager.load(runbookId)).resolves.toEqual(before);
+    });
+
+    it('treats a consumed child report from an earlier entry of the active frame as duplicate', async () => {
+      const parent = makeParentWithDelegation();
+      const reentered = {
+        ...parent,
+        activeEntry: 2,
+        frameEntryCounts: { [buildFrameKey('1')]: 2 },
+        substepStates: parent.substepStates?.map((entry) => ({
+          ...entry,
+          status: 'done' as const,
+          result: 'pass' as const,
+        })),
+      };
+      await manager.save(reentered);
+      const before = await manager.load(runbookId);
+      const child = makeChildWithDelegationLinkage();
+
+      expect(
+        service.prepareChildCompletion({ childState: child, result: 'pass' }, reentered),
+      ).toEqual({ kind: 'duplicate' });
+      await expect(
+        service.recordChildCompletionUnlocked({ childState: child, result: 'pass' }),
+      ).resolves.toBe('duplicate');
+      await expect(manager.load(runbookId)).resolves.toEqual(before);
+    });
+
     it('duplicate child completion with different result does not overwrite parent substep state', async () => {
       const parent = makeParentWithDelegation();
       await manager.save(parent);
@@ -1926,6 +1979,110 @@ describe('RunbookCompletionService', () => {
       expect(result.status).toBe('recorded');
       expect(acquireSpy).not.toHaveBeenCalled();
     });
+
+    describe.each<{
+      label: string;
+      seed: (base: RunbookState) => RunbookState;
+      expected: RecordCompletionResult['status'];
+      targetFrame?: Frame;
+    }>([
+      {
+        label: 'a fresh target',
+        seed: (base: RunbookState): RunbookState => base,
+        expected: 'recorded',
+      },
+      {
+        label: 'a substep the cursor has already moved past',
+        seed: (base: RunbookState): RunbookState => ({
+          ...base,
+          step: '2',
+          substep: undefined,
+          substepStates: [
+            { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+          ],
+        }),
+        expected: 'duplicate',
+      },
+      {
+        label: 'a completion row that already exists',
+        seed: (base: RunbookState): RunbookState => ({
+          ...base,
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+        expected: 'duplicate',
+      },
+      {
+        // The completion key embeds the entry, so a row left by an EARLIER entry
+        // on the same frame is not a duplicate of this one: a RETRY/GOTO that
+        // re-opens a substep bumps the entry, and resolving the re-opened cursor
+        // is a legitimate re-completion. A lookup that matched on
+        // frameKey+substep alone would refuse it and strand the re-entered
+        // substep with no way to resolve it.
+        label: 'a completion row left behind by an earlier entry on the same frame',
+        seed: (base: RunbookState): RunbookState => ({
+          ...base,
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+        targetFrame: activeFrame(buildFrameKey('1'), 2),
+        expected: 'recorded',
+      },
+    ])(
+      'prepareManualCompletion agrees with recordManualCompletionUnlocked for $label',
+      ({
+        seed,
+        expected,
+        targetFrame,
+      }: {
+        seed: (b: RunbookState) => RunbookState;
+        expected: RecordCompletionResult['status'];
+        targetFrame?: Frame;
+      }) => {
+        // The fenced seam prepares a manual completion purely, while the locking
+        // twin records it. They are two renderings of ONE decision, so they must
+        // never disagree about duplicate-vs-recorded or about the completion key
+        // — a divergence would let the same substep be resolved twice through
+        // different commands. Pins the agreement before the two share a core.
+        it('reaches the same status and key', async () => {
+          const seeded = seed(state({ substep: '1' }));
+          await manager.save(seeded);
+          const args = {
+            runbookId,
+            currentState: seeded,
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: targetFrame ?? activeFrame(buildFrameKey('1'), 1),
+            result: 'pass' as const,
+            agentId: 'manual',
+            completedAt: '2026-01-01T00:00:00.000Z',
+          };
+
+          const prepared = service.prepareManualCompletion(args);
+          const recorded = await service.recordManualCompletionUnlocked(args);
+
+          expect(prepared.status).toBe(expected);
+          expect(recorded.status).toBe(expected);
+          expect(prepared.key).toBe(recorded.key);
+        });
+      },
+    );
 
     it('drainResolvedCompletions wraps the unlocked twin in exactly one lock scope', async () => {
       const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');

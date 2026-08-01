@@ -301,7 +301,7 @@ describe('storage schema', () => {
     await driver.immediate((tx) => {
       insertRun(tx);
     });
-    const phases = ['claimed', 'effect_started', 'recovery_pending', 'committed'];
+    const phases = ['claimed', 'effect_started', 'recovery_pending', 'committed', 'released'];
     await expect(
       driver.immediate((tx) => {
         phases.forEach((phase, i) => {

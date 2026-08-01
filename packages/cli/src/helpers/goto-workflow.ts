@@ -13,7 +13,6 @@ import {
   stepIdToString,
   deriveGotoActionBlock,
   type RunbookStateManager,
-  type RunbookActorService,
   type LifecycleNavigationOutcome,
   type ResolvedStep,
   type StepId,
@@ -21,14 +20,17 @@ import {
   type ClaimId,
   type RunId,
   type CommandExecutionStreamOptions,
+  type RunbookLifecycleCommandService,
+  type CallerEvidence,
+  type LifecycleTerminalReleaseMode,
+  claimKeyFromBearer,
 } from '@rundown-org/core';
-import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
+import { runExecutionLoop } from '../services/execution.js';
 import {
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
   type DrivenRunPropagation,
 } from './delegation-completion.js';
-import { createCliRunbookActorService } from './actor-service-factory.js';
 import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
@@ -47,8 +49,10 @@ export interface GotoContext {
   output: OutputEmitter;
   /** State manager for persisting runbook state changes */
   manager: RunbookStateManager;
-  /** Actor service for managing XState actor lifecycle */
-  actorService: RunbookActorService;
+  /** Core lifecycle seam that owns the decisive GOTO mutation. */
+  seam: RunbookLifecycleCommandService;
+  /** Evidence already accepted by the navigation policy seam. */
+  callerEvidence: CallerEvidence;
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
@@ -56,7 +60,7 @@ export interface GotoContext {
   /** Current working directory for file resolution */
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
-  terminalReleaseMode: ExecutionTerminalReleaseMode;
+  terminalReleaseMode: LifecycleTerminalReleaseMode;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
 }
@@ -183,7 +187,7 @@ export function renderNavigationRefusal(output: OutputEmitter, refusal: GotoRefu
 export async function resolveTerminalReleaseModeForRunbook(
   manager: RunbookStateManager,
   runbookId: RunId,
-): Promise<ExecutionTerminalReleaseMode> {
+): Promise<LifecycleTerminalReleaseMode> {
   const session = await manager.loadSession();
   const claimed = Object.values(session.claims).some(
     (claim) => claim.controlledRunId === runbookId,
@@ -228,11 +232,12 @@ export async function buildGotoContext(
 ): Promise<BuildGotoContextResult> {
   const { manager, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
+  const callerEvidence = readLifecycleCallerEvidence(
+    options.claimId !== undefined ? { claimId: options.claimId } : {},
+  );
   const outcome = await seam.resolveRunNavigation({
     command: 'goto',
-    callerEvidence: readLifecycleCallerEvidence(
-      options.claimId !== undefined ? { claimId: options.claimId } : {},
-    ),
+    callerEvidence,
     targetSelector:
       options.claimId !== undefined
         ? { kind: 'claim', claimId: options.claimId }
@@ -249,7 +254,8 @@ export async function buildGotoContext(
     ctx: {
       output,
       manager,
-      actorService: createCliRunbookActorService(manager),
+      seam,
+      callerEvidence,
       state: outcome.state,
       steps: [...outcome.steps],
       cwd,
@@ -364,21 +370,39 @@ export function validateGotoTarget(
  * @returns Execution result indicating success or failure
  */
 export async function executeGoto(ctx: GotoContext, target: StepId): Promise<GotoExecutionResult> {
-  const { output, manager, actorService, state, steps, cwd } = ctx;
+  const { output, manager, seam, callerEvidence, state, steps, cwd } = ctx;
 
-  const syncResult = await actorService.sendAndSync(state.id, steps, {
-    type: 'GOTO',
+  const mutation = await seam.runNavigationMutation({
+    runId: state.id,
+    callerEvidence,
+    steps,
     target,
+    terminalReleaseMode: ctx.terminalReleaseMode,
   });
-  if (!syncResult) {
-    return { ok: false, error: 'Failed to initialize runbook engine', code: 'ENGINE_INIT_FAILED' };
+  if (mutation.kind !== 'applied') {
+    switch (mutation.kind) {
+      case 'claim_superseded':
+        return { ok: false, error: mutation.message, code: 'STALE_CLAIM' };
+      case 'concurrent_modification':
+        return { ok: false, error: mutation.message, code: 'CONCURRENT_MODIFICATION' };
+      case 'execution_in_progress':
+        return { ok: false, error: mutation.message, code: 'EXECUTION_IN_PROGRESS' };
+      case 'recovery_required':
+        return { ok: false, error: mutation.message, code: 'RECOVERY_REQUIRED' };
+      case 'missing':
+        return { ok: false, error: mutation.message, code: 'RUN_TARGET_UNAVAILABLE' };
+      default: {
+        const _exhaustive: never = mutation;
+        return _exhaustive;
+      }
+    }
   }
 
   output.action(
     deriveGotoActionBlock({
       steps,
-      previousState: state,
-      updatedState: syncResult.state,
+      previousState: mutation.previousState,
+      updatedState: mutation.updatedState,
       target,
     }),
   );
@@ -396,6 +420,9 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     emitter,
     {
       terminalReleaseMode: ctx.terminalReleaseMode,
+      ...(callerEvidence.kind === 'claim_bearer'
+        ? { claimKey: claimKeyFromBearer(callerEvidence.claimId) }
+        : {}),
       output,
       commandStreamOptions: ctx.commandStreamOptions,
     },

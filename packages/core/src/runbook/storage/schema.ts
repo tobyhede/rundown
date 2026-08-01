@@ -27,6 +27,14 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * Version 2 adds `claims_one_active_per_run`. Sharing version 1 with databases
  * created before that index existed would silently run without its invariant,
  * so those databases are rejected rather than migrated.
+ *
+ * The `released` execution phase widened this DDL's `phase` CHECK constraint
+ * WITHOUT moving this constant, following the same call made for
+ * `claims_one_active_per_run`: the store is unreleased, no persisted database
+ * exists outside a development tree, and there is nothing to migrate. A stale
+ * development database rejects a `released` write at the constraint; the
+ * remedy is to delete `.rundown/rundown.db`. From the first release, any DDL
+ * edit MUST move this constant or `IncompatibleSchemaError` can never fire.
  */
 export const SCHEMA_VERSION = 2;
 
@@ -178,9 +186,16 @@ CREATE TABLE execution_attempts (
   exec_epoch        INTEGER NOT NULL,
   -- Hashed ExecutionToken bearer secret; never the raw token.
   exec_token        TEXT    NOT NULL,
-  -- claimed | effect_started | recovery_pending | committed
+  -- claimed | effect_started | recovery_pending | committed | released
+  --
+  -- 'committed' means the prepared state was durably written under this exact
+  -- (run, epoch, token) -- isExactAttemptCommitted reads it as exactly that
+  -- proof. 'released' is its counterpart for an attempt closed with no durable
+  -- state write: normally before the effect boundary, or after the one guarded
+  -- commit refusal that is proven to run before its first write. The two must
+  -- stay distinct, or a released attempt reads as a durable commit.
   phase             TEXT    NOT NULL
-                            CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed')),
+                            CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed', 'released')),
   owner_pid         INTEGER NOT NULL,
   owner_start_id    TEXT,
   -- Closed recovery-reason union member, NULL until recovery.
