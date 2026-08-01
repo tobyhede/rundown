@@ -34,7 +34,10 @@ export interface ActionDefs {
     message: string;
   };
   readonly setDelegationIssuanceFailed: {
-    reason: 'delegation_resolution_failed' | 'nested_delegation_forbidden';
+    reason:
+      | 'actor_context_required'
+      | 'delegation_resolution_failed'
+      | 'nested_delegation_forbidden';
     message: string;
   };
   readonly storeDelegateFrontier: {

@@ -30,7 +30,11 @@ import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { logger } from '../../../src/logger.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
-import { assertDelegationTokenHash } from '../../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  hashDelegationToken,
+} from '../../../src/runbook/delegation-token.js';
+import { makeStepDelegation } from '../../../src/testing/delegation-fixtures.js';
 import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
@@ -131,6 +135,35 @@ describe('RunbookStore round-trip', () => {
     await store.createRun(state);
     const loaded = await store.loadRun(state.id);
     expect(loaded).toEqual(state);
+  });
+
+  it('persists delegation descriptors and hashes without the plaintext bearer', async () => {
+    // cspell:disable-next-line
+    const rawToken = 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
+    const base = await newState();
+    const state: RunbookState = {
+      ...base,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'pending',
+          delegation: makeStepDelegation({ tokenHash: hashDelegationToken(rawToken) }),
+        },
+      ],
+    };
+
+    await store.createRun(state);
+
+    const stateJson = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT state_json FROM runs WHERE id = :id')
+          .get<{ readonly state_json: string }>({ id: state.id })?.state_json,
+    );
+    expect(stateJson).toContain(hashDelegationToken(rawToken));
+    expect(stateJson).not.toContain(rawToken);
+    expect(stateJson).toContain('issuanceNonce');
   });
 
   it('round-trips a run carrying resolved completions from their own table', async () => {

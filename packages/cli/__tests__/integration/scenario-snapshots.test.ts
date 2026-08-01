@@ -1,4 +1,5 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
+import { SessionService } from '@rundown-org/core';
 import {
   createTestWorkspace,
   getActiveState,
@@ -12,6 +13,7 @@ type Format = 'json' | 'text';
 async function runDelegationSequence(workspace: TestWorkspace, format: Format): Promise<string> {
   const textFlag = format === 'text' ? ['--text'] : [];
   const blocks: string[] = [];
+  const prepareClaim = jest.spyOn(SessionService.prototype, 'prepareRunControlClaim');
 
   // 1. Start the parent runbook.
   const parent = await runCliInProcess(
@@ -24,12 +26,18 @@ async function runDelegationSequence(workspace: TestWorkspace, format: Format): 
     } ===\n${parent.stdout}`,
   );
 
-  // 2. Extract the auto-issued delegation token from state.
+  // 2. Reproduce the bearer through the exact process-only authority used by
+  // the initial launch. Persisted state contains only the public descriptor.
   const state = await getActiveState(workspace);
-  const token = state?.substepStates?.[0]?.delegation?.token ?? null;
-  if (!token) {
-    throw new Error(`Delegation token not found in active state:\n${JSON.stringify(state)}`);
+  const descriptor = state?.substepStates?.[0]?.delegation?.credential;
+  const prepared = prepareClaim.mock.results[0]?.value as
+    | ReturnType<SessionService['prepareRunControlClaim']>
+    | undefined;
+  prepareClaim.mockRestore();
+  if (!descriptor || !prepared) {
+    throw new Error(`Delegation credential not prepared:\n${JSON.stringify(state)}`);
   }
+  const token = prepared.deriveDelegationToken(descriptor);
 
   // 3. Claim the token — launches and runs the child to completion.
   const claim = await runCliInProcess(['claim', token, ...textFlag], workspace);

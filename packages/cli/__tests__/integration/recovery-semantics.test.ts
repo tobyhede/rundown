@@ -10,6 +10,7 @@ import {
   readRunbookState,
   runCli,
   runCliInProcess,
+  requireFrontierToken,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -71,8 +72,7 @@ describe('recovery semantics for delegated command infrastructure stops', () => 
     const start = runCli('run parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
     const parentId = (await getActiveState(workspace))!.id;
-    const token = (await getActiveState(workspace))!.substepStates?.[0]?.delegation?.token;
-    expect(token).toMatch(/^rdtk_/);
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     const claim = await runCliInProcess(['claim', String(token), '--deny-all'], workspace);
     expect(claim.exitCode).toBe(1);
@@ -101,7 +101,7 @@ describe('recovery semantics for delegated command infrastructure stops', () => 
     const start = runCli('run parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
     const parentId = (await getActiveState(workspace))!.id;
-    const token = String((await getActiveState(workspace))!.substepStates?.[0]?.delegation?.token);
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     const claim = await runCliInProcess(['claim', token, '--deny-all'], workspace);
     const claimPayload = findActionOutput(claim.stdout)!;
@@ -129,7 +129,7 @@ describe('recovery semantics for delegated command infrastructure stops', () => 
     const start = runCli('run parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
     const parentId = (await getActiveState(workspace))!.id;
-    const token = String((await getActiveState(workspace))!.substepStates?.[0]?.delegation?.token);
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     const claim = await runCliInProcess(['claim', token, '--deny-all'], workspace);
     expect(claim.exitCode).toBe(1);

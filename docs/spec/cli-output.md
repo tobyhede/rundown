@@ -237,11 +237,12 @@ variables and are surfaced through `vars` rather than a separate field.
 
 Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
 (pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for
-correlation. Bearer `claim_id` values are only returned by `rundown claim` and
-the `runbook_started` event emitted by `rundown run`; they are never
-reconstructed from status output. The Zod `DelegationStatusEntrySchema` in
-`@rundown-org/core` remains the single source of truth for the exact per-entry
-shape.
+correlation. Delegation entries expose the non-secret `tokenHash` but never the
+raw delegation token. Bearer `claim_id` values are only returned by
+`rundown claim` and the `runbook_started` event emitted by `rundown run`; they
+are never reconstructed from status output. The Zod
+`DelegationStatusEntrySchema` in `@rundown-org/core` remains the single source
+of truth for the exact per-entry shape.
 
 ### `rundown status` (no active runbook)
 

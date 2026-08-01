@@ -66,7 +66,6 @@ interface StatusDetailData {
     childRunId?: string;
     /** Non-secret claim lookup key for claimed delegation correlation. */
     claimKey?: string;
-    token?: string;
   }[];
 }
 
@@ -307,7 +306,7 @@ export class TextRenderer implements OutputRenderer {
         } else if (d.state === 'cancelled') {
           stateLabel = '(cancelled)';
         } else {
-          stateLabel = d.token ? `(pending claim: ${d.token})` : '(pending claim)';
+          stateLabel = '(pending claim)';
         }
         this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}`);
       }

@@ -39,6 +39,9 @@ import {
   type FrameKey,
   RUNS_DIR,
   type DelegateFrontierEntry,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
+  projectDelegateFrontier,
   DelegationLock,
   DelegationLockTimeoutError,
   type ScopedLock,
@@ -246,6 +249,10 @@ export interface ExecutionLoopOptions {
   readonly actorService?: RunbookActorService;
   /** Exact claim authority retained by a claim-authenticated continuation. */
   readonly claimKey?: ClaimLookupKey;
+  /** Verified claim-bound issuer supplied to machine-owned delegation transitions. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /** Verified same-issuer deriver used only for intentional frontier output. */
+  readonly delegationTokenDeriver?: DelegationTokenDeriver;
   /** Optional core mutation runner test seam. */
   readonly actorMutationRunner?: EffectfulActorMutationRunner;
   /** Optional command services test seam. */
@@ -922,6 +929,8 @@ export interface DrainResolvedCompletionsArgs {
   command?: string;
   /** Override frame for frame-scoped lookups (e.g., prompted-for with explicit --index). */
   frameOverride?: Frame;
+  /** Verified runtime-only issuer for completion transitions entering delegation. */
+  issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
 /** Result of draining resolved substep completions. */
@@ -976,6 +985,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
  * @param args.frameOverride - Optional frame override for frame-scoped lookups (e.g., prompted-for with explicit --index)
+ * @param args.issueDelegationCredential - Verified runtime issuer for transitions entering delegation
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  * @throws {Error} If the core completion service, session update, or transition event handling fails
  */
@@ -992,6 +1002,7 @@ export async function drainResolvedCompletions({
   computeActionResult,
   command,
   frameOverride,
+  issueDelegationCredential,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
   let drainState = currentState;
@@ -1004,6 +1015,7 @@ export async function drainResolvedCompletions({
       steps,
       currentState: drainState,
       maxApplied: 1,
+      issueDelegationCredential,
       ...(frameOverride ? { frameOverride } : {}),
     });
 
@@ -1099,7 +1111,9 @@ export async function drainResolvedCompletions({
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
  *   actor/lifecycle/session services throw while advancing transitions,
- *   command execution rejects, or the emitter raises during event dispatch.
+ *   command execution rejects, a persisted delegation frontier cannot be
+ *   projected with verified claim authority, or the emitter raises during
+ *   event dispatch.
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
@@ -1282,6 +1296,7 @@ export async function runExecutionLoop(
       steps,
       currentState,
       transitionPolicy: terminalPolicy,
+      issueDelegationCredential: options.issueDelegationCredential,
     });
     if (drainResult.status === 'done') {
       if (terminalReleaseMode === 'release-runbook') {
@@ -1377,10 +1392,21 @@ export async function runExecutionLoop(
     const stepIsPrompted = currentStep.kind === 'prompted-for';
     const contextSnapshot = await actorService.getContextSnapshot(runbookId, steps);
 
-    const delegateFrontier: Array<DelegateFrontierEntry> | undefined =
+    const persistedDelegateFrontier =
       isSubstep && contextSnapshot?.delegateFrontier && contextSnapshot.delegateFrontier.length > 0
         ? [...contextSnapshot.delegateFrontier]
         : undefined;
+    const delegationTokenDeriver = options.delegationTokenDeriver;
+
+    let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
+    if (persistedDelegateFrontier !== undefined) {
+      if (delegationTokenDeriver === undefined) {
+        throw new Error('Delegation frontier cannot be projected without verified claim authority');
+      }
+      delegateFrontier = [
+        ...projectDelegateFrontier(persistedDelegateFrontier, delegationTokenDeriver),
+      ];
+    }
 
     // Expand once: artifact-producing helpers in command code append a manifest
     // row per call, so a second expansion would duplicate the entries.
@@ -1513,15 +1539,21 @@ export async function runExecutionLoop(
       },
       compute: async (capturedState) => {
         previousState = lifecycleService.deriveActiveEntry(capturedState).state;
-        const prepared = await actorService.prepareActorMutation(runbookId, previousState, steps, {
-          type: 'EXECUTE_COMMAND',
-          command: expandedCommandCode,
-          displayCommand,
-          runbookPath: capturedState.runbookPath,
-          outputScope,
-          nakedOutputs,
-          rdInjected,
-        });
+        const prepared = await actorService.prepareActorMutation(
+          runbookId,
+          previousState,
+          steps,
+          {
+            type: 'EXECUTE_COMMAND',
+            command: expandedCommandCode,
+            displayCommand,
+            runbookPath: capturedState.runbookPath,
+            outputScope,
+            nakedOutputs,
+            rdInjected,
+          },
+          { issueDelegationCredential: options.issueDelegationCredential },
+        );
         const projected = lifecycleService.deriveActiveEntry(
           prepared.nextState,
           previousState,

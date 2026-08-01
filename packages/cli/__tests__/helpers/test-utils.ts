@@ -86,6 +86,9 @@ export interface CliResult {
   exitIntercepted?: boolean;
 }
 
+const latestEmittedFrontier = new WeakMap<TestWorkspace, FrontierEntry[]>();
+const emittedRunClaims = new WeakMap<TestWorkspace, Map<string, string>>();
+
 /**
  * Creates isolated temp directory with fixtures and .rundown structure.
  * Also creates a symlink to the CLI in node_modules/.bin for rd commands.
@@ -176,11 +179,14 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
     },
   });
 
-  return {
+  const cliResult = {
     stdout: result.stdout || '',
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
+  const frontier = findFrontierInEvents(parseConcatenatedJson(cliResult.stdout));
+  if (frontier) latestEmittedFrontier.set(workspace, frontier);
+  return cliResult;
 }
 
 export { stripExitArtefact };
@@ -212,7 +218,7 @@ export async function runCliInProcess(
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
-  return runCliInProcessCore({
+  const result = await runCliInProcessCore({
     args: argArray,
     cwd: workspace.cwd,
     env: {
@@ -221,6 +227,25 @@ export async function runCliInProcess(
       ...(options.env ?? {}),
     },
   });
+  const frontier = findFrontierInEvents(parseConcatenatedJson(result.stdout));
+  if (frontier) latestEmittedFrontier.set(workspace, frontier);
+  const claims = emittedRunClaims.get(workspace) ?? new Map<string, string>();
+  for (const value of parseConcatenatedJson(result.stdout)) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      (value as { type?: unknown }).type === 'runbook_started' &&
+      typeof (value as { runbookId?: unknown }).runbookId === 'string' &&
+      typeof (value as { claim_id?: unknown }).claim_id === 'string'
+    ) {
+      claims.set(
+        (value as { runbookId: string }).runbookId,
+        (value as { claim_id: string }).claim_id,
+      );
+    }
+  }
+  emittedRunClaims.set(workspace, claims);
+  return result;
 }
 
 /**
@@ -394,6 +419,8 @@ export async function withRunTarget(
 ): Promise<string[]> {
   const state = await getActiveState(workspace);
   if (!state) throw new Error('withRunTarget: no active run to target');
+  const emittedClaimId = emittedRunClaims.get(workspace)?.get(state.id);
+  if (emittedClaimId) return [...args, '--claim-id', emittedClaimId];
   const manager = new RunbookStateManager(workspace.cwd);
   const sessionService = new SessionService(manager);
   const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
@@ -549,6 +576,54 @@ export function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undef
     }
   }
   return undefined;
+}
+
+/**
+ * Read an intentionally emitted delegation bearer from CLI JSON output.
+ *
+ * Tests must not recover delegation bearers from persisted run state: state
+ * stores only the non-secret credential descriptor and lookup hash.
+ *
+ * @param stdout - Concatenated JSON output from a CLI transition
+ * @param id - Optional qualified delegated substep id
+ * @returns The emitted delegation bearer
+ * @throws {Error} When the output contains no matching frontier entry
+ */
+export function requireFrontierToken(stdout: string, id?: string): string {
+  const frontier = findFrontierInEvents(parseConcatenatedJson(stdout));
+  const entry =
+    id === undefined ? frontier?.[0] : frontier?.find((candidate) => candidate.id === id);
+  if (typeof entry?.token === 'string') return entry.token;
+
+  const textTokens = stdout.match(/rdtk_[A-Za-z0-9_-]{32}/g) ?? [];
+  const token = id === undefined ? textTokens[0] : textTokens[Number(id.split('.').at(-1)) - 1];
+  if (typeof token === 'string') return token;
+  throw new Error(`Expected CLI output to include delegation token${id ? ` for ${id}` : ''}`);
+}
+
+/**
+ * Read a delegation bearer from the immediately preceding CLI transition.
+ *
+ * @param workspace - Test workspace whose latest command emitted the token
+ * @param id - Optional qualified delegated substep id
+ * @returns The intentionally emitted delegation bearer
+ * @throws {Error} When no command result has been recorded
+ */
+export function requireLatestFrontierToken(workspace: TestWorkspace, id?: string): string {
+  const frontier = latestEmittedFrontier.get(workspace);
+  const entry =
+    id === undefined ? frontier?.[0] : frontier?.find((candidate) => candidate.id === id);
+  if (typeof entry?.token !== 'string') {
+    throw new Error(`Expected a preceding CLI transition to emit token${id ? ` for ${id}` : ''}`);
+  }
+  return entry.token;
+}
+
+/** Return the run-control bearer intentionally emitted when a run started. */
+export function requireEmittedRunClaim(workspace: TestWorkspace, runId: string): string {
+  const claimId = emittedRunClaims.get(workspace)?.get(runId);
+  if (!claimId) throw new Error(`Expected runbook_started output for ${runId}`);
+  return claimId;
 }
 
 /**

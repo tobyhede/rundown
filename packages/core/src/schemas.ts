@@ -1,9 +1,12 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import {
-  DELEGATION_TOKEN_PATTERN,
+  DELEGATION_ISSUANCE_NONCE_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
+  type delegationIssuanceNonceBrand,
   type delegationTokenHashBrand,
+  type DelegationCredentialDescriptor,
+  type DelegationIssuanceNonce,
   type DelegationTokenHash,
 } from './runbook/delegation-token.js';
 import {
@@ -19,7 +22,12 @@ import {
 } from './runbook/claim-id.js';
 import { isFrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
-import type { JsonArrayStream, JsonValue, TemplateVarValue } from './runbook/types.js';
+import type {
+  JsonArrayStream,
+  JsonValue,
+  PersistedDelegateFrontierEntry,
+  TemplateVarValue,
+} from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
   brandEffectiveVars,
@@ -64,6 +72,40 @@ export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, string> =
 // Keeps the unique-symbol token-hash brand nameable in declaration emit for
 // exported schemas inferred from DelegationTokenHashSchema. This is type-only.
 type _DelegationTokenHashBrandForDeclarationEmit = typeof delegationTokenHashBrand;
+
+/** Zod schema that parses strings and brands them as delegation issuance nonces. */
+export const DelegationIssuanceNonceSchema: z.ZodType<DelegationIssuanceNonce, string> = z
+  .string()
+  .regex(DELEGATION_ISSUANCE_NONCE_PATTERN)
+  .transform((value) => value as DelegationIssuanceNonce);
+
+// Keeps the unique-symbol nonce brand nameable in declaration emit for
+// exported schemas inferred from DelegationIssuanceNonceSchema. This is type-only.
+type _DelegationIssuanceNonceBrandForDeclarationEmit = typeof delegationIssuanceNonceBrand;
+
+/** Zod schema for the non-secret persisted description of a delegation credential. */
+export const DelegationCredentialDescriptorSchema: z.ZodType<DelegationCredentialDescriptor> = z
+  .object({
+    version: z.literal(1),
+    issuerClaimKey: z.lazy(() => ClaimLookupKeySchema),
+    issuanceNonce: DelegationIssuanceNonceSchema,
+    parentRunId: RunIdSchema,
+    parentStepId: z.string().min(1),
+    parentFrameKey: FrameKeySchema,
+    parentEntry: z.number().int().positive(),
+    supersedesTokenHash: DelegationTokenHashSchema.optional(),
+  })
+  .strict();
+
+/** Zod schema for a non-secret delegation frontier intent persisted in machine context. */
+export const PersistedDelegateFrontierEntrySchema: z.ZodType<PersistedDelegateFrontierEntry> = z
+  .object({
+    id: z.string().min(1),
+    runbook: z.string().min(1),
+    credential: DelegationCredentialDescriptorSchema,
+    tokenHash: DelegationTokenHashSchema,
+  })
+  .strict();
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -477,19 +519,12 @@ export const ContextSnapshotSchema = z
     }
   });
 
-function isPendingDelegation(delegation: {
-  readonly childRunId: string | null;
-  readonly cancelledAt: string | null;
-}): boolean {
-  return delegation.childRunId === null && delegation.cancelledAt === null;
-}
-
 /**
  * Zod schema for delegation metadata attached to a substep.
  */
 export const StepDelegationSchema = z
   .object({
-    token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
+    credential: DelegationCredentialDescriptorSchema,
     tokenHash: DelegationTokenHashSchema,
     childRunbookPath: z.string(),
     childRunbookRef: RunbookRefSchema,
@@ -499,10 +534,7 @@ export const StepDelegationSchema = z
     cancelledAt: z.string().nullable(),
     extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
   })
-  .refine((delegation) => delegation.token === undefined || isPendingDelegation(delegation), {
-    message: 'token is only allowed while delegation is pending',
-    path: ['token'],
-  });
+  .strict();
 
 /** Zod schema for durable inline child launch metadata attached to a substep. */
 export const StepInlineChildSchema = z.object({
@@ -1085,7 +1117,7 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodType {
 function makeStepDelegationSchema(projectRoot: string): z.ZodType {
   return z
     .object({
-      token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
+      credential: DelegationCredentialDescriptorSchema,
       tokenHash: DelegationTokenHashSchema,
       childRunbookPath: z.string(),
       childRunbookRef: RunbookRefSchema,
@@ -1095,10 +1127,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodType {
       cancelledAt: z.string().nullable(),
       extraVars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)).optional(),
     })
-    .refine((delegation) => delegation.token === undefined || isPendingDelegation(delegation), {
-      message: 'token is only allowed while delegation is pending',
-      path: ['token'],
-    });
+    .strict();
 }
 
 /**

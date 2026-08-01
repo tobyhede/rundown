@@ -19,6 +19,9 @@ import {
   createRunbook,
   parseCliJsonObject,
   parseConcatenatedJson,
+  findFrontierInEvents,
+  requireLatestFrontierToken,
+  requireEmittedRunClaim,
   withRunTarget,
 } from '../helpers/test-utils.js';
 
@@ -175,19 +178,16 @@ describe('delegate command', () => {
 
     // Start the substeps runbook in prompted mode
     const startResult = await runCliInProcess(
-      'run --prompted runbooks/delegate-parent.runbook.md --text',
+      'run --prompted runbooks/delegate-parent.runbook.md',
       workspace,
     );
     if (startResult.exitCode !== 0) {
       throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
     }
     const state = await getActiveState(workspace);
-    const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
-      ?.token;
-    if (!autoToken) {
-      throw new Error('setup run did not persist an auto-issued delegation token');
-    }
-    const parentClaimId = await issueRunControlClaim(workspace, state.id);
+    if (!state) throw new Error('Expected active run after delegation setup');
+    const autoToken = requireLatestFrontierToken(workspace, '1.1');
+    const parentClaimId = requireEmittedRunClaim(workspace, state.id);
     const abortResult = await runCliInProcess(
       ['abort', autoToken, '--claim-id', parentClaimId],
       workspace,
@@ -226,19 +226,13 @@ describe('delegate command', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'delegate-parent.runbook.md'), parentContent);
 
     const startResult = await runCliInProcess(
-      'run --prompted runbooks/delegate-parent.runbook.md --text',
+      'run --prompted runbooks/delegate-parent.runbook.md',
       workspace,
     );
     if (startResult.exitCode !== 0) {
       throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
     }
-    const state = await getActiveState(workspace);
-    const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
-      ?.token;
-    if (!autoToken) {
-      throw new Error('setup run did not persist an auto-issued delegation token');
-    }
-    return autoToken;
+    return requireLatestFrontierToken(workspace, '1.1');
   }
 
   it('rejects malformed --claim-id before delegation logic runs', async () => {
@@ -654,21 +648,20 @@ describe('delegate command', () => {
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/for-parent.runbook.md --text',
+        'run --prompted runbooks/for-parent.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
       // Clear the live iteration's auto-issued delegation so the explicit
       // --index issuance below is the only delegation in play.
-      const stateAfterStart = await getActiveState(workspace);
       const autoTokens =
-        stateAfterStart?.substepStates
-          ?.map((substep) => substep.delegation?.token)
-          .filter((token): token is string => typeof token === 'string') ?? [];
+        findFrontierInEvents(parseConcatenatedJson(startResult.stdout))?.map(
+          (entry) => entry.token,
+        ) ?? [];
       for (const token of autoTokens) {
         const state = await getActiveState(workspace);
         if (!state) throw new Error('Expected active run for abort setup');
-        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const parentClaimId = requireEmittedRunClaim(workspace, state.id);
         const abort = await runCliInProcess(
           ['abort', token, '--claim-id', parentClaimId],
           workspace,
@@ -898,7 +891,7 @@ describe('delegate command', () => {
       const delegation = ss1?.delegation as Record<string, unknown>;
       expect(delegation.tokenHash).toBeDefined();
       expect((delegation.tokenHash as string).startsWith('sha256:')).toBe(true);
-      expect(delegation.token).toBe(output.token);
+      expect(delegation.token).toBeUndefined();
       expect(delegation.childRunId).toBeNull();
     });
 
@@ -910,8 +903,6 @@ describe('delegate command', () => {
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
-      const token = parseCliJsonObject(delegated.stdout).token as string;
-
       const statusResult = await runCliInProcess('status', workspace);
       expect(statusResult.exitCode).toBe(0);
 
@@ -921,7 +912,7 @@ describe('delegate command', () => {
       expect(delegations).toHaveLength(1);
       expect(delegations?.[0]?.substep).toBe('1');
       expect(delegations?.[0]?.state).toBe('pending');
-      expect(delegations?.[0]?.token).toBe(token);
+      expect(delegations?.[0]).not.toHaveProperty('token');
       expect(delegations?.[0]?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
     });
 
@@ -1058,7 +1049,7 @@ describe('delegate command', () => {
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/with-delegate-ref.runbook.md --text',
+        'run --prompted runbooks/with-delegate-ref.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
@@ -1067,7 +1058,9 @@ describe('delegate command', () => {
         await withRunTarget(['goto', '2'], workspace),
         workspace,
       );
-      expect(gotoResult.exitCode).toBe(0);
+      if (gotoResult.exitCode !== 0) {
+        throw new Error(`setup goto failed:\n${gotoResult.stdout}\n${gotoResult.stderr}`);
+      }
     }
 
     /**
@@ -1097,7 +1090,7 @@ describe('delegate command', () => {
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/with-ref.runbook.md --text',
+        'run --prompted runbooks/with-ref.runbook.md',
         workspace,
       );
       if (startResult.exitCode !== 0) {
@@ -1109,9 +1102,10 @@ describe('delegate command', () => {
       await setupDelegationWithPendingDelegateRunbookRef();
 
       const before = await getActiveState(workspace);
-      const issuedToken = before?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
-      expect(issuedToken).toBeDefined();
+      const beforeDelegation = before?.substepStates?.find(
+        (substep) => substep.id === '1',
+      )?.delegation;
+      const issuedToken = requireLatestFrontierToken(workspace, '2.1');
 
       const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
@@ -1123,11 +1117,13 @@ describe('delegate command', () => {
       );
       expect(envelope.token).toBe(issuedToken);
 
-      // No duplication: the persisted delegation token is unchanged.
+      // No duplication: the persisted non-secret credential is unchanged.
       const after = await getActiveState(workspace);
-      const afterToken = after?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
-      expect(afterToken).toBe(issuedToken);
+      const afterDelegation = after?.substepStates?.find(
+        (substep) => substep.id === '1',
+      )?.delegation;
+      expect(afterDelegation?.credential).toEqual(beforeDelegation?.credential);
+      expect(afterDelegation?.tokenHash).toBe(beforeDelegation?.tokenHash);
     });
 
     it('rd delegate --step 1.1 does not infer after inline child launch takes scope', async () => {
@@ -1151,10 +1147,10 @@ describe('delegate command', () => {
       // satisfy the assertion. The setup `goto 2`s, so the cursor sits in
       // step 2's base frame (`2|`).
       const beforeFrame = before?.activeFrameKey ?? buildFrameKey('2');
-      const issuedToken = before?.substepStates?.find(
+      const beforeDelegation = before?.substepStates?.find(
         (substep) => substep.id === '1' && substep.frameKey === beforeFrame,
-      )?.delegation?.token;
-      expect(issuedToken).toBeDefined();
+      )?.delegation;
+      const issuedToken = requireLatestFrontierToken(workspace, '2.1');
 
       const result = await runCliInProcess(
         await withRunTarget(['delegate', '--step', '2.1'], workspace),
@@ -1168,13 +1164,14 @@ describe('delegate command', () => {
       );
       expect(envelope.token).toBe(issuedToken);
 
-      // No re-issue: the persisted delegation token is unchanged.
+      // No re-issue: the persisted non-secret credential is unchanged.
       const after = await getActiveState(workspace);
       const afterFrame = after?.activeFrameKey ?? buildFrameKey('2');
-      const afterToken = after?.substepStates?.find(
+      const afterDelegation = after?.substepStates?.find(
         (substep) => substep.id === '1' && substep.frameKey === afterFrame,
-      )?.delegation?.token;
-      expect(afterToken).toBe(issuedToken);
+      )?.delegation;
+      expect(afterDelegation?.credential).toEqual(beforeDelegation?.credential);
+      expect(afterDelegation?.tokenHash).toBe(beforeDelegation?.tokenHash);
     });
 
     it('backward compat: explicit rd delegate child.runbook.md --step 1.1 still works', async () => {
@@ -2036,19 +2033,18 @@ describe('delegate command', () => {
 
       // Start the parent in prompted mode
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/for-parent.runbook.md --text',
+        'run --prompted runbooks/for-parent.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
-      const stateAfterStart = await getActiveState(workspace);
       const autoTokens =
-        stateAfterStart?.substepStates
-          ?.map((substep) => substep.delegation?.token)
-          .filter((token): token is string => typeof token === 'string') ?? [];
+        findFrontierInEvents(parseConcatenatedJson(startResult.stdout))?.map(
+          (entry) => entry.token,
+        ) ?? [];
       for (const token of autoTokens) {
         const state = await getActiveState(workspace);
         if (!state) throw new Error('Expected active run for abort setup');
-        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const parentClaimId = requireEmittedRunClaim(workspace, state.id);
         const abort = await runCliInProcess(
           ['abort', token, '--claim-id', parentClaimId],
           workspace,

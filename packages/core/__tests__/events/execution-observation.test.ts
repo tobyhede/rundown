@@ -6,8 +6,17 @@ import {
   createExecutionEffectCollector,
   deriveStepEnteredEffect,
   policyDeniedEffect,
+  projectDelegateFrontier,
 } from '../../src/events/execution-observation.js';
 import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
+import { assertClaimLookupKey } from '../../src/runbook/claim-id.js';
+import {
+  assertDelegationIssuanceNonce,
+  hashDelegationToken,
+} from '../../src/runbook/delegation-token.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
+import type { PersistedDelegateFrontierEntry } from '../../src/runbook/types.js';
 const exactArtifact = {
   kind: 'artifact-record' as const,
   uri: 'rd://artifacts/ctx/rd_11111111111111111111111111111111/plan.md',
@@ -64,6 +73,59 @@ const publicWildcardArtifacts = wildcardArtifacts.map((artifact) => ({
 }));
 
 describe('execution observation projection', () => {
+  it('projects descriptor-bearing frontier intents into public token entries', () => {
+    const tokens = [`rdtk_${'A'.repeat(32)}`, `rdtk_${'B'.repeat(32)}`] as const;
+    const frontier: readonly PersistedDelegateFrontierEntry[] = tokens.map((token, index) => ({
+      id: `1.${index + 1}`,
+      runbook: `child-${index + 1}.md`,
+      credential: {
+        version: 1,
+        issuerClaimKey: assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`),
+        issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+        parentRunId: assertRunId(`rd_${'2'.repeat(32)}`),
+        parentStepId: `1.${index + 1}`,
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      },
+      tokenHash: hashDelegationToken(token),
+    }));
+
+    expect(JSON.stringify(frontier)).not.toContain('rdtk_');
+    expect(
+      projectDelegateFrontier(
+        frontier,
+        (descriptor) => tokens[descriptor.parentStepId === '1.1' ? 0 : 1],
+      ),
+    ).toEqual([
+      { id: '1.1', runbook: 'child-1.md', token: tokens[0] },
+      { id: '1.2', runbook: 'child-2.md', token: tokens[1] },
+    ]);
+  });
+
+  it('refuses to disclose a reconstructed frontier token that fails hash verification', () => {
+    const persistedToken = `rdtk_${'A'.repeat(32)}`;
+    const frontier: readonly PersistedDelegateFrontierEntry[] = [
+      {
+        id: '1.1',
+        runbook: 'child.md',
+        credential: {
+          version: 1,
+          issuerClaimKey: assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`),
+          issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+          parentRunId: assertRunId(`rd_${'2'.repeat(32)}`),
+          parentStepId: '1.1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+        tokenHash: hashDelegationToken(persistedToken),
+      },
+    ];
+
+    expect(() => projectDelegateFrontier(frontier, () => `rdtk_${'B'.repeat(32)}`)).toThrow(
+      'Derived delegation credential does not match frontier 1.1',
+    );
+  });
+
   it('derives STEP_ENTERED artifacts from enteredArtifacts exact entries', () => {
     expect(
       deriveStepEnteredEffect({

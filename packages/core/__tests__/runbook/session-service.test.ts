@@ -413,6 +413,53 @@ describe('SessionService', () => {
       });
     });
 
+    it('prepares a run-control claim without persistence and installs that exact bearer atomically', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+          runId: PARENT_RUN_ID,
+        },
+      );
+      const service = new SessionService(manager, () => '2026-08-01T00:00:00.000Z');
+
+      const prepared = service.prepareRunControlClaim(state.id);
+
+      expect((await manager.loadSession()).claims).toEqual({});
+      const installed = unwrapSessionMutation(
+        await service.pushRunbookWithPreparedRunControlClaim(state.id, prepared),
+      );
+      expect(installed).toEqual({ claimId: prepared.claimId, claim: prepared.claim });
+      await expect(service.verifyClaimId(prepared.claimId)).resolves.toMatchObject({
+        status: 'verified',
+        claim: {
+          claimKey: prepared.claim.claimKey,
+          controlledRunId: state.id,
+        },
+      });
+    });
+
+    it('refuses a prepared record paired with a different bearer', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const service = new SessionService(manager);
+      const prepared = service.prepareRunControlClaim(state.id);
+      const other = service.prepareRunControlClaim(state.id);
+
+      await expect(
+        service.pushRunbookWithPreparedRunControlClaim(state.id, {
+          ...prepared,
+          claimId: other.claimId,
+        }),
+      ).rejects.toThrow(`Prepared run-control claim does not match ${state.id}`);
+      expect((await manager.loadSession()).defaultStack).toEqual([]);
+      expect((await manager.loadSession()).claims).toEqual({});
+    });
+
     it('mints a claim with child mutation and parent report grants', async () => {
       const persistedLinkage = linkageFor(PARENT_RUN_ID, 'b');
       await manager.create({ source: 'project', path: 'parent.runbook.md' }, mockRunbook, {

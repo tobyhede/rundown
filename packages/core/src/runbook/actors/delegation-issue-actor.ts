@@ -1,14 +1,19 @@
 import { fromPromise } from 'xstate';
 
-import type { DelegateFrontierEntry } from '../../events/types.js';
 import { getErrorMessage } from '../../errors.js';
 import { createDelegation } from '../delegation-service.js';
+import type { DelegationCredentialIssuer } from '../delegation-credential.js';
 import {
   inferAllDelegateSubsteps,
   type ResolveDelegationRunbook,
 } from '../delegation-inference.js';
 import type { FrameKey } from '../targeting.js';
-import type { DelegationParentState, ResolvedStep, SubstepState } from '../types.js';
+import type {
+  DelegationParentState,
+  PersistedDelegateFrontierEntry,
+  ResolvedStep,
+  SubstepState,
+} from '../types.js';
 
 /** Input shape for {@link delegationIssueActor}. */
 export interface DelegationIssueInput {
@@ -20,6 +25,8 @@ export interface DelegationIssueInput {
   readonly frameKey: FrameKey;
   /** Runtime resolver for child runbook references. */
   readonly resolveRunbook: ResolveDelegationRunbook;
+  /** Verified runtime credential issuer; absent callers cannot issue tokens. */
+  readonly issueCredential?: DelegationCredentialIssuer;
 }
 
 /** Output shape for {@link delegationIssueActor}. */
@@ -27,12 +34,15 @@ export type DelegationIssueOutput =
   | { readonly status: 'skipped' }
   | {
       readonly status: 'issued';
-      readonly frontier: readonly DelegateFrontierEntry[];
+      readonly frontier: readonly PersistedDelegateFrontierEntry[];
       readonly substepStates: readonly SubstepState[];
     }
   | {
       readonly status: 'failed';
-      readonly reason: 'delegation_resolution_failed' | 'nested_delegation_forbidden';
+      readonly reason:
+        | 'actor_context_required'
+        | 'delegation_resolution_failed'
+        | 'nested_delegation_forbidden';
       readonly message: string;
     };
 
@@ -66,6 +76,13 @@ export const delegationIssueActor = fromPromise<DelegationIssueOutput, Delegatio
     if (targets.length === 0) {
       return { status: 'skipped' };
     }
+    if (input.issueCredential === undefined) {
+      return {
+        status: 'failed',
+        reason: 'actor_context_required',
+        message: 'Delegation issuance requires verified claim authority',
+      };
+    }
 
     let resolvedTargets: Array<{
       target: (typeof targets)[number];
@@ -96,7 +113,7 @@ export const delegationIssueActor = fromPromise<DelegationIssueOutput, Delegatio
     }
 
     let workingState: DelegationParentState = input.state;
-    const frontier: DelegateFrontierEntry[] = [];
+    const frontier: PersistedDelegateFrontierEntry[] = [];
 
     for (const { target, resolved } of resolvedTargets) {
       if (!resolved) {
@@ -114,6 +131,7 @@ export const delegationIssueActor = fromPromise<DelegationIssueOutput, Delegatio
           childRunbookPath: resolved.path,
           childRunbookRef: resolved.childRunbookRef,
           frameKey: input.frameKey,
+          issueCredential: input.issueCredential,
         },
         input.steps,
       );
@@ -137,7 +155,8 @@ export const delegationIssueActor = fromPromise<DelegationIssueOutput, Delegatio
       frontier.push({
         id: target.stepId,
         runbook: target.runbookRef,
-        token: result.token,
+        credential: result.delegation.credential,
+        tokenHash: result.delegation.tokenHash,
       });
       workingState = {
         ...workingState,

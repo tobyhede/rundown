@@ -50,6 +50,12 @@ import {
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
+import {
+  createDelegationCredentialIssuer,
+  createDelegationTokenDeriver,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
+} from './delegation-credential.js';
 import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
@@ -65,6 +71,24 @@ export type ReleaseRunbookResult =
       readonly removedFromDefaultStack: boolean;
       readonly nextDefaultRunbookId: RunId | null;
     };
+
+/**
+ * In-memory run-control credential prepared before a run is activated.
+ *
+ * The bearer is intentionally absent from persisted state until the matching
+ * atomic activation installs {@link claim}. Callers must keep this value in
+ * process memory only.
+ */
+export interface PreparedRunControlClaim {
+  /** Public bearer returned to the run controller after activation commits. */
+  readonly claimId: ClaimId;
+  /** Proof-backed record installed in the session transaction. */
+  readonly claim: ClaimRecord;
+  /** Claim-bound credential issuer retained in process memory only. */
+  readonly issueDelegationCredential: DelegationCredentialIssuer;
+  /** Claim-bound token deriver retained in process memory only. */
+  readonly deriveDelegationToken: DelegationTokenDeriver;
+}
 
 /**
  * Project one terminal release onto an in-memory session snapshot.
@@ -617,6 +641,64 @@ export class SessionService {
   }
 
   /**
+   * Prepare a run-control bearer without writing session state.
+   *
+   * This seam lets run initialization bind credential derivation to the exact
+   * bearer that will later be installed by
+   * {@link pushRunbookWithPreparedRunControlClaim}.
+   *
+   * @param runId - Run id controlled by the prepared claim.
+   * @returns The caller-held bearer and its non-secret persisted record.
+   */
+  prepareRunControlClaim(runId: RunId): PreparedRunControlClaim {
+    const parsed = parseClaimBearer(generateClaimBearer());
+    const authority = {
+      kind: 'bearer' as const,
+      claimId: parsed.claimId,
+      claimKey: parsed.claimKey,
+    };
+    return {
+      claimId: parsed.claimId,
+      claim: createClaimRecord({
+        claimKey: parsed.claimKey,
+        secretHash: hashClaimSecret(parsed.secret),
+        controlledRunId: runId,
+        grants: createRunControlGrants(runId),
+        now: this.now(),
+      }),
+      issueDelegationCredential: createDelegationCredentialIssuer(authority),
+      deriveDelegationToken: createDelegationTokenDeriver(authority),
+    };
+  }
+
+  /**
+   * Push a run and install an already prepared run-control claim atomically.
+   *
+   * @param id - Runbook state ID to push and control.
+   * @param prepared - Exact in-memory claim prepared before initialization.
+   * @returns The installed claim after the guarded session transaction commits.
+   * @throws When the prepared claim controls a different run.
+   */
+  async pushRunbookWithPreparedRunControlClaim(
+    id: RunId,
+    prepared: PreparedRunControlClaim,
+  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+    const parsed = parseClaimBearer(prepared.claimId);
+    if (
+      prepared.claim.controlledRunId !== id ||
+      prepared.claim.claimKey !== parsed.claimKey ||
+      prepared.claim.secretHash !== hashClaimSecret(parsed.secret)
+    ) {
+      throw new Error(`Prepared run-control claim does not match ${id}`);
+    }
+    return this.mutateGuarded([id], (ctx) => {
+      ctx.session.defaultStack.push(id);
+      this.installRunControlClaim(ctx.session, prepared.claim);
+      return { claimId: prepared.claimId, claim: prepared.claim };
+    });
+  }
+
+  /**
    * Mint a run-control bearer claim into an in-memory session (no IO, no lock).
    *
    * Shared by {@link issueRunControlClaim} and
@@ -632,26 +714,23 @@ export class SessionService {
     session: SessionData,
     runId: RunId,
   ): { readonly claimId: ClaimId; readonly claim: ClaimRecord } {
-    const now = this.now();
-    const parsed = parseClaimBearer(generateClaimBearer());
-    const claim = createClaimRecord({
-      claimKey: parsed.claimKey,
-      secretHash: hashClaimSecret(parsed.secret),
-      controlledRunId: runId,
-      grants: createRunControlGrants(runId),
-      now,
-    });
+    const prepared = this.prepareRunControlClaim(runId);
+    this.installRunControlClaim(session, prepared.claim);
+    return prepared;
+  }
+
+  /** Install one prepared run-control claim into an in-memory session. */
+  private installRunControlClaim(session: SessionData, claim: ClaimRecord): void {
     // Uphold the SessionDataSchema controlledRunId-uniqueness invariant: a run has
     // at most one run-control claim. Re-issuing supersedes (rotates) any existing
     // claim for this run rather than appending a duplicate that would render the
     // session unreadable. The prior bearer is invalidated by construction.
     for (const [existingKey, existingClaim] of Object.entries(session.claims)) {
-      if (existingClaim.controlledRunId === runId) {
+      if (existingClaim.controlledRunId === claim.controlledRunId) {
         delete session.claims[existingKey];
       }
     }
     session.claims[claim.claimKey] = claim;
-    return { claimId: parsed.claimId, claim };
   }
 
   /**

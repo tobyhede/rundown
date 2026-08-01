@@ -22,9 +22,9 @@ import {
   writeSession,
   listRunbookStates,
   readRunbookState,
-  getActiveState,
   findActionOutput,
   parseConcatenatedJson,
+  requireFrontierToken,
   seedExecutionOwnership,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -555,9 +555,7 @@ rd echo --result pass
 
       const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
       expect(start.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
-      const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
-      if (!token) throw new Error('expected auto-issued frontier token for 1.1');
+      const token = requireFrontierToken(start.stdout, '1.1');
 
       const claimResult = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimResult.exitCode).toBe(0);

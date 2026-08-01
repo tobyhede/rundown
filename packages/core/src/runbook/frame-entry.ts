@@ -12,7 +12,10 @@ import type { RunbookState } from './types.js';
  * @param frameKey - Frame whose current entry should be inferred.
  * @returns The frame's active or recorded entry, defaulting to `1`.
  */
-export function inferFrameEntryFromState(state: RunbookState, frameKey: FrameKey): number {
+export function inferFrameEntryFromState(
+  state: Pick<RunbookState, 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'>,
+  frameKey: FrameKey,
+): number {
   return state.activeFrameKey === frameKey && state.activeEntry !== undefined
     ? state.activeEntry
     : (state.frameEntryCounts?.[frameKey] ?? 1);

@@ -6,11 +6,9 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
-  DelegationLock,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
-  replaceSubstepStateEntry,
   createEffectfulActorMutationRunner,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
@@ -282,7 +280,7 @@ export function registerDelegateCommand(program: Command): void {
             }
 
             // Parse the raw retry locator first. Core resolves its state-bound
-            // preconditions under DelegationLock; lazy overrides stay deferred
+            // preconditions against the aggregate capture; lazy overrides stay deferred
             // so input errors cannot mask those higher-priority outcomes.
             const locator = resolveRetryLocator(tokenArg, options, output);
 
@@ -393,6 +391,27 @@ export function registerDelegateCommand(program: Command): void {
                 renderSessionMutationRefusal(output, outcome);
                 process.exitCode = 1;
                 break;
+              case 'claim_superseded':
+                output.error(outcome.message, 'STALE_CLAIM');
+                process.exitCode = 1;
+                break;
+              case 'concurrent_modification':
+                output.error(outcome.message, 'CONCURRENT_MODIFICATION');
+                process.exitCode = 1;
+                break;
+              case 'missing':
+                output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+                process.exitCode = 1;
+                break;
+              case 'aggregate_recovery_required':
+                output.error(outcome.message, 'RECOVERY_REQUIRED', {
+                  runs: outcome.attempts.map(({ runId, epoch }) => ({
+                    runId,
+                    epoch: Number(epoch),
+                  })),
+                });
+                process.exitCode = 1;
+                break;
               default: {
                 const _exhaustive: never = outcome;
                 throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
@@ -406,7 +425,7 @@ export function registerDelegateCommand(program: Command): void {
           const seam = buildDelegateSeam(manager, sessionService, cwd);
 
           // Category-A syntax parsing only. Whether the target is a FOR step is
-          // state-dependent and is validated by core under DelegationLock.
+          // state-dependent and is validated by core against its aggregate capture.
           let explicitIteration: number | undefined;
           try {
             explicitIteration = resolveIndexOption(
@@ -534,6 +553,27 @@ export function registerDelegateCommand(program: Command): void {
               renderSessionMutationRefusal(output, outcome);
               process.exitCode = 1;
               break;
+            case 'claim_superseded':
+              output.error(outcome.message, 'STALE_CLAIM');
+              process.exitCode = 1;
+              break;
+            case 'concurrent_modification':
+              output.error(outcome.message, 'CONCURRENT_MODIFICATION');
+              process.exitCode = 1;
+              break;
+            case 'missing':
+              output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+              process.exitCode = 1;
+              break;
+            case 'aggregate_recovery_required':
+              output.error(outcome.message, 'RECOVERY_REQUIRED', {
+                runs: outcome.attempts.map(({ runId, epoch }) => ({
+                  runId,
+                  epoch: Number(epoch),
+                })),
+              });
+              process.exitCode = 1;
+              break;
             default: {
               const _exhaustive: never = outcome;
               throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
@@ -592,7 +632,7 @@ function emitAlreadyDelegated(
  * Construct the delegation lifecycle command seam with all CLI-bound deps.
  *
  * Shared by the fresh-issue and `--retry` flows so the injected discovery
- * (`resolveChildRunbook`), persistence (`persistIssuedSubstep`), and cross-run
+ * (`resolveChildRunbook`) and cross-run
  * token lookup (`findDelegationByToken`) callables are wired identically.
  *
  * @param manager - State manager bound to the project root.
@@ -614,27 +654,13 @@ function buildDelegateSeam(
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
-    deleteRun: async (id) => {
-      await manager.delete(id);
-    },
     loadSteps: (s) => getRunbookFromState(s, cwd),
     resolveChildRunbook: async (name) => {
       const resolved = await resolveRunbookFile(cwd, name);
       return resolved ? { path: resolved.path, ref: await buildRunbookRef(resolved) } : undefined;
     },
-    persistIssuedSubstep: async (id, entry) => {
-      // Locked read-modify-merge of the single issued entry: a whole-array
-      // overwrite would clobber a concurrent delegate/retry on a sibling substep
-      // that committed after the seam read the active state (RD last-write-wins).
-      await manager.updateWithState(id, (fresh) => ({
-        substepStates: replaceSubstepStateEntry(fresh.substepStates ?? [], entry),
-      }));
-    },
     findDelegationByToken: async (token) =>
       (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
-    // Real per-parent-run lock: fresh issuance and --retry run their
-    // read-modify-write under it, serialized against claim/abort/completion.
-    delegationLock: new DelegationLock(cwd),
   });
 }
 
@@ -678,7 +704,7 @@ async function resolveDelegateExtraVars(
  *
  * Parses only raw syntax: token/step/inferred form, step-id syntax, and numeric
  * index conflicts. Core resolves the run once and performs every
- * state-dependent check against its DelegationLock-scoped reread.
+ * state-dependent check against its aggregate capture.
  *
  * @param tokenArg - The positional token when it looks like a delegation token.
  * @param options - Parsed delegate options (`--step` / `--index`).

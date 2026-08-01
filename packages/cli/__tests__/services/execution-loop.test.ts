@@ -250,6 +250,20 @@ describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
   const runbookId = actualCore.assertRunId(`rd_${'1'.repeat(32)}`);
+  const persistedFrontierEntry = (id: string, runbook: string, token: string) => ({
+    id,
+    runbook,
+    credential: {
+      version: 1 as const,
+      issuerClaimKey: `rdclk_${'a'.repeat(32)}`,
+      issuanceNonce: id.replace('.', '').padEnd(43, '0'),
+      parentRunId: runbookId,
+      parentStepId: id,
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    },
+    tokenHash: actualCore.hashDelegationToken(token),
+  });
   const steps: LooseStep[] = [
     {
       kind: 'command',
@@ -2551,8 +2565,8 @@ describe('runExecutionLoop', () => {
 
     mockActorService.getContextSnapshot.mockResolvedValue({
       delegateFrontier: [
-        { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_aaaa1111' },
-        { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_bbbb2222' },
+        persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_aaaa1111'),
+        persistedFrontierEntry('1.2', 'child-b.runbook.md', 'rdtk_bbbb2222'),
       ],
     });
     mockActorService.sendAndSync.mockResolvedValue({
@@ -2567,6 +2581,10 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
+      {
+        delegationTokenDeriver: (credential) =>
+          credential.parentStepId === '1.1' ? 'rdtk_aaaa1111' : 'rdtk_bbbb2222',
+      },
     );
 
     // STEP_ENTERED should have been emitted with delegateFrontier
@@ -2632,7 +2650,10 @@ describe('runExecutionLoop', () => {
     ];
 
     mockActorService.getContextSnapshot.mockResolvedValue({
-      delegateFrontier: preIssued,
+      delegateFrontier: [
+        persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a'),
+        persistedFrontierEntry('1.2', 'child-b.runbook.md', 'rdtk_retry_b'),
+      ],
     });
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '1', substep: '1', status: 'running' },
@@ -2646,6 +2667,10 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
+      {
+        delegationTokenDeriver: (credential) =>
+          credential.parentStepId === '1.1' ? 'rdtk_retry_a' : 'rdtk_retry_b',
+      },
     );
 
     // STEP_ENTERED payload should carry the pre-issued frontier
@@ -2661,6 +2686,50 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
+  });
+
+  it('refuses a persisted delegation frontier when continuation lacks its token deriver', async () => {
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      delegateFrontier: [persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')],
+    });
+
+    await expect(
+      runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(delegateSteps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      ),
+    ).rejects.toThrow('Delegation frontier cannot be projected without verified claim authority');
+
+    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'STEP_ENTERED' }),
+    );
   });
 
   it('rolls back existing inline child session activation when intent consumption fails', async () => {
@@ -3251,7 +3320,7 @@ describe('runExecutionLoop', () => {
     mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
 
     mockActorService.getContextSnapshot.mockResolvedValue({
-      delegateFrontier: [{ id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' }],
+      delegateFrontier: [persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')],
     });
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '1', substep: '1', status: 'running' },
@@ -3265,6 +3334,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       true,
       asEmitter(mockEmitter),
+      { delegationTokenDeriver: () => 'rdtk_retry_a' },
     );
 
     const stepEnteredCall = mockEmitter.emit.mock.calls.find(

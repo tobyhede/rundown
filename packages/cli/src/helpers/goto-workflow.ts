@@ -23,6 +23,8 @@ import {
   type RunbookLifecycleCommandService,
   type CallerEvidence,
   type LifecycleTerminalReleaseMode,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
   claimKeyFromBearer,
 } from '@rundown-org/core';
 import { runExecutionLoop } from '../services/execution.js';
@@ -63,6 +65,10 @@ export interface GotoContext {
   terminalReleaseMode: LifecycleTerminalReleaseMode;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
+  /** Verified issuer for a navigation transition that enters a delegation frontier. */
+  issueDelegationCredential?: DelegationCredentialIssuer;
+  /** Same-issuer deriver used only to render the public delegation frontier. */
+  delegationTokenDeriver?: DelegationTokenDeriver;
 }
 
 /**
@@ -261,6 +267,8 @@ export async function buildGotoContext(
       cwd,
       terminalReleaseMode: outcome.terminalReleaseMode,
       commandStreamOptions: options.commandStreamOptions,
+      issueDelegationCredential: outcome.issueDelegationCredential,
+      delegationTokenDeriver: outcome.deriveDelegationToken,
     },
   };
 }
@@ -378,6 +386,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     steps,
     target,
     terminalReleaseMode: ctx.terminalReleaseMode,
+    issueDelegationCredential: ctx.issueDelegationCredential,
   });
   if (mutation.kind !== 'applied') {
     switch (mutation.kind) {
@@ -425,6 +434,8 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
         : {}),
       output,
       commandStreamOptions: ctx.commandStreamOptions,
+      issueDelegationCredential: ctx.issueDelegationCredential,
+      delegationTokenDeriver: ctx.delegationTokenDeriver,
     },
   );
 

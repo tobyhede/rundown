@@ -10,8 +10,8 @@
  * @module
  */
 
-import type { DelegateFrontierEntry } from '../events/types.js';
 import type {
+  PersistedDelegateFrontierEntry,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
   RunbookState,
@@ -21,6 +21,7 @@ import type {
 import type { RunbookContext } from './compiler.js';
 import type { ForContext } from './types.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import { Errors } from '../errors/factory.js';
@@ -36,7 +37,7 @@ import { resetReopenedSubsteps } from './substep-reset.js';
  */
 export interface RetryHookSuccess {
   readonly status: 'success';
-  readonly frontier: ReadonlyArray<DelegateFrontierEntry>;
+  readonly frontier: ReadonlyArray<PersistedDelegateFrontierEntry>;
   readonly substepStates: readonly SubstepState[];
 }
 
@@ -142,8 +143,13 @@ export function retrySingleSubstep(
   activeFrameKey: FrameKey,
   _parentName: string,
   steps: readonly ResolvedStep[],
+  issueCredential: DelegationCredentialIssuer,
 ):
-  | { status: 'retried'; working: RetryWorkingState; frontierEntry: DelegateFrontierEntry }
+  | {
+      status: 'retried';
+      working: RetryWorkingState;
+      frontierEntry: PersistedDelegateFrontierEntry;
+    }
   | { status: 'skipped' }
   | { status: 'error'; code: string; message: string } {
   const ss = findSubstepState(working.substepStates ?? [], substep.id, activeFrameKey);
@@ -156,10 +162,14 @@ export function retrySingleSubstep(
 
   const result: RetryDelegationResult = retryDelegation(
     {
-      state: working as RunbookState,
+      state: {
+        ...working,
+        id: ss.delegation.credential.parentRunId,
+      } as RunbookState,
       substepId: substep.id,
       frameKey: activeFrameKey,
       allowLinkedChildRun: true,
+      issueCredential,
     },
     steps,
   );
@@ -192,7 +202,8 @@ export function retrySingleSubstep(
       frontierEntry: {
         id: frontierAt,
         runbook: result.delegation.childRunbookPath,
-        token: result.token,
+        credential: result.delegation.credential,
+        tokenHash: result.delegation.tokenHash,
       },
     };
   }
@@ -246,6 +257,7 @@ export function runRetryHook(
   context: RunbookContext,
   parentStep: ResolvedStepHavingSubsteps,
   steps: readonly ResolvedStep[],
+  issueCredential?: DelegationCredentialIssuer,
 ): RetryHookResult {
   const substepStates = context.substepStates ?? [];
   // Derive the active frame key from the cursor (parent step + forStack) every
@@ -258,8 +270,26 @@ export function runRetryHook(
     parentStep.name,
     activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
   );
+  const activeDelegation = substepStates.find(
+    (substepState) =>
+      substepState.frameKey === activeFrameKey && substepState.delegation !== undefined,
+  );
+  const hasDelegationToRetry = activeDelegation !== undefined;
+  if (hasDelegationToRetry && issueCredential === undefined) {
+    return {
+      status: 'error',
+      code: 'ACTOR_CONTEXT_REQUIRED',
+      message: 'Delegation retry requires verified claim authority',
+      substepStates,
+    };
+  }
+  const credentialIssuer: DelegationCredentialIssuer =
+    issueCredential ??
+    (() => {
+      throw new Error('Delegation credential issuer reached without an active delegation');
+    });
 
-  const frontier: DelegateFrontierEntry[] = [];
+  const frontier: PersistedDelegateFrontierEntry[] = [];
   // Narrowed input for retryDelegation — only the fields it actually reads
   // (step, substepStates, templateVars, forStack, activeFrameKey, variables).
   // Casting a structurally-sufficient partial to RunbookState at the call site
@@ -314,7 +344,14 @@ export function runRetryHook(
   }
 
   for (const substep of parentStep.substeps) {
-    const outcome = retrySingleSubstep(working, substep, activeFrameKey, parentStep.name, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      activeFrameKey,
+      parentStep.name,
+      steps,
+      credentialIssuer,
+    );
     switch (outcome.status) {
       case 'skipped':
         continue;

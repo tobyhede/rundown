@@ -8,6 +8,7 @@ import {
   brandEffectiveVarsForTest,
   brandRunIdForTest,
 } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 
 const RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
@@ -16,6 +17,7 @@ const OTHER_CHILD_RUN_ID = brandRunIdForTest(`rd_${'3'.repeat(32)}`);
 /** Helper: create a delegation object. */
 function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
+    credential: makeDelegationCredentialDescriptor(),
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.md',
     childRunbookRef: { source: 'project', path: 'child.md' },

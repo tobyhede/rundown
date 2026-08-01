@@ -53,20 +53,22 @@ describe('buildNonDelegatingLifecycleSeam', () => {
   });
 
   describe('delegation-refusal contract', () => {
-    it('refuses a retry-by-token issuance (findDelegationByToken stub throws)', async () => {
+    it('scans retry tokens without making the non-issuing seam mint a delegation', async () => {
       const { seam } = buildNonDelegatingLifecycleSeam(workspace.cwd);
 
-      // A token-locator retry hits `findDelegationByToken` first thing, before any
-      // active-run / policy gate — so the stub throws with no setup. This is the
-      // whole point of the non-delegating seam: pass/fail/complete/stop front ends
-      // must never mint or mutate a delegation.
+      // Abort now shares this seam and needs the read-only token scanner. An
+      // unknown retry token therefore returns the normal write-free lookup
+      // outcome; the issuing resolver remains the seam's mutation guard.
       await expect(
         seam.issueDelegation({
           mode: 'retry',
           callerEvidence: { kind: 'direct_cli' },
           locator: { kind: 'token', token: `${DELEGATION_TOKEN_PREFIX}never_resolved` },
         }),
-      ).rejects.toThrow(REFUSAL);
+      ).resolves.toEqual({
+        kind: 'token-not-found',
+        token: `${DELEGATION_TOKEN_PREFIX}never_resolved`,
+      });
     });
 
     it('refuses a fresh issuance against a delegatable substep (resolveChildRunbook stub throws)', async () => {
@@ -96,14 +98,13 @@ describe('buildNonDelegatingLifecycleSeam', () => {
       await writeFile(join(workspace.cwd, 'runbooks', 'delegate-parent.runbook.md'), parentContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/delegate-parent.runbook.md --text',
+        'run --prompted runbooks/delegate-parent.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
 
       const state = await getActiveState(workspace);
-      const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
+      const autoToken = /"token":"(rdtk_[^"]+)"/.exec(startResult.stdout)?.[1];
       expect(autoToken).toBeDefined();
       const parentClaimId = await issueRunControlClaim(workspace, state!.id);
 

@@ -3,6 +3,7 @@ import { CompletionLock } from './completion-lock.js';
 import { DelegationLock } from './delegation-lock.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { merge } from './state-update-ops.js';
 import { applyRunbookStateUpdate, type RunbookStateManager } from './state.js';
 import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
@@ -305,6 +306,8 @@ export interface DrainResolvedCompletionsArgs {
    * the write inside its transaction.
    */
   readonly guard?: ParentAdvanceGuard;
+  /** Verified runtime-only issuer for a completion transition that enters delegation. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
 /** Result of a resolved-completion drain pass. */
@@ -1126,7 +1129,12 @@ export class RunbookCompletionService {
         // behind a bare refusal. This mirrors the recorded path, where the drain
         // that follows a committed decisive write runs unguarded for the same
         // reason (see LifecycleCommandService#driveSubstep).
-        guardOptions(applied.length === 0 ? args.guard : undefined),
+        {
+          ...guardOptions(applied.length === 0 ? args.guard : undefined),
+          ...(args.issueDelegationCredential === undefined
+            ? {}
+            : { runtime: { issueDelegationCredential: args.issueDelegationCredential } }),
+        },
       );
       if (!result) {
         return { status: 'continue', state, unresolved, applied };

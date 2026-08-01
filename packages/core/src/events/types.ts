@@ -45,8 +45,11 @@ export interface RunbookStartedPayload {
 }
 
 /**
- * A single entry in the delegate frontier — one pre-issued delegation token
- * per substep, returned when execution enters a DELEGATE step.
+ * Public credential-delivery entry for one delegated substep.
+ *
+ * This token-bearing shape is never persisted in runbook state or XState
+ * context. Core derives it from a descriptor-bearing frontier intent only at
+ * an authorized observation boundary.
  */
 export interface DelegateFrontierEntry {
   readonly id: string;
@@ -189,10 +192,12 @@ export interface RunbookStoppedPayload {
   readonly message?: string;
   readonly position: StepPosition;
   readonly reason?:
+    | 'actor_context_required'
     | 'policy_denied'
     | 'command_execution_failed'
     | 'fail_transition'
     | 'user_abort'
+    | 'actor_context_required'
     | 'delegation_resolution_failed'
     | 'nested_delegation_forbidden'
     | 'inline_launch_failed'

@@ -17,6 +17,7 @@ import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
 import { logger } from '../../src/logger.js';
+import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 
 const RUNBOOK = `## 1. First
 - PASS CONTINUE
@@ -189,6 +190,36 @@ describe('createEffectfulActorMutationRunner', () => {
       // Recovery committed for both, so neither is left pending.
       expect(await store.readPendingRecovery(a.id)).toBeNull();
       expect(await store.readPendingRecovery(b.id)).toBeNull();
+    });
+  });
+
+  describe('write-free aggregate outcomes', () => {
+    it('revalidates the captured authority immediately before returning a prepared value', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const state = await seedRun('echo.runbook.md');
+      const compute = jest.fn();
+      const realValidate = RunbookStore.prototype.validateCapturedRunSet;
+      jest
+        .spyOn(RunbookStore.prototype, 'validateCapturedRunSet')
+        .mockImplementationOnce(async function (this: RunbookStore, captured) {
+          unwrapSessionMutation(await sessionService.releaseRunbook(state.id));
+          return realValidate.call(this, captured);
+        });
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: state.id }],
+        beforeEffect: () => ({ kind: 'return', value: 'derived-bearer' }),
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, recoveryState: RunbookState) =>
+          actorService.createRecoveryActor(recoveryState, steps),
+      });
+
+      expect(result).toEqual({
+        kind: 'claim_superseded',
+        runId: state.id,
+        message: `The presented claim no longer controls run ${state.id}.`,
+      });
+      expect(compute).not.toHaveBeenCalled();
     });
   });
 

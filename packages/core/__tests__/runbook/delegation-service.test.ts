@@ -21,6 +21,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { brandEffectiveVars } from '../../src/runbook/effective-vars.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { makeStepDelegation } from '../../src/testing/delegation-fixtures.js';
 
 const TEST_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 const OTHER_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
@@ -45,7 +46,7 @@ function runState(overrides: Partial<RunbookState> = {}): RunbookState {
 }
 
 function delegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
-  return {
+  return makeStepDelegation({
     tokenHash: TEST_TOKEN_HASH,
     childRunbookPath: 'child.md',
     childRunbookRef: { source: 'project', path: 'child.md' },
@@ -54,7 +55,7 @@ function delegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
     createdAt: '2026-04-23T00:00:00.000Z',
     cancelledAt: null,
     ...overrides,
-  };
+  });
 }
 
 function parentState(overrides: Partial<StepDelegation> = {}): RunbookState {
@@ -102,7 +103,7 @@ describe('Result types', () => {
       status: 'created',
       token: 'dlg_test',
       tokenHash: TEST_TOKEN_HASH,
-      delegation: {
+      delegation: makeStepDelegation({
         tokenHash: TEST_TOKEN_HASH,
         childRunbookPath: 'child.md',
         childRunbookRef: { source: 'project', path: 'child.md' },
@@ -110,7 +111,7 @@ describe('Result types', () => {
         childRunId: null,
         createdAt: '2026-04-23T00:00:00.000Z',
         cancelledAt: null,
-      },
+      }),
       updatedSubstepStates: [],
     });
 

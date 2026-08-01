@@ -291,7 +291,12 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
 
     const beforeEffect = await input.beforeEffect?.(captured);
     if (beforeEffect?.kind === 'return') {
-      return { kind: 'committed', value: beforeEffect.value };
+      const validation = await store.validateCapturedRunSet(
+        captured.map(({ authority }) => authority),
+      );
+      return validation.kind === 'committed'
+        ? { kind: 'committed', value: beforeEffect.value }
+        : validation;
     }
 
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));

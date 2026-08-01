@@ -32,8 +32,14 @@ import type {
 } from './actors/inline-launch-intent-actor.js';
 import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
+import {
+  prepareManualDelegation,
+  type ManualDelegationPreparationEvent,
+} from './manual-delegation-machine.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { PreparedActorMutation } from './effectful-mutation-executor.js';
+import type { RundownError } from '../errors/rundown-error.js';
 import {
   applyRunbookStateUpdate,
   type RunbookStateManager,
@@ -182,6 +188,12 @@ export interface RunbookActorServiceOptions {
   readonly machineEffectTimeoutMs?: number;
 }
 
+/** Per-operation runtime capabilities that must never enter persisted context. */
+export interface RunbookActorRuntimeCapabilities {
+  /** Verified claim-bound issuer for machine-owned delegation credentials. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+}
+
 /**
  * Typed shape of the persisted snapshot returned by `actor.getPersistedSnapshot()`
  * within `updateFromActor`. Only the fields accessed in that method are declared;
@@ -291,7 +303,9 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   if (type === 'DELEGATION_ISSUANCE_FAILED') {
     const reason = (value as { readonly reason?: unknown }).reason;
     return (
-      (reason === 'delegation_resolution_failed' || reason === 'nested_delegation_forbidden') &&
+      (reason === 'actor_context_required' ||
+        reason === 'delegation_resolution_failed' ||
+        reason === 'nested_delegation_forbidden') &&
       typeof (value as { readonly message?: unknown }).message === 'string'
     );
   }
@@ -369,6 +383,7 @@ function lastResultSyncForEvent(
     case 'INLINE_CHILD_STARTED':
     case 'DELEGATION_CHILD_LINKED':
     case 'DELEGATION_CHILD_UNLINKED':
+    case 'MANUAL_DELEGATION_ABORT_PREPARED':
     // Recovery jumps to recoveryRequired; the interrupted step's result is
     // unknown, so the prior lastResult is preserved rather than resolved.
     case 'EXECUTION_OUTCOME_UNKNOWN':
@@ -853,6 +868,7 @@ export class RunbookActorService {
     state: RunbookState,
     steps: readonly ResolvedStep[],
     executionObserver?: MachineExecutionObserver,
+    runtime?: RunbookActorRuntimeCapabilities,
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
@@ -874,6 +890,7 @@ export class RunbookActorService {
       substepStates: state.substepStates,
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
+      issueDelegationCredential: runtime?.issueDelegationCredential,
       resolveInlineRunbook: this.options.resolveInlineRunbook,
       generateChildRunId: this.options.generateInlineChildRunId,
       now: this.options.inlineLaunchNow,
@@ -887,11 +904,12 @@ export class RunbookActorService {
     state: RunbookState,
     steps: readonly ResolvedStep[],
     executionObserver?: MachineExecutionObserver,
+    runtime?: RunbookActorRuntimeCapabilities,
   ): AnyActorRef {
     if (state.snapshot) {
       this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
     }
-    const machine = this.compileMachineFromState(id, state, steps, executionObserver);
+    const machine = this.compileMachineFromState(id, state, steps, executionObserver, runtime);
     const snapshot = hydrateSnapshot(machine, state);
     const actor = createActor(machine, { snapshot });
     actor.start();
@@ -954,10 +972,14 @@ export class RunbookActorService {
    *   as a signal to run `rundown prune` and restart execution; the invalid
    *   state cannot be migrated in place.
    */
-  async createActor(id: string, steps: readonly ResolvedStep[]): Promise<AnyActorRef | null> {
+  async createActor(
+    id: string,
+    steps: readonly ResolvedStep[],
+    runtime?: RunbookActorRuntimeCapabilities,
+  ): Promise<AnyActorRef | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
-    return this.createActorForState(id, state, steps);
+    return this.createActorForState(id, state, steps, undefined, runtime);
   }
 
   /**
@@ -1102,6 +1124,7 @@ export class RunbookActorService {
     previousState: RunbookState,
     steps: readonly ResolvedStep[],
     event: RunbookEvent,
+    runtime?: RunbookActorRuntimeCapabilities,
   ): Promise<PreparedActorMutation> {
     const collector = createExecutionEffectCollector();
     const effects: ExecutionObservationEffect[] = [];
@@ -1115,7 +1138,7 @@ export class RunbookActorService {
         }),
       );
     }
-    const actor = this.createActorForState(id, previousState, steps, collector);
+    const actor = this.createActorForState(id, previousState, steps, collector, runtime);
     const errorSubscription = actor.subscribe({ error: () => undefined });
     try {
       actor.send(event);
@@ -1146,6 +1169,54 @@ export class RunbookActorService {
     } finally {
       errorSubscription.unsubscribe();
       this.stopActor(actor);
+    }
+  }
+
+  /**
+   * Prepare manual issue/retry state through the dedicated delegation machine.
+   *
+   * @param previousState - Exact parent state captured by the aggregate runner.
+   * @param steps - Parsed steps corresponding to the captured state.
+   * @param event - Typed manual issue or retry event.
+   * @param issueCredential - Verified claim-bound runtime issuer.
+   * @returns The captured state with machine-prepared substep state applied.
+   */
+  async prepareManualDelegationMutation(
+    previousState: RunbookState,
+    steps: readonly ResolvedStep[],
+    event: ManualDelegationPreparationEvent,
+    issueCredential: DelegationCredentialIssuer,
+  ): Promise<
+    | { readonly nextState: RunbookState }
+    | { readonly status: 'already_cancelled' }
+    | { readonly status: 'needs_force'; readonly childRunId: string }
+    | { readonly error: RundownError }
+  > {
+    const result = prepareManualDelegation({
+      state: previousState,
+      steps,
+      issueCredential,
+      event,
+    });
+    switch (result.status) {
+      case 'prepared':
+        if (event.type === 'ABORT' && previousState.snapshot !== undefined) {
+          const mutation = await this.prepareActorMutation(previousState.id, previousState, steps, {
+            type: 'MANUAL_DELEGATION_ABORT_PREPARED',
+            substepStates: result.substepStates,
+          });
+          return { nextState: mutation.nextState };
+        }
+        return { nextState: { ...previousState, substepStates: result.substepStates } };
+      case 'already_cancelled':
+      case 'needs_force':
+        return result;
+      case 'error':
+        return { error: result.error };
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
     }
   }
 
@@ -1316,8 +1387,12 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps
    * @returns Updated state, or null if state not found
    */
-  async initializeState(id: string, steps: readonly ResolvedStep[]): Promise<RunbookState | null> {
-    const actor = await this.createActor(id, steps);
+  async initializeState(
+    id: string,
+    steps: readonly ResolvedStep[],
+    runtime?: RunbookActorRuntimeCapabilities,
+  ): Promise<RunbookState | null> {
+    const actor = await this.createActor(id, steps, runtime);
     if (!actor) return null;
     try {
       const { state: synced } = await this.persistAfterMachineEffects(id, actor, steps);
@@ -1530,7 +1605,10 @@ export class RunbookActorService {
     id: string,
     steps: readonly ResolvedStep[],
     event: RunbookEvent,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
+    options: {
+      readonly guard?: ParentAdvanceGuard;
+      readonly runtime?: RunbookActorRuntimeCapabilities;
+    } = {},
   ): Promise<ActorSyncResult | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
@@ -1546,7 +1624,7 @@ export class RunbookActorService {
         }),
       );
     }
-    const actor = this.createActorForState(id, state, steps, collector);
+    const actor = this.createActorForState(id, state, steps, collector, options.runtime);
     try {
       if (logger.isDebugEnabled()) {
         // Pre-send diagnostics

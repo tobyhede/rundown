@@ -13,6 +13,10 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { Errors } from '../../src/errors/factory.js';
 import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
+import {
+  makeDelegationCredentialDescriptor,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
 
 // Same mock pattern as retry-hook.test.ts — control retryDelegation return values.
 jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({
@@ -27,6 +31,7 @@ const mockedRetryDelegation = retryDelegation as jest.MockedFunction<typeof retr
 const HASH_TEST = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 const HASH_NEW = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
 const HASH_NO_AT = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
+const issueCredential = makeDelegationCredentialIssuer();
 
 function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
   working: RetryWorkingState;
@@ -66,6 +71,7 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
   const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
 
   const defaultDelegation: StepDelegation = {
+    credential: makeDelegationCredentialDescriptor(),
     tokenHash: HASH_TEST,
     childRunbookPath: 'child-1.md',
     childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -111,7 +117,14 @@ describe('retrySingleSubstep', () => {
   it('returns { status: "skipped" } when no substep state exists for the id', () => {
     const { working, substep, frameKey, parentName, steps } = makeInputs({ substepStates: [] });
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('skipped');
     expect(mockedRetryDelegation).not.toHaveBeenCalled();
@@ -125,7 +138,14 @@ describe('retrySingleSubstep', () => {
     const ss: SubstepState = { id: '1', frameKey: dummyKey, status: 'pending' };
     const { working, substep, frameKey, parentName, steps } = makeInputs({ substepStates: [ss] });
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('skipped');
     expect(mockedRetryDelegation).not.toHaveBeenCalled();
@@ -135,6 +155,7 @@ describe('retrySingleSubstep', () => {
     const { working, substep, frameKey, parentName, steps, originalSubstepStates } = makeInputs();
 
     const newDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -158,7 +179,14 @@ describe('retrySingleSubstep', () => {
       updatedSubstepStates: [...originalSubstepStates],
     }));
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('retried');
     if (outcome.status === 'retried') {
@@ -166,7 +194,8 @@ describe('retrySingleSubstep', () => {
       expect(outcome.frontierEntry.id).toBe('1.2.1');
       expect(outcome.frontierEntry.id).not.toBe('1.1');
       expect(outcome.frontierEntry.runbook).toBe('child-1.md');
-      expect(outcome.frontierEntry.token).toBe('rdtk_new_token');
+      expect(outcome.frontierEntry.credential).toBe(newDelegation.credential);
+      expect(outcome.frontierEntry.tokenHash).toBe(HASH_NEW);
       // working should be a new object (immutable update)
       expect(outcome.working).not.toBe(working);
       // The retried substep should be reset to pending with result cleared
@@ -187,7 +216,14 @@ describe('retrySingleSubstep', () => {
       error: inner,
     }));
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
@@ -208,7 +244,14 @@ describe('retrySingleSubstep', () => {
       error: inner,
     }));
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
@@ -222,6 +265,7 @@ describe('retrySingleSubstep', () => {
   it('error variant from RD-904 on missing contextSnapshot.at does NOT carry substepStates', () => {
     const { working, substep, frameKey, parentName, steps, originalSubstepStates } = makeInputs();
     const delegationNoAt: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_NO_AT,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -244,7 +288,14 @@ describe('retrySingleSubstep', () => {
       updatedSubstepStates: [...originalSubstepStates],
     }));
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
@@ -263,7 +314,14 @@ describe('retrySingleSubstep', () => {
       error: inner,
     }));
 
-    const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    const outcome = retrySingleSubstep(
+      working,
+      substep,
+      frameKey,
+      parentName,
+      steps,
+      issueCredential,
+    );
 
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
@@ -279,6 +337,7 @@ describe('retrySingleSubstep', () => {
     const snapshot = JSON.parse(JSON.stringify(working)) as RetryWorkingState;
 
     const newDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -301,7 +360,7 @@ describe('retrySingleSubstep', () => {
       updatedSubstepStates: [...originalSubstepStates],
     }));
 
-    retrySingleSubstep(working, substep, frameKey, parentName, steps);
+    retrySingleSubstep(working, substep, frameKey, parentName, steps, issueCredential);
 
     // Input working must be unchanged (immutability)
     expect(working).toEqual(snapshot);

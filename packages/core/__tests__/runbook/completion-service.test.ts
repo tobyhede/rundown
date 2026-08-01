@@ -29,6 +29,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 
@@ -510,6 +511,7 @@ describe('RunbookCompletionService', () => {
           frameKey: buildFrameKey('1'),
           status: 'running',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
@@ -559,6 +561,7 @@ describe('RunbookCompletionService', () => {
           frameKey: buildFrameKey('1'),
           status: 'running',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
@@ -1540,6 +1543,7 @@ describe('RunbookCompletionService', () => {
             frameKey: buildFrameKey('1'),
             status: 'running',
             delegation: {
+              credential: makeDelegationCredentialDescriptor(),
               tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
               childRunbookPath: 'child.md',
               childRunbookRef: { source: 'project', path: 'child.md' },

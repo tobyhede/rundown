@@ -11,6 +11,7 @@ import {
   InvalidRunbookStateError,
   assertClaimId,
   assertClaimLookupKey,
+  assertDelegationIssuanceNonce,
   assertDelegationTokenHash,
   assertRunId,
   type AdvanceInlineParent,
@@ -22,6 +23,7 @@ import {
   type ReleaseRunbookResult,
   type SessionMutationResult,
 } from '../../src/runbook/index.js';
+import { createDelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
 import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
 import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
@@ -99,6 +101,26 @@ describe('RunbookCollectionService', () => {
   // policy-gate describe.
   const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'claim_bearer', claimId };
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
+
+  function frontierEntry(id = '1.1', runbook = 'child-a.md', nonce = 'A') {
+    const issued = createDelegationCredentialIssuer({ kind: 'bearer', claimId, claimKey }, () =>
+      assertDelegationIssuanceNonce(`${nonce.repeat(42)}A`),
+    )({
+      parentRunId: runId,
+      parentStepId: id,
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    });
+    return {
+      persisted: {
+        id,
+        runbook,
+        credential: issued.credential,
+        tokenHash: issued.tokenHash,
+      },
+      public: { id, runbook, token: issued.token },
+    };
+  }
 
   // Default runbook: step 1 delegates two substeps (PASS CONTINUE so a full
   // drain advances the run to step 2 while staying `running`); step 2 is a
@@ -444,6 +466,8 @@ describe('RunbookCollectionService', () => {
       substep: '2',
       resolvedCompletions: target.resolvedCompletions,
     });
+    const retryA = frontierEntry('1.1', 'child-a.md', 'A');
+    const retryB = frontierEntry('1.2', 'child-b.md', 'B');
     const retryState = state({
       step: '1',
       substep: '1',
@@ -451,10 +475,7 @@ describe('RunbookCollectionService', () => {
       resolvedCompletions: target.resolvedCompletions,
       snapshot: {
         context: {
-          delegateFrontier: [
-            { id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' },
-            { id: '1.2', runbook: 'child-b.md', token: 'rdtk_retry_b' },
-          ],
+          delegateFrontier: [retryA.persisted, retryB.persisted],
         },
       },
     });
@@ -470,10 +491,7 @@ describe('RunbookCollectionService', () => {
             isSubstep: true,
             prompted: false,
             artifacts: {},
-            delegateFrontier: [
-              { id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' },
-              { id: '1.2', runbook: 'child-b.md', token: 'rdtk_retry_b' },
-            ],
+            delegateFrontier: [retryA.public, retryB.public],
           },
         },
       },
@@ -566,6 +584,7 @@ describe('RunbookCollectionService', () => {
       },
     });
     await manager.save(target);
+    const retry = frontierEntry();
 
     jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
       status: 'continue',
@@ -593,7 +612,7 @@ describe('RunbookCollectionService', () => {
         retryCount: 1,
         snapshot: {
           context: {
-            delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+            delegateFrontier: [retry.persisted],
           },
         },
       }),
@@ -610,7 +629,7 @@ describe('RunbookCollectionService', () => {
             isSubstep: true,
             prompted: false,
             artifacts: {},
-            delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+            delegateFrontier: [retry.public],
           },
         },
       },
@@ -640,11 +659,12 @@ describe('RunbookCollectionService', () => {
     // still re-project + consume the pending frontier and surface its
     // observations — not strand it behind a terminal `already_collected` no-op.
     const frameKey = buildFrameKey('1');
+    const retry = frontierEntry();
     const target = state({
       retryCount: 1,
       snapshot: {
         context: {
-          delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+          delegateFrontier: [retry.persisted],
         },
       },
     });
@@ -670,7 +690,7 @@ describe('RunbookCollectionService', () => {
             isSubstep: true,
             prompted: false,
             artifacts: {},
-            delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+            delegateFrontier: [retry.public],
           },
         },
       },
@@ -1492,6 +1512,7 @@ describe('RunbookCollectionService', () => {
       unresolved: 1,
       applied: [],
     });
+    const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
 
     await expect(
       collectionService.collectDelegationOutcomes({
@@ -1507,6 +1528,7 @@ describe('RunbookCollectionService', () => {
       code: 'COLLECT_OPERATION_FAILED',
       message: expect.any(String),
     });
+    expect(observeEntrySpy).not.toHaveBeenCalled();
   });
 
   it('counts only delegate substeps as required, ignoring plain substeps in the same step', async () => {
@@ -1968,23 +1990,79 @@ describe('RunbookCollectionService', () => {
   it('rejects a frontier entry missing a string id', async () => {
     // L286 `typeof entry.id === 'string'`: id absent → false → `.every` fails →
     // throw. Forcing this check `true` (or OR-ing it) would accept the entry.
-    await expect(
-      collectWithPersistedFrontier([{ runbook: 'child.md', token: 'rdtk_x' }]),
-    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    const { id: _id, ...missingId } = frontierEntry().persisted;
+    await expect(collectWithPersistedFrontier([missingId])).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
   });
 
   it('rejects a frontier entry missing a string runbook', async () => {
     // L287 `typeof entry.runbook === 'string'`: runbook absent → false → throw.
-    await expect(
-      collectWithPersistedFrontier([{ id: '1.1', token: 'rdtk_x' }]),
-    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    const { runbook: _runbook, ...missingRunbook } = frontierEntry().persisted;
+    await expect(collectWithPersistedFrontier([missingRunbook])).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
   });
 
-  it('rejects a frontier entry missing a string token', async () => {
-    // L288 `typeof entry.token === 'string'`: token absent → false → throw.
-    await expect(
-      collectWithPersistedFrontier([{ id: '1.1', runbook: 'child.md' }]),
-    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+  it('rejects a frontier entry missing its credential descriptor', async () => {
+    const { credential: _credential, ...missingCredential } = frontierEntry().persisted;
+    await expect(collectWithPersistedFrontier([missingCredential])).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+  });
+
+  it('rejects a frontier entry missing its token hash', async () => {
+    const { tokenHash: _tokenHash, ...missingTokenHash } = frontierEntry().persisted;
+    await expect(collectWithPersistedFrontier([missingTokenHash])).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+  });
+
+  it('refuses projection when the verified collector is not the frontier issuer', async () => {
+    const persisted = frontierEntry().persisted;
+    const rotatedIssuer = {
+      ...persisted,
+      credential: {
+        ...persisted.credential,
+        issuerClaimKey: assertClaimLookupKey(`rdclk_${'9'.repeat(32)}`),
+      },
+    };
+    const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
+    const consumeSpy = jest.spyOn(actorService, 'sendAndSync');
+
+    await expect(collectWithPersistedFrontier([rotatedIssuer])).resolves.toMatchObject({
+      kind: 'collection_failed',
+      reason: 'frontier_projection_refused',
+      code: 'COLLECT_OPERATION_FAILED',
+    });
+    expect(observeEntrySpy).not.toHaveBeenCalled();
+    expect(consumeSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses projection when a derived token does not match the persisted hash', async () => {
+    const persisted = frontierEntry().persisted;
+    const wrongHash = {
+      ...persisted,
+      tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`),
+    };
+    const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
+    const consumeSpy = jest.spyOn(actorService, 'sendAndSync');
+
+    await expect(collectWithPersistedFrontier([wrongHash])).resolves.toMatchObject({
+      kind: 'collection_failed',
+      reason: 'frontier_projection_refused',
+      code: 'COLLECT_OPERATION_FAILED',
+    });
+    expect(observeEntrySpy).not.toHaveBeenCalled();
+    expect(consumeSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the persisted re-entry frontier free of plaintext bearers', () => {
+    const entry = frontierEntry();
+
+    expect(entry.public.token).toMatch(/^rdtk_/);
+    expect(JSON.stringify(entry.persisted)).not.toMatch(/rdtk_/);
+    expect(entry.persisted).not.toHaveProperty('token');
   });
 
   it('treats an empty-array delegateFrontier as no re-entry (no observations surfaced)', async () => {
@@ -2011,12 +2089,13 @@ describe('RunbookCollectionService', () => {
     // to `status: 'none'`. Kills the L313 substep-clause mutants and confirms the
     // observation path is skipped.
     const frameKey = buildFrameKey('1');
+    const retry = frontierEntry();
     const target = state({
       substep: undefined,
       retryCount: 1,
       snapshot: {
         context: {
-          delegateFrontier: [{ id: '1.1', runbook: 'child.md', token: 'rdtk_x' }],
+          delegateFrontier: [retry.persisted],
         },
       },
     });
@@ -2056,10 +2135,12 @@ describe('RunbookCollectionService', () => {
   /** Capture-and-assert helper: run a no-op collect that projects a valid frontier. */
   async function projectFrontierAndCapture(overrides: Partial<RunbookState>) {
     const frameKey = buildFrameKey('1');
-    const frontier = [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }];
+    const retry = frontierEntry();
+    const persistedFrontier = [retry.persisted];
+    const frontier = [retry.public];
     const target = state({
       retryCount: 1,
-      snapshot: { context: { delegateFrontier: frontier } },
+      snapshot: { context: { delegateFrontier: persistedFrontier } },
       ...overrides,
     });
     await manager.save(target);

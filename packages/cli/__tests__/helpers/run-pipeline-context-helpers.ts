@@ -58,6 +58,22 @@ export function makeRunPipelineContext(
     } as unknown as RunbookActorService,
     sessionService: {
       pushRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined),
+      prepareRunControlClaim: mockFn<(...args: unknown[]) => unknown>().mockReturnValue({
+        claimId: 'test-claim',
+        claim: {},
+        issueDelegationCredential: () => {
+          throw new Error('Unexpected credential issuance in pipeline service double');
+        },
+        deriveDelegationToken: () => {
+          throw new Error('Unexpected token derivation in pipeline service double');
+        },
+      }),
+      pushRunbookWithPreparedRunControlClaim: mockFn<
+        (...args: unknown[]) => Promise<unknown>
+      >().mockResolvedValue({
+        kind: 'committed',
+        value: { claimId: 'test-claim', claim: {} },
+      }),
       ...overrides.sessionService,
     } as unknown as SessionService,
     lifecycleService: {

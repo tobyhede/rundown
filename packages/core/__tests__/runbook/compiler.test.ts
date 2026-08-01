@@ -44,7 +44,12 @@ import type {
   RunbookState,
 } from '../../src/runbook/types.js';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  generateDelegationToken,
+  hashDelegationToken,
+} from '../../src/runbook/delegation-token.js';
+import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { activeFrame, buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -55,7 +60,10 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
-import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
+import {
+  makeDelegatedSubstepState,
+  makeDelegationCredentialDescriptor,
+} from '../../src/testing/delegation-fixtures.js';
 
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
@@ -82,6 +90,15 @@ describe('runbook compiler', () => {
     runExternalCommand: async () => ({ success: true, exitCode: 0 }),
   };
 
+  const ISSUE_DELEGATION_CREDENTIAL: DelegationCredentialIssuer = (location) => {
+    const token = generateDelegationToken();
+    return {
+      token,
+      tokenHash: hashDelegationToken(token),
+      credential: makeDelegationCredentialDescriptor(location),
+    };
+  };
+
   function compileDelegationFixtureMachine(steps: ResolvedStep[]) {
     return compileRunbookToMachine(steps, {
       templateVars: brandFlattenedTemplateVarsForTest({
@@ -92,6 +109,7 @@ describe('runbook compiler', () => {
         runbookRef,
         childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
       }),
+      issueDelegationCredential: ISSUE_DELEGATION_CREDENTIAL,
     });
   }
 
@@ -587,14 +605,11 @@ Review the plan manually.
     const targetFrame = buildFrameKey('1', 1);
     const collidingFrame = buildFrameKey('1', 2);
 
-    function delegationFixture(
-      options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
-    ) {
+    function delegationFixture(options: { readonly linkedChild?: typeof childRunId } = {}) {
       const target = makeDelegatedSubstepState({
         id: '1.1',
         frameKey: targetFrame,
         delegation: {
-          token: options.plaintextToken,
           tokenHash,
           childRunId: options.linkedChild ?? null,
         },
@@ -751,11 +766,10 @@ Review the plan manually.
         childRunId,
       };
       actor.send(event);
-      const { token: _plaintextToken, ...persistedDelegation } = linked.target.delegation!;
       expect(actor.getSnapshot().context.substepStates).toEqual([
         {
           ...linked.target,
-          delegation: { ...persistedDelegation, childRunId: null },
+          delegation: { ...linked.target.delegation, childRunId: null },
         },
         linked.sameIdOtherFrame,
         linked.sibling,
@@ -12227,6 +12241,7 @@ echo ok
             childRunbookRef,
             ancestors: [],
             frameKey,
+            issueCredential: ISSUE_DELEGATION_CREDENTIAL,
           },
           steps,
         );
@@ -12372,6 +12387,11 @@ echo ok
       expect(ctx.delegateFrontier?.length).toBe(2);
       const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
       expect(frontierIds).toEqual(['1.1', '1.2']);
+      expect(ctx.delegateFrontier?.every((entry) => entry.credential !== undefined)).toBe(true);
+      expect(ctx.delegateFrontier?.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(
+        true,
+      );
+      expect(JSON.stringify(actor.getPersistedSnapshot())).not.toContain('rdtk_');
 
       // Each retried substep's state is reset: status pending, result cleared.
       const post1 = ctx.substepStates?.find((ss) => ss.id === '1');
@@ -12827,6 +12847,7 @@ echo ok
           childRunbookRef,
           ancestors: [],
           frameKey,
+          issueCredential: ISSUE_DELEGATION_CREDENTIAL,
         },
         steps,
       );
@@ -13127,6 +13148,7 @@ echo ok
           runbookRef,
           childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
         }),
+        issueDelegationCredential: ISSUE_DELEGATION_CREDENTIAL,
       });
       const actor = createActor(machine);
       actor.start();

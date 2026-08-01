@@ -32,6 +32,8 @@ import {
   issueRunControlClaim,
   readSession,
   writeSession,
+  requireFrontierToken,
+  requireLatestFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
@@ -1413,7 +1415,7 @@ describe('collect command', () => {
       const parent = await getActiveState(workspace);
       expect(parent).not.toBeNull();
       const parentRunId = parent!.id;
-      const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+      const token = requireFrontierToken(start.stdout, '1.1');
 
       // Claim + explicitly close the delegated worker -> reports the outcome.
       const claim = await runCliInProcess(`claim ${token}`, workspace);
@@ -1523,8 +1525,7 @@ describe('collect command', () => {
      * `fail`, which lets the collecting run's FAIL ANY aggregation STOP it.
      */
     async function claimAndReportActiveDelegation(result: 'pass' | 'fail' = 'pass'): Promise<void> {
-      const active = await getActiveState(workspace);
-      const token = active!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+      const token = requireLatestFrontierToken(workspace, '1.1');
       const claim = await runCliInProcess(`claim ${token}`, workspace);
       expect(claim.exitCode).toBe(0);
       const claimId = String(findActionOutput(claim.stdout)!.claim_id);

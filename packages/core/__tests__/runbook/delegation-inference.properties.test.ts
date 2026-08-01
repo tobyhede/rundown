@@ -28,6 +28,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 
 const DEFAULT_TRANSITIONS: Transitions = {
@@ -133,13 +134,11 @@ describe('delegation inference invariants', () => {
 /**
  * Generated description of a single per-frame delegation substep record.
  *
- * `token` is `undefined` for a token-less (non-recoverable) delegation, and
  * `cancelled` flips `cancelledAt` from `null` to a timestamp.
  */
 interface DelegationSpec {
   readonly id: string;
   readonly frameKey: FrameKey;
-  readonly token: string | undefined;
   readonly cancelled: boolean;
   /** When true, the delegation is claimed (`childRunId` set, not pending). */
   readonly claimed: boolean;
@@ -148,17 +147,12 @@ interface DelegationSpec {
 /**
  * Build a substep state carrying a delegation from a generated spec.
  *
- * Delegation tokens are cryptographically unique in production, so two distinct
- * delegations never share one. The generator draws token strings freely and may
- * repeat a value across records; `index` is folded into the token to restore
- * that real-world uniqueness. Without it a cancelled delegation in one frame can
- * share a token with a live delegation in the active frame, and a token-keyed
- * invariant (e.g. "never surfaces a cancelled delegation") false-positives on a
- * state the runtime can never produce.
+ * `index` is folded into the persisted credential coordinate so generated
+ * delegations retain the production invariant that each issuance is distinct.
  *
  * @param spec - Generated delegation description.
- * @param index - Position in the generated array; disambiguates repeated tokens.
- * @returns A substep state with a (possibly cancelled / token-less) delegation.
+ * @param index - Position in the generated array; disambiguates issuance coordinates.
+ * @returns A substep state with a possibly cancelled or claimed delegation.
  */
 function substepFromSpec(spec: DelegationSpec, index: number): SubstepState {
   return {
@@ -166,7 +160,11 @@ function substepFromSpec(spec: DelegationSpec, index: number): SubstepState {
     frameKey: spec.frameKey,
     status: 'pending',
     delegation: {
-      ...(spec.token !== undefined ? { token: `${spec.token}#${String(index)}` } : {}),
+      credential: makeDelegationCredentialDescriptor({
+        parentStepId: `1.${spec.id}`,
+        parentFrameKey: spec.frameKey,
+        parentEntry: index + 1,
+      }),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'child.runbook.md',
       childRunbookRef: { source: 'project', path: 'child.runbook.md' },
@@ -226,7 +224,6 @@ describe('deriveDelegateFrontier invariants', () => {
   const specArb: fc.Arbitrary<DelegationSpec> = fc.record({
     id: fc.constantFrom('1', '2', '3'),
     frameKey: frameArb,
-    token: fc.option(fc.string({ minLength: 1, maxLength: 16 }), { nil: undefined }),
     cancelled: fc.boolean(),
     claimed: fc.boolean(),
   });
@@ -258,7 +255,9 @@ describe('deriveDelegateFrontier invariants', () => {
               ss.id === substepId &&
               ss.frameKey === expectedFrame &&
               ss.delegation?.cancelledAt === null &&
-              ss.delegation.token === entry.token,
+              ss.delegation.childRunId === null &&
+              ss.delegation.credential === entry.credential &&
+              ss.delegation.tokenHash === entry.tokenHash,
           );
           expect(sourceInExpectedFrame).toBe(true);
         }
@@ -266,21 +265,27 @@ describe('deriveDelegateFrontier invariants', () => {
     );
   });
 
-  it('never surfaces a cancelled or token-less delegation', () => {
+  it('never surfaces a cancelled or claimed delegation or plaintext token', () => {
     fc.assert(
       fc.property(specsArb, fc.option(frameArb, { nil: undefined }), (specs, activeFrameKey) => {
         const substepStates = specs.map((spec, index) => substepFromSpec(spec, index));
         const state = makeFrontierState(STEP, activeFrameKey, substepStates);
 
         for (const entry of deriveDelegateFrontier(state)) {
-          // Token must be a non-empty recoverable string.
-          expect(typeof entry.token).toBe('string');
-          expect(entry.token.length).toBeGreaterThan(0);
-          // No cancelled delegation may match this entry's token.
+          expect(entry).not.toHaveProperty('token');
+          expect(entry.credential).toBeDefined();
+          expect(entry.tokenHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+          // No cancelled delegation may match this issuance descriptor.
           const matchesCancelled = substepStates.some(
-            (ss) => ss.delegation?.token === entry.token && ss.delegation.cancelledAt !== null,
+            (ss) =>
+              ss.delegation?.credential === entry.credential && ss.delegation.cancelledAt !== null,
           );
           expect(matchesCancelled).toBe(false);
+          const matchesClaimed = substepStates.some(
+            (ss) =>
+              ss.delegation?.credential === entry.credential && ss.delegation.childRunId !== null,
+          );
+          expect(matchesClaimed).toBe(false);
         }
       }),
     );
@@ -309,7 +314,12 @@ describe('deriveDelegateFrontier invariants', () => {
           );
 
           const normalise = (entries: ReturnType<typeof deriveDelegateFrontier>) =>
-            entries.map((e) => `${e.id} ${e.runbook} ${e.token}`).sort((a, b) => a.localeCompare(b));
+            entries
+              .map(
+                (entry) =>
+                  `${entry.id}\u0000${entry.runbook}\u0000${JSON.stringify(entry.credential)}\u0000${entry.tokenHash}`,
+              )
+              .sort((a, b) => a.localeCompare(b));
 
           expect(normalise(shuffledFrontier)).toEqual(normalise(baseFrontier));
         },
@@ -428,7 +438,6 @@ describe('findPendingDelegation invariants', () => {
   const specArb: fc.Arbitrary<DelegationSpec> = fc.record({
     id: idArb,
     frameKey: frameArb,
-    token: fc.option(fc.string({ minLength: 1, maxLength: 16 }), { nil: undefined }),
     cancelled: fc.boolean(),
     claimed: fc.boolean(),
   });
@@ -445,7 +454,7 @@ describe('findPendingDelegation invariants', () => {
     return [...byKey.values()];
   }
 
-  it('is defined iff some substep matches id, frame, non-cancelled, unclaimed, tokened', () => {
+  it('is defined iff some substep matches id, frame, non-cancelled, and unclaimed', () => {
     fc.assert(
       fc.property(specsArb, idArb, frameArb, (specs, targetId, targetFrame) => {
         const substepStates = uniqueStates(specs);
@@ -457,14 +466,14 @@ describe('findPendingDelegation invariants', () => {
             ss.id === targetId &&
             ss.frameKey === targetFrame &&
             ss.delegation?.cancelledAt === null &&
-            ss.delegation.childRunId === null &&
-            ss.delegation.token != null,
+            ss.delegation.childRunId === null,
         );
         expect(result !== undefined).toBe(expectMatch);
 
         if (result) {
-          expect(typeof result.token).toBe('string');
-          expect(result.token.length).toBeGreaterThan(0);
+          expect(result).not.toHaveProperty('token');
+          expect(result.credential).toBeDefined();
+          expect(result.tokenHash).toMatch(/^sha256:[0-9a-f]{64}$/);
           // The returned delegation must belong to a substep matching the
           // *targeted* id and frame (not merely exist somewhere), so a lookup
           // that ignored id or frameKey would be caught here too.
@@ -474,8 +483,7 @@ describe('findPendingDelegation invariants', () => {
               ss.frameKey === targetFrame &&
               ss.delegation === result &&
               ss.delegation.cancelledAt === null &&
-              ss.delegation.childRunId === null &&
-              ss.delegation.token != null,
+              ss.delegation.childRunId === null,
           );
           expect(isMatchingSubstepDelegation).toBe(true);
         }
@@ -509,7 +517,8 @@ describe('findPendingDelegation invariants', () => {
             targetFrame,
           );
 
-          expect(reordered?.token).toBe(base?.token);
+          expect(reordered?.credential).toEqual(base?.credential);
+          expect(reordered?.tokenHash).toBe(base?.tokenHash);
         },
       ),
     );

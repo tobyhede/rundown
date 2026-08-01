@@ -82,6 +82,12 @@ export * from './duration.js';
 export * from './last-action.js';
 export * from './transition-kernel.js';
 export {
+  prepareManualDelegation,
+  type ManualDelegationPreparationEvent,
+  type ManualDelegationPreparationInput,
+  type ManualDelegationPreparationResult,
+} from './manual-delegation-machine.js';
+export {
   generateRunId,
   RunbookStateManager,
   InvalidRunbookStateError,
@@ -107,6 +113,7 @@ export {
   type RollbackInitialLinkInput,
   type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
+  type PreparedRunControlClaim,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
   type RunningStackMemberResolution,
@@ -243,7 +250,8 @@ export {
   type DelegationIssuanceOutcome,
   type ExplicitDelegationTarget,
   type FindDelegationByToken,
-  type ForceAbortLinkedChildCleanupResult,
+  type DelegationAbortInput,
+  type DelegationAbortOutcome,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
   type LifecycleNavigationMutationInput,
@@ -255,7 +263,6 @@ export {
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
-  type PersistIssuedSubstep,
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
@@ -354,7 +361,12 @@ export {
   type PrepareDelegationChildLinkResult,
   type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
+  type RunbookActorRuntimeCapabilities,
 } from './actor-service.js';
+export type {
+  DelegationCredentialIssuer,
+  DelegationTokenDeriver,
+} from './delegation-credential.js';
 export { inferFrameEntryFromState } from './frame-entry.js';
 export type { RunbookEvent } from './compiler.js';
 export {
@@ -397,16 +409,22 @@ export {
 } from './delegation-lifecycle-read-model.js';
 export {
   DELEGATION_CLAIM_MARKER,
+  DELEGATION_ISSUANCE_NONCE_PATTERN,
   DELEGATION_TOKEN_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
+  assertDelegationIssuanceNonce,
   assertDelegationTokenHash,
   findDelegationClaimToken,
+  generateDelegationIssuanceNonce,
   generateDelegationToken,
   hashDelegationToken,
   isDelegationToken,
   isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
+  type DelegationCredentialCoordinate,
+  type DelegationCredentialDescriptor,
+  type DelegationIssuanceNonce,
   type DelegationTokenHash,
 } from './delegation-token.js';
 export {

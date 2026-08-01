@@ -423,6 +423,7 @@ remediations
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
 linecap
 linejoin
+linearization
 offsetless
 Vulns
 sqljs

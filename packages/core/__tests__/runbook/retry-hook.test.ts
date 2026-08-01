@@ -10,6 +10,10 @@ import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
+import {
+  makeDelegationCredentialDescriptor,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
 import { Errors } from '../../src/errors/factory.js';
 
 // Mock delegation-service so we can drive `retryDelegation` to specific
@@ -32,6 +36,7 @@ const HASH_NEW = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
 const HASH_STALE = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
 const HASH_ORPHAN = assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`);
 const HASH_NO_AT = assertDelegationTokenHash(`sha256:${'e'.repeat(64)}`);
+const issueCredential = makeDelegationCredentialIssuer();
 
 describe('asTemplateVars', () => {
   it('passes through strings, numbers, arrays, and objects unchanged', () => {
@@ -131,6 +136,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const steps: ResolvedStep[] = [parentStep];
 
     const fixtureDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_TEST,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -180,6 +186,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     // id is "1.2.1", not "1.1".
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
     const delegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -203,7 +210,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       updatedSubstepStates: [...originalSubstepStates],
     }));
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
     expect(result.status).toBe('success');
     if (result.status === 'success') {
       expect(result.frontier).toHaveLength(1);
@@ -222,7 +229,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       error: inner,
     }));
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
@@ -241,7 +248,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       error: inner,
     }));
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
@@ -264,7 +271,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       error: inner,
     }));
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
@@ -311,6 +318,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const steps: ResolvedStep[] = [parentStep];
 
     const staleDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_STALE,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -359,7 +367,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     };
     void activeFrameKey;
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
@@ -407,6 +415,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const steps: ResolvedStep[] = [parentStep];
 
     const orphanDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_ORPHAN,
       childRunbookPath: 'child-99.md',
       childRunbookRef: { source: 'project', path: 'child-99.md' },
@@ -445,7 +454,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     };
     void activeFrameKey;
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
@@ -463,6 +472,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     // would mis-target the re-entry frontier (e.g. "1.1" for an iteration-2 retry).
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
     const delegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: HASH_NO_AT,
       childRunbookPath: 'child-1.md',
       childRunbookRef: { source: 'project', path: 'child-1.md' },
@@ -485,7 +495,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       updatedSubstepStates: [...originalSubstepStates],
     }));
 
-    const result = runRetryHook(context, parentStep, steps);
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {

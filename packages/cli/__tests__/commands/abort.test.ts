@@ -8,6 +8,7 @@ import {
   findActionOutput,
   parseCliJsonObject,
   parseConcatenatedJson,
+  requireFrontierToken,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -114,10 +115,7 @@ describe('abort command - unit tests', () => {
     expect(typeof started?.claim_id).toBe('string');
     orchestratorClaimId = String(started!.claim_id);
 
-    const state = await getActiveState(workspace);
-    const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    return requireFrontierToken(result.stdout, '1.1');
   }
 
   function abortCommand(token: string, suffix = ''): string {
@@ -518,10 +516,11 @@ describe('abort command - unit tests', () => {
       result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
       expect(result.exitCode).toBe(0);
 
-      // The parent remains the default-stack runbook; the child state is gone.
+      // The parent remains the default-stack runbook; the stopped child is
+      // retained as terminal evidence for crash reconciliation and pruning.
       const afterAbortParent = await readRunbookState(workspace, parentState.id);
       expect(afterAbortParent?.lifecycle).toBe('running');
-      expect(await readRunbookState(workspace, childRunId)).toBeNull();
+      expect((await readRunbookState(workspace, childRunId))?.lifecycle).toBe('stopped');
 
       // FAIL propagation must reach the parent: the substepState for the
       // delegated parent substep must be marked done/fail. Without

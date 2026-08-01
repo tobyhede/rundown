@@ -15,6 +15,7 @@ import {
   brandStoredOutputsForTest,
   brandEffectiveVarsForTest,
 } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 
 describe('DelegationScanService', () => {
   let tmpDir: string;
@@ -77,6 +78,7 @@ describe('DelegationScanService', () => {
 
   function makeDelegation(token: string): StepDelegation {
     return {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: hashDelegationToken(token),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },

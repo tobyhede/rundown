@@ -14,12 +14,61 @@
  */
 
 import type { ContextSnapshot, StepDelegation, SubstepState } from '../runbook/types.js';
-import { assertDelegationTokenHash } from '../runbook/delegation-token.js';
+import {
+  assertClaimLookupKey,
+  generateClaimBearer,
+  parseClaimBearer,
+} from '../runbook/claim-id.js';
+import {
+  createDelegationCredentialIssuer,
+  type DelegationCredentialIssuer,
+} from '../runbook/delegation-credential.js';
+import {
+  assertDelegationIssuanceNonce,
+  assertDelegationTokenHash,
+  type DelegationCredentialDescriptor,
+} from '../runbook/delegation-token.js';
+import { assertRunId } from '../runbook/run-id.js';
 import { buildFrameKey, type FrameKey } from '../runbook/targeting.js';
 import { brandEffectiveVarsForTest } from './effective-vars.js';
 
 /** Token hash used by every fixture that does not name its own. */
 const DEFAULT_TOKEN_HASH = `sha256:${'a'.repeat(64)}`;
+
+/**
+ * Build a non-secret delegation credential descriptor with valid canonical coordinates.
+ *
+ * @param partial - Overrides for any credential descriptor field.
+ * @returns A valid credential descriptor.
+ */
+export function makeDelegationCredentialDescriptor(
+  partial: Partial<DelegationCredentialDescriptor> = {},
+): DelegationCredentialDescriptor {
+  return {
+    version: 1,
+    issuerClaimKey: assertClaimLookupKey(`rdclk_${'b'.repeat(32)}`),
+    issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+    parentRunId: assertRunId(`rd_${'c'.repeat(32)}`),
+    parentStepId: '1.1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+    ...partial,
+  };
+}
+
+/**
+ * Build a claim-bound credential issuer for delegation primitive tests.
+ *
+ * @returns A fresh issuer whose bearer remains local to the test process.
+ */
+export function makeDelegationCredentialIssuer(): DelegationCredentialIssuer {
+  const parsed = parseClaimBearer(generateClaimBearer());
+  return createDelegationCredentialIssuer({
+    kind: 'bearer',
+    claimId: parsed.claimId,
+    claimKey: parsed.claimKey,
+  });
+}
 
 /**
  * Build a `ContextSnapshot` with a branded empty `EffectiveVars`.
@@ -46,6 +95,7 @@ export function makeContextSnapshot(partial: Partial<ContextSnapshot> = {}): Con
  */
 export function makeStepDelegation(partial: Partial<StepDelegation> = {}): StepDelegation {
   return {
+    credential: makeDelegationCredentialDescriptor(),
     tokenHash: assertDelegationTokenHash(DEFAULT_TOKEN_HASH),
     childRunbookPath: 'child.md',
     childRunbookRef: { source: 'project', path: 'child.md' },

@@ -1,7 +1,7 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { verifiedClaimContext, type CallerEvidence } from './actor-context.js';
 import { claimCanReportDelegationResult } from './claim-id.js';
-import type { ClaimId, ClaimRecord, VerifiedClaim } from './claim-id.js';
+import type { ClaimId, ClaimRecord, VerifiedClaim, VerifiedClaimAuthority } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -30,9 +30,17 @@ import {
 import { countNumberedSteps } from './step-utils.js';
 import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
-import type { ResolvedStep, RunbookState, RunId } from './types.js';
-import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ExecutionObservationEffect } from '../events/execution-observation.js';
+import type { PersistedDelegateFrontierEntry, ResolvedStep, RunbookState, RunId } from './types.js';
+import {
+  projectDelegateFrontier,
+  type ExecutionObservationEffect,
+} from '../events/execution-observation.js';
+import {
+  createDelegationCredentialIssuer,
+  createDelegationTokenDeriver,
+} from './delegation-credential.js';
+import { PersistedDelegateFrontierEntrySchema } from '../schemas.js';
+import { getErrorMessage } from '../errors.js';
 import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
@@ -354,7 +362,13 @@ export async function collectDelegationOutcomes(
     };
   }
 
-  return applyCollection(input, { stepName, frame, frameKey, claim: authority.claim });
+  return applyCollection(input, {
+    stepName,
+    frame,
+    frameKey,
+    claim: authority.claim,
+    authority: authority.authority,
+  });
 }
 
 function deriveCollectionTransitionObservations(
@@ -377,6 +391,7 @@ function deriveCollectionTransitionObservations(
 type ReEntryProjection =
   | { readonly status: 'none' }
   | { readonly status: 'projected'; readonly observations: readonly ExecutionObservationEffect[] }
+  | { readonly status: 'projection_refused'; readonly message: string }
   | { readonly status: 'consume_failed' };
 
 /**
@@ -389,19 +404,14 @@ type ReEntryProjection =
  * @param value - Candidate frontier entry read from the persisted snapshot.
  * @returns A type predicate narrowing `value` to {@link DelegateFrontierEntry}.
  */
-function isDelegateFrontierEntry(value: unknown): value is DelegateFrontierEntry {
-  if (typeof value !== 'object' || value === null) return false;
-  const entry = value as Record<string, unknown>;
-  return (
-    typeof entry.id === 'string' &&
-    typeof entry.runbook === 'string' &&
-    typeof entry.token === 'string'
-  );
+function isPersistedDelegateFrontierEntry(value: unknown): value is PersistedDelegateFrontierEntry {
+  return PersistedDelegateFrontierEntrySchema.safeParse(value).success;
 }
 
 async function projectAndConsumeReEntryFrontier(
   input: CollectDelegationOutcomesOperationInput,
   advanced: RunbookState,
+  authority: VerifiedClaimAuthority,
 ): Promise<ReEntryProjection> {
   const context = (advanced.snapshot as { readonly context?: Record<string, unknown> } | undefined)
     ?.context;
@@ -414,14 +424,21 @@ async function projectAndConsumeReEntryFrontier(
   // corrupt/incompatible persisted snapshot. Per the no-migration rule, reject it
   // (the CLI maps InvalidRunbookStateError to finish/stop/prune/restart) rather
   // than trusting malformed data or crashing mid-collection.
-  if (!Array.isArray(rawFrontier) || !rawFrontier.every(isDelegateFrontierEntry)) {
+  if (!Array.isArray(rawFrontier) || !rawFrontier.every(isPersistedDelegateFrontierEntry)) {
     throw new InvalidRunbookStateError(
       `Run ${advanced.id} carries a malformed delegateFrontier in its persisted snapshot`,
     );
   }
-  const frontier: readonly DelegateFrontierEntry[] = rawFrontier;
-  if (frontier.length === 0 || advanced.substep === undefined) {
+  const persistedFrontier: readonly PersistedDelegateFrontierEntry[] = rawFrontier;
+  if (persistedFrontier.length === 0 || advanced.substep === undefined) {
     return { status: 'none' };
+  }
+
+  let frontier: ReturnType<typeof projectDelegateFrontier>;
+  try {
+    frontier = projectDelegateFrontier(persistedFrontier, createDelegationTokenDeriver(authority));
+  } catch (error) {
+    return { status: 'projection_refused', message: getErrorMessage(error) };
   }
 
   const position = buildStepPosition(
@@ -478,6 +495,7 @@ async function applyCollection(
     readonly frame: Frame;
     readonly frameKey?: FrameKey;
     readonly claim: VerifiedClaim;
+    readonly authority: VerifiedClaimAuthority;
   },
 ): Promise<DelegationPolicyOutcome> {
   const drained = await input.completionService.drainResolvedCompletions({
@@ -485,6 +503,7 @@ async function applyCollection(
     steps: [...input.steps],
     currentState: input.targetState,
     frameOverride: scope.frame,
+    issueDelegationCredential: createDelegationCredentialIssuer(scope.authority),
   });
 
   if (drained.status === 'failed') {
@@ -603,7 +622,16 @@ async function applyCollection(
     drained.applied.at(-1)?.stateAfter ??
     input.targetState;
   // Stryker restore OptionalChaining,UnaryOperator
-  const reentry = await projectAndConsumeReEntryFrontier(input, advanced);
+  const reentry = await projectAndConsumeReEntryFrontier(input, advanced, scope.authority);
+  if (reentry.status === 'projection_refused') {
+    return {
+      kind: 'collection_failed',
+      targetRunId: input.targetState.id,
+      reason: 'frontier_projection_refused',
+      code: 'COLLECT_OPERATION_FAILED',
+      message: reentry.message,
+    };
+  }
   if (reentry.status === 'consume_failed') {
     // Transient: the frontier is still persisted and no observations were
     // surfaced (their fresh tokens would be orphaned by a retry). Surface a

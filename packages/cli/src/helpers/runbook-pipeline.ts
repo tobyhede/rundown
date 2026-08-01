@@ -25,6 +25,8 @@ import {
   type ParentLinkage,
   type ClaimId,
   type SessionMutationRefusalOutcome,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
   RUNS_DIR,
   classifyDelegationLiveness,
   DelegationScanService,
@@ -199,6 +201,11 @@ export type RunbookStartResult =
       loopResult: 'done' | 'stopped' | 'waiting';
       stateId: RunId;
       claimId?: ClaimId;
+      /** Process-only capabilities bound to the exact run-control claim. */
+      delegationRuntime?: {
+        readonly issueDelegationCredential: DelegationCredentialIssuer;
+        readonly deriveDelegationToken: DelegationTokenDeriver;
+      };
     }
   | RunbookStartFailure
   | SessionRefusedFailure;
@@ -981,6 +988,11 @@ async function launchRunbook(
   // is raised as a throw so the shared cleanup path runs exactly as it does for
   // any other init failure, then replaces the generic launch-failed envelope.
   let activationRefusal: SessionMutationRefusalOutcome | undefined;
+  const sessionActivation = options.sessionActivation ?? { kind: 'default-stack' as const };
+  const preparedRunControlClaim =
+    sessionActivation.kind === 'default-stack'
+      ? sessionService.prepareRunControlClaim(prepared.runId)
+      : undefined;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
     if (afterInitAttempted && options.afterInitRollback) {
@@ -1043,7 +1055,13 @@ async function launchRunbook(
       await options.afterCreate(state.id);
     }
 
-    const initializedState = await actorService.initializeState(state.id, runbook.steps);
+    const initializedState = await actorService.initializeState(
+      state.id,
+      runbook.steps,
+      preparedRunControlClaim === undefined
+        ? undefined
+        : { issueDelegationCredential: preparedRunControlClaim.issueDelegationCredential },
+    );
     if (!initializedState) {
       throw new Error('Failed to initialize runbook engine');
     }
@@ -1054,14 +1072,19 @@ async function launchRunbook(
       await options.afterInit(state.id);
     }
 
-    const sessionActivation = options.sessionActivation ?? { kind: 'default-stack' as const };
     switch (sessionActivation.kind) {
       case 'default-stack': {
         // Push + run-control claim mint as one atomic session mutation: run-start
         // is never persisted in a pushed-but-unclaimed state, and it takes a
         // single session-lock cycle instead of two (removing the double-cycle
         // contention that made run-start flaky under heavy parallel load).
-        const activation = await sessionService.pushRunbookWithRunControlClaim(state.id);
+        if (preparedRunControlClaim === undefined) {
+          throw new Error('Default-stack activation is missing its prepared run-control claim');
+        }
+        const activation = await sessionService.pushRunbookWithPreparedRunControlClaim(
+          state.id,
+          preparedRunControlClaim,
+        );
         if (activation.kind !== 'committed') {
           activationRefusal = activation;
           throw new Error(activation.message);
@@ -1132,6 +1155,12 @@ async function launchRunbook(
         options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
       output,
       commandStreamOptions: ctx.commandStreamOptions,
+      ...(preparedRunControlClaim === undefined
+        ? {}
+        : {
+            issueDelegationCredential: preparedRunControlClaim.issueDelegationCredential,
+            delegationTokenDeriver: preparedRunControlClaim.deriveDelegationToken,
+          }),
     },
   );
 
@@ -1140,6 +1169,14 @@ async function launchRunbook(
     loopResult,
     stateId: launchedStateId,
     ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
+    ...(preparedRunControlClaim === undefined
+      ? {}
+      : {
+          delegationRuntime: {
+            issueDelegationCredential: preparedRunControlClaim.issueDelegationCredential,
+            deriveDelegationToken: preparedRunControlClaim.deriveDelegationToken,
+          },
+        }),
   };
 }
 

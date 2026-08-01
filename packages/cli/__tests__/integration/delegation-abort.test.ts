@@ -9,6 +9,7 @@ import {
   readRunbookState,
   runCli,
   runCliInProcess,
+  requireFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
@@ -67,14 +68,13 @@ describe('Delegation abort integration', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    const result = runCli('run --prompted parent.runbook.md --text', workspace);
+    const result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const state = await getActiveState(workspace);
-    const token = state?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const token = requireFrontierToken(result.stdout, '1.1');
     const parentClaimId = await issueRunControlClaim(workspace, state!.id);
-    return { token: token!, parentClaimId };
+    return { token, parentClaimId };
   }
 
   it('rejects invalid token format', () => {
@@ -261,7 +261,7 @@ describe('Delegation abort integration', () => {
     const rows = Object.values(parent!.resolvedCompletions ?? {}).filter(
       (row) => row.agentId === 'delegation',
     );
-    expect(rows).toHaveLength(0);
+    expect(rows).toEqual([expect.objectContaining({ result: 'fail' })]);
     const entry = parent!.substepStates?.find((state) => state.id === '1');
     expect(entry?.delegation?.cancelledAt).not.toBeNull();
   });
@@ -294,7 +294,7 @@ describe('Delegation abort integration', () => {
     ].join('\n');
     await writeFile(join(workspace.cwd, 'for-abort.runbook.md'), parentContent);
 
-    const start = runCli('run --prompted for-abort.runbook.md --text', workspace);
+    const start = runCli('run --prompted for-abort.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
     // The FOR step has entered iteration 1; substep 1.1 auto-issued a token in
@@ -302,10 +302,7 @@ describe('Delegation abort integration', () => {
     const entered = await getActiveState(workspace);
     const parentId = entered!.id;
     const parentClaimId = await issueRunControlClaim(workspace, parentId);
-    const iterationSubstep = entered?.substepStates?.find((ss) => ss.delegation?.token);
-    const token = iterationSubstep?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     // Claim (in-flight), then force abort.
     let result = runCli(`claim ${token}`, workspace);

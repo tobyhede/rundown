@@ -98,6 +98,18 @@ function claimRecord(childRunId: RunId, overrides: ClaimRecordOverride = {}): Cl
   });
 }
 
+function preparedClaimFor(runId: RunId) {
+  return {
+    claimId: TEST_CLAIM_ID,
+    claim: claimRecord(runId),
+    issueDelegationCredential: () => {
+      throw new Error('Unexpected credential issuance in pipeline test');
+    },
+    // cspell:disable-next-line
+    deriveDelegationToken: () => 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+  } as ReturnType<SessionService['prepareRunControlClaim']>;
+}
+
 function claimedRunbookResult(
   childRunId: RunId,
   overrides: ClaimRecordOverride = {},
@@ -2091,7 +2103,7 @@ describe('startRunbook', () => {
     const mockInitState =
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
     const mockPushRunbookWithRunControlClaim = mockFn<
-      SessionService['pushRunbookWithRunControlClaim']
+      SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }));
     const mockEnsureActiveEntry = mockFn<
       ExecutionLifecycleService['ensureActiveEntry']
@@ -2112,7 +2124,8 @@ describe('startRunbook', () => {
       },
       actorService: { initializeState: mockInitState },
       sessionService: {
-        pushRunbookWithRunControlClaim: mockPushRunbookWithRunControlClaim,
+        prepareRunControlClaim: () => preparedClaimFor(preparedRunId),
+        pushRunbookWithPreparedRunControlClaim: mockPushRunbookWithRunControlClaim,
       },
       lifecycleService: { ensureActiveEntry: mockEnsureActiveEntry },
     });
@@ -2156,7 +2169,10 @@ describe('startRunbook', () => {
       }),
     );
     expect(mockInitState).toHaveBeenCalled();
-    expect(mockPushRunbookWithRunControlClaim).toHaveBeenCalledWith(MOCK_RUN_ID);
+    expect(mockPushRunbookWithRunControlClaim).toHaveBeenCalledWith(
+      MOCK_RUN_ID,
+      expect.objectContaining({ claimId: TEST_CLAIM_ID }),
+    );
     expect(mockEnsureActiveEntry).not.toHaveBeenCalled();
     expect(mockInitializeSubsteps).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
@@ -2173,7 +2189,7 @@ describe('startRunbook', () => {
     const runId = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
     const createdState = makeState(runId) as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
-      SessionService['pushRunbookWithRunControlClaim']
+      SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
@@ -2185,7 +2201,10 @@ describe('startRunbook', () => {
       actorService: {
         initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue(null),
       },
-      sessionService: { pushRunbookWithRunControlClaim: mockPushWithClaim },
+      sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(runId),
+        pushRunbookWithPreparedRunControlClaim: mockPushWithClaim,
+      },
     });
 
     const prepared: RunnableRunbook = {
@@ -2230,7 +2249,7 @@ describe('startRunbook', () => {
       frameEntryCounts: { '1|': 1 },
     } as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
-      SessionService['pushRunbookWithRunControlClaim']
+      SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
     const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
       committed({
@@ -2243,7 +2262,8 @@ describe('startRunbook', () => {
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       sessionService: {
-        pushRunbookWithRunControlClaim: mockPushWithClaim,
+        prepareRunControlClaim: () => preparedClaimFor(runId),
+        pushRunbookWithPreparedRunControlClaim: mockPushWithClaim,
         releaseRunbook: mockReleaseRunbook,
       },
       manager: {
@@ -2296,7 +2316,10 @@ describe('startRunbook', () => {
         code: core.ErrorCodes.LAUNCH_FAILED.code,
       }),
     );
-    expect(mockPushWithClaim).toHaveBeenCalledWith(prepared.runId);
+    expect(mockPushWithClaim).toHaveBeenCalledWith(
+      prepared.runId,
+      expect.objectContaining({ claimId: TEST_CLAIM_ID }),
+    );
     expect(mockReleaseRunbook).toHaveBeenCalledWith(prepared.runId);
     expect(mockDelete).toHaveBeenCalledWith(prepared.runId);
   });
@@ -2327,6 +2350,15 @@ describe('startRunbook', () => {
         } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
         >().mockResolvedValue(
@@ -2391,6 +2423,15 @@ describe('startRunbook', () => {
         } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
         >().mockResolvedValue(
@@ -2470,6 +2511,15 @@ describe('startRunbook', () => {
         } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
         >().mockResolvedValue(

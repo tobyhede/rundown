@@ -2,7 +2,8 @@ import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/par
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
-import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import { RunbookStateManager } from './state.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
@@ -324,6 +325,10 @@ export interface DelegateOptions {
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */
   readonly frameKey: FrameKey;
+  /** Verified runtime capability that issues a credential after validation succeeds. */
+  readonly issueCredential: DelegationCredentialIssuer;
+  /** Prior credential replaced by this issuance, for retry replay identity. */
+  readonly supersedesTokenHash?: DelegationTokenHash;
 }
 
 /** Success variant: delegation created; caller must persist updatedSubstepStates. */
@@ -634,9 +639,17 @@ export function createDelegation(
     };
   }
 
-  // 8. Generate token and hash
-  const token = generateDelegationToken();
-  const tokenHash = hashDelegationToken(token);
+  // 8. Issue the credential only after all write-free validation succeeds.
+  const issuedCredential = options.issueCredential(
+    {
+      parentRunId: state.id,
+      parentStepId: stepId,
+      parentFrameKey: frameKey,
+      parentEntry: inferFrameEntryFromState(state, frameKey),
+    },
+    options.supersedesTokenHash,
+  );
+  const { token, tokenHash, credential } = issuedCredential;
 
   // 9. Build context snapshot
   const explicitIteration = typeof parsed.at === 'number' ? parsed.at : undefined;
@@ -647,7 +660,7 @@ export function createDelegation(
 
   // 10. Create delegation object
   const delegation: StepDelegation = {
-    token,
+    credential,
     tokenHash,
     childRunbookPath,
     childRunbookRef,
@@ -730,7 +743,6 @@ export function abortDelegation(options: AbortDelegationOptions): AbortDelegatio
   // 4. Set cancelledAt
   const updatedDelegation: StepDelegation = {
     ...delegation,
-    token: undefined,
     cancelledAt: new Date().toISOString(),
   };
 
@@ -761,6 +773,8 @@ export interface RetryDelegationOptions {
    * false so linked child runs must go through abort --force teardown first.
    */
   readonly allowLinkedChildRun?: boolean;
+  /** Verified runtime capability that issues the replacement credential. */
+  readonly issueCredential: DelegationCredentialIssuer;
 }
 
 /**
@@ -1051,6 +1065,8 @@ export function retryDelegation(
       ...(mergedExtraVars ? { extraVars: mergedExtraVars } : {}),
       ancestors: [],
       frameKey,
+      issueCredential: options.issueCredential,
+      supersedesTokenHash: existingDelegation.tokenHash,
     },
     steps,
   );

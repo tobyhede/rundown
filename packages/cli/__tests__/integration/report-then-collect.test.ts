@@ -8,6 +8,7 @@ import {
   getActiveState,
   parseConcatenatedJson,
   runCliInProcess,
+  requireFrontierToken,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -66,8 +67,7 @@ describe('report-then-collect (single delegation level)', () => {
     expect(start.exitCode).toBe(0);
     const parent = await getActiveState(workspace);
     if (!parent) throw new Error('Expected active parent state.');
-    const token = parent.substepStates?.[0]?.delegation?.token;
-    if (!token) throw new Error('Expected delegation token for child claim.');
+    const token = requireFrontierToken(start.stdout, '1.1');
     const claim = await runCliInProcess(`claim ${token}`, workspace);
     const claimId = String(findActionOutput(claim.stdout)!.claim_id);
     const close = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
