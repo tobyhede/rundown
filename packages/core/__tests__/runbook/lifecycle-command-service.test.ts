@@ -3613,6 +3613,49 @@ describe('RunbookLifecycleCommandService', () => {
       loadStepsImpl = () => fencedSteps;
     });
 
+    it('drains the exact current-entry completion before an older completion on the same frame', async () => {
+      const frameKey = buildFrameKey('1');
+      const staleKey = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey, status: 'running' }],
+          frameEntryCounts: { [frameKey]: 2 },
+          activeFrameKey: frameKey,
+          activeEntry: 2,
+          resolvedCompletions: {
+            [staleKey]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(frameKey, 1),
+              completedAt: '2026-06-27T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId: '1.1' },
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.updatedState?.substep).toBe('2');
+      const persisted = await manager.load(runId);
+      expect(persisted?.substep).toBe('2');
+      // The old row remains historical evidence; only the exact entry-2 row was
+      // selected and consumed by this transition.
+      expect(persisted?.resolvedCompletions?.[staleKey]?.targetEntry).toBe(1);
+    });
+
     it('allows exactly one concurrent owner and leaves no orphaned completion row', async () => {
       await activate(
         baseState({

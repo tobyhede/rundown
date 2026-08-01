@@ -7,7 +7,12 @@ import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { createEffectfulActorMutationRunner } from '../../src/runbook/effectful-actor-mutation-runner.js';
-import { closeRunbookStore, getRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import {
+  closeRunbookStore,
+  getRunbookStore,
+  openRunbookStore,
+} from '../../src/runbook/storage/store-registry.js';
+import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
@@ -144,6 +149,66 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(result).toEqual({ kind: 'committed', value: 'done' });
       const store = await getRunbookStore(dir);
       expect((await store.loadRun(required.id))?.step).toBe('2');
+    });
+
+    it('commits the required target when an optional target cannot acquire its lease', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const optional = await seedRun('optional.runbook.md');
+      await sessionService.pushRunbook(optional.id);
+      await sessionService.pushRunbook(required.id);
+      const { driver, store } = await openRunbookStore(dir);
+      const optionalCapture = await store.captureRunAuthority(optional.id);
+      if (optionalCapture.kind !== 'captured') throw new Error('optional capture failed');
+      const lease = new SqliteExecutionLeaseService(driver);
+      const optionalOwner = await lease.acquire(optionalCapture.authority, process.pid);
+      if (optionalOwner.kind !== 'committed') throw new Error('optional lease acquisition failed');
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: required.id }, { runId: optional.id, optional: true }],
+        releases: [{ runId: required.id }, { runId: optional.id }],
+        compute: (captured) => {
+          expect(captured.map(({ state }) => state.id)).toEqual([required.id]);
+          return Promise.resolve({
+            members: [{ runId: required.id, nextState: { ...captured[0].state, step: '2' } }],
+            value: 'done',
+          });
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'done' });
+      expect((await store.loadRun(required.id))?.step).toBe('2');
+      expect((await store.loadRun(optional.id))?.step).toBe('1');
+      expect((await sessionService.getActive())?.id).toBe(optional.id);
+      await lease.releaseClaimed([optionalOwner.value]);
+    });
+
+    it('still refuses when a required target cannot acquire its lease', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const optional = await seedRun('optional.runbook.md');
+      const { driver, store } = await openRunbookStore(dir);
+      const requiredCapture = await store.captureRunAuthority(required.id);
+      if (requiredCapture.kind !== 'captured') throw new Error('required capture failed');
+      const lease = new SqliteExecutionLeaseService(driver);
+      const requiredOwner = await lease.acquire(requiredCapture.authority, process.pid);
+      if (requiredOwner.kind !== 'committed') throw new Error('required lease acquisition failed');
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: required.id }, { runId: optional.id, optional: true }],
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result.kind).toBe('execution_in_progress');
+      if (result.kind !== 'execution_in_progress') return;
+      expect(result.runId).toBe(required.id);
+      expect(compute).not.toHaveBeenCalled();
+      await lease.releaseClaimed([requiredOwner.value]);
     });
 
     it('still refuses when a REQUIRED target cannot be captured', async () => {

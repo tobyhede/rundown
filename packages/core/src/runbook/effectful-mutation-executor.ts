@@ -105,8 +105,10 @@ export interface EffectfulMutationInput<TPrepared, TResult> {
 export interface EffectfulMutationSetInput<TPrepared, TResult> {
   /** Authority captured for every affected run, in dependency order. */
   readonly captured: readonly CapturedAuthority[];
+  /** Captured runs that may be dropped when lease acquisition refuses them. */
+  readonly optionalRunIds?: readonly CapturedAuthority['runId'][];
   /** Run the aggregate external effect and prepare all not-yet-committed changes. */
-  readonly compute: () => Promise<TPrepared>;
+  readonly compute: (captured: readonly CapturedAuthority[]) => Promise<TPrepared>;
   /** Atomically persist the prepared run set under every exact owning attempt. */
   readonly commit: (
     attempts: readonly ExecutionAttempt[],
@@ -252,7 +254,10 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
       // branch below guards against. Recording recovery instead would park a run
       // whose state never changed and downgrade an actionable refusal to an
       // opaque one.
-      if (isOpenDelegatedChildrenError(commitError)) throw commitError;
+      if (isOpenDelegatedChildrenError(commitError)) {
+        await this.lease.releaseEffectStarted(attempt);
+        throw commitError;
+      }
       // Every other thrown commit has an ambiguous durability outcome: it may
       // have failed before commit, or committed durably before its caller
       // observed an error. Either way the cause has no home in a refusal
@@ -306,19 +311,38 @@ export class CoreEffectfulMutationExecutor implements EffectfulMutationExecutor 
     if (runIds.size !== input.captured.length) {
       throw new Error('Aggregate effectful mutation repeats a captured run.');
     }
-    const acquired = await this.lease.acquireAll(input.captured, this.ownerPid, input.wait);
-    if (acquired.kind !== 'committed') return acquired;
-    const marked = await this.lease.markEffectStartedAll(acquired.value);
-    if (marked.kind !== 'committed') {
+    const optionalRunIds = new Set(input.optionalRunIds ?? []);
+    if (input.captured.every(({ runId }) => optionalRunIds.has(runId))) {
+      throw new Error('Aggregate effectful mutation requires at least one required run.');
+    }
+    let activeCaptured = [...input.captured];
+    let attempts: readonly ExecutionAttempt[];
+    for (;;) {
+      const acquired = await this.lease.acquireAll(activeCaptured, this.ownerPid, input.wait);
+      if (acquired.kind !== 'committed') {
+        if (optionalRunIds.has(acquired.runId)) {
+          activeCaptured = activeCaptured.filter(({ runId }) => runId !== acquired.runId);
+          continue;
+        }
+        return acquired;
+      }
+      const marked = await this.lease.markEffectStartedAll(acquired.value);
+      if (marked.kind === 'committed') {
+        attempts = marked.value;
+        break;
+      }
       await this.lease.releaseClaimed(acquired.value);
+      if (optionalRunIds.has(marked.runId)) {
+        activeCaptured = activeCaptured.filter(({ runId }) => runId !== marked.runId);
+        continue;
+      }
       return marked;
     }
-    const attempts = marked.value;
     const reason = input.recoveryReason ?? DEFAULT_MID_EFFECT_REASON;
 
     let prepared: TPrepared;
     try {
-      prepared = await input.compute();
+      prepared = await input.compute(activeCaptured);
     } catch (effectError) {
       void logger.warn('aggregate effect failed after the execution boundary', {
         runs: attempts.map(({ runId, epoch }) => ({ runId, epoch })),

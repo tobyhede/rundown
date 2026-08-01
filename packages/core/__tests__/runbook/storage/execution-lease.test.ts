@@ -284,6 +284,38 @@ describe('effect boundary', () => {
     );
     expect(phase).toBe('claimed');
   });
+
+  it('releases an exact effect-started attempt idempotently after a write-free refusal', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const marked = await lease.markEffectStarted(acquired.value);
+    if (marked.kind !== 'committed') throw new Error('mark failed');
+
+    await lease.releaseEffectStarted(marked.value);
+
+    const owner = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :runId')
+        .get<{ readonly exec_token: string | null }>({ runId: state.id }),
+    );
+    expect(owner?.exec_token).toBeNull();
+    const attempt = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId AND exec_epoch = :epoch`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({
+          runId: state.id,
+          epoch: marked.value.epoch,
+        }),
+    );
+    expect(attempt?.phase).toBe('released');
+    expect(attempt?.finished_at).not.toBeNull();
+    await expect(lease.releaseEffectStarted(marked.value)).resolves.toBeUndefined();
+  });
 });
 
 describe('PID-aware dead-owner recovery', () => {

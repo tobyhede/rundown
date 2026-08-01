@@ -228,6 +228,19 @@ export interface ExecutionLeaseService {
    */
   releaseClaimed(attempts: readonly ExecutionAttempt[]): Promise<void>;
   /**
+   * Release one exact effect-started attempt after a provably write-free commit
+   * refusal.
+   *
+   * This is deliberately narrower than {@link abandonToRecovery}: callers may
+   * use it only when the decisive commit guard ran before its first write, so the
+   * attempt has a known non-durable outcome rather than an ambiguous one.
+   *
+   * @param attempt - Exact effect-started attempt to close and disown.
+   * @returns A promise resolving once the matching attempt is released, or when
+   *   it no longer owns the run.
+   */
+  releaseEffectStarted(attempt: ExecutionAttempt): Promise<void>;
+  /**
    * Abandon this process's own `effect_started` attempt to `recovery_pending`
    * after a mid-effect failure whose external outcome is unknown.
    *
@@ -462,6 +475,41 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
           .run({ finishedAt, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
         assertExactlyOneRow(closed, attempt.runId);
       }
+    });
+  }
+
+  async releaseEffectStarted(attempt: ExecutionAttempt): Promise<void> {
+    const hash = hashExecutionToken(attempt.token);
+    const finishedAt = new Date().toISOString();
+    await this.driver.immediate((tx) => {
+      const cleared = tx
+        .prepare(
+          `UPDATE runs
+              SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
+            WHERE id = :runId AND exec_pid = :ownerPid
+              AND exec_token = :hash AND exec_epoch = :epoch
+              AND EXISTS (
+                SELECT 1 FROM execution_attempts
+                 WHERE run_id = :runId AND exec_epoch = :epoch
+                   AND exec_token = :hash AND phase = 'effect_started'
+              )`,
+        )
+        .run({
+          runId: attempt.runId,
+          ownerPid: attempt.ownerPid,
+          hash,
+          epoch: attempt.epoch,
+        }).changes;
+      if (cleared === 0) return;
+      const closed = tx
+        .prepare(
+          `UPDATE execution_attempts
+              SET phase = 'released', finished_at = :finishedAt
+            WHERE run_id = :runId AND exec_epoch = :epoch
+              AND exec_token = :hash AND phase = 'effect_started'`,
+        )
+        .run({ finishedAt, runId: attempt.runId, epoch: attempt.epoch, hash }).changes;
+      assertExactlyOneRow(closed, attempt.runId);
     });
   }
 

@@ -302,6 +302,25 @@ describe('CoreEffectfulMutationExecutor', () => {
     expect(abandon).not.toHaveBeenCalled();
     expect(await store.readPendingRecovery(runId)).toBeNull();
     expect((await store.loadRun(runId))?.step).toBe('1');
+    const ownership = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :runId')
+        .get<{ readonly exec_token: string | null }>({ runId }),
+    );
+    expect(ownership?.exec_token).toBeNull();
+    const attempt = await store.read((txn) =>
+      txn.tx
+        .prepare(
+          `SELECT phase, finished_at
+             FROM execution_attempts
+            WHERE run_id = :runId
+            ORDER BY exec_epoch DESC
+            LIMIT 1`,
+        )
+        .get<{ readonly phase: string; readonly finished_at: string | null }>({ runId }),
+    );
+    expect(attempt?.phase).toBe('released');
+    expect(attempt?.finished_at).not.toBeNull();
   });
 
   it('reconciles a lost response from an already durable exact commit', async () => {
@@ -561,6 +580,62 @@ describe('CoreEffectfulMutationExecutor', () => {
     expect(commitCalls).toBe(1);
   });
 
+  it('drops an optional member that loses ownership before the aggregate effect boundary', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    const realMark = lease.markEffectStartedAll.bind(lease);
+    const mark = jest.spyOn(lease, 'markEffectStartedAll');
+    mark
+      .mockResolvedValueOnce({
+        kind: 'execution_in_progress',
+        runId: b.runId,
+        message: `Run ${b.runId} lost ownership before the boundary.`,
+      })
+      .mockImplementation(realMark);
+
+    const result = await executor.runAll({
+      captured: [a.captured, b.captured],
+      optionalRunIds: [b.runId],
+      compute: (captured) => {
+        expect(captured.map(({ runId }) => runId)).toEqual([a.runId]);
+        return Promise.resolve('prepared');
+      },
+      commit: async (attempts) => {
+        expect(attempts.map(({ runId }) => runId)).toEqual([a.runId]);
+        await lease.releaseEffectStarted(attempts[0]);
+        return { kind: 'committed', value: 'done' };
+      },
+    });
+
+    expect(result).toEqual({ kind: 'committed', value: 'done' });
+    expect(mark).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a required member mark refusal without running the aggregate effect', async () => {
+    const a = await seedOwnableRun();
+    const b = await seedOwnableRun();
+    const executor = new CoreEffectfulMutationExecutor(lease);
+    jest.spyOn(lease, 'markEffectStartedAll').mockResolvedValue({
+      kind: 'execution_in_progress',
+      runId: a.runId,
+      message: `Run ${a.runId} lost ownership before the boundary.`,
+    });
+    const compute = jest.fn();
+
+    const result = await executor.runAll({
+      captured: [a.captured, b.captured],
+      optionalRunIds: [b.runId],
+      compute: compute as never,
+      commit: () => Promise.resolve({ kind: 'committed', value: 'unreachable' }),
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    if (result.kind !== 'execution_in_progress') return;
+    expect(result.runId).toBe(a.runId);
+    expect(compute).not.toHaveBeenCalled();
+  });
+
   it('rejects empty and duplicate aggregate scopes before acquisition', async () => {
     const a = await seedOwnableRun();
     const executor = new CoreEffectfulMutationExecutor(lease);
@@ -573,6 +648,14 @@ describe('CoreEffectfulMutationExecutor', () => {
     await expect(
       executor.runAll({ captured: [a.captured, a.captured], compute, commit }),
     ).rejects.toThrow('repeats a captured run');
+    await expect(
+      executor.runAll({
+        captured: [a.captured],
+        optionalRunIds: [a.runId],
+        compute,
+        commit,
+      }),
+    ).rejects.toThrow('requires at least one required run');
     expect(compute).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
   });

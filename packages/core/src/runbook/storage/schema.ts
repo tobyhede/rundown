@@ -190,9 +190,10 @@ CREATE TABLE execution_attempts (
   --
   -- 'committed' means the prepared state was durably written under this exact
   -- (run, epoch, token) -- isExactAttemptCommitted reads it as exactly that
-  -- proof. 'released' is its counterpart for an attempt torn down BEFORE the
-  -- effect boundary: also closed, but with nothing written. The two must stay
-  -- distinct, or a released attempt reads as a durable commit.
+  -- proof. 'released' is its counterpart for an attempt closed with no durable
+  -- state write: normally before the effect boundary, or after the one guarded
+  -- commit refusal that is proven to run before its first write. The two must
+  -- stay distinct, or a released attempt reads as a durable commit.
   phase             TEXT    NOT NULL
                             CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed', 'released')),
   owner_pid         INTEGER NOT NULL,

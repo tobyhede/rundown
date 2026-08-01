@@ -61,11 +61,13 @@ import {
 import type { Frame, FrameKey } from './targeting.js';
 import {
   activeFrame,
+  buildCompletionKey,
   buildFrameKey,
   completionEntryForFrame,
   deriveActiveFrame,
   deriveExecutionAt,
   findSubstepState,
+  inactiveFrame,
 } from './targeting.js';
 import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
@@ -2700,12 +2702,14 @@ export class RunbookLifecycleCommandService {
             state = projected;
             const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
             const entry = state.activeEntry ?? 1;
-            const current = Object.entries(state.resolvedCompletions ?? {}).find(
-              ([, completion]) =>
-                completion.targetStep === state.step &&
-                completion.targetSubstep === state.substep &&
-                completion.targetFrameKey === frameKey,
-            );
+            const completions = state.resolvedCompletions ?? {};
+            const exactKey = buildCompletionKey(activeFrame(frameKey, entry), state.substep);
+            const sentinelKey = buildCompletionKey(inactiveFrame(frameKey), state.substep);
+            const current = Object.hasOwn(completions, exactKey)
+              ? ([exactKey, completions[exactKey]] as const)
+              : Object.hasOwn(completions, sentinelKey)
+                ? ([sentinelKey, completions[sentinelKey]] as const)
+                : undefined;
             if (current === undefined) break;
             const validated = completionService.validateCurrentCompletion(state, current[1], entry);
             if ('status' in validated) throw new Error(validated.message);

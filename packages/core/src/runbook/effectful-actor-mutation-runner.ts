@@ -85,7 +85,8 @@ export interface EffectfulActorMutationSetTarget {
   /** Presented claim authority for this run, when required. */
   readonly claimKey?: ClaimLookupKey;
   /**
-   * Whether a capture refusal drops this target instead of refusing the set.
+   * Whether a capture or pre-effect lease refusal drops this target instead of
+   * refusing the set.
    *
    * For a target the mutation only writes opportunistically — a delegating
    * parent receiving a terminal report — a run that cannot be captured must not veto the
@@ -266,15 +267,24 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
     }
 
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
+    let activeCaptured = captured;
     const result = await executor.runAll({
       captured: captured.map(({ authority }) => authority),
-      compute: () => input.compute(captured),
+      optionalRunIds: input.targets.filter(({ optional }) => optional).map(({ runId }) => runId),
+      compute: (activeAuthorities) => {
+        const activeRunIds = new Set(activeAuthorities.map(({ runId }) => runId));
+        for (const member of captured) {
+          if (!activeRunIds.has(member.state.id)) droppedRunIds.add(member.state.id);
+        }
+        activeCaptured = captured.filter(({ state }) => activeRunIds.has(state.id));
+        return input.compute(activeCaptured);
+      },
       commit: async (attempts, prepared) => {
-        if (prepared.members.length !== captured.length) {
+        if (prepared.members.length !== activeCaptured.length) {
           throw new Error('Aggregate preparation must provide one state for every target.');
         }
         const members = prepared.members.map((member, index) => {
-          const exact = captured[index];
+          const exact = activeCaptured[index];
           const attempt = attempts[index];
           if (member.runId !== exact.state.id) {
             throw new Error('Aggregate preparation order does not match the captured targets.');
