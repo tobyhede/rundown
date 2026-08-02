@@ -86,8 +86,18 @@ export interface CliResult {
   exitIntercepted?: boolean;
 }
 
-const latestEmittedFrontier = new WeakMap<TestWorkspace, FrontierEntry[]>();
+/**
+ * Delegation frontier each run in a workspace currently advertises.
+ *
+ * Keyed by run id, iterated in least-recently-advertised order (a run that
+ * advertises again is re-inserted at the end), so the most recent emission wins
+ * a lookup. See {@link recordEmittedFrontier} for the replace-or-delete rule.
+ */
+const latestEmittedFrontier = new WeakMap<TestWorkspace, Map<string, FrontierEntry[]>>();
 const emittedRunClaims = new WeakMap<TestWorkspace, Map<string, string>>();
+
+/** Cache key for a `step_entered` event that carries no attributable run id. */
+const UNATTRIBUTED_RUN = '';
 
 /**
  * Creates isolated temp directory with fixtures and .rundown structure.
@@ -184,8 +194,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
-  const frontier = findFrontierInEvents(parseConcatenatedJson(cliResult.stdout));
-  if (frontier) latestEmittedFrontier.set(workspace, frontier);
+  recordEmittedFrontier(workspace, cliResult.stdout);
   return cliResult;
 }
 
@@ -227,8 +236,7 @@ export async function runCliInProcess(
       ...(options.env ?? {}),
     },
   });
-  const frontier = findFrontierInEvents(parseConcatenatedJson(result.stdout));
-  if (frontier) latestEmittedFrontier.set(workspace, frontier);
+  recordEmittedFrontier(workspace, result.stdout);
   const claims = emittedRunClaims.get(workspace) ?? new Map<string, string>();
   for (const value of parseConcatenatedJson(result.stdout)) {
     if (
@@ -548,6 +556,8 @@ export interface FrontierEntry {
 export interface StepEnteredEvent {
   /** Event discriminator; `step_entered` identifies the event this helper accepts. */
   type?: string;
+  /** Run that entered the step; scopes a frontier to the run advertising it. */
+  runbookId?: string;
   /** Delegated work made claimable when the entered step has a DELEGATE frontier. */
   delegateFrontier?: FrontierEntry[];
   /** Human-readable name of the step that was entered. */
@@ -557,25 +567,141 @@ export interface StepEnteredEvent {
 }
 
 /**
- * Walk a possibly-nested list of parsed JSON values and find the first
- * `step_entered` event that carries a `delegateFrontier`.
+ * Walk a possibly-nested list of parsed JSON values and collect every
+ * `step_entered` frontier, in emission order.
+ *
+ * A single command can enter more than one DELEGATE step (a `collect` that
+ * closes one FOR iteration and opens the next, an inline handoff that launches
+ * a child, a retry that re-issues in place), so the events carry a *sequence*
+ * of frontiers, not one. Callers pick the end of that sequence they mean.
  *
  * @param events - Parsed JSON values from stdout
- * @returns The frontier array if found, otherwise undefined
+ * @returns Every emitted frontier array, oldest first
  */
-export function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+function frontiersInEvents(events: unknown[]): FrontierEntry[][] {
+  const frontiers: FrontierEntry[][] = [];
   for (const ev of events) {
     if (Array.isArray(ev)) {
-      const nested = findFrontierInEvents(ev);
-      if (nested) return nested;
+      frontiers.push(...frontiersInEvents(ev));
     } else if (ev && typeof ev === 'object') {
       const e = ev as StepEnteredEvent;
       if (e.type === 'step_entered' && e.delegateFrontier) {
-        return e.delegateFrontier;
+        frontiers.push(e.delegateFrontier);
       }
     }
   }
+  return frontiers;
+}
+
+/**
+ * Walk a possibly-nested list of parsed JSON values and find the first
+ * `step_entered` event that carries a `delegateFrontier`.
+ *
+ * Use this only when the assertion is genuinely about the FIRST frontier a
+ * command emitted (e.g. "the entry frontier of `rundown run`"). To resolve a
+ * bearer, prefer {@link requireFrontierToken}, which honours later re-issuance.
+ *
+ * @param events - Parsed JSON values from stdout
+ * @returns The first frontier array if found, otherwise undefined
+ */
+export function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+  return frontiersInEvents(events)[0];
+}
+
+/**
+ * Walk a possibly-nested list of parsed JSON values and find the LAST
+ * `step_entered` event that carries a `delegateFrontier`.
+ *
+ * This is the frontier the command left the run standing on. Taking the first
+ * instead would hand back a bearer that a later transition in the same command
+ * already superseded.
+ *
+ * @param events - Parsed JSON values from stdout
+ * @returns The final frontier array if found, otherwise undefined
+ */
+export function findLatestFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+  const frontiers = frontiersInEvents(events);
+  return frontiers[frontiers.length - 1];
+}
+
+/**
+ * Select the frontier entry a caller meant from an emission-ordered list.
+ *
+ * When `id` is given the LAST matching entry wins: a command that re-issues a
+ * substep's credential emits the replacement after the original, and the
+ * replacement is the live bearer. When `id` is omitted the sole entry of a
+ * single-substep frontier is returned.
+ *
+ * @param entries - Frontier entries in emission order
+ * @param id - Optional qualified delegated substep id
+ * @returns The selected entry, or undefined when nothing matches
+ */
+function selectFrontierEntry(
+  entries: readonly FrontierEntry[] | undefined,
+  id: string | undefined,
+): FrontierEntry | undefined {
+  if (!entries) return undefined;
+  if (id === undefined) return entries[0];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].id === id) return entries[i];
+  }
   return undefined;
+}
+
+/**
+ * Reduce a command's events to the frontier each run last advertised.
+ *
+ * A `step_entered` with a `delegateFrontier` advertises that frontier for its
+ * run; one without RETRACTS it — the run has moved to a step that offers no
+ * delegation. Later events in the same command win, so the map records where
+ * each run stood when the command finished.
+ *
+ * @param events - Parsed JSON values from stdout
+ * @returns Run id to advertised frontier, or `undefined` where retracted
+ */
+function frontiersByRunInEvents(events: unknown[]): Map<string, FrontierEntry[] | undefined> {
+  const byRun = new Map<string, FrontierEntry[] | undefined>();
+  for (const ev of events) {
+    if (Array.isArray(ev)) {
+      for (const [runId, frontier] of frontiersByRunInEvents(ev)) byRun.set(runId, frontier);
+    } else if (ev && typeof ev === 'object') {
+      const e = ev as StepEnteredEvent;
+      if (e.type !== 'step_entered') continue;
+      const runId = typeof e.runbookId === 'string' ? e.runbookId : UNATTRIBUTED_RUN;
+      byRun.set(runId, e.delegateFrontier);
+    }
+  }
+  return byRun;
+}
+
+/**
+ * Record where each run stood after a command, for
+ * {@link requireLatestFrontierToken}.
+ *
+ * Replace-or-delete **per run**, never merge. A run that entered a step with no
+ * `delegateFrontier` has its cached frontier DELETED — leaving the previous one
+ * in place would let a test read a bearer the run no longer offers and stay
+ * green after the emission it was asserting on regressed away.
+ *
+ * Scoping to the emitting run is what makes that strictness safe. Delegation
+ * tests interleave runs: a parent standing on its frontier while `claim` and
+ * `pass` drive a child through frontier-less steps. Those child transitions say
+ * nothing about the parent, so they must not retract the parent's frontier.
+ *
+ * @param workspace - Test workspace the command ran against
+ * @param stdout - Raw stdout of that command
+ */
+function recordEmittedFrontier(workspace: TestWorkspace, stdout: string): void {
+  const advertised = frontiersByRunInEvents(parseConcatenatedJson(stdout));
+  if (advertised.size === 0) return;
+  const cache = latestEmittedFrontier.get(workspace) ?? new Map<string, FrontierEntry[]>();
+  for (const [runId, frontier] of advertised) {
+    // Delete first so a re-advertising run is re-inserted at the end of the
+    // Map's iteration order, making "most recent" a positional fact.
+    cache.delete(runId);
+    if (frontier) cache.set(runId, frontier);
+  }
+  latestEmittedFrontier.set(workspace, cache);
 }
 
 /**
@@ -584,15 +710,17 @@ export function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undef
  * Tests must not recover delegation bearers from persisted run state: state
  * stores only the non-secret credential descriptor and lookup hash.
  *
+ * Entries from every frontier the output carries are considered, and the LAST
+ * match for `id` wins — a re-issued credential supersedes the one it replaced.
+ *
  * @param stdout - Concatenated JSON output from a CLI transition
  * @param id - Optional qualified delegated substep id
  * @returns The emitted delegation bearer
  * @throws {Error} When the output contains no matching frontier entry
  */
 export function requireFrontierToken(stdout: string, id?: string): string {
-  const frontier = findFrontierInEvents(parseConcatenatedJson(stdout));
-  const entry =
-    id === undefined ? frontier?.[0] : frontier?.find((candidate) => candidate.id === id);
+  const entries = frontiersInEvents(parseConcatenatedJson(stdout)).flat();
+  const entry = selectFrontierEntry(entries, id);
   if (typeof entry?.token === 'string') return entry.token;
 
   const textTokens = stdout.match(/rdtk_[A-Za-z0-9_-]{32}/g) ?? [];
@@ -602,24 +730,46 @@ export function requireFrontierToken(stdout: string, id?: string): string {
 }
 
 /**
- * Read a delegation bearer from the immediately preceding CLI transition.
+ * Read a delegation bearer from the frontier a preceding CLI transition left
+ * standing.
  *
- * @param workspace - Test workspace whose latest command emitted the token
+ * Resolves against the most recently advertised frontier (see
+ * {@link recordEmittedFrontier}), so a re-issued credential always supersedes
+ * the one it replaced. Once the owning run enters a step with no frontier the
+ * bearer is retracted and this throws rather than serving a stale one.
+ *
+ * @param workspace - Test workspace whose commands advertised the frontier
  * @param id - Optional qualified delegated substep id
  * @returns The intentionally emitted delegation bearer
- * @throws {Error} When no command result has been recorded
+ * @throws {Error} When no run currently advertises a matching frontier entry
  */
 export function requireLatestFrontierToken(workspace: TestWorkspace, id?: string): string {
-  const frontier = latestEmittedFrontier.get(workspace);
+  const frontiers = [...(latestEmittedFrontier.get(workspace)?.values() ?? [])];
   const entry =
-    id === undefined ? frontier?.[0] : frontier?.find((candidate) => candidate.id === id);
+    id === undefined
+      ? selectFrontierEntry(frontiers[frontiers.length - 1], undefined)
+      : selectFrontierEntry(frontiers.flat(), id);
   if (typeof entry?.token !== 'string') {
     throw new Error(`Expected a preceding CLI transition to emit token${id ? ` for ${id}` : ''}`);
   }
   return entry.token;
 }
 
-/** Return the run-control bearer intentionally emitted when a run started. */
+/**
+ * Return the run-control bearer intentionally emitted when a run started.
+ *
+ * `runbook_started.claim_id` is the sole credential-delivery surface for the
+ * run-control bearer — it is never recoverable from persisted state — so a test
+ * that needs to mutate a run it started reads the bearer back from here.
+ *
+ * @param workspace - Test workspace whose commands were run through
+ *   {@link runCliInProcess}, which records emitted run-control bearers
+ * @param runId - Run id whose `runbook_started` event carried the bearer
+ * @returns The emitted run-control bearer claim id
+ * @throws {Error} When no `runbook_started` output for `runId` was observed —
+ *   the run was started by a helper that does not record bearers, or the
+ *   emission regressed
+ */
 export function requireEmittedRunClaim(workspace: TestWorkspace, runId: string): string {
   const claimId = emittedRunClaims.get(workspace)?.get(runId);
   if (!claimId) throw new Error(`Expected runbook_started output for ${runId}`);

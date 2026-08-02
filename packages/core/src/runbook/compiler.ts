@@ -4678,9 +4678,10 @@ export function compileRunbookToMachine(
       },
       MANUAL_DELEGATION_ABORT_PREPARED: {
         actions: runbookSetup.assign({
-          substepStates: ({ event }) =>
-            (event as Extract<RunbookEvent, { readonly type: 'MANUAL_DELEGATION_ABORT_PREPARED' }>)
-              .substepStates,
+          substepStates: ({ event }) => {
+            assertEvent(event, 'MANUAL_DELEGATION_ABORT_PREPARED');
+            return event.substepStates;
+          },
         }),
       },
     },

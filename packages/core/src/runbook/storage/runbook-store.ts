@@ -1022,7 +1022,9 @@ export class RunbookStore {
    *
    * @param captured - Dependency-ordered authority captures to validate atomically.
    * @returns Committed void when every capture is still exact, otherwise the first refusal.
-   * @throws {Error} When a captured run or claim changed after preparation.
+   * @throws {Error} When the caller violates the call contract — an empty capture
+   *   set, or the same run captured more than once. A run or claim that changed
+   *   after preparation is reported as a refusal, never thrown.
    */
   validateCapturedRunSet(
     captured: readonly CapturedAuthority[],

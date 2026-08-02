@@ -7,6 +7,7 @@ import {
 import {
   assertDelegationIssuanceNonce,
   assertDelegationTokenHash,
+  hashDelegationToken,
 } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import type { FrameKey } from '../../src/runbook/targeting.js';
@@ -37,6 +38,37 @@ describe('delegation credential capabilities', () => {
     expect(createDelegationTokenDeriver(owner.authority)(issued.credential)).toBe(issued.token);
     expect(JSON.stringify(issued.credential)).not.toContain(issued.token);
     expect(issued.credential.issuerClaimKey).toBe(owner.parsed.claimKey);
+  });
+
+  it('publishes a tokenHash that verifies the token the deriver reproduces', () => {
+    // projectDelegateFrontier (events/execution-observation.ts) discloses a
+    // frontier token only when hashDelegationToken(deriveToken(credential))
+    // equals the persisted entry.tokenHash. That check can only ever succeed if
+    // the issuer's tokenHash is the hash of the token it issued, so pin the
+    // agreement here rather than leaving it to the projection's runtime throw.
+    const owner = authority();
+    const issued = createDelegationCredentialIssuer(owner.authority)(location);
+
+    expect(issued.tokenHash).toBe(hashDelegationToken(issued.token));
+    expect(
+      hashDelegationToken(createDelegationTokenDeriver(owner.authority)(issued.credential)),
+    ).toBe(issued.tokenHash);
+  });
+
+  it('derives a distinct token per issuance at one location with the default nonce', () => {
+    // The default generateNonce is the only thing separating two issuances that
+    // share every coordinate: same claim, same parent run/step/frame/entry. The
+    // pinned-nonce tests above deliberately freeze it, so uniqueness is only
+    // exercised here.
+    const owner = authority();
+    const issue = createDelegationCredentialIssuer(owner.authority);
+
+    const first = issue(location);
+    const second = issue(location);
+
+    expect(second.credential.issuanceNonce).not.toBe(first.credential.issuanceNonce);
+    expect(second.token).not.toBe(first.token);
+    expect(second.tokenHash).not.toBe(first.tokenHash);
   });
 
   it('refuses an authority whose bearer encodes a different claim key', () => {

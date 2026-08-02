@@ -12,6 +12,7 @@ import type {
   DelegationLock,
   PrepareParsedRunbookInput,
   PrepareParsedRunbookResult,
+  PreparedRunControlClaim,
   PreparedTemplateVariables,
   RunbookState,
   RunbookRef,
@@ -98,7 +99,7 @@ function claimRecord(childRunId: RunId, overrides: ClaimRecordOverride = {}): Cl
   });
 }
 
-function preparedClaimFor(runId: RunId) {
+function preparedClaimFor(runId: RunId): PreparedRunControlClaim {
   return {
     claimId: TEST_CLAIM_ID,
     claim: claimRecord(runId),
@@ -107,7 +108,7 @@ function preparedClaimFor(runId: RunId) {
     },
     // cspell:disable-next-line
     deriveDelegationToken: () => 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
-  } as ReturnType<SessionService['prepareRunControlClaim']>;
+  };
 }
 
 function claimedRunbookResult(

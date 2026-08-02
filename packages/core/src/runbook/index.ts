@@ -263,6 +263,7 @@ export {
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
+  type MutationAuthorityRefusalPolicy,
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
@@ -360,6 +361,7 @@ export {
   type PreparedDelegationChildUnlink,
   type PrepareDelegationChildLinkResult,
   type PrepareDelegationChildUnlinkResult,
+  type PreparedManualDelegationMutation,
   type RunbookActorServiceOptions,
   type RunbookActorRuntimeCapabilities,
 } from './actor-service.js';

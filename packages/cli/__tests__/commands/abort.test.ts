@@ -29,6 +29,25 @@ import { validateCommandOutput } from '../helpers/schema-validator.js';
 // import + wiring test link this file into the graph so the covering tests
 // actually run against each mutant. Mirrors collect.test.ts / delegate.test.ts.
 import { registerAbortCommand } from '../../src/commands/abort.js';
+import type { DelegationAbortOutcome } from '@rundown-org/core';
+
+/** True only when the two unions are mutually assignable (no widening either way). */
+type ExactUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/**
+ * The refusal kinds `abort`'s `refused` arm can carry.
+ *
+ * Pinned as a type-level assertion rather than a runtime case: the command's
+ * refusal switch ends in a `never` check, so a third kind appearing in core must
+ * fail compilation at the CLI rather than fall through to a default that renders
+ * some other refusal's envelope (CLAUDE.md "No silent mapping"). This assertion
+ * fails the same way and names the contract that broke.
+ */
+const _abortRefusalKindsAreExact: ExactUnion<
+  Extract<DelegationAbortOutcome, { kind: 'refused' }>['policy']['kind'],
+  'actor_context_required' | 'claim_grant_required'
+> = true;
+void _abortRefusalKindsAreExact;
 
 describe('abort command wiring', () => {
   it('registers the abort command with its documented flags and descriptions', () => {
@@ -231,6 +250,34 @@ describe('abort command - unit tests', () => {
         }),
       );
       expect(String((envelope as { error?: unknown }).error)).toContain('aborting delegated work');
+    });
+
+    it('refuses a claim that lacks the abort grant with CLAIM_GRANT_REQUIRED', async () => {
+      // The second (and only other) refusal kind the abort resolver produces.
+      // It must render its own envelope: collapsing it into
+      // ACTOR_CONTEXT_REQUIRED would tell a caller that already supplied a
+      // bearer to supply one.
+      const token = await setupDelegation();
+      const claimed = await runCliInProcess(['claim', token], workspace);
+      expect(claimed.exitCode).toBe(0);
+      const childClaimId = findActionOutput<{ claim_id: string }>(claimed.stdout)?.claim_id;
+      if (childClaimId === undefined)
+        throw new Error(`Expected child claim id:\n${claimed.stdout}`);
+
+      const result = await runCliInProcess(
+        ['abort', token, '--claim-id', childClaimId, '--force'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIM_GRANT_REQUIRED',
+          error: expect.stringContaining('rundown abort'),
+        }),
+      );
     });
 
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {

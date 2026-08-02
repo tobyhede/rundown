@@ -5,6 +5,7 @@ import { buildContextSnapshot } from './delegation-context.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { inferFrameEntryFromState } from './frame-entry.js';
 import type { DelegationTokenHash } from './delegation-token.js';
+import type { RunId } from './run-id.js';
 import { RunbookStateManager } from './state.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
 import type {
@@ -276,8 +277,14 @@ export interface AbortDelegationAlreadyCancelledResult {
 /** Delegation is claimed by a child run and requires `force` to cancel. */
 export interface AbortDelegationNeedsForceResult {
   readonly status: 'needs_force';
-  /** Child run currently holding the claimed delegation. */
-  readonly childRunId: string;
+  /**
+   * Child run currently holding the claimed delegation.
+   *
+   * Read verbatim from `StepDelegation.childRunId`, whose brand the persisted
+   * state schema validates at load, so callers inherit the brand rather than
+   * re-asserting it at their own boundary.
+   */
+  readonly childRunId: RunId;
 }
 
 /**
@@ -419,8 +426,14 @@ export interface CreateDelegationClaimedResult {
   readonly status: 'delegation_claimed';
   /** Caller-input `stepId` verbatim (mirrors {@link CreateDelegationExistsResult.step}). */
   readonly step: string;
-  /** Child run currently holding the claimed delegation. */
-  readonly childRunId: string;
+  /**
+   * Child run currently holding the claimed delegation.
+   *
+   * Read verbatim from `StepDelegation.childRunId`, whose brand the persisted
+   * state schema validates at load, so callers inherit the brand rather than
+   * re-asserting it at their own boundary.
+   */
+  readonly childRunId: RunId;
   /** Wrapped RundownError (RD-811) for callers that re-surface the message. */
   readonly error: RundownError;
 }
@@ -844,8 +857,14 @@ export interface RetryDelegationErrorResult {
  */
 export interface RetryDelegationInFlightResult {
   readonly status: 'in_flight';
-  /** Linked child run that must be force-aborted before retry. */
-  readonly childRunId: string;
+  /**
+   * Linked child run that must be force-aborted before retry.
+   *
+   * Read verbatim from `StepDelegation.childRunId`, whose brand the persisted
+   * state schema validates at load, so callers inherit the brand rather than
+   * re-asserting it at their own boundary.
+   */
+  readonly childRunId: RunId;
   /** Wrapped RundownError (RD-823) for callers that re-surface the message. */
   readonly error: RundownError;
 }

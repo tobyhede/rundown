@@ -36,10 +36,10 @@ import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import {
   prepareManualDelegation,
   type ManualDelegationPreparationEvent,
+  type ManualDelegationPreparationResult,
 } from './manual-delegation-machine.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { PreparedActorMutation } from './effectful-mutation-executor.js';
-import type { RundownError } from '../errors/rundown-error.js';
 import {
   applyRunbookStateUpdate,
   type RunbookStateManager,
@@ -160,6 +160,23 @@ export type PrepareDelegationChildUnlinkResult =
   | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildUnlink }
   | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+
+/**
+ * Typed outcome of preparing a manual delegation issue, retry, or abort.
+ *
+ * Shares the `status` discriminant with
+ * {@link ManualDelegationPreparationResult}: the refusal arms are propagated
+ * verbatim (so a live-child refusal keeps its branded child run id), while the
+ * `prepared` arm exchanges the machine's substep states for the not-yet-
+ * persisted parent state the caller commits.
+ */
+export type PreparedManualDelegationMutation =
+  | {
+      readonly status: 'prepared';
+      /** Captured parent state with the machine-prepared delegation applied. */
+      readonly nextState: RunbookState;
+    }
+  | Exclude<ManualDelegationPreparationResult, { readonly status: 'prepared' }>;
 
 /** Runtime dependencies for {@link RunbookActorService}. */
 export interface RunbookActorServiceOptions {
@@ -1176,25 +1193,34 @@ export class RunbookActorService {
   }
 
   /**
-   * Prepare manual issue/retry state through the dedicated delegation machine.
+   * Prepare manual issue, retry, or abort state through the dedicated
+   * delegation machine.
+   *
+   * Every arm carries the `status` discriminant of
+   * {@link ManualDelegationPreparationResult}; the `prepared` arm replaces the
+   * machine's substep states with the not-yet-persisted parent state. A
+   * prepared ABORT against a state that carries a persisted snapshot is routed
+   * through {@link prepareActorMutation} so the parent machine — not this
+   * method — owns the resulting transition; every other prepared command
+   * applies the substep states directly to the captured state.
    *
    * @param previousState - Exact parent state captured by the aggregate runner.
    * @param steps - Parsed steps corresponding to the captured state.
-   * @param event - Typed manual issue or retry event.
+   * @param event - Typed manual issue, retry, or abort event.
    * @param issueCredential - Verified claim-bound runtime issuer.
-   * @returns The captured state with machine-prepared substep state applied.
+   * @returns The captured state with machine-prepared substep state applied
+   *   (`prepared`), or the domain refusal produced by core delegation logic:
+   *   `already_cancelled`, `needs_force`, `child_in_flight`, or `error`.
+   * @throws {Error} If a live-child refusal carries a non-canonical child run
+   *   id, or if the snapshot-backed abort path fails in
+   *   {@link prepareActorMutation} (invalid state, actor error state).
    */
   async prepareManualDelegationMutation(
     previousState: RunbookState,
     steps: readonly ResolvedStep[],
     event: ManualDelegationPreparationEvent,
     issueCredential: DelegationCredentialIssuer,
-  ): Promise<
-    | { readonly nextState: RunbookState }
-    | { readonly status: 'already_cancelled' }
-    | { readonly status: 'needs_force'; readonly childRunId: string }
-    | { readonly error: RundownError }
-  > {
+  ): Promise<PreparedManualDelegationMutation> {
     const result = prepareManualDelegation({
       state: previousState,
       steps,
@@ -1208,14 +1234,17 @@ export class RunbookActorService {
             type: 'MANUAL_DELEGATION_ABORT_PREPARED',
             substepStates: result.substepStates,
           });
-          return { nextState: mutation.nextState };
+          return { status: 'prepared', nextState: mutation.nextState };
         }
-        return { nextState: { ...previousState, substepStates: result.substepStates } };
+        return {
+          status: 'prepared',
+          nextState: { ...previousState, substepStates: result.substepStates },
+        };
       case 'already_cancelled':
       case 'needs_force':
-        return result;
+      case 'child_in_flight':
       case 'error':
-        return { error: result.error };
+        return result;
       default: {
         const _exhaustive: never = result;
         return _exhaustive;

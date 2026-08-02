@@ -29,8 +29,10 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
-import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
-import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
+import {
+  makeDelegationCredentialDescriptor,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 

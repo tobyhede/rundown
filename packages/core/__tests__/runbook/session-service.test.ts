@@ -431,6 +431,10 @@ describe('SessionService', () => {
       const installed = unwrapSessionMutation(
         await service.pushRunbookWithPreparedRunControlClaim(state.id, prepared),
       );
+      // Atomic installation is a claim about the number of guarded writes as
+      // much as their shape: asserting only the arguments would still pass if a
+      // second guarded mutation slipped in behind the first.
+      expect(mutateSpy).toHaveBeenCalledTimes(1);
       expect(mutateSpy).toHaveBeenCalledWith([state.id], expect.any(Function));
       expect(installed).toEqual({ claimId: prepared.claimId, claim: prepared.claim });
       await expect(service.verifyClaimId(prepared.claimId)).resolves.toMatchObject({

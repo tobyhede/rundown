@@ -1804,7 +1804,7 @@ echo ok
         },
         makeDelegationCredentialIssuer(),
       );
-      if (!('nextState' in result)) throw new Error('expected prepared manual delegation');
+      if (result.status !== 'prepared') throw new Error('expected prepared manual delegation');
       return result.nextState;
     }
 
@@ -1827,6 +1827,7 @@ echo ok
 
       expect(state).toEqual(captured);
       expect(result).toEqual({
+        status: 'prepared',
         nextState: expect.objectContaining({
           substepStates: expect.arrayContaining([
             expect.objectContaining({
@@ -1855,6 +1856,40 @@ echo ok
       );
 
       expect(result).toEqual({
+        status: 'error',
+        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
+      });
+    });
+
+    it('propagates the branded child run id of a live-child issue refusal', async () => {
+      const issued = await issueDelegation();
+      const childRunId = assertRunId(`rd_${'e'.repeat(32)}`);
+      if (issued.substepStates === undefined) throw new Error('expected issued substep state');
+      const linked = {
+        ...issued,
+        substepStates: issued.substepStates.map((substep) =>
+          substep.delegation === undefined
+            ? substep
+            : { ...substep, delegation: { ...substep.delegation, childRunId } },
+        ),
+      };
+
+      const result = await actorService.prepareManualDelegationMutation(
+        linked,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: '1.1',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(result).toEqual({
+        status: 'child_in_flight',
+        childRunId,
         error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
       });
     });
@@ -1867,7 +1902,7 @@ echo ok
         { type: 'ABORT', substepId: '1', frameKey, force: false },
         makeDelegationCredentialIssuer(),
       );
-      if (!('nextState' in firstAbort)) throw new Error('expected prepared abort');
+      if (firstAbort.status !== 'prepared') throw new Error('expected prepared abort');
 
       await expect(
         actorService.prepareManualDelegationMutation(
@@ -1916,7 +1951,7 @@ echo ok
         makeDelegationCredentialIssuer(),
       );
 
-      expect(result).toEqual({ nextState: actorNextState });
+      expect(result).toEqual({ status: 'prepared', nextState: actorNextState });
       expect(prepareSpy).toHaveBeenCalledTimes(1);
       const preparedCall = prepareSpy.mock.calls[0];
       const [preparedId, preparedState, , preparedEvent] = preparedCall;

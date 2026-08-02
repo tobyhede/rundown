@@ -48,18 +48,29 @@ export function registerAbortCommand(program: Command): void {
               case 'token_not_found':
                 throw Errors.tokenNotFound(token);
               case 'refused':
-                if (outcome.policy.kind === 'actor_context_required') {
-                  renderActorContextRequiredRefusal(output, 'abort', 'aborting delegated work');
-                } else if (outcome.policy.kind === 'claim_grant_required') {
-                  renderClaimGrantRequiredRefusal(
-                    output,
-                    'abort',
-                    outcome.policy.targetRunId === undefined
-                      ? undefined
-                      : { targetRunId: outcome.policy.targetRunId },
-                  );
-                } else {
-                  renderActorContextRequiredRefusal(output, 'abort', 'aborting delegated work');
+                // Exhaustive over the refusal-only union core publishes for this
+                // seam. There is deliberately no catch-all arm: rendering an
+                // unknown refusal as `actor_context_required` would misdiagnose
+                // it, so a new kind must fail compilation here instead.
+                switch (outcome.policy.kind) {
+                  case 'actor_context_required':
+                    renderActorContextRequiredRefusal(output, 'abort', 'aborting delegated work');
+                    break;
+                  case 'claim_grant_required':
+                    renderClaimGrantRequiredRefusal(
+                      output,
+                      'abort',
+                      outcome.policy.targetRunId === undefined
+                        ? undefined
+                        : { targetRunId: outcome.policy.targetRunId },
+                    );
+                    break;
+                  default: {
+                    const _exhaustivePolicy: never = outcome.policy;
+                    throw new Error(
+                      `Unexpected abort refusal policy: ${JSON.stringify(_exhaustivePolicy)}`,
+                    );
+                  }
                 }
                 process.exitCode = 1;
                 break;

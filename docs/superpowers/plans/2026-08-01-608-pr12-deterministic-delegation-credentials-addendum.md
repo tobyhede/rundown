@@ -155,8 +155,22 @@ a DELEGATE frontier must carry verified run-control authority. Bare mutation may
 not cross into a state that issues credentials. The refusal remains machine/core
 owned and renders through the existing actor-context taxonomy.
 
-The raw claim id, its secret, and the derivation key must not be placed in an
-event, persisted context, snapshot, prepared state, result diagnostic, or log.
+The raw claim id, its secret, and the derivation key must not be placed in
+persisted context, a snapshot, prepared state, a result diagnostic, a log, or
+status output.
+
+There is exactly one exception, and it is defined here: the
+`runbook_started.claim_id` field emitted after run activation commits (see
+[Run-start ordering](#run-start-ordering)). That field is the sole
+credential-delivery channel for the run-control bearer — it hands the caller the
+exact bearer it must later present as `--claim-id`, and no other event, command,
+or rendered surface may carry it. Even there the value is delivery-only: it must
+not be written back into `RunbookState`, the XState snapshot, session
+persistence, SQLite, logs, diagnostics, recovery records, or `rundown status`
+output, and it must be redacted from every refusal and error envelope. The claim
+secret and the derivation key have no exception at all — they are never emitted
+on any surface.
+
 Pass a least-privilege `DelegationTokenDeriver` callable through the compiler's
 runtime `invoke.input` closure. This is a Category C dependency: machine-owned
 behavior with an injected runtime capability.
@@ -229,7 +243,15 @@ design therefore requires a prepared-claim seam:
 4. Activate the run and install the already-prepared run-control claim in the
    existing atomic session mutation.
 5. Emit `runbook_started.claim_id` and any derived `STEP_ENTERED` delegation
-   tokens only after activation commits.
+   tokens only after activation commits. These are the design's only two
+   credential-delivery surfaces — `runbook_started.claim_id` is the single
+   defined exception to the no-credential-in-events rule in the
+   [Authority contract](#authority-contract), and it carries the run-control
+   bearer alone (never the claim secret or the derivation key). Both values are
+   transient output: neither may be written into `RunbookState`, the XState
+   snapshot, session persistence, SQLite, logs, diagnostics, recovery records,
+   or `rundown status` output, and both stay redacted in every refusal and
+   error envelope.
 
 Do not push an active run before initialization; that creates an
 active-but-uninitialized durable window. Do not mint a second claim during

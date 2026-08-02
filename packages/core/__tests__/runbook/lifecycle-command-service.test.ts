@@ -39,7 +39,11 @@ import {
   type SubstepState,
 } from '../../src/runbook/index.js';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  DELEGATION_CLAIM_MARKER,
+  TOKEN_PREFIX,
+} from '../../src/runbook/delegation-token.js';
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
@@ -914,6 +918,78 @@ describe('RunbookLifecycleCommandService', () => {
       expect(echo.kind).toBe('already-delegated');
       if (echo.kind !== 'already-delegated') throw new Error('expected delegation echo');
       expect(echo.token).toBe(issued.token);
+    });
+
+    // An echo is a credential disclosure, so it is gated on the same invariant
+    // `projectDelegateFrontier` enforces at the observation boundary: the token
+    // reconstructed from the persisted descriptor must hash to the verifier the
+    // parent recorded. Both failure modes must refuse as typed data and must
+    // never put a bearer on the wire.
+    it('refuses to echo a delegation whose persisted verifier does not match the derived token', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Tamper only the verifier: the descriptor still derives under the issuing
+      // claim, but the reconstructed token no longer matches what was recorded.
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === first.tokenHash
+            ? {
+                ...entry,
+                delegation: {
+                  ...entry.delegation,
+                  tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+                },
+              }
+            : entry,
+        ),
+      }));
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(echo.kind).toBe('error');
+      if (echo.kind !== 'error') throw new Error('expected a typed refusal');
+      expect(echo.error.code).toBe('RD-821');
+      expect(echo).not.toHaveProperty('token');
+      const serialized = JSON.stringify(echo);
+      expect(serialized).not.toContain(first.token);
+      expect(serialized).not.toContain(TOKEN_PREFIX);
+      expect(serialized).not.toContain(DELEGATION_CLAIM_MARKER);
+    });
+
+    it('refuses to echo a delegation the presenting claim cannot re-derive after issuer rotation', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Rotate the run-control claim. The new bearer is authorized for the run
+      // but did not issue the in-flight credential, so derivation cannot
+      // succeed — and must surface as data, not as an escaping throw.
+      await issueRunControlClaimFor(runId);
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(echo.kind).toBe('error');
+      if (echo.kind !== 'error') throw new Error('expected a typed refusal');
+      expect(echo.error.code).toBe('RD-821');
+      expect(echo).not.toHaveProperty('token');
+      const serialized = JSON.stringify(echo);
+      expect(serialized).not.toContain(first.token);
+      expect(serialized).not.toContain(TOKEN_PREFIX);
+      expect(serialized).not.toContain(DELEGATION_CLAIM_MARKER);
     });
   });
 

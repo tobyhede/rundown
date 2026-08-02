@@ -30,7 +30,11 @@ import {
 } from './delegation-credential.js';
 import type { TokenScanResult } from './delegation-scan.js';
 import { hashDelegationToken } from './delegation-token.js';
-import { resolveDelegationIssuance, type RequestedRunbookArg } from './delegation-inference.js';
+import {
+  resolveDelegationIssuance,
+  type DelegationIssuanceResolution,
+  type RequestedRunbookArg,
+} from './delegation-inference.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -379,6 +383,85 @@ function replaceIssuedDelegation(
   };
 }
 
+/**
+ * Outcome of verifying the bearer an already-issued delegation would echo.
+ *
+ * Discriminated so the caller cannot reach a token without having passed the
+ * verification: the refusal arm carries no token at all.
+ */
+type EchoedDelegationToken =
+  | { readonly kind: 'verified'; readonly token: string }
+  | { readonly kind: 'unverifiable'; readonly error: RundownError };
+
+/**
+ * Reconstruct and verify the bearer token for an already-issued delegation
+ * before the seam echoes it.
+ *
+ * An echo is a credential disclosure, so it is gated on the same invariant
+ * `projectDelegateFrontier` enforces at the observation boundary: the token
+ * reconstructed from the persisted descriptor MUST hash to the verifier the
+ * parent recorded at issuance. Without that check the seam would hand back
+ * whatever the descriptor happens to derive to, which is a forged or corrupted
+ * record's own choosing.
+ *
+ * Derivation itself can fail — a rotated issuing claim can no longer reproduce a
+ * credential minted by its predecessor, and the deriver throws for that. That
+ * throw must not escape as an untyped error from a command seam whose contract
+ * is typed data, so it collapses into the same refusal as a mismatch. Neither
+ * arm carries the reconstructed token, so a caller cannot leak a bearer it was
+ * refused.
+ *
+ * @param echo - The `already-issued` resolution the seam matched.
+ * @param deriveToken - Verified runtime deriver bound to the presenting claim.
+ * @returns The verified bearer, or the typed refusal to return in its place.
+ */
+function verifyEchoedDelegationToken(
+  echo: Extract<DelegationIssuanceResolution, { readonly kind: 'already-issued' }>,
+  deriveToken: DelegationTokenDeriver,
+): EchoedDelegationToken {
+  let token: string;
+  try {
+    token = deriveToken(echo.credential);
+  } catch {
+    return {
+      kind: 'unverifiable',
+      error: Errors.delegationInvariantViolated(
+        `the presented claim cannot reconstruct the in-flight delegation credential for ${echo.stepId}`,
+      ),
+    };
+  }
+  if (hashDelegationToken(token) !== echo.tokenHash) {
+    return {
+      kind: 'unverifiable',
+      error: Errors.delegationInvariantViolated(
+        `reconstructed delegation credential for ${echo.stepId} does not match its persisted verifier`,
+      ),
+    };
+  }
+  return { kind: 'verified', token };
+}
+
+/**
+ * The policy refusals the mutation-authority resolution can produce.
+ *
+ * `#resolveMutationActorContext` is the sole authority gate on the abort path
+ * and yields exactly these two kinds: "no authority was named at all"
+ * (`actor_context_required`) and "the presented claim lacks this grant"
+ * (`claim_grant_required`). Publishing that narrow union — rather than the whole
+ * {@link DelegationPolicyOutcome} — is what lets a frontend switch exhaustively
+ * over it: a third kind added here becomes a compile error at every consumer
+ * instead of silently landing in a fallback that renders some other refusal's
+ * envelope (CLAUDE.md "No silent mapping").
+ *
+ * Deliberately NOT reused for {@link DelegationIssuanceOutcome}'s `refused` arm:
+ * issuance also runs `resolveCommandIntent`, which can refuse for collection
+ * state, so that seam legitimately carries the wider union.
+ */
+export type MutationAuthorityRefusalPolicy = Extract<
+  DelegationPolicyOutcome,
+  { readonly kind: 'actor_context_required' | 'claim_grant_required' }
+>;
+
 /** Input for the core-owned delegation abort workflow. */
 export interface DelegationAbortInput {
   /** Plaintext delegation bearer used only for lookup and exact hash revalidation. */
@@ -401,7 +484,7 @@ export type DelegationAbortOutcome =
   | {
       readonly kind: 'needs_force';
       readonly substepId: string;
-      readonly childRunId: string;
+      readonly childRunId: RunId;
     }
   | {
       readonly kind: 'cancelled';
@@ -411,7 +494,7 @@ export type DelegationAbortOutcome =
       readonly childRunId: RunId | null;
       readonly cleanup: 'none' | 'active_child_failed' | 'terminal_child_cleaned';
     }
-  | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+  | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
   | { readonly kind: 'error'; readonly error: RundownError }
   | Extract<
       GuardedMutationResult<never>,
@@ -1013,7 +1096,7 @@ export class RunbookLifecycleCommandService {
         readonly actorContext: ActorContext;
         readonly authority: VerifiedClaimAuthority;
       }
-    | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+    | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
   > {
     const presentedClaimId =
       input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
@@ -1164,13 +1247,19 @@ export class RunbookLifecycleCommandService {
           requested,
         });
         if (exact.kind === 'already-issued') {
+          // Never echo a bearer this claim cannot reproduce and verify against
+          // the persisted verifier — a refused echo returns data, not a token.
+          const echoed = verifyEchoedDelegationToken(exact, deriveToken);
+          if (echoed.kind === 'unverifiable') {
+            return { kind: 'return', value: { kind: 'error', error: echoed.error } };
+          }
           return {
             kind: 'return',
             value: {
               kind: 'already-delegated',
               stepId: exact.stepId,
               runbookRef: exact.runbookRef,
-              token: deriveToken(exact.credential),
+              token: echoed.token,
               parentRunId: captured.state.id,
             },
           };
@@ -1216,8 +1305,8 @@ export class RunbookLifecycleCommandService {
           },
           issueCredential,
         );
-        if (!('nextState' in prepared)) {
-          if ('error' in prepared) {
+        if (prepared.status !== 'prepared') {
+          if (prepared.status === 'error' || prepared.status === 'child_in_flight') {
             return { kind: 'return', value: { kind: 'error', error: prepared.error } };
           }
           throw new Error(`Issue preparation returned ${prepared.status}`);
@@ -1553,8 +1642,8 @@ export class RunbookLifecycleCommandService {
           },
           issueCredential,
         );
-        if (!('nextState' in prepared)) {
-          if ('error' in prepared) {
+        if (prepared.status !== 'prepared') {
+          if (prepared.status === 'error' || prepared.status === 'child_in_flight') {
             return { kind: 'return', value: { kind: 'error', error: prepared.error } };
           }
           throw new Error(`Retry preparation returned ${prepared.status}`);
@@ -1691,11 +1780,13 @@ export class RunbookLifecycleCommandService {
           { type: 'ABORT', substepId, frameKey, force: input.force },
           createDelegationCredentialIssuer(verifiedAuthority),
         );
-        if (!('nextState' in parentPrepared)) {
-          if ('error' in parentPrepared) {
+        switch (parentPrepared.status) {
+          case 'prepared':
+            break;
+          case 'error':
+          case 'child_in_flight':
             return { kind: 'return', value: { kind: 'error', error: parentPrepared.error } };
-          }
-          if (parentPrepared.status === 'needs_force') {
+          case 'needs_force':
             return {
               kind: 'return',
               value: {
@@ -1704,16 +1795,20 @@ export class RunbookLifecycleCommandService {
                 childRunId: parentPrepared.childRunId,
               },
             };
+          case 'already_cancelled':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'already_cancelled',
+                parentRunId,
+                substepId,
+                childRunbookPath: exact.delegation.childRunbookPath,
+              },
+            };
+          default: {
+            const _exhaustive: never = parentPrepared;
+            return _exhaustive;
           }
-          return {
-            kind: 'return',
-            value: {
-              kind: 'already_cancelled',
-              parentRunId,
-              substepId,
-              childRunbookPath: exact.delegation.childRunbookPath,
-            },
-          };
         }
 
         let nextParent = parentPrepared.nextState;

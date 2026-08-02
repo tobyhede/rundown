@@ -12387,7 +12387,19 @@ echo ok
       expect(ctx.delegateFrontier?.length).toBe(2);
       const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
       expect(frontierIds).toEqual(['1.1', '1.2']);
-      expect(ctx.delegateFrontier?.map((entry) => entry.credential)).toHaveLength(2);
+      // Assert the credential values, never the length of a mapped projection:
+      // `.map()` preserves length whatever it yields, so asserting the mapped
+      // credentials have 2 entries still passes when every credential regressed
+      // to a stale or absent descriptor. Each entry must carry the descriptor
+      // minted for its own coordinates — `toMatchObject` also fails outright on
+      // a missing credential, which the mapped-length check could not detect.
+      for (const entry of ctx.delegateFrontier ?? []) {
+        expect(entry.credential).toMatchObject({
+          version: 1,
+          parentStepId: entry.id,
+          parentFrameKey: buildFrameKey('1'),
+        });
+      }
       expect(ctx.delegateFrontier?.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(
         true,
       );

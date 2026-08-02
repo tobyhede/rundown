@@ -98,10 +98,13 @@ function frontierToken(events: JsonEvent[], runbookSuffix: string): string | und
 interface StatusResponse {
   readonly file?: string;
   readonly position?: { readonly current?: string };
+  // `status` is read-only and holds no bearer authority, so its delegation
+  // projection is redacted: it carries `tokenHash` and never the raw `rdtk_…`
+  // bearer. Only an authorized `step_entered` frontier delivers the token.
   readonly delegations?: ReadonlyArray<{
     readonly substep: string;
     readonly state: string;
-    readonly token: string;
+    readonly tokenHash: string;
     readonly runbook: string;
   }>;
 }
@@ -160,7 +163,15 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
         current.file?.endsWith('review-and-collate.runbook.md') &&
         current.position?.current === '1'
       ) {
-        return { token: token ?? pending.token, events };
+        if (token === undefined) {
+          throw new Error(
+            'Reached the review-and-collate DELEGATE step but no step_entered ' +
+              'delegateFrontier delivered a review-file.runbook.md token. Status ' +
+              'redacts delegation bearers, so a missing frontier emission is the ' +
+              'regression — not a reason to read the token from status.',
+          );
+        }
+        return { token, events };
       }
       const advanced = await pass();
       events.push(...advanced);

@@ -2689,41 +2689,65 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  it('refuses a persisted delegation frontier when continuation lacks its token deriver', async () => {
-    const delegateSteps: any[] = [
-      {
-        kind: 'substeps',
-        name: '1',
-        description: 'Parallel work',
-        substeps: [
-          {
-            id: '1',
-            description: 'First task',
-            delegate: true,
-            runbooks: ['child-a.runbook.md'],
-            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
-          },
-        ],
-        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
-      },
-    ];
+  // The missing-authority refusal must behave exactly like its neighbour, the
+  // frontier-consume failure: a coded ERROR_OCCURRED, a positioned
+  // RUNBOOK_STOPPED, and a terminal release — never an untyped throw. A throw
+  // unwinds past `applyExecutionTerminalRelease`, so the refused run stays on
+  // the session stack (`popRunbook` never runs) and every later bare command
+  // still resolves it as the active runbook. That stranding, not the message,
+  // is what these tests pin.
+  const frontierWithoutDeriverSteps = (): LooseStep[] => [
+    {
+      kind: 'substeps',
+      name: '1',
+      description: 'Parallel work',
+      substeps: [
+        {
+          id: '1',
+          description: 'First task',
+          delegate: true,
+          runbooks: ['child-a.runbook.md'],
+          transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+        },
+      ],
+      transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+    },
+  ];
+
+  it('refuses a persisted delegation frontier without a token deriver as a coded stop', async () => {
+    const delegateSteps = frontierWithoutDeriverSteps();
 
     mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
     mockActorService.getContextSnapshot.mockResolvedValue({
       delegateFrontier: [persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')],
     });
 
-    await expect(
-      runExecutionLoop(
-        asManager(mockManager),
-        runbookId,
-        asSteps(delegateSteps),
-        '/tmp',
-        false,
-        asEmitter(mockEmitter),
-      ),
-    ).rejects.toThrow('Delegation frontier cannot be projected without verified claim authority');
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: 'Delegation frontier cannot be projected without verified claim authority',
+        code: 'ACTOR_CONTEXT_REQUIRED',
+      },
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '1', total: 1, substep: '1' },
+        message: 'Delegation frontier cannot be projected without verified claim authority',
+      },
+    });
+
+    // None of the frontier-dependent work may run on the refusal path.
     expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
@@ -2731,6 +2755,50 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'STEP_ENTERED' }),
     );
+  });
+
+  it('releases the run from the session stack when the frontier refusal fires', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      delegateFrontier: [persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')],
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(frontierWithoutDeriverSteps()),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    // The stranding assertion: the default 'stack-pop' release must have run,
+    // so the refused run no longer sits at the top of the session stack.
+    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  it('releases a claimed child through releaseRunbook when the frontier refusal fires', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      delegateFrontier: [persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')],
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(frontierWithoutDeriverSteps()),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { terminalReleaseMode: 'release-runbook' },
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
   it('rolls back existing inline child session activation when intent consumption fails', async () => {

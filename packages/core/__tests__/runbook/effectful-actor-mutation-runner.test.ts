@@ -198,13 +198,17 @@ describe('createEffectfulActorMutationRunner', () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const state = await seedRun('echo.runbook.md');
       const compute = jest.fn();
-      const store = await getRunbookStore(dir);
-      const realValidate = store.validateCapturedRunSet.bind(store);
+      // Capture the prototype method, not a bound copy from a separately
+      // resolved store: the mock runs on whichever RunbookStore instance the
+      // runner holds, so the real validation must run against that same
+      // receiver rather than against this test's handle.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realValidate = RunbookStore.prototype.validateCapturedRunSet;
       jest
         .spyOn(RunbookStore.prototype, 'validateCapturedRunSet')
         .mockImplementationOnce(async function (this: RunbookStore, captured) {
           unwrapSessionMutation(await sessionService.releaseRunbook(state.id));
-          return realValidate(captured);
+          return realValidate.call(this, captured);
         });
 
       const result = await runner.runAll<string>({

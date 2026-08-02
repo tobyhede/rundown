@@ -68,10 +68,13 @@ function makeState(overrides: Partial<DelegationInferenceState> = {}): Delegatio
   };
 }
 
+/** Persisted verifier carried by the default pending-delegation fixture. */
+const PENDING_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+
 function makeActiveDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
     credential: makeDelegationCredentialDescriptor(),
-    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+    tokenHash: PENDING_TOKEN_HASH,
     childRunbookPath: 'child.runbook.md',
     childRunbookRef: { source: 'project', path: 'child.runbook.md' },
     contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
@@ -864,6 +867,7 @@ describe('resolveDelegationIssuance', () => {
         kind: 'already-issued',
         stepId: '1.1',
         credential: makeDelegationCredentialDescriptor(),
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
@@ -879,6 +883,30 @@ describe('resolveDelegationIssuance', () => {
         kind: 'already-issued',
         credential: makeDelegationCredentialDescriptor(),
       });
+    });
+
+    it("carries the delegation record's own verifier alongside its descriptor", () => {
+      // The verifier is what an echoing caller checks a reconstructed bearer
+      // against, so it must be read from the record rather than defaulted:
+      // a resolution pinned to some other delegation hash would authorize a
+      // token this record never issued.
+      const ownHash = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({ tokenHash: ownHash }),
+        },
+      ]);
+
+      const resolution = resolveDelegationIssuance(state, buildSingleDelegateSteps(), frameKey, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+
+      expect(resolution).toMatchObject({ kind: 'already-issued', tokenHash: ownHash });
+      expect(ownHash).not.toBe(PENDING_TOKEN_HASH);
     });
 
     it('conflicts (RD-804) when the requested runbook differs from the in-flight one', () => {
@@ -996,6 +1024,7 @@ describe('resolveDelegationIssuance', () => {
         kind: 'already-issued',
         stepId: '1.1',
         credential: firstCredential,
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
@@ -1041,6 +1070,7 @@ describe('resolveDelegationIssuance', () => {
         kind: 'already-issued',
         stepId: '1.2',
         credential: pendingCredential,
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
@@ -1084,6 +1114,7 @@ describe('resolveDelegationIssuance', () => {
         kind: 'already-issued',
         stepId: '1.1',
         credential: makeDelegationCredentialDescriptor(),
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
@@ -1163,6 +1194,7 @@ describe('resolveDelegationIssuance', () => {
         kind: 'already-issued',
         stepId: '1.1',
         credential: makeDelegationCredentialDescriptor(),
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
 

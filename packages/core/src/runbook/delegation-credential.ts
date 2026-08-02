@@ -39,7 +39,10 @@ export type DelegationTokenDeriver = (descriptor: DelegationCredentialDescriptor
  *
  * @param authority - Exact verified issuing claim bearer.
  * @returns A callable that derives only descriptors owned by that claim.
- * @throws {Error} When a descriptor names a different issuer claim.
+ * @throws {Error} Eagerly, when the authority's bearer encodes a different claim
+ *   key than the authority names. The returned callable additionally throws when
+ *   a descriptor names a different issuer claim, and propagates
+ *   {@link deriveDelegationToken}'s rejection of a non-positive parent entry.
  */
 export function createDelegationTokenDeriver(
   authority: VerifiedClaimAuthority,
@@ -59,9 +62,19 @@ export function createDelegationTokenDeriver(
 /**
  * Bind fresh credential issuance to one already verified claim authority.
  *
+ * Issuance derives through {@link createDelegationTokenDeriver}, so the bound
+ * authority is validated once here rather than on every issuance, and the
+ * returned issuer inherits that closure's remaining runtime failure modes.
+ *
  * @param authority - Exact verified issuing claim bearer.
  * @param generateNonce - Public issuance nonce source.
  * @returns A callable that creates descriptor, token and hash together.
+ * @throws {Error} Eagerly, when the authority's bearer encodes a different claim
+ *   key than the authority names ('Verified claim authority does not match its
+ *   bearer'), raised by {@link createDelegationTokenDeriver} before any issuer
+ *   is returned. The returned issuer itself throws when `location.parentEntry`
+ *   is not a positive safe integer, propagated from
+ *   {@link deriveDelegationToken}.
  */
 export function createDelegationCredentialIssuer(
   authority: VerifiedClaimAuthority,

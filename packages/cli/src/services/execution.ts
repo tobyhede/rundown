@@ -263,6 +263,16 @@ export interface ExecutionLoopOptions {
   readonly output?: OutputEmitter;
 }
 
+/**
+ * Refusal text for a persisted delegation frontier reached without the verified
+ * claim authority needed to project it.
+ *
+ * Shared by the `ERROR_OCCURRED` and the corrective `RUNBOOK_STOPPED` so the two
+ * halves of one refusal cannot describe it differently.
+ */
+const FRONTIER_AUTHORITY_REQUIRED_MESSAGE =
+  'Delegation frontier cannot be projected without verified claim authority';
+
 interface InlineLaunchArgs {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
@@ -1108,12 +1118,14 @@ export async function drainResolvedCompletions({
  * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param emitter - Event emitter for execution events
  * @param options - Optional execution loop behavior overrides
- * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
+ * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only
+ *   step reached. A persisted delegation frontier that cannot be projected
+ *   without verified claim authority returns 'stopped' after an
+ *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and the terminal release — it is
+ *   a refusal, not a throw, so the run is never left on the session stack.
  * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
  *   actor/lifecycle/session services throw while advancing transitions,
- *   command execution rejects, a persisted delegation frontier cannot be
- *   projected with verified claim authority, or the emitter raises during
- *   event dispatch.
+ *   command execution rejects, or the emitter raises during event dispatch.
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
@@ -1401,7 +1413,33 @@ export async function runExecutionLoop(
     let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
     if (persistedDelegateFrontier !== undefined) {
       if (delegationTokenDeriver === undefined) {
-        throw new Error('Delegation frontier cannot be projected without verified claim authority');
+        // Same treatment as the frontier-consume failure below: a missing
+        // deriver is a refusal of this continuation, not a crash. Throwing
+        // unwound past both the emitter and applyExecutionTerminalRelease, so
+        // the caller got a bare Error carrying no code and the refused run
+        // stayed on the session stack — still resolving as the active runbook
+        // for every later bare command.
+        emitter.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+            code: 'ACTOR_CONTEXT_REQUIRED',
+          },
+        });
+        emitter.emit({
+          type: 'RUNBOOK_STOPPED',
+          payload: {
+            position: stepPosition,
+            message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+          },
+        });
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'stopped',
+        );
       }
       delegateFrontier = [
         ...projectDelegateFrontier(persistedDelegateFrontier, delegationTokenDeriver),
