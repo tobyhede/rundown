@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import type { ResolvedStepWithSubsteps, Substep, Transitions } from '@rundown-org/parser';
 import { createActor } from 'xstate';
 
@@ -146,6 +146,49 @@ function input(
 }
 
 describe('delegationIssueActor', () => {
+  it('refuses token issuance before resolution when verified claim authority is absent', async () => {
+    const resolveRunbook = jest.fn(async (runbookRef: string) => makeResolved(runbookRef));
+
+    const result = await runActor(
+      input({
+        issueCredential: undefined,
+        resolveRunbook,
+      }),
+    );
+
+    expect(result.status).toBe('done');
+    expect(result.output).toEqual({
+      status: 'failed',
+      reason: 'actor_context_required',
+      message: 'Delegation issuance requires verified claim authority',
+    });
+    expect(resolveRunbook).not.toHaveBeenCalled();
+  });
+
+  it('forwards the verified credential issuer to every delegation target', async () => {
+    const issueCredential = jest.fn(input().issueCredential);
+
+    const result = await runActor(input({ issueCredential }));
+
+    expect(result.status).toBe('done');
+    expect(result.output).toMatchObject({ status: 'issued' });
+    expect(issueCredential).toHaveBeenCalledTimes(2);
+    expect(issueCredential).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        parentRunId: brandRunIdForTest(`rd_${'1'.repeat(32)}`),
+        parentStepId: '1.1',
+        parentFrameKey: buildFrameKey('1'),
+      }),
+      undefined,
+    );
+    expect(issueCredential).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ parentStepId: '1.2' }),
+      undefined,
+    );
+  });
+
   it('fans out two delegated substeps with token-free intents and updated substep states', async () => {
     const result = await runActor(input());
 

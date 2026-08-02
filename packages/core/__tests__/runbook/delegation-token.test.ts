@@ -109,6 +109,12 @@ describe('deriveDelegationToken', () => {
       deriveDelegationToken(DERIVATION_SECRET, { ...DERIVATION_COORDINATE, parentEntry }),
     ).toThrow('Invalid delegation parent entry: expected a positive safe integer');
   });
+
+  it('accepts parent entry one as the positive lower boundary', () => {
+    expect(() =>
+      deriveDelegationToken(DERIVATION_SECRET, { ...DERIVATION_COORDINATE, parentEntry: 1 }),
+    ).not.toThrow();
+  });
 });
 
 describe('delegation issuance nonces', () => {
@@ -121,8 +127,12 @@ describe('delegation issuance nonces', () => {
     expect(second).not.toBe(first);
   });
 
-  it('rejects malformed persisted nonce values', () => {
-    expect(() => assertDelegationIssuanceNonce('too-short')).toThrow(
+  it.each([
+    ['wrong encoded length', 'A'.repeat(44)],
+    ['non-base64url alphabet', `${'A'.repeat(42)}!`],
+    ['non-canonical trailing bits', `${'A'.repeat(42)}B`],
+  ])('rejects a nonce with %s', (_reason, value) => {
+    expect(() => assertDelegationIssuanceNonce(value)).toThrow(
       'Invalid delegation issuance nonce: expected 43 base64url characters',
     );
   });

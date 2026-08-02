@@ -425,11 +425,13 @@ describe('SessionService', () => {
       const service = new SessionService(manager, () => '2026-08-01T00:00:00.000Z');
 
       const prepared = service.prepareRunControlClaim(state.id);
+      const mutateSpy = jest.spyOn(manager, 'mutateSessionGuarded');
 
       expect((await manager.loadSession()).claims).toEqual({});
       const installed = unwrapSessionMutation(
         await service.pushRunbookWithPreparedRunControlClaim(state.id, prepared),
       );
+      expect(mutateSpy).toHaveBeenCalledWith([state.id], expect.any(Function));
       expect(installed).toEqual({ claimId: prepared.claimId, claim: prepared.claim });
       await expect(service.verifyClaimId(prepared.claimId)).resolves.toMatchObject({
         status: 'verified',
@@ -459,6 +461,35 @@ describe('SessionService', () => {
       expect((await manager.loadSession()).defaultStack).toEqual([]);
       expect((await manager.loadSession()).claims).toEqual({});
     });
+
+    it.each([
+      ['controlled run id', 'controlledRunId'],
+      ['claim key', 'claimKey'],
+      ['secret hash', 'secretHash'],
+    ] as const)(
+      'independently refuses a prepared claim with a mismatched %s',
+      async (_label, field) => {
+        const state = await manager.create(
+          { source: 'project', path: 'parent.runbook.md' },
+          mockRunbook,
+          { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+        );
+        const service = new SessionService(manager);
+        const prepared = service.prepareRunControlClaim(state.id);
+        const other = service.prepareRunControlClaim(CHILD_RUN_ID);
+        const tampered = {
+          ...prepared,
+          claim: { ...prepared.claim, [field]: other.claim[field] },
+        };
+
+        await expect(
+          service.pushRunbookWithPreparedRunControlClaim(state.id, tampered),
+        ).rejects.toThrow(`Prepared run-control claim does not match ${state.id}`);
+        const session = await manager.loadSession();
+        expect(session.defaultStack).toEqual([]);
+        expect(session.claims).toEqual({});
+      },
+    );
 
     it('mints a claim with child mutation and parent report grants', async () => {
       const persistedLinkage = linkageFor(PARENT_RUN_ID, 'b');

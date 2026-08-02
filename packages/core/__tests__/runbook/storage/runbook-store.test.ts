@@ -431,6 +431,95 @@ describe('captureRunAuthority (bare caller, no presented claim)', () => {
 });
 
 describe('guarded state writes', () => {
+  describe('validateCapturedRunSet', () => {
+    async function capture(state: RunbookState, keyHex: string): Promise<CapturedAuthority> {
+      await store.createRun(state);
+      const key = await mintClaim(state.id, keyHex);
+      const result = await store.captureAuthority(state.id, assertClaimLookupKey(key));
+      if (result.kind !== 'captured') throw new Error(`expected captured, got ${result.kind}`);
+      return result.authority;
+    }
+
+    it('requires a non-empty authority set', () => {
+      expect(() => store.validateCapturedRunSet([])).toThrow(
+        'Captured authority validation requires at least one run.',
+      );
+    });
+
+    it('rejects duplicate captures of the same run', async () => {
+      const authority = await capture(await newState(), '1'.repeat(32));
+
+      expect(() => store.validateCapturedRunSet([authority, authority])).toThrow(
+        'Captured authority validation repeats a run.',
+      );
+    });
+
+    it('commits only after validating every distinct capture', async () => {
+      const first = await capture(await newState(), '1'.repeat(32));
+      const second = await capture(await newState(), '2'.repeat(32));
+
+      await expect(store.validateCapturedRunSet([first, second])).resolves.toEqual({
+        kind: 'committed',
+        value: undefined,
+      });
+    });
+
+    it('reports concurrent modification of a captured run', async () => {
+      const state = await newState();
+      const authority = await capture(state, '3'.repeat(32));
+      await store.saveState(authority, { ...state, stepName: 'changed' });
+
+      await expect(store.validateCapturedRunSet([authority])).resolves.toEqual({
+        kind: 'concurrent_modification',
+        runId: state.id,
+        message: `Run ${state.id} was modified concurrently.`,
+      });
+    });
+
+    it('reports claim supersession of a captured run', async () => {
+      const state = await newState();
+      const authority = await capture(state, '4'.repeat(32));
+      await store.transaction((txn) => {
+        txn.tombstoneClaim(authority.claimKey);
+      });
+
+      await expect(store.validateCapturedRunSet([authority])).resolves.toEqual({
+        kind: 'claim_superseded',
+        runId: state.id,
+        message: `The presented claim no longer controls run ${state.id}.`,
+      });
+    });
+
+    it('reports an execution owner acquired after capture', async () => {
+      const state = await newState();
+      const authority = await capture(state, '5'.repeat(32));
+      await store.transaction((txn) => {
+        takeOwnership(txn.tx, state.id);
+      });
+
+      await expect(store.validateCapturedRunSet([authority])).resolves.toEqual({
+        kind: 'execution_in_progress',
+        runId: state.id,
+        message: `Run ${state.id} has an execution in progress.`,
+      });
+    });
+
+    it('reports a captured run deleted before validation', async () => {
+      const state = await newState();
+      const authority = await capture(state, '6'.repeat(32));
+      await store.transaction((txn) => {
+        txn.tombstoneClaim(authority.claimKey);
+        txn.deleteRun(state.id);
+      });
+
+      await expect(store.validateCapturedRunSet([authority])).resolves.toEqual({
+        kind: 'missing',
+        runId: state.id,
+        message: `Run ${state.id} no longer exists.`,
+      });
+    });
+  });
+
   it('refuses concurrent_modification on a stale captured version', async () => {
     const state = await newState();
     await store.createRun(state);

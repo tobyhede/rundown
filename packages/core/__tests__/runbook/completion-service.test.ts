@@ -30,6 +30,7 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
+import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 
@@ -333,6 +334,44 @@ describe('RunbookCompletionService', () => {
       steps,
       expect.objectContaining({ type: 'APPLY_CURRENT_RESOLVED_COMPLETION' }),
       { guard },
+    );
+  });
+
+  it('forwards verified claim authority through the completion transition runtime', async () => {
+    const current = state();
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    await manager.save({
+      ...current,
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+    const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: state({ substep: '2' }),
+      snapshot: {},
+      effects: [],
+    });
+    const issueDelegationCredential = makeDelegationCredentialIssuer();
+
+    await service.drainResolvedCompletions({
+      runbookId,
+      steps,
+      currentState: current,
+      issueDelegationCredential,
+    });
+
+    expect(sendAndSync).toHaveBeenCalledWith(
+      runbookId,
+      steps,
+      expect.objectContaining({ type: 'APPLY_CURRENT_RESOLVED_COMPLETION' }),
+      { runtime: { issueDelegationCredential } },
     );
   });
 

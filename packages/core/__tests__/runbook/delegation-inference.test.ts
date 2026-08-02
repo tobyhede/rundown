@@ -1000,6 +1000,51 @@ describe('resolveDelegationIssuance', () => {
       });
     });
 
+    it('ignores a claimed delegation when no pending or issuable candidate remains', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithClaimedDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { requested: noneRequested },
+      );
+
+      expect(resolution.kind).toBe('none');
+      if (resolution.kind !== 'none') return;
+      expect(resolution.error.code).toBe('RD-813');
+    });
+
+    it('echoes a later pending delegation instead of an earlier claimed delegation', () => {
+      const pendingCredential = makeDelegationCredentialDescriptor({ parentEntry: 2 });
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({
+            credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
+            childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
+          }),
+        },
+        {
+          id: '2',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({ credential: pendingCredential }),
+        },
+      ]);
+
+      expect(
+        resolveDelegationIssuance(state, buildDelegateSteps(), frameKey, {
+          requested: noneRequested,
+        }),
+      ).toEqual({
+        kind: 'already-issued',
+        stepId: '1.2',
+        credential: pendingCredential,
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
     it('returns none with RD-813 when the step has no delegate substeps', () => {
       const steps: ResolvedStep[] = [
         makeStepWithSubsteps('1', [

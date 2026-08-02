@@ -178,6 +178,40 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     return { context, parentStep, steps, originalSubstepStates };
   }
 
+  it('refuses an active delegation retry when verified claim authority is absent', () => {
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result).toEqual({
+      status: 'error',
+      code: 'ACTOR_CONTEXT_REQUIRED',
+      message: 'Delegation retry requires verified claim authority',
+      substepStates: originalSubstepStates,
+    });
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
+  it('forwards the verified credential issuer to delegation retry', () => {
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const issuer = makeDelegationCredentialIssuer();
+    const delegation = originalSubstepStates[0]?.delegation;
+    if (delegation === undefined) throw new Error('Expected delegated retry fixture');
+    mockedRetryDelegation.mockReturnValue({
+      status: 'retried',
+      token: 'rdtk_new_token',
+      tokenHash: HASH_NEW,
+      delegation,
+      updatedSubstepStates: [...originalSubstepStates],
+    });
+
+    const result = runRetryHook(context, parentStep, steps, issuer);
+
+    expect(result.status).toBe('success');
+    expect(mockedRetryDelegation).toHaveBeenCalledTimes(1);
+    expect(mockedRetryDelegation.mock.calls[0]?.[0].issueCredential).toBe(issuer);
+  });
+
   it('uses the canonical contextSnapshot.at when pushing a FOR-iteration frontier entry', () => {
     // Regression: the pre-fix code built the frontier id from
     // `${parentStep.name}.${substep.id}` — e.g. "1.1" — which erased the

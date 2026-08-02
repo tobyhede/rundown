@@ -12,6 +12,7 @@ import type { SessionMutationRefusalOutcome } from '@rundown-org/core';
 import {
   isSessionMutationRefusal,
   renderSessionMutationRefusal,
+  renderTransactionalMutationRefusal,
   sessionMutationRefusalCode,
 } from '../../src/helpers/session-mutation-result.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
@@ -92,5 +93,58 @@ describe('isSessionMutationRefusal', () => {
     // capture any of them, or `terminal-command.ts` would render a cleanup
     // success as a refusal.
     expect(isSessionMutationRefusal(outcome)).toBe(false);
+  });
+});
+
+describe('renderTransactionalMutationRefusal', () => {
+  it.each([
+    { refusal: executionInProgress, code: 'EXECUTION_IN_PROGRESS' },
+    { refusal: recoveryRequired, code: 'RECOVERY_REQUIRED' },
+  ])(
+    'renders the $refusal.kind ownership refusal through the shared mapping',
+    ({ refusal, code }) => {
+      const { emitter, error } = makeOutput();
+
+      expect(renderTransactionalMutationRefusal(emitter, refusal)).toBe(true);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(refusal.message, code);
+    },
+  );
+
+  it.each([
+    { kind: 'claim_superseded' as const, message: 'superseded', code: 'STALE_CLAIM' },
+    {
+      kind: 'concurrent_modification' as const,
+      message: 'changed concurrently',
+      code: 'CONCURRENT_MODIFICATION',
+    },
+    { kind: 'missing' as const, message: 'missing run', code: 'RUN_TARGET_UNAVAILABLE' },
+  ])('renders $kind with its exact message and code', (refusal) => {
+    const { emitter, error } = makeOutput();
+
+    expect(renderTransactionalMutationRefusal(emitter, refusal)).toBe(true);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(refusal.message, refusal.code);
+  });
+
+  it('renders every aggregate recovery attempt with a numeric epoch', () => {
+    const { emitter, error } = makeOutput();
+    const refusal = {
+      kind: 'aggregate_recovery_required' as const,
+      message: 'recover these runs',
+      attempts: [
+        { runId: `rd_${'2'.repeat(32)}`, epoch: 3 },
+        { runId: `rd_${'3'.repeat(32)}`, epoch: 4 },
+      ],
+    };
+
+    expect(renderTransactionalMutationRefusal(emitter, refusal)).toBe(true);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('recover these runs', 'RECOVERY_REQUIRED', {
+      runs: [
+        { runId: refusal.attempts[0].runId, epoch: 3 },
+        { runId: refusal.attempts[1].runId, epoch: 4 },
+      ],
+    });
   });
 });

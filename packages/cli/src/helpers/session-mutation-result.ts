@@ -52,6 +52,19 @@ export function isSessionMutationRefusal(outcome: {
  */
 export type SessionMutationRefusalCode = 'EXECUTION_IN_PROGRESS' | 'RECOVERY_REQUIRED';
 
+/** Transactional refusals shared by delegation mutation commands. */
+export type TransactionalMutationRefusal =
+  | SessionMutationRefusalOutcome
+  | {
+      readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing';
+      readonly message: string;
+    }
+  | {
+      readonly kind: 'aggregate_recovery_required';
+      readonly message: string;
+      readonly attempts: readonly { readonly runId: string; readonly epoch: number }[];
+    };
+
 /**
  * Map a session ownership refusal to its registered symbolic error code.
  *
@@ -94,4 +107,36 @@ export function renderSessionMutationRefusal(
 ): boolean {
   output.error(refusal.message, sessionMutationRefusalCode(refusal));
   return true;
+}
+
+/**
+ * Render a transactional delegation refusal under its registered symbolic code.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param refusal - Transactional refusal returned by a core delegation seam.
+ * @returns `true` because every transactional refusal requests a non-zero exit code.
+ */
+export function renderTransactionalMutationRefusal(
+  output: OutputEmitter,
+  refusal: TransactionalMutationRefusal,
+): boolean {
+  switch (refusal.kind) {
+    case 'execution_in_progress':
+    case 'recovery_required':
+      return renderSessionMutationRefusal(output, refusal);
+    case 'claim_superseded':
+      output.error(refusal.message, 'STALE_CLAIM');
+      return true;
+    case 'concurrent_modification':
+      output.error(refusal.message, 'CONCURRENT_MODIFICATION');
+      return true;
+    case 'missing':
+      output.error(refusal.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
+    case 'aggregate_recovery_required':
+      output.error(refusal.message, 'RECOVERY_REQUIRED', {
+        runs: refusal.attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+      });
+      return true;
+  }
 }

@@ -31,7 +31,7 @@ import {
   collect,
 } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
-import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import { renderTransactionalMutationRefusal } from '../helpers/session-mutation-result.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import {
   withTransitionTargetOptions,
@@ -388,29 +388,11 @@ export function registerDelegateCommand(program: Command): void {
                 throw new Error(`Unexpected retry outcome: ${outcome.kind}`);
               case 'execution_in_progress':
               case 'recovery_required':
-                renderSessionMutationRefusal(output, outcome);
-                process.exitCode = 1;
-                break;
               case 'claim_superseded':
-                output.error(outcome.message, 'STALE_CLAIM');
-                process.exitCode = 1;
-                break;
               case 'concurrent_modification':
-                output.error(outcome.message, 'CONCURRENT_MODIFICATION');
-                process.exitCode = 1;
-                break;
               case 'missing':
-                output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
-                process.exitCode = 1;
-                break;
               case 'aggregate_recovery_required':
-                output.error(outcome.message, 'RECOVERY_REQUIRED', {
-                  runs: outcome.attempts.map(({ runId, epoch }) => ({
-                    runId,
-                    epoch: Number(epoch),
-                  })),
-                });
-                process.exitCode = 1;
+                process.exitCode = renderTransactionalMutationRefusal(output, outcome) ? 1 : 0;
                 break;
               default: {
                 const _exhaustive: never = outcome;
@@ -550,29 +532,11 @@ export function registerDelegateCommand(program: Command): void {
               throw new Error(`Unexpected fresh delegate outcome: ${outcome.kind}`);
             case 'execution_in_progress':
             case 'recovery_required':
-              renderSessionMutationRefusal(output, outcome);
-              process.exitCode = 1;
-              break;
             case 'claim_superseded':
-              output.error(outcome.message, 'STALE_CLAIM');
-              process.exitCode = 1;
-              break;
             case 'concurrent_modification':
-              output.error(outcome.message, 'CONCURRENT_MODIFICATION');
-              process.exitCode = 1;
-              break;
             case 'missing':
-              output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
-              process.exitCode = 1;
-              break;
             case 'aggregate_recovery_required':
-              output.error(outcome.message, 'RECOVERY_REQUIRED', {
-                runs: outcome.attempts.map(({ runId, epoch }) => ({
-                  runId,
-                  epoch: Number(epoch),
-                })),
-              });
-              process.exitCode = 1;
+              process.exitCode = renderTransactionalMutationRefusal(output, outcome) ? 1 : 0;
               break;
             default: {
               const _exhaustive: never = outcome;

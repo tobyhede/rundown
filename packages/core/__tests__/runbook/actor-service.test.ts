@@ -39,7 +39,14 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
-import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
+import {
+  makeDelegatedSubstepState,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
+import {
+  makeState as makeDelegationState,
+  makeSteps as makeDelegationSteps,
+} from './delegation-service-fixtures.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The
@@ -1777,6 +1784,156 @@ echo ok
       });
       const persisted = await manager.load(state.id);
       expect(persisted?.lastResult).toBeUndefined();
+    });
+  });
+
+  describe('prepareManualDelegationMutation', () => {
+    const frameKey = buildFrameKey('1');
+
+    async function issueDelegation() {
+      const state = makeDelegationState();
+      const result = await actorService.prepareManualDelegationMutation(
+        state,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: '1.1',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+      if (!('nextState' in result)) throw new Error('expected prepared manual delegation');
+      return result.nextState;
+    }
+
+    it('returns the machine-prepared issue state without mutating its capture', async () => {
+      const state = makeDelegationState();
+      const captured = structuredClone(state);
+
+      const result = await actorService.prepareManualDelegationMutation(
+        state,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: '1.1',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(state).toEqual(captured);
+      expect(result).toEqual({
+        nextState: expect.objectContaining({
+          substepStates: expect.arrayContaining([
+            expect.objectContaining({
+              id: '1',
+              delegation: expect.objectContaining({ childRunId: null, cancelledAt: null }),
+            }),
+          ]),
+        }),
+      });
+    });
+
+    it('maps an invalid manual issue to its domain error', async () => {
+      const state = makeDelegationState();
+
+      const result = await actorService.prepareManualDelegationMutation(
+        state,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: 'missing',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(result).toEqual({
+        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
+      });
+    });
+
+    it('passes through already-cancelled and needs-force abort refusals', async () => {
+      const issued = await issueDelegation();
+      const firstAbort = await actorService.prepareManualDelegationMutation(
+        issued,
+        makeDelegationSteps(),
+        { type: 'ABORT', substepId: '1', frameKey, force: false },
+        makeDelegationCredentialIssuer(),
+      );
+      if (!('nextState' in firstAbort)) throw new Error('expected prepared abort');
+
+      await expect(
+        actorService.prepareManualDelegationMutation(
+          firstAbort.nextState,
+          makeDelegationSteps(),
+          { type: 'ABORT', substepId: '1', frameKey, force: false },
+          makeDelegationCredentialIssuer(),
+        ),
+      ).resolves.toEqual({ status: 'already_cancelled' });
+
+      const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
+      if (issued.substepStates === undefined) throw new Error('expected issued substep state');
+      const linked = {
+        ...issued,
+        substepStates: issued.substepStates.map((substep) =>
+          substep.delegation === undefined
+            ? substep
+            : { ...substep, delegation: { ...substep.delegation, childRunId } },
+        ),
+      };
+      await expect(
+        actorService.prepareManualDelegationMutation(
+          linked,
+          makeDelegationSteps(),
+          { type: 'ABORT', substepId: '1', frameKey, force: false },
+          makeDelegationCredentialIssuer(),
+        ),
+      ).resolves.toEqual({ status: 'needs_force', childRunId });
+    });
+
+    it('routes a prepared abort through the actor when a persisted snapshot exists', async () => {
+      const issued = await issueDelegation();
+      const captured = { ...issued, snapshot: { value: 'persisted' } };
+      const actorNextState = { ...captured, stepName: 'actor-applied' };
+      const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
+        previousState: captured,
+        nextState: actorNextState,
+        snapshot: { value: 'next' },
+        effects: [],
+      });
+
+      const result = await actorService.prepareManualDelegationMutation(
+        captured,
+        makeDelegationSteps(),
+        { type: 'ABORT', substepId: '1', frameKey, force: false },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(result).toEqual({ nextState: actorNextState });
+      expect(prepareSpy).toHaveBeenCalledTimes(1);
+      const preparedCall = prepareSpy.mock.calls[0];
+      const [preparedId, preparedState, , preparedEvent] = preparedCall;
+      expect(preparedId).toBe(captured.id);
+      expect(preparedState).toBe(captured);
+      expect(preparedEvent.type).toBe('MANUAL_DELEGATION_ABORT_PREPARED');
+      if (preparedEvent.type !== 'MANUAL_DELEGATION_ABORT_PREPARED') {
+        throw new Error('expected prepared abort event');
+      }
+      expect(preparedEvent.substepStates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: '1',
+            delegation: expect.objectContaining({ cancelledAt: expect.any(String) }),
+          }),
+        ]),
+      );
     });
   });
 

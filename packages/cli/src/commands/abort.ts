@@ -8,7 +8,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
-import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import { renderTransactionalMutationRefusal } from '../helpers/session-mutation-result.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
@@ -112,29 +112,11 @@ export function registerAbortCommand(program: Command): void {
                 break;
               case 'execution_in_progress':
               case 'recovery_required':
-                renderSessionMutationRefusal(output, outcome);
-                process.exitCode = 1;
-                break;
               case 'claim_superseded':
-                output.error(outcome.message, 'STALE_CLAIM');
-                process.exitCode = 1;
-                break;
               case 'concurrent_modification':
-                output.error(outcome.message, 'CONCURRENT_MODIFICATION');
-                process.exitCode = 1;
-                break;
               case 'missing':
-                output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
-                process.exitCode = 1;
-                break;
               case 'aggregate_recovery_required':
-                output.error(outcome.message, 'RECOVERY_REQUIRED', {
-                  runs: outcome.attempts.map(({ runId, epoch }) => ({
-                    runId,
-                    epoch: Number(epoch),
-                  })),
-                });
-                process.exitCode = 1;
+                process.exitCode = renderTransactionalMutationRefusal(output, outcome) ? 1 : 0;
                 break;
               default: {
                 const _exhaustive: never = outcome;
