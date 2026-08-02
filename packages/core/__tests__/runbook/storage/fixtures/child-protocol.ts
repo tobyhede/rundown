@@ -17,6 +17,7 @@ import type { DelegationLinkage } from '../../../../src/runbook/types.js';
 
 /** One session mutation for a child process to perform after the barrier releases. */
 export type ChildOp =
+  | { readonly kind: 'readSession' }
   | { readonly kind: 'issueRunControlClaim'; readonly runId: string }
   | {
       readonly kind: 'claimRunbook';

@@ -167,6 +167,8 @@ class HarnessRunbookStateManager extends RunbookStateManager {
  */
 async function run(service: SessionService): Promise<unknown> {
   switch (op.kind) {
+    case 'readSession':
+      return manager.loadSession();
     // The four ownership-guarded mutations are unwrapped here so the wire carries
     // the DOMAIN result the parent asserts on, not the storage envelope around it.
     // No child in this fixture holds an execution lease, so a refusal would be a

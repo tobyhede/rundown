@@ -113,8 +113,8 @@ export function RunbookRunner({
   const [mode, setMode] = useState<'text' | 'json'>('text');
   // Set while reset()'s async cleanRundownState is awaiting. Without this
   // gate, status stays `ready` during cleanup, which would let a Next click
-  // start a new run before `.rundown/runs` / `session.json` / locks are
-  // gone — and the new run would inherit stale persisted state.
+  // start a new run before the SQLite authority and locks are gone — and the
+  // new run would inherit stale persisted state.
   const [isResetting, setIsResetting] = useState(false);
 
   // Instance-scoped IDs so multiple RunbookRunner instances on the same page

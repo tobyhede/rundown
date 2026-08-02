@@ -54,7 +54,7 @@ export function registerPruneCommand(program: Command): void {
           let activeState: Awaited<ReturnType<typeof sessionService.getActive>> = null;
           let stashedId: Awaited<ReturnType<typeof sessionService.getStashedRunbookId>> = null;
           // `--all` is the recovery path for incompatible persisted sessions.
-          // It does not need targeting metadata because every state file is selected.
+          // It does not need targeting metadata because every persisted run is selected.
           if (!options.all) {
             try {
               activeState = await sessionService.getActive();
@@ -168,10 +168,10 @@ export function registerPruneCommand(program: Command): void {
 
           // #534: release pruned ids from the session BEFORE deleting state
           // files. Release-then-delete converges under interruption: a crash
-          // after the release leaves terminal state files that a prune re-run
+          // after the release leaves terminal run rows that a prune re-run
           // still lists and finishes. (Delete-then-release would strand
           // dangling stack ids invisible to prune — manager.list() skips ids
-          // with no state file.)
+          // with no persisted run.)
           const loadedRunIdsToDelete = toDelete.map((state) => state.id);
           const prunedIds = [...loadedRunIdsToDelete, ...invalidToDelete];
           // Selective prune removes each id from targeting under one lock.
@@ -185,7 +185,7 @@ export function registerPruneCommand(program: Command): void {
               return;
             }
             // Tombstone GC only for ids that are NOT parseable RunIds (invalid
-            // state files) — releaseRunbooks already deleted claims for the
+            // persisted runs) — releaseRunbooks already deleted claims for the
             // valid RunIds.
             const pruned = await sessionService.pruneClaimsForChildren(
               prunedIds.filter((id) => !isRunId(id)),
@@ -197,7 +197,7 @@ export function registerPruneCommand(program: Command): void {
               return;
             }
           }
-          // Perform deletion (state files last — see the ordering note above).
+          // Perform deletion (run rows last — see the ordering note above).
           for (const id of loadedRunIdsToDelete) {
             await manager.delete(id);
           }

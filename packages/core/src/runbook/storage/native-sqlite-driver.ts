@@ -166,8 +166,8 @@ export class NativeSqlDriver implements SqlDriver {
     const busyTimeoutMs = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
     this.maxBusyRetries = options.maxBusyRetries ?? DEFAULT_MAX_BUSY_RETRIES;
     this.busyRetryBaseMs = options.busyRetryBaseMs ?? DEFAULT_BUSY_RETRY_BASE_MS;
-    this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
+    this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
   }
 

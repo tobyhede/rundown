@@ -237,7 +237,7 @@ from `lifecycle: stopped` alone.
 Policy denial and command execution failure leave the linked child terminal for
 operator recovery. A retry over that terminal linked child supersedes stale
 delegation outcomes and removes the stale claim record without deleting the
-child state file. `abort --force` can also cancel the resolved linked delegation
+child run. `abort --force` can also cancel the resolved linked delegation
 without recording a fresh delegated fail.
 
 On `COMMAND_RESULT` the leaf transitions to its relative child

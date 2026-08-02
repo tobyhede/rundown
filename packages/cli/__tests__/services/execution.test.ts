@@ -3,6 +3,7 @@ import {
   isValidResult,
   getStepRetryMax,
   buildStepVariables,
+  buildMetadata,
 } from '../../src/services/execution.js';
 import { expandLoopVariables } from '../../src/services/template-renderer.js';
 import {
@@ -11,10 +12,24 @@ import {
   isRunbookStopped,
   type ForContext,
   type TemplateVarValue,
+  type RunbookState,
 } from '@rundown-org/core';
 import type { ForClause, Step } from '@rundown-org/parser';
 
 describe('execution service', () => {
+  it('reports the SQLite authority in runbook metadata', () => {
+    const state = {
+      id: 'rd_0123456789abcdef0123456789abcdef',
+      runbook: { source: 'project', path: 'runbooks/test.md' },
+    } as unknown as RunbookState;
+
+    expect(buildMetadata(state)).toEqual({
+      file: 'runbooks/test.md',
+      state: '.rundown/rundown.db',
+      prompted: undefined,
+    });
+  });
+
   describe('isRunbookComplete', () => {
     it('returns true when status is done and value is COMPLETE', () => {
       expect(isRunbookComplete({ status: 'done', value: 'COMPLETE' })).toBe(true);

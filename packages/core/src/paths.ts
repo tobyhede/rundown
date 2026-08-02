@@ -40,11 +40,8 @@ export function assertSafeId(value: string, field: string): void {
   }
 }
 
-/** Directory path (relative to project root) where runbook execution state files are stored. */
+/** Directory path (relative to project root) for per-run filesystem artifacts. */
 export const RUNS_DIR = `${RUNDOWN_DIR}/runs`;
-
-/** File path (relative to project root) for the session tracking file. */
-export const SESSION_FILE = `${RUNDOWN_DIR}/session.json`;
 
 /** Directory path (relative to project root) for delegation lock files. */
 export const LOCKS_DIR = `${RUNDOWN_DIR}/locks`;
@@ -71,14 +68,6 @@ export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
  * @returns Path to `.rundown/runs/`
  */
 export const runsDir = (cwd: string): string => path.join(cwd, RUNS_DIR);
-
-/**
- * Absolute path to the session tracking file.
- *
- * @param cwd - Project root directory
- * @returns Path to `.rundown/session.json`
- */
-export const sessionPath = (cwd: string): string => path.join(cwd, SESSION_FILE);
 
 /**
  * Absolute path to a project's runbook state database.
@@ -146,26 +135,6 @@ export const ensureStateDirs = async (cwd: string): Promise<void> => {
 };
 
 /**
- * Absolute path to a specific runbook state file.
- *
- * @param cwd - Project root directory
- * @param id - Runbook execution ID (must match `[A-Za-z0-9._-]+`)
- * @returns Path to `.rundown/runs/<id>.json`
- * @throws {Error} If `id` contains path separators, `..`, or is otherwise unsafe
- */
-export const statePath = (cwd: string, id: string): string => {
-  assertSafeId(id, 'id');
-  return path.join(cwd, RUNS_DIR, `${id}.json`);
-};
-
-/**
- * Session file path used by versions prior to the `.rundown/` migration.
- * Used only for upgrade detection — never written to.
- * @internal
- */
-export const LEGACY_SESSION_FILE = '.claude/rundown/session.json';
-
-/**
  * Absolute path to a delegation lock file.
  *
  * Lock path: `.rundown/locks/run-<parentRunId>.delegation.lock`
@@ -194,29 +163,3 @@ export const completionLockPath = (cwd: string, runId: string): string => {
   assertSafeId(runId, 'runId');
   return path.join(cwd, LOCKS_DIR, `run-${runId}.completion.lock`);
 };
-
-/**
- * Absolute path to a run-state lock file.
- *
- * Lock path: `.rundown/locks/run-<runId>.state.lock`
- *
- * @param cwd - Project root directory
- * @param runId - Run ID to lock (must match `[A-Za-z0-9._-]+`)
- * @returns Path to the run-state lock file
- * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
- */
-export const runStateLockPath = (cwd: string, runId: string): string => {
-  assertSafeId(runId, 'runId');
-  return path.join(cwd, LOCKS_DIR, `run-${runId}.state.lock`);
-};
-
-/**
- * Absolute path to the workspace-wide session lock file.
- *
- * One lock per project root serializes load-modify-save cycles on
- * `.rundown/session.json`. Lock path: `.rundown/locks/session.lock`.
- *
- * @param cwd - Project root directory
- * @returns Path to the session lock file
- */
-export const sessionLockPath = (cwd: string): string => path.join(cwd, LOCKS_DIR, 'session.lock');

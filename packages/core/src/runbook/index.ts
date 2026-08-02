@@ -462,7 +462,6 @@ export {
   CompletionLockTimeoutError,
   type CompletionLockLike,
 } from './completion-lock.js';
-export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export {
   acquireFileLock,
   FileLockTimeoutError,

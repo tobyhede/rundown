@@ -248,7 +248,7 @@ export type DelegationPolicyOutcome =
       /**
        * Ordered transition observations projected from the applied collection
        * transitions. This is an in-memory command outcome only; it is never
-       * persisted into `.rundown/runs/`.
+       * persisted into the SQLite run state.
        */
       readonly transitionObservations: readonly TransitionObservationEvent[];
       /**

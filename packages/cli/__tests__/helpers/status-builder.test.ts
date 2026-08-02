@@ -188,7 +188,7 @@ describe('buildStashedStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(2);
 
@@ -207,7 +207,7 @@ describe('buildStashedStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(2);
 
@@ -223,7 +223,7 @@ describe('buildStashedStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
       prompted: true,
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
@@ -242,7 +242,7 @@ describe('buildActiveStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
@@ -261,7 +261,7 @@ describe('buildActiveStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
@@ -281,7 +281,7 @@ describe('buildActiveStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
     jest.mocked(getStepRetryMax).mockReturnValue(3);
@@ -304,7 +304,7 @@ describe('buildActiveStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
     jest.mocked(getStepRetryMax).mockReturnValue(0);
@@ -322,7 +322,7 @@ describe('buildActiveStatus', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
@@ -340,7 +340,7 @@ describe('claimKey join (#531)', () => {
     jest.mocked(getRunbookFromState).mockReturnValue([makeStep({ name: '1' })]);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
   });
@@ -521,7 +521,7 @@ describe('parentLinkage projection', () => {
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
   });
@@ -650,7 +650,7 @@ describe('vars field', () => {
     jest.mocked(core.countNumberedSteps).mockReturnValue(0);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
     jest.mocked(getStepRetryMax).mockReturnValue(0);
     jest.mocked(formatActionForDisplay).mockReturnValue('CONTINUE');
@@ -838,7 +838,7 @@ describe('vars field', () => {
     jest.mocked(getRunbookFromState).mockReturnValue([makeStep()]);
     jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
-      state: '.rundown/runs/test-id.json',
+      state: '.rundown/rundown.db',
     });
 
     const result = buildActiveStatus(state, '/project');

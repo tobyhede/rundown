@@ -65,7 +65,7 @@ export async function mountRunbook(
   content: string
 ): Promise<void> {
   // Normalize separators, strip leading slashes, and guard against path traversal.
-  // Path layout mirrors packages/core/src/paths.ts (RUNBOOKS_DIR / RUNS_DIR / SESSION_FILE).
+  // Path layout mirrors packages/core/src/paths.ts (RUNBOOKS_DIR).
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
   const segments = normalized.split('/');
   if (!normalized || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
@@ -84,12 +84,13 @@ export async function mountRunbook(
  * @param container - The WebContainer instance to clean up
  */
 export async function cleanRundownState(container: WebContainer): Promise<void> {
-  // Remove state files best-effort per path so one missing entry doesn't skip the others.
-  // Mirrors the three state locations in packages/core/src/paths.ts
-  // (RUNS_DIR, SESSION_FILE, LOCKS_DIR).
+  // Remove current SQLite authority and lock files best-effort per path so one
+  // missing entry does not skip the others. Unreleased JSON locations are inert
+  // and deliberately untouched.
   await Promise.allSettled([
-    container.fs.rm('.rundown/runs', { recursive: true }),
-    container.fs.rm('.rundown/session.json'),
+    container.fs.rm('.rundown/rundown.db'),
+    container.fs.rm('.rundown/rundown.db-wal'),
+    container.fs.rm('.rundown/rundown.db-shm'),
     container.fs.rm('.rundown/locks', { recursive: true }),
   ]);
 }

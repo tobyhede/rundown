@@ -702,6 +702,16 @@ function recordingConnection(db: RecordingDatabase): DatabaseSync {
 }
 
 describe('native adapter connection configuration', () => {
+  it('installs the busy timeout before WAL initialization can contend', async () => {
+    const db = new RecordingDatabase(() => false);
+    await using _driver = new NativeSqlDriver(recordingConnection(db), { busyTimeoutMs: 1234 });
+
+    expect(db.executed.slice(0, 2)).toEqual([
+      'PRAGMA busy_timeout = 1234',
+      'PRAGMA journal_mode = WAL',
+    ]);
+  });
+
   it('opens in WAL mode with foreign keys on and the configured busy timeout', async () => {
     await using driver = new NativeSqlDriver(new DatabaseSync(path.join(dir, 'pragma.db')), {
       busyTimeoutMs: 1234,

@@ -22,7 +22,7 @@ export type TransitionCommandName = 'pass' | 'fail';
 
 /**
  * Refusal: the named `--run` id is not a running member of this session's
- * default stack (unknown id, missing state file, or terminal lifecycle).
+ * default stack (unknown id, missing persisted run, or terminal lifecycle).
  *
  * The single structural declaration of this refusal. Every union that can carry
  * a `--run` refusal — target resolution, transition targets, delegation
@@ -486,7 +486,7 @@ function claimAuthorizesRunMutation(claim: VerifiedClaim, state: RunbookState): 
  * `unknown_run` refusal shape.
  *
  * Single source of truth for the operator-facing `--run` refusal messages:
- * `not_on_stack` (unknown id or missing state file) and `not_running`
+ * `not_on_stack` (unknown id or missing persisted run) and `not_running`
  * (terminal lifecycle) render distinct causes, and every consumer — target
  * resolution, run-targeted terminals, delegation-issuance anchoring — refuses
  * with the identical wording.

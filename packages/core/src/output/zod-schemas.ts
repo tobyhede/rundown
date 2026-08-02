@@ -161,7 +161,7 @@ export const CLIErrorCodes = {
   COLLECT_ALREADY_APPLIED: 'COLLECT_ALREADY_APPLIED',
   /** Core collection failed while applying delegation outcomes. */
   COLLECT_OPERATION_FAILED: 'COLLECT_OPERATION_FAILED',
-  /** Child run state file is missing on disk (transient — pruning may help) */
+  /** Child run state row is missing (transient — pruning may help). */
   CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
   CHILD_LINKAGE_MISMATCH: 'CHILD_LINKAGE_MISMATCH',
@@ -280,8 +280,8 @@ export const RunbookContextSchema = z
   .object({
     /** Runbook filename (relative path) */
     file: z.string().describe('Path to the runbook file'),
-    /** State file path */
-    state: z.string().describe('Current runbook state or status'),
+    /** SQLite run/session authority path. */
+    state: z.string().describe('Path to the SQLite run/session authority'),
     /** Whether runbook is in prompted mode (waiting for user input) */
     prompted: z.boolean().optional().describe('Whether the runbook is awaiting user input'),
   })
@@ -436,7 +436,7 @@ export const ActionResponseSchema = z
     runbook: RunbookContextSchema.optional().describe('Runbook context information'),
     // Flat format fields
     file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Runbook state after action'),
+    state: z.string().optional().describe('Path to the SQLite run/session authority'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     message: z.string().optional().describe('Status message from the action'),
     /** Idempotency status for action-family responses */
@@ -674,7 +674,7 @@ export const ArtifactInspectResponseSchema = z.union([
 export const ActiveRunbookEntrySchema = z
   .object({
     /** Unique runbook instance ID */
-    id: z.string().describe('Unique state file identifier'),
+    id: z.string().describe('Unique run identifier'),
     /** Runbook filename */
     runbook: z.string().describe('Runbook filename'),
     /** Current step display (e.g., "1/5", "Step") */
@@ -1192,7 +1192,7 @@ export const StashResponseSchema = z
     /** Runbook context */
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Runbook state'),
+    state: z.string().optional().describe('Path to the SQLite run/session authority'),
     message: z.string().optional().describe('Status message'),
     position: PositionSchema.optional().describe('Position when stashed'),
   })
@@ -1214,7 +1214,7 @@ export const PopResponseSchema = z
     /** Runbook context */
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Runbook state'),
+    state: z.string().optional().describe('Path to the SQLite run/session authority'),
     message: z.string().optional().describe('Status message'),
     position: PositionSchema.optional().describe('Position when restored'),
     step: z

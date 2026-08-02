@@ -35,7 +35,7 @@ export interface StepPosition {
 export interface RunbookMetadata {
   /** Path to the runbook source file */
   file: string;
-  /** Current runbook state (e.g., 'running', 'complete', 'stopped') */
+  /** Path to the SQLite run/session authority. */
   state: string;
   /** Whether the runbook is waiting for user input (only included if true) */
   prompted?: boolean;

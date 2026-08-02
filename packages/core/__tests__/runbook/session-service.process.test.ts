@@ -7,7 +7,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { closeRunbookStores } from '../../src/runbook/storage/store-registry.js';
+import { closeRunbookStores, openRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import { SCHEMA_VERSION } from '../../src/runbook/storage/schema.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import type { RunId, Runbook, Step, DelegationLinkage } from '../../src/runbook/types.js';
@@ -411,6 +412,38 @@ async function waitForFile(file: string, child: ChildProcess): Promise<void> {
 }
 
 describe('cross-process session write contention (transaction replaces SessionLock)', () => {
+  it('initializes one valid SQLite authority while unreleased JSON remains inert', async () => {
+    const inertFiles = [
+      path.join(dir, '.rundown', 'session.json'),
+      path.join(dir, '.rundown', 'runs', 'rd_legacy.json'),
+      path.join(dir, '.claude', 'rundown', 'session.json'),
+    ];
+    const invalidBytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
+    for (const file of inertFiles) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, invalidBytes);
+    }
+
+    const results = await race([{ kind: 'readSession' }, { kind: 'readSession' }]);
+    expect(values(results)).toEqual([
+      { defaultStack: [], claims: {} },
+      { defaultStack: [], claims: {} },
+    ]);
+
+    const opened = await openRunbookStore(dir, { runtime: 'native' });
+    const integrity = await opened.driver.read((tx) =>
+      tx.prepare('PRAGMA integrity_check').get<{ readonly integrity_check: string }>(),
+    );
+    const schemaVersion = await opened.driver.read((tx) =>
+      tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>(),
+    );
+    expect(integrity).toEqual({ integrity_check: 'ok' });
+    expect(schemaVersion).toEqual({ user_version: SCHEMA_VERSION });
+    for (const file of inertFiles) {
+      await expect(fs.readFile(file)).resolves.toEqual(invalidBytes);
+    }
+  }, 120_000);
+
   it('does not lose any claim when N processes mint run-control claims for N different runs', async () => {
     // The canonical lost update: each writer reads the session, adds its claim,
     // writes it back. Unserialized, the last writer's snapshot (taken before the

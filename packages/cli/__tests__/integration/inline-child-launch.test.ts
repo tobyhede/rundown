@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -11,7 +12,6 @@ import {
   writeSession,
   withRunTarget,
 } from '../helpers/test-utils.js';
-import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 
 function flattenEvents(events: unknown[]): Record<string, unknown>[] {
   const flat: Record<string, unknown>[] = [];
@@ -355,10 +355,7 @@ Child prompt.
         },
       },
     };
-    await writeFile(
-      join(workspace.statePath(), `${parentRunId}.json`),
-      JSON.stringify(mutatedParent, null, 2),
-    );
+    await patchPersistedRunState(workspace.cwd, parentRunId, mutatedParent);
 
     const recover = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
     expect(recover.exitCode).toBe(0);

@@ -94,13 +94,13 @@ describe('output formatter', () => {
       printMetadata(
         {
           file: 'runbooks/build.md',
-          state: '.rundown/runs/wf-123.json',
+          state: '.rundown/rundown.db',
         },
         writer,
       );
       expect(writer.getLines()).toEqual([
         'File:     runbooks/build.md',
-        'State:    .rundown/runs/wf-123.json',
+        'State:    .rundown/rundown.db',
       ]);
     });
 
@@ -108,7 +108,7 @@ describe('output formatter', () => {
       printMetadata(
         {
           file: 'runbooks/build.md',
-          state: '.rundown/runs/wf-123.json',
+          state: '.rundown/rundown.db',
           prompted: true,
         },
         writer,
@@ -120,7 +120,7 @@ describe('output formatter', () => {
       printMetadata(
         {
           file: 'runbooks/build.md',
-          state: '.rundown/runs/wf-123.json',
+          state: '.rundown/rundown.db',
           prompted: false,
         },
         writer,

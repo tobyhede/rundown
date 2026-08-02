@@ -36,7 +36,7 @@ import {
 } from './effective-vars.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
-import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
+import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import {
   guardOptions,
@@ -122,7 +122,7 @@ function assertTrustedResolvedCompletions(
 }
 
 /**
- * Thrown when a persisted state file uses the deprecated dynamic-step snapshot
+ * Thrown when persisted state uses the deprecated dynamic-step snapshot
  * shape (`GOTO_NEXT` last action or `instance` field), which the current
  * runtime rejects per the no-migration rule.
  *
@@ -142,7 +142,7 @@ export class LegacySnapshotError extends Error {
 }
 
 /**
- * Thrown when a persisted state file does not match the current schema contract.
+ * Thrown when persisted state does not match the current schema contract.
  */
 export class InvalidRunbookStateError extends Error {
   /**
@@ -335,15 +335,10 @@ export interface RunbookStateManagerOptions {
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
- * State is persisted to `.rundown/runs/` as JSON files.
+ * State is persisted in the project's shared SQLite store.
  * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
-  /**
-   * Module-level guard so the legacy-state warning is emitted at most once
-   * per process regardless of how many RunbookStateManager instances exist.
-   */
-  private static legacyWarningEmitted = false;
   private readonly _cwd: string;
   private readonly storeOptions: OpenRunbookDriverOptions;
 
@@ -423,22 +418,6 @@ export class RunbookStateManager {
         throw new Error(`Runbook ${id} not found`);
       default:
         throw new Error(result.message);
-    }
-  }
-
-  /** Emit a process-wide one-time warning when legacy `.claude/rundown/` state is detected. */
-  private async warnIfLegacyStateExists(): Promise<void> {
-    if (RunbookStateManager.legacyWarningEmitted) return;
-    try {
-      await fs.access(path.join(this.cwd, LEGACY_SESSION_FILE));
-      RunbookStateManager.legacyWarningEmitted = true;
-      process.stderr.write(
-        '[rundown] Warning: State from a previous installation was found at .claude/rundown/.\n' +
-          '  State is now stored in .rundown/. Complete or abort any in-flight runbooks\n' +
-          '  from the old location, then remove the .claude/rundown/ directory.\n',
-      );
-    } catch {
-      // No legacy state — normal startup.
     }
   }
 
@@ -864,31 +843,18 @@ export class RunbookStateManager {
   }
 
   /**
-   * Load the session data from disk.
+   * Load session data from the shared SQLite store.
    *
-   * @returns The parsed session data, or a default empty session if the file doesn't exist
-   * @throws {Error} When the persisted session is incompatible with the current
-   *   model and must NOT be adapted. Rundown never migrates persisted runbook
-   *   state, so each of these is a rejection with an explicit user recovery path,
-   *   never a hydration or a shim:
-   *   - A legacy per-agent ownership shape (`ownedRunbooks`, `stashedRunbookOwnership`,
-   *     or `stacks`) — recover by finishing or pruning active runbooks and restarting.
-   *   - A claim record predating the required `ClaimRecord.lastSeenAt` (#519) —
-   *     same recovery. Checked before schema validation purely to route this cause to
-   *     the finish/prune/restart path rather than Zod's delete-the-file message.
-   *   - A session failing `SessionDataSchema` — recover by deleting
-   *     `.rundown/session.json` and restarting active runbooks.
-   * @throws {SyntaxError} When the session file is not parseable JSON.
+   * @returns Validated session data, or the default empty session when the
+   *   database has no session rows.
+   * @throws {Error} When the reconstructed session is incompatible with the
+   *   current schema.
    */
   async loadSession(): Promise<SessionData> {
     const store = await this.store();
     const session = await store.loadSession();
-    if (session.defaultStack.length === 0 && Object.keys(session.claims).length === 0) {
-      await this.warnIfLegacyStateExists();
-    }
-    // The store reconstructs the session from typed columns, so the legacy-shape
-    // guards that policed hand-edited session.json have no analogue here: an
-    // incompatible database is rejected by schema version at open, not per read.
+    // The store reconstructs the session from typed columns. An incompatible
+    // database is rejected by schema version at open, not adapted per read.
     const result = SessionDataSchema.safeParse(session);
     if (!result.success) {
       throw new Error(

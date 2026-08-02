@@ -206,7 +206,7 @@ onboarding        plugin   New hire setup                 hr, setup
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 Prompt:   Yes
 
 ## 1. First Step
@@ -222,7 +222,7 @@ Step description here.
   "active": true,
   "stashed": false,
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "prompted": true,
   "position": { "current": "1", "total": 3 },
   "step": { "name": "1", "description": "First Step" }
@@ -280,7 +280,7 @@ terminal, or unlinked claim ids return an error response.
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 Action:   START
 
@@ -308,7 +308,7 @@ arbitrary command bytes cannot corrupt the JSON stream. `--text` preserves the
 human terminal behavior.
 
 ```jsonl
-{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","claim_id":"rdclm_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_started","prompted":false,"claim_id":"rdclm_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
 {"type":"command_started","command":"echo \"hello\"","displayCommand":"echo \"hello\"","position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":3}
 {"type":"command_completed","command":"echo \"hello\"","success":true,"exitCode":0,"position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":4}
@@ -486,7 +486,7 @@ for jump).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 ─── 2 ──────────────────────────────────────────
 
@@ -506,7 +506,7 @@ Next step description.
   "kind": "action",
   "action": "CONTINUE",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "from": "1",
   "at": "2"
 }
@@ -538,7 +538,7 @@ for stopping).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 Action:   RETRY (1/3)
 At:       1/3
@@ -555,7 +555,7 @@ Step description.
   "kind": "action",
   "action": "RETRY (1/3)",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "at": "1"
 }
 ```
@@ -566,7 +566,7 @@ Step description.
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 Runbook:  STOP
 ```
@@ -578,7 +578,7 @@ Runbook:  STOP
   "kind": "action",
   "action": "STOP",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "stopped": true
 }
 ```
@@ -607,7 +607,7 @@ The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 ─── 3 ──────────────────────────────────────────
 
@@ -627,7 +627,7 @@ Step description.
   "kind": "action",
   "action": "GOTO 3",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "from": "1",
   "at": "3"
 }
@@ -664,7 +664,7 @@ object is the last line).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 Runbook:  STOP
 ```
@@ -678,7 +678,7 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 ```jsonl
 {"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL","command":"stop","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"runbook_stopped","message":"User requested stop","position":{"current":"1","total":1},"reason":"fail_transition","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
-{"file":"runbooks/deploy.runbook.md","state":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","action":"stop","stopped":true,"kind":"action","message":"User requested stop"}
+{"file":"runbooks/deploy.runbook.md","state":".rundown/rundown.db","action":"stop","stopped":true,"kind":"action","message":"User requested stop"}
 ```
 
 ---
@@ -697,7 +697,7 @@ refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 
 Runbook:  COMPLETE
 ```
@@ -711,7 +711,7 @@ Bare `rundown complete` emits newline-delimited JSON: the streamed
 ```jsonl
 {"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","command":"complete","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"runbook_completed","message":"Deployment finished","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
-{"file":"runbooks/deploy.runbook.md","state":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","action":"complete","complete":true,"kind":"action","message":"Deployment finished"}
+{"file":"runbooks/deploy.runbook.md","state":".rundown/rundown.db","action":"complete","complete":true,"kind":"action","message":"Deployment finished"}
 ```
 
 ---
@@ -726,7 +726,7 @@ Uses `action: "stash"` (command-name action).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 Prompt:   Yes
 
 Step:     1/3
@@ -741,7 +741,7 @@ Runbook:  STASHED
   "kind": "stash",
   "action": "stash",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "prompted": true,
   "position": { "current": "1", "total": 3 }
 }
@@ -764,7 +764,7 @@ Uses `action: "pop"` (command-name action).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 Prompt:   Yes
 
 Action:   PASS
@@ -782,7 +782,7 @@ Step description.
   "kind": "pop",
   "action": "pop",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
   "prompted": true,
   "position": { "current": "2", "total": 3 },
   "step": { "name": "2", "description": "Second Step" }

@@ -14,6 +14,7 @@ import type { RunbookMetadata, ActionBlockData } from '../../cli/types.js';
 import type { Step, Substep } from '../../runbook/types.js';
 import { getWriter } from '../../cli/context.js';
 import { formatTransitionAction } from '../../runbook/transition-kernel.js';
+import { DB_FILE } from '../../paths.js';
 
 /**
  * Renders runbook events to terminal output via existing print functions.
@@ -90,10 +91,10 @@ export class CLISubscriber {
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
 
-    // Print metadata - use canonical runbook path for file, statePath for state
+    // Print metadata with the shared SQLite authority.
     const meta: RunbookMetadata = {
       file: runbook.path,
-      state: payload.statePath,
+      state: DB_FILE,
       prompted: payload.prompted,
     };
     printMetadata(meta, this.writer);

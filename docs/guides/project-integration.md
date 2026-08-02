@@ -31,7 +31,7 @@ with your team. Runtime state should stay ignored:
 # Ignore runtime state, commit runbooks
 .rundown/work/
 .rundown/runs/
-.rundown/session.json
+.rundown/rundown.db*
 .rundown/locks/
 ```
 
@@ -43,9 +43,9 @@ directory:
 ```
 
 Persisted runtime state is not migrated between incompatible Rundown versions.
-If `.rundown/runs/`, `.rundown/session.json`, stashed runs, or claim records
-become stale or structurally incompatible, finish or stop the affected run if
-possible, then prune/clean the state and restart from the source runbook. See
+If the SQLite run/session state becomes structurally incompatible, finish or
+stop the affected run if possible, then prune/clean the state and restart from
+the source runbook. See
 [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration).
 
 ## Discovery

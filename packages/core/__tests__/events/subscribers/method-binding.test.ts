@@ -32,7 +32,6 @@ describe('Subscriber method binding', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-test.json',
         },
       });
 
@@ -54,7 +53,6 @@ describe('Subscriber method binding', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-test.json',
         },
       });
       emitter.emit({
@@ -118,7 +116,6 @@ describe('Subscriber method binding', () => {
           type: 'RUNBOOK_STARTED',
           payload: {
             prompted: false,
-            statePath: '.rundown/runs/wf-test.json',
           },
         });
       }).not.toThrow();
@@ -159,7 +156,6 @@ describe('Subscriber method binding', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-test.json',
         },
       });
       emitter.emit({

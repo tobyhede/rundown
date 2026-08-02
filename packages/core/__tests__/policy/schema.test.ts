@@ -232,7 +232,7 @@ describe('Policy Schema', () => {
       // Generated subpaths should be present
       expect(allowedWrites).toContain('{repo}/.rundown/runs/**');
       expect(allowedWrites).toContain('{repo}/.rundown/locks/**');
-      expect(allowedWrites).toContain('{repo}/.rundown/session.json');
+      expect(allowedWrites).not.toContain('{repo}/.rundown/session.json');
       expect(allowedWrites).toContain('{repo}/.rundown/work/**');
       // runbooks/ contains user-authored sources, not generated state — must NOT be writable by default
       expect(allowedWrites).not.toContain('{repo}/.rundown/runbooks/**');

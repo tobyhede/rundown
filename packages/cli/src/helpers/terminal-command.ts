@@ -275,7 +275,7 @@ export async function runSeamTerminal(
   });
 
   // Bare path only: a `none` outcome can mean an orphaned active stack (the top
-  // entry's state file is missing on disk) rather than a genuinely empty stack.
+  // entry's persisted run is missing) rather than a genuinely empty stack.
   // Attempt Category-A orphan cleanup; a verified-unusable top is popped and
   // reported as a removal (exit 0). An empty stack or a healthy top cleans
   // nothing and falls through to the normal `no active runbook` rendering. No

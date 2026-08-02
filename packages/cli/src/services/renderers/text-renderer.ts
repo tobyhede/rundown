@@ -36,6 +36,7 @@ import {
   warning,
   info,
   dim,
+  DB_FILE,
 } from '@rundown-org/core';
 import { formatTable } from '../../helpers/table-formatter.js';
 import type { OutputRenderer, RendererOptions } from './types.js';
@@ -706,7 +707,7 @@ export class TextRenderer implements OutputRenderer {
     printMetadata(
       {
         file: runbook.path,
-        state: payload.statePath,
+        state: DB_FILE,
         prompted: payload.prompted,
       },
       this.writer,

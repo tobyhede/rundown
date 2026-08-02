@@ -8,15 +8,7 @@
  */
 
 import { z } from 'zod';
-import {
-  CONFIG_FILE,
-  CONTEXTS_DIR,
-  LOCKS_DIR,
-  RUNS_DIR,
-  SESSION_FILE,
-  DB_FILE,
-  WORK_DIR,
-} from '../paths.js';
+import { CONFIG_FILE, CONTEXTS_DIR, LOCKS_DIR, RUNS_DIR, DB_FILE, WORK_DIR } from '../paths.js';
 
 /**
  * Policy mode determines how permissions are handled.
@@ -246,8 +238,6 @@ export const DEFAULT_POLICY: PolicyConfig = {
         `{repo}/${RUNS_DIR}/**`,
         `{repo}/${LOCKS_DIR}/**`,
         `{repo}/${CONTEXTS_DIR}/**`,
-        // Single-file entries: update this list when new top-level .rundown/*.json artifacts are introduced
-        `{repo}/${SESSION_FILE}`,
         // The state database, plus the WAL/shm sidecars SQLite creates beside it.
         // A nested `rundown pass`/`fail` spawned from inside a runbook step runs
         // under this policy and mutates run state, so losing write access here

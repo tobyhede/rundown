@@ -27,8 +27,8 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Runtime          | The CLI-managed execution process for one or more runbooks.                                                                                        |
 | Run              | One active or persisted execution of a runbook.                                                                                                    |
-| State file       | JSON file under `.rundown/runs/` storing one run's state.                                                                                          |
-| Session          | `.rundown/session.json`, which tracks active top-level runs, stashes, and claims.                                                                  |
+| Run state        | One run's state persisted in `.rundown/rundown.db`.                                                                                                |
+| Session          | SQLite-backed active top-level runs, stash, and claim tracking.                                                                                    |
 | Frame            | Internal execution scope key: `step\|iteration`.                                                                                                   |
 | Entry            | Monotonic re-entry counter for a frame.                                                                                                            |
 | Claim            | `rdclm_...` bearer credential authorizing mutations on one run — the run `rundown run` controls, or a delegated child claimed via `rundown claim`. |
@@ -216,13 +216,13 @@ source. Open-ended data-source iteration reads until source exhaustion or the
 
 Runtime state persists across process exits and context clears.
 
-### 7.1 File Locations
+### 7.1 Storage Locations
 
-| Path                    | Purpose                                          |
-| ----------------------- | ------------------------------------------------ |
-| `.rundown/runs/`        | Runbook state files.                             |
-| `.rundown/session.json` | Active runbook stack, stash, and claim tracking. |
-| `.rundown/runbooks/`    | Project-local runbook discovery source.          |
+| Path                              | Purpose                                     |
+| --------------------------------- | ------------------------------------------- |
+| `.rundown/rundown.db`             | Run state, active stack, stash, and claims. |
+| `.rundown/runs/<run-id>/outputs/` | Captured filesystem outputs.                |
+| `.rundown/runbooks/`              | Project-local runbook discovery source.     |
 
 ### 7.2 Session Structure
 
@@ -305,11 +305,11 @@ root reports its terminal outcome to the delegating parent, which advances on
 
 Persisted state MUST NOT be migrated between runtime versions. This applies to:
 
-| State               | Covered data                                                              |
-| ------------------- | ------------------------------------------------------------------------- |
-| Runbook state files | Structured fields and opaque `snapshot` blob.                             |
-| Session state       | `defaultStack`, `stashedRunbookId`, and `claims`.                         |
-| Delegation state    | Claim records, parent links, child links, tokens, and completion records. |
+| State              | Covered data                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| Runbook state rows | Structured fields and opaque `snapshot` blob.                                                    |
+| Session state      | `defaultStack`, `stashedRunbookId`, and `claims`.                                                |
+| Delegation state   | Claim records, parent links, child links, credential descriptors/hashes, and completion records. |
 
 If persisted state is structurally incompatible, corrupt, unreadable, or not
 schema version 1, Rundown MUST fail closed and refuse to continue that run.
@@ -321,11 +321,11 @@ Persisted runbook state has no released compatibility contract: preserving older
 active runs is not a product requirement. Implementations MUST prefer a breaking
 schema/runtime change plus an explicit invalid-state error over runtime
 migration code, fallback parsing, legacy field hydration, warning-only adapters,
-or compatibility branches for old `.rundown/` files.
+or compatibility branches for older persisted state.
 
 ### 7.5 Runbook State Fields
 
-Each run state file stores enough information to resume deterministically.
+Each SQLite run state row stores enough information to resume deterministically.
 
 ```json
 {

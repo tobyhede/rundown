@@ -52,7 +52,7 @@ export interface StatusOutputData {
   stashed: boolean;
   /** Runbook file path (flat, not nested) */
   file?: string;
-  /** State file path */
+  /** SQLite run/session authority path. */
   state?: string;
   /** Whether runbook is in prompted mode */
   prompted?: boolean;
@@ -275,7 +275,7 @@ export interface ActiveStatusOptions {
    * Session claim join map: childRunId → claimKey (#531). When provided, a
    * delegation whose COMPUTED state is `claimed` and whose childRunId has a
    * matching entry is surfaced with its `claimKey` so orphaned claims are
-   * recoverable from `rd status` without hand-reading `.rundown/session.json`.
+   * recoverable from `rundown status` without inspecting SQLite directly.
    */
   readonly claimKeyByChildRunId?: ReadonlyMap<string, string>;
 }

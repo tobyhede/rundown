@@ -73,11 +73,10 @@ export type OrphanCleanupResult =
  * deleting. Only a missing state file or a recoverable snapshot failure
  * (invalid schema, corrupt JSON, legacy dynamic-step snapshot) authorizes
  * deletion. Deletions leave a debug-level `lifecycle-write` trail via
- * `RunbookStateManager.delete`. Healthy-top soundness relies on the atomic
- * temp-file+rename write invariant of writeJsonFileAtomic: a concurrent save
- * can never expose a torn state file to this probe.
+ * `RunbookStateManager.delete`. SQLite transactions ensure a concurrent save
+ * cannot expose a partially written run to this probe.
  *
- * @param manager - State manager used to load the session and delete state files
+ * @param manager - State manager used to load the session and delete persisted runs
  * @param sessionService - Session service used to release session references
  * @returns Typed cleanup outcome
  * @throws {unknown} Rethrows non-recoverable load errors (permissions, IO)

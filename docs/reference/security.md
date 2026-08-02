@@ -247,9 +247,8 @@ Default file access:
   `**/*password*`, `**/id_rsa`, `**/id_ed25519`, `**/*.pem`, `**/*.key`
 - Write allow: `{repo}/.claude/**`, `{repo}/.rundown/runs/**`,
   `{repo}/.rundown/locks/**`, `{repo}/.rundown/contexts/**`,
-  `{repo}/.rundown/session.json`, `{repo}/.rundown/work/**`,
-  `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`,
-  `{repo}/.next/**`, `{tmp}/**`
+  `{repo}/.rundown/rundown.db`, `{repo}/.rundown/rundown.db-wal`,
+  `{repo}/.rundown/rundown.db-shm`, `{repo}/.rundown/work/**`, `{tmp}/**`
 - Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`,
   `**/*password*`, `{repo}/.rundown/config.yaml`
 

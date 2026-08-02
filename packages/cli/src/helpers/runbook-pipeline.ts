@@ -26,7 +26,6 @@ import {
   type ClaimId,
   type SessionMutationRefusalOutcome,
   type DelegationRuntimeCapabilities,
-  RUNS_DIR,
   classifyDelegationLiveness,
   DelegationScanService,
   DelegationLock,
@@ -254,8 +253,8 @@ export type ClaimFailure =
        * The child's persisted `parentLinkage` disagrees with the freshly
        * token-validated linkage. Indicates state corruption (manual edits,
        * stale linkage from a prior delegation, cross-host state merge);
-       * operator intervention required — inspect
-       * `.rundown/runs/<childRunId>.json`. Rendered as
+       * operator intervention required — inspect the child row in
+       * `.rundown/rundown.db`. Rendered as
        * `CHILD_LINKAGE_MISMATCH`.
        */
       readonly reason: 'linkage-mismatch';
@@ -348,7 +347,6 @@ export function emitRunbookStarted(
       description: runbookState.description,
       prompted,
       ...(claimId !== undefined ? { claimId } : {}),
-      statePath: `${RUNS_DIR}/${runbookState.id}.json`,
     },
   });
 }
@@ -1118,7 +1116,7 @@ async function launchRunbook(
     launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
-    // it so an unclaimed state file doesn't linger on disk with no session entry.
+    // it so an unclaimed run doesn't linger with no session entry.
     await cleanupCreatedRun();
     if (activationRefusal !== undefined) {
       return { ok: false, reason: 'session-refused', refusal: activationRefusal };

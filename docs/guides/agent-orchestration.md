@@ -74,7 +74,7 @@ sequenceDiagram
     participant O as Orchestrator
     participant CLI as rundown CLI
     participant Core as Core state machine/services
-    participant S as .rundown/session.json
+    participant S as .rundown/rundown.db
     participant A as Subagent
 
     O->>CLI: rundown run release-review.runbook.md
@@ -137,10 +137,10 @@ The trace starts when the orchestrator launches the parent:
 rundown run release-review.runbook.md
 ```
 
-`rundown run` creates a parent run state, pushes that run onto
-`.rundown/session.json`'s `defaultStack`, and returns both the parent
-`runbookId` and a root `claim_id`. The root claim is stored as proof-backed
-session data, not as a reusable bearer credential:
+`rundown run` creates a parent run state, pushes that run onto SQLite's
+`defaultStack`, and returns both the parent `runbookId` and a root `claim_id`.
+The root claim is stored as proof-backed session data, not as a reusable bearer
+credential:
 
 ```json
 {
@@ -262,7 +262,7 @@ The session now has two independent claim records:
 
 ```mermaid
 flowchart TB
-    Session[".rundown/session.json"]
+    Session[".rundown/rundown.db"]
     Stack["defaultStack<br/>rd_parent"]
     Root["rdclk_root record<br/>controls rd_parent"]
     Child["rdclk_child record<br/>controls rd_child"]
@@ -498,13 +498,13 @@ adversarial sandbox boundary.
 
 `rundown run <runbook>` returns a generated `rdclm_...` bearer for the started
 run. `rundown claim <token>` returns a generated `rdclm_...` bearer for the
-claimed delegated child. The full bearer is not persisted:
-`.rundown/session.json` stores a non-secret `rdclk_...` lookup key, a hash of
-the bearer secret segment, the controlled run id, optional delegation linkage,
-and explicit grants. CLI commands that accept `--claim-id` (`rundown status`,
-`rundown pass`, `rundown fail`, `rundown collect`, `rundown goto`,
-`rundown stash`, `rundown pop`, parent-side `rundown delegate`, `rundown stop`,
-and `rundown complete`) verify the bearer and route to the exact authorized run.
+claimed delegated child. The full bearer is not persisted: The SQLite claim
+table stores a non-secret `rdclk_...` lookup key, a hash of the bearer secret
+segment, the controlled run id, optional delegation linkage, and explicit
+grants. CLI commands that accept `--claim-id` (`rundown status`, `rundown pass`,
+`rundown fail`, `rundown collect`, `rundown goto`, `rundown stash`,
+`rundown pop`, parent-side `rundown delegate`, `rundown stop`, and
+`rundown complete`) verify the bearer and route to the exact authorized run.
 Plain commands continue to target only the default stack, and mutating commands
 on delegation-exposed runs refuse bare authority.
 

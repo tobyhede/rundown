@@ -5,7 +5,7 @@
  * contains raw markdown with `{{placeholders}}`. Variables are re-applied via
  * AST-level substitution with context-aware escaping on each resume.
  *
- * For backward compatibility, old state files (pre-expanded `runbookSrc`,
+ * For backward compatibility, old persisted states (pre-expanded `runbookSrc`,
  * no `templateVars`) continue to work — the expanded content is parsed directly.
  *
  * @module
@@ -50,7 +50,7 @@ import { buildRunnableRenderContext } from './render-context.js';
 export function getRunbookFromState(state: RunbookState, cwd: string): readonly ResolvedStep[] {
   if (!state.runbookSrc) {
     throw new Error(
-      `State file ${state.id} is missing runbookSrc. ` +
+      `Persisted run ${state.id} is missing runbookSrc. ` +
         `This indicates corrupted state. Delete and re-run the runbook.`,
     );
   }
@@ -86,7 +86,7 @@ export function getRunbookFromState(state: RunbookState, cwd: string): readonly 
     return substituted.steps;
   }
 
-  // Fallback for state files with pre-expanded runbookSrc and no templateVars.
+  // Fallback for persisted states with pre-expanded runbookSrc and no templateVars.
   const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
   checkDiagnostics(diagnostics);
 

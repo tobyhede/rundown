@@ -251,7 +251,7 @@ Immediately terminate the active runbook.
 rundown stop [message]
 ```
 
-Marks the runbook as stopped, preserves the stopped state file for inspection,
+Marks the runbook as stopped, preserves the stopped SQLite row for inspection,
 and removes it from the active session stack. Bare `rundown stop` is a failure
 terminal and exits non-zero.
 
@@ -495,7 +495,7 @@ shown below.
 
 ```text
 File:     my-runbook.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 Action:   CONTINUE
 Result:   PASS
 
@@ -596,7 +596,7 @@ Line 22: Invalid transition: GOTO 10 (step does not exist)
 
 #### `rundown prune` - Remove Runbook State
 
-Clean up runbook state files (not runbook source files).
+Clean up runbook state records (not runbook source files).
 
 ```bash
 rundown prune               # Remove completed + stopped runbooks (default)
@@ -921,7 +921,7 @@ rundown status
 Output shows:
 
 - Current runbook file
-- State file location
+- SQLite state database location
 - Current action location (`At`) and optional loop scope (`For`)
 - Last action taken
 
@@ -1087,7 +1087,7 @@ Output formatting is implemented in
 
 ```text
 File:     runbook.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
 Action:   START
 At:       1
 

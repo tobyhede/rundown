@@ -10,7 +10,6 @@ import {
 } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { runStateLockPath, statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -851,19 +850,15 @@ describe('RunbookStateManager', () => {
       expect(session.claims[claimKey].lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
     });
 
-    it('loads a session with no claims at all without tripping the claim guard (#519)', async () => {
-      // `claims: {}` must load cleanly: `.some()` over an empty object is false. This
-      // kills the `.some` -> `.every` mutant specifically — `.every` over an empty
-      // object is TRUE, so the mutant would throw on every claimless session, which
-      // is the overwhelmingly common case.
+    it('ignores an unreleased session JSON file when loading the SQLite session', async () => {
       await mkdir(join(testDir, '.rundown'), { recursive: true });
-      await writeFile(
-        join(testDir, '.rundown', 'session.json'),
-        JSON.stringify({ defaultStack: [], claims: {} }),
-      );
+      const legacyPath = join(testDir, '.rundown', 'session.json');
+      const invalidBytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
+      await writeFile(legacyPath, invalidBytes);
 
       const session = await manager.loadSession();
       expect(session.claims).toEqual({});
+      await expect(readFile(legacyPath)).resolves.toEqual(invalidBytes);
     });
 
     it('load returns null for nonexistent runbook', async () => {
@@ -917,16 +912,6 @@ describe('RunbookStateManager', () => {
 
       const updated = await manager.load(state.id);
       expect(updated?.variables).toEqual({ A: '1', B: '2' });
-    });
-
-    it('never creates a run-state lock file', async () => {
-      // The lock is gone: atomicity comes from the transaction, so a stray lock
-      // file would mean a resurrected shadow serialization path.
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      await manager.update(state.id, { variables: merge({ A: '1' }) });
-      await expect(readFile(runStateLockPath(testDir, state.id), 'utf8')).rejects.toThrow();
     });
 
     it('lands every field when many updates contend on one run', async () => {

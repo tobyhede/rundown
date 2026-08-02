@@ -56,7 +56,6 @@ describe('JSONRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-2026-04-23-abcdef.json',
         },
       };
       const completed: RunbookEventV1 = {
@@ -72,6 +71,7 @@ describe('JSONRenderer', () => {
       expect(writer.lines).toHaveLength(2);
       expect(writer.lines.some((l) => l.trim() === '{}')).toBe(false);
       expect(writer.lines[0]).toContain('"type":"runbook_started"');
+      expect(writer.lines[0]).not.toContain('statePath');
       expect(writer.lines[1]).toContain('"type":"runbook_completed"');
     });
 
@@ -87,7 +87,6 @@ describe('JSONRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-2026-04-23-abcdef.json',
         },
       };
 

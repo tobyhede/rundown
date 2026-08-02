@@ -729,7 +729,7 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z
     }
   });
 
-/** Zod schema for `.rundown/session.json`. */
+/** Zod schema for session data reconstructed from SQLite rows. */
 export const SessionDataSchema = z
   .object({
     defaultStack: z.array(RunIdSchema).default([]),

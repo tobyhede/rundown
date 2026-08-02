@@ -97,7 +97,7 @@ export const PromptResponseSchema = z
  */
 export const RunbookSchema = z
   .object({
-    id: z.string().describe('Unique state file identifier'),
+    id: z.string().describe('Unique run identifier'),
     runbook: z.string().describe('Runbook filename'),
     status: z.string().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
     step: z.string().optional().describe('Current step number'),

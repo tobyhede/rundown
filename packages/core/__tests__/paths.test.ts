@@ -9,9 +9,7 @@ import {
   delegationLockPath,
   ensureStateDirs,
   LOCKS_DIR,
-  runStateLockPath,
   RUNS_DIR,
-  statePath,
   WORK_DIR,
 } from '../src/paths.js';
 
@@ -25,8 +23,6 @@ describe('assertSafeId (via path builders)', () => {
     }> = [
       { name: 'completionLockPath', build: (id) => completionLockPath(cwd, id) },
       { name: 'delegationLockPath', build: (id) => delegationLockPath(cwd, id) },
-      { name: 'runStateLockPath', build: (id) => runStateLockPath(cwd, id) },
-      { name: 'statePath', build: (id) => statePath(cwd, id) },
     ];
 
     const badIds = ['..', '.', 'foo/bar', 'foo\\bar', '', '../outside'];

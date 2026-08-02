@@ -76,9 +76,10 @@ debt. The fix is to move it, not to rationalise its location.
 
 ### Concurrent write synchronization
 
-When multiple CLI processes may mutate the same file (e.g.,
-`.rundown/session.json`, run state, artifact manifest), use **file-based
-exclusive locks** with process-aware stale lock reclamation:
+When multiple CLI processes may mutate a file-backed artifact such as the
+artifact manifest, use **file-based exclusive locks** with process-aware stale
+lock reclamation. Run and session authority lives in SQLite and uses database
+transactions and execution leases instead:
 
 **Pattern:** Acquire the lock, then scope its release with `await using` so the
 lock is released deterministically on every exit path — including early `return`
@@ -107,18 +108,12 @@ Domain locks expose `scope()` / `held()` built on them.
   committed outcome of the protected work. Never release a domain lock from a
   bare `finally` — that is the RD-102 masking defect.
 
-**Examples:** `CompletionLock`, `DelegationLock`, and `SessionLock`
-(`packages/core/src/runbook/{completion,delegation,session}-lock.ts`) all expose
-`acquire` + `scope()` / `held()`. `RunStateLock` (`run-state-lock.ts`) is the
-exception: it is consumed through the narrow `RunStateLockLike` DI interface
-(acquire/release only, so test fakes stay trivial), so its caller —
-`RunbookStateManager.withRunStateLock` in `state.ts` — wraps `heldLock` inline
-rather than calling a `held()` method. See the lock fixture tests under
-`packages/core/__tests__/runbook/` (`*-lock.test.ts`).
+**Examples:** The artifact-manifest and sql.js durable-replacement locks use
+these primitives. `CompletionLock` and `DelegationLock` remain temporary domain
+locks until their remaining workflows move to aggregate SQLite transactions.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
-(e.g., `sessionLockPath(cwd)` if manifest is per-project, or derive a
-manifest-specific lock path from `manifestPath(cwd)` + `.lock`).
+derived from `manifestPath(cwd)` + `.lock`.
 
 ### Actor dependencies
 
@@ -291,20 +286,20 @@ not part of the public Rundown format specification. See
 
 ## State Persistence
 
-State persists in `.rundown/runs/` (execution state) and `.rundown/session.json`
-(active runbook tracking). Runbook source files are discovered from multiple
-locations (see [Runbook Discovery](#runbook-discovery)). State files persist
-across context clears.
+Run and session state persists in `.rundown/rundown.db`. Captured outputs remain
+under `.rundown/runs/<run-id>/outputs/`. Runbook source files are discovered
+from multiple locations (see [Runbook Discovery](#runbook-discovery)). State
+persists across context clears.
 
 <important>
 **Principle:** NEVER migrate persisted runbook state between versions.
 </important>
 
 **Principle:** Never migrate persisted runbook state between versions. This
-applies to all data written to `.rundown/runs/`: structured `RunbookState`
-fields (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob
-stored inside `RunbookState`. Neither is exempt. For the v1 release, persisted
-runbook state uses schema version `1`; state with any other schema version or
+applies to all run data written to SQLite: structured `RunbookState` fields
+(step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
+inside `RunbookState`. Neither is exempt. For the v1 release, persisted runbook
+state uses schema version `1`; state with any other schema version or
 incompatible structure is invalid. On schema changes, running runbooks should be
 completed/closed and restarted. The CLI should detect invalid state (via schema
 version or structural guard) and prompt the user to finish or prune — never

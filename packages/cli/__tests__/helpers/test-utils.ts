@@ -14,7 +14,6 @@ import {
   exactFrame,
   isRunId,
   runsDir,
-  sessionPath as _sessionPath,
   runbooksDir,
   locksDir,
   RunbookStateManager,
@@ -60,8 +59,6 @@ export interface TestWorkspace {
   cwd: string;
   cleanup: () => Promise<void>;
   runbookPath: (name: string) => string;
-  statePath: () => string;
-  sessionPath: () => string;
   /** Project-local runbook destination (`.rundown/runbooks/`). */
   runbooksDir: () => string;
   /** Plugin runbook destination (`$CLAUDE_PLUGIN_ROOT/runbooks/`). */
@@ -148,8 +145,6 @@ export async function createTestWorkspace(opts?: { fixtureDir?: string }): Promi
     cwd: tempDir,
     cleanup: () => rm(tempDir, { recursive: true, force: true }),
     runbookPath: (name: string) => join(rootRunbooksDir, name),
-    statePath: () => runsDir(tempDir),
-    sessionPath: () => _sessionPath(tempDir),
     runbooksDir: () => runbooksDir(tempDir),
     pluginRunbooksDir: () => pluginRunbooksDir,
     rootRunbooksDir: () => rootRunbooksDir,
