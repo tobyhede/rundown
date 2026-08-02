@@ -498,12 +498,19 @@ async function applyCollection(
     readonly authority: VerifiedClaimAuthority;
   },
 ): Promise<DelegationPolicyOutcome> {
+  // Bound ONCE, from the authority `collectDelegationOutcomes` verified for
+  // `collect-for-run` on this exact target. Only `createRunControlGrants` mints
+  // `collect-for-run`, and it mints `delegate-from-run` for the same run in the
+  // same set — so the bearer that may collect this run is by construction the
+  // bearer that may delegate from it. The drain issues under it, and the
+  // `continue` return below hands the same capability to the continuation.
+  const issueDelegationCredential = createDelegationCredentialIssuer(scope.authority);
   const drained = await input.completionService.drainResolvedCompletions({
     runbookId: input.targetState.id,
     steps: [...input.steps],
     currentState: input.targetState,
     frameOverride: scope.frame,
-    issueDelegationCredential: createDelegationCredentialIssuer(scope.authority),
+    issueDelegationCredential,
   });
 
   if (drained.status === 'failed') {
@@ -674,6 +681,14 @@ async function applyCollection(
     reportedTerminalOutcome: false,
     transitionObservations,
     ...(reentry.status === 'projected' ? { reEntryObservations: reentry.observations } : {}),
+    // The target is still running, so the frontend drives a continuation for it.
+    // That continuation can step INTO a DELEGATE frontier, where machine-owned
+    // issuance needs a verified issuer and the following turn needs the
+    // same-issuer deriver. Both are this collector's verified authority over
+    // THIS run — runtime-only closures, never persisted, and carried only on the
+    // non-terminal arm (a terminal target drives no continuation).
+    issueDelegationCredential,
+    deriveDelegationToken: createDelegationTokenDeriver(scope.authority),
   };
 }
 

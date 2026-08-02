@@ -492,7 +492,19 @@ export type DelegationAbortOutcome =
       readonly substepId: string;
       readonly childRunbookPath: string;
       readonly childRunId: RunId | null;
-      readonly cleanup: 'none' | 'active_child_failed' | 'terminal_child_cleaned';
+      /**
+       * Which linked-child cleanup branch ran.
+       *
+       * `none` means no child was ever linked — deliberately NOT reused for a
+       * linked child whose run has vanished, which is `missing_child_cleaned`:
+       * that branch superseded a stale delegated outcome, and collapsing the
+       * two would hide the cleanup behind "nothing to clean".
+       */
+      readonly cleanup:
+        | 'none'
+        | 'active_child_failed'
+        | 'terminal_child_cleaned'
+        | 'missing_child_cleaned';
     }
   | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
   | { readonly kind: 'error'; readonly error: RundownError }
@@ -1700,7 +1712,9 @@ export class RunbookLifecycleCommandService {
    * decision is repeated against the exact captured parent and child. A forced
    * running child is retained as stopped terminal evidence; physical deletion
    * is deferred to pruning so exact execution-attempt evidence survives crash
-   * reconciliation.
+   * reconciliation. A linked child whose run no longer exists is cleaned rather
+   * than refused, so a pruned or deleted child cannot strand the parent's
+   * delegation permanently linked.
    *
    * @param input - Token, caller authority, and force policy.
    * @returns Domain, policy, transaction, or committed abort outcome.
@@ -1729,15 +1743,21 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
+    // A linked child whose run no longer exists is CLEANABLE, not a refusal.
+    // Its stale `childRunId` is precisely what `abort --force` exists to clear,
+    // so refusing here would leave the delegation permanently linked and the
+    // token impossible to force-abort — a stuck state with no operator
+    // recovery. Only a child that is genuinely absent is dropped: a child whose
+    // state loads stays a REQUIRED aggregate member, so every other reason it
+    // cannot be mutated (an execution in progress, a superseded claim, a
+    // concurrent modification) still refuses the whole force-abort rather than
+    // being silently discarded. That distinction is why the drop is decided
+    // here, from the absence of state, and not by marking the aggregate target
+    // `optional` — which would drop the child on ANY capture refusal.
     const scannedChild =
       scannedChildRunId === null ? undefined : await this.#deps.loadRun(scannedChildRunId);
-    if (scannedChildRunId !== null && scannedChild === undefined) {
-      return {
-        kind: 'missing',
-        runId: scannedChildRunId,
-        message: `Run ${scannedChildRunId} is missing.`,
-      };
-    }
+    const missingChildRunId =
+      scannedChildRunId !== null && scannedChild === undefined ? scannedChildRunId : null;
     const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
     let prepared:
       | {
@@ -1813,7 +1833,8 @@ export class RunbookLifecycleCommandService {
 
         let nextParent = parentPrepared.nextState;
         let nextChild: RunbookState | undefined;
-        let cleanup: 'none' | 'active_child_failed' | 'terminal_child_cleaned' = 'none';
+        let cleanup: Extract<DelegationAbortOutcome, { readonly kind: 'cancelled' }>['cleanup'] =
+          'none';
         if (scannedChild !== undefined) {
           if (child?.state.id !== scannedChild.id) {
             throw new Error('Delegation abort did not capture its linked child first.');
@@ -1857,6 +1878,21 @@ export class RunbookLifecycleCommandService {
             throw new Error(`Force abort could not prepare child failure: ${report.kind}`);
           }
           nextParent = report.nextParentState;
+        } else if (missingChildRunId !== null) {
+          // The linked child's run is gone, so there is nothing to stop and no
+          // terminal child state to report as a failure. What survives it is
+          // the delegated outcome it left on the parent, which no collect can
+          // ever resolve against a run that no longer exists: supersede it
+          // alongside the cancellation, exactly as the pre-aggregate cleanup
+          // path did. Superseding is the whole of this branch's effect — no
+          // child completion is fabricated from a state we do not have.
+          nextParent = replaceIssuedDelegation(
+            nextParent,
+            nextParent.substepStates ?? [],
+            substepId,
+            frameKey,
+          );
+          cleanup = 'missing_child_cleaned';
         }
         prepared = {
           parent: nextParent,

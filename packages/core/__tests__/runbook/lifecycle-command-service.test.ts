@@ -2049,6 +2049,192 @@ describe('RunbookLifecycleCommandService', () => {
       expect((await mgr.load(childRunId))?.lifecycle).toBe('stopped');
       expect((await mgr.loadSession()).claims[claimKeyFromBearer(childClaim)]).toBeDefined();
     });
+
+    /**
+     * Link a live child run to the delegation `issued` on `parentRunId`, seed
+     * the delegated outcome it reported, and issue its run-control claim.
+     *
+     * @param parentRunId - Parent run owning the delegation.
+     * @param issued - The delegation issuance whose substep gains the child link.
+     * @param childRunId - Child run to create and link.
+     * @returns The completion key of the seeded delegated outcome.
+     */
+    async function linkLiveChild(
+      parentRunId: RunId,
+      issued: { readonly tokenHash: string },
+      childRunId: RunId,
+    ): Promise<string> {
+      await manager.updateWithState(parentRunId, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === issued.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
+            : entry,
+        ),
+      }));
+      await manager.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(issued.tokenHash),
+          },
+        }),
+      );
+      await issueRunControlClaimFor(childRunId);
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const parent = await manager.load(parentRunId);
+      if (!parent) throw new Error('expected persisted parent');
+      await manager.save({
+        ...parent,
+        resolvedCompletions: {
+          [completionKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+        },
+      });
+      return completionKey;
+    }
+
+    it('cancels the parent delegation and cleans the reference when the linked child state is gone', async () => {
+      // Regression guard: a parent that still records a `childRunId` whose run
+      // has been pruned or deleted must stay force-abortable. Refusing
+      // `missing` before the aggregate left the delegation permanently linked
+      // — a stuck state with no operator recovery.
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0d0000000000000000000000000000');
+      await linkLiveChild(state.id, issued, childRunId);
+      // Prune the child exactly as `rundown prune` does: the parent keeps its
+      // reference, the run itself is gone.
+      await mgr.delete(childRunId);
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
+      });
+
+      expect(outcome).toEqual(
+        expect.objectContaining({
+          kind: 'cancelled',
+          cleanup: 'missing_child_cleaned',
+          childRunId,
+        }),
+      );
+      const parent = await mgr.load(state.id);
+      expect(
+        parent?.substepStates?.find((entry) => entry.id === '1')?.delegation?.cancelledAt,
+      ).toEqual(expect.any(String));
+      // The vanished child's stale delegated outcome is superseded, so nothing
+      // is left that a later collect could resolve against a run that is gone.
+      expect(Object.keys(parent?.resolvedCompletions ?? {})).toHaveLength(0);
+    });
+
+    it('leaves the delegation re-issuable after force-aborting a pruned linked child', async () => {
+      // The operator recovery the `missing` refusal removed: once the stale
+      // link is force-aborted, the same substep accepts a fresh delegation.
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0e0000000000000000000000000000');
+      await linkLiveChild(state.id, issued, childRunId);
+      await mgr.delete(childRunId);
+
+      const cancelled = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
+      });
+      expect(cancelled.kind).toBe('cancelled');
+
+      // Force-abort is terminal for the token: the replay is idempotent, not a
+      // second `missing`.
+      await expect(
+        localSeam.abortDelegation({
+          token: issued.token,
+          callerEvidence: runControlEvidence(runId),
+          force: true,
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'already_cancelled' }));
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: issued.stepId },
+      });
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      expect(retried.tokenHash).not.toBe(issued.tokenHash);
+      const parent = await mgr.load(state.id);
+      const delegation = parent?.substepStates?.find((entry) => entry.id === '1')?.delegation;
+      expect(delegation?.tokenHash).toBe(retried.tokenHash);
+      expect(delegation?.childRunId).toBeNull();
+      expect(delegation?.cancelledAt).toBeNull();
+    });
+
+    it('still refuses the force-abort when the present linked child is owned by another execution', async () => {
+      // The counterweight to the missing-child drop: a child that EXISTS stays
+      // a required aggregate member, so a genuine capture refusal still vetoes
+      // the whole force-abort instead of being silently discarded.
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0f0000000000000000000000000000');
+      const completionKey = await linkLiveChild(state.id, issued, childRunId);
+      // The child runs its own runbook, so it resolves its own steps.
+      const parentLoadSteps = deps.loadSteps;
+      deps.loadSteps = (target) =>
+        target.id === childRunId
+          ? [
+              {
+                kind: 'base',
+                name: '1',
+                description: 'child step',
+                transitions: tx('CONTINUE', 'STOP'),
+              },
+            ]
+          : parentLoadSteps(target);
+      await ownRunForTest(tmp, childRunId);
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
+      });
+
+      expect(outcome).toEqual({
+        kind: 'execution_in_progress',
+        runId: childRunId,
+        message: `Run ${childRunId} has an execution in progress.`,
+      });
+      const parent = await mgr.load(state.id);
+      const delegation = parent?.substepStates?.find((entry) => entry.id === '1')?.delegation;
+      expect(delegation?.cancelledAt).toBeNull();
+      expect(delegation?.childRunId).toBe(childRunId);
+      expect(Object.keys(parent?.resolvedCompletions ?? {})).toEqual([completionKey]);
+      expect((await mgr.load(childRunId))?.lifecycle).toBe('running');
+    });
   });
 
   describe('runTransition refusals', () => {

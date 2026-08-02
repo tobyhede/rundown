@@ -68,7 +68,7 @@ export function registerAbortCommand(program: Command): void {
                   default: {
                     const _exhaustivePolicy: never = outcome.policy;
                     throw new Error(
-                      `Unexpected abort refusal policy: ${JSON.stringify(_exhaustivePolicy)}`,
+                      `Unexpected abort refusal policy: ${(_exhaustivePolicy as { kind: string }).kind}`,
                     );
                   }
                 }
@@ -106,19 +106,43 @@ export function registerAbortCommand(program: Command): void {
                     ...(options.force ? { force: true } : {}),
                     ...(outcome.childRunId === null ? {} : { childRunId: outcome.childRunId }),
                   });
-                } else if (outcome.cleanup === 'active_child_failed') {
-                  output.message(`CANCELLED  ${hint} (in-flight, child run stopped)`, 'warning');
-                  output.message(
-                    `FAILED     step ${outcome.substepId} (delegation cancelled)`,
-                    'error',
-                  );
-                } else if (outcome.cleanup === 'terminal_child_cleaned') {
-                  output.message(`CANCELLED  ${hint} (linked child cleaned up)`, 'warning');
                 } else {
-                  output.message(
-                    `CANCELLED  ${hint} (pending delegation to ${outcome.childRunbookPath})`,
-                    'success',
-                  );
+                  // Exhaustive over core's `cleanup` union, for the reason an
+                  // if/else chain here already failed once: a new member fell
+                  // through to the pending-delegation arm and told the operator
+                  // no child was ever linked. A `never` check makes the next
+                  // member fail compilation instead of rendering a lie.
+                  switch (outcome.cleanup) {
+                    case 'active_child_failed':
+                      output.message(
+                        `CANCELLED  ${hint} (in-flight, child run stopped)`,
+                        'warning',
+                      );
+                      output.message(
+                        `FAILED     step ${outcome.substepId} (delegation cancelled)`,
+                        'error',
+                      );
+                      break;
+                    case 'terminal_child_cleaned':
+                      output.message(`CANCELLED  ${hint} (linked child cleaned up)`, 'warning');
+                      break;
+                    case 'missing_child_cleaned':
+                      output.message(
+                        `CANCELLED  ${hint} (linked child run missing, stale reference cleaned up)`,
+                        'warning',
+                      );
+                      break;
+                    case 'none':
+                      output.message(
+                        `CANCELLED  ${hint} (pending delegation to ${outcome.childRunbookPath})`,
+                        'success',
+                      );
+                      break;
+                    default: {
+                      const _exhaustiveCleanup: never = outcome.cleanup;
+                      throw new Error(`Unexpected abort cleanup: ${String(_exhaustiveCleanup)}`);
+                    }
+                  }
                 }
                 break;
               case 'execution_in_progress':
@@ -127,11 +151,18 @@ export function registerAbortCommand(program: Command): void {
               case 'concurrent_modification':
               case 'missing':
               case 'aggregate_recovery_required':
-                process.exitCode = renderTransactionalMutationRefusal(output, outcome) ? 1 : 0;
+                // Every transactional refusal exits 1, exactly like the `refused`
+                // arm above. The renderer's boolean is the shared refusal-renderer
+                // protocol (see `refusal-renderers.ts`), not a per-refusal exit
+                // disposition — a ternary on it would imply some refusal exits 0.
+                renderTransactionalMutationRefusal(output, outcome);
+                process.exitCode = 1;
                 break;
               default: {
                 const _exhaustive: never = outcome;
-                throw new Error(`Unexpected abort outcome: ${JSON.stringify(_exhaustive)}`);
+                throw new Error(
+                  `Unexpected abort outcome: ${(_exhaustive as { kind: string }).kind}`,
+                );
               }
             }
             output.flush();

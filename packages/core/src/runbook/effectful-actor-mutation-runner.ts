@@ -98,7 +98,21 @@ export interface EffectfulActorMutationSetTarget {
    * shape it does when the target was never named.
    */
   readonly optional?: boolean;
-  /** Drop this target only when its controlling claim has already been released. */
+  /**
+   * Drop this target only when its controlling claim has been released.
+   *
+   * Narrower than {@link EffectfulActorMutationSetTarget.optional}: the target is
+   * dropped on `claim_superseded` and on nothing else. It is honoured at both
+   * pre-effect stages — the initial capture and the lease acquisition — because
+   * the claim can be released in the window between them, while `beforeEffect`
+   * reads the filesystem and prepares the mutation. Every other refusal still
+   * refuses the set; in particular `execution_in_progress` means another owner
+   * genuinely holds the lease, and committing without the target there would
+   * silently drop a member the caller named.
+   *
+   * A target that also sets `optional` is unconditionally optional; this field
+   * adds nothing to it.
+   */
   readonly optionalWhenClaimSuperseded?: boolean;
 }
 
@@ -164,6 +178,58 @@ export interface EffectfulActorMutationSetRunnerInput<TResult> {
 export type EffectfulActorMutationSetRunnerResult<TResult> =
   | GuardedMutationResult<TResult>
   | AbandonedAttemptSetOutcome;
+
+/** One aggregate outcome weighed against the conditional-optionality policy. */
+interface SupersededDropDecision<TResult> {
+  /** The executor's aggregate outcome. */
+  readonly outcome: EffectfulActorMutationSetRunnerResult<TResult>;
+  /** Whether the aggregate `compute` — the external effect — was entered. */
+  readonly effectStarted: boolean;
+  /** Authorities presented to the refused acquisition. */
+  readonly acquiring: readonly CapturedAuthority[];
+  /** Runs the caller marked {@link EffectfulActorMutationSetTarget.optionalWhenClaimSuperseded}. */
+  readonly supersededOptionalRunIds: ReadonlySet<RunId>;
+  /** Runs the caller marked {@link EffectfulActorMutationSetTarget.optional}. */
+  readonly optionalRunIds: ReadonlySet<RunId>;
+}
+
+/**
+ * Select the one opportunistic target a pre-effect refusal drops, if any.
+ *
+ * The executor's optional-target policy is a flat run-id set: a listed run is
+ * dropped on any acquisition refusal. `optionalWhenClaimSuperseded` is a
+ * conditional policy that set cannot express, so the aggregate runner — which
+ * owns the conditional flag — re-applies it here against the pre-effect refusal
+ * rather than widening the unconditional policy. Applying it at capture alone
+ * would leave the capture-to-acquisition window unguarded, and that window is
+ * real work: a caller's `beforeEffect` loads runbook steps off disk and prepares
+ * an actor mutation, so a racing terminal-child report can retire the target's
+ * claim inside it.
+ *
+ * A drop is only sound before the effect boundary. `effectStarted` records
+ * whether the aggregate `compute` ran; once it has, re-entering acquisition
+ * would repeat an ambiguous external effect, which the fence forbids. Before it,
+ * an all-or-none acquisition refusal leaves nothing acquired and nothing
+ * written, so a narrower retry starts from the same ground state.
+ *
+ * @param decision - The refused outcome, effect-boundary flag, and both policies.
+ * @returns The run to drop before retrying acquisition, or undefined to surface
+ *   the outcome unchanged.
+ */
+function selectSupersededDrop<TResult>(
+  decision: SupersededDropDecision<TResult>,
+): RunId | undefined {
+  const { outcome, effectStarted, acquiring, supersededOptionalRunIds, optionalRunIds } = decision;
+  if (effectStarted || outcome.kind !== 'claim_superseded') return undefined;
+  if (!supersededOptionalRunIds.has(outcome.runId)) return undefined;
+  // The executor requires a captured set holding at least one required run and
+  // throws on one that does not. Surfacing the real refusal instead keeps that
+  // boundary a typed outcome the caller can render — the same reason the capture
+  // loop returns its last drop rather than throwing on an emptied set.
+  const remaining = acquiring.filter(({ runId }) => runId !== outcome.runId);
+  if (!remaining.some(({ runId }) => !optionalRunIds.has(runId))) return undefined;
+  return outcome.runId;
+}
 
 /** Registry-backed implementation of {@link EffectfulActorMutationRunner}. */
 class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunner {
@@ -307,63 +373,103 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
     }
 
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
+    const optionalRunIds = new Set(
+      input.targets.filter(({ optional }) => optional).map(({ runId }) => runId),
+    );
+    // `optional` already drops on every refusal, so a target carrying both flags
+    // is unconditionally optional and never reaches the conditional policy.
+    const supersededOptionalRunIds = new Set(
+      input.targets
+        .filter(
+          ({ optional, optionalWhenClaimSuperseded }) => !optional && optionalWhenClaimSuperseded,
+        )
+        .map(({ runId }) => runId),
+    );
     let activeCaptured = captured;
-    const result = await executor.runAll({
-      captured: captured.map(({ authority }) => authority),
-      optionalRunIds: input.targets.filter(({ optional }) => optional).map(({ runId }) => runId),
-      compute: (activeAuthorities) => {
-        const activeRunIds = new Set(activeAuthorities.map(({ runId }) => runId));
-        for (const member of captured) {
-          if (!activeRunIds.has(member.state.id)) droppedRunIds.add(member.state.id);
-        }
-        activeCaptured = captured.filter(({ state }) => activeRunIds.has(state.id));
-        return input.compute(activeCaptured);
-      },
-      commit: async (attempts, prepared) => {
-        if (prepared.members.length !== activeCaptured.length) {
-          throw new Error('Aggregate preparation must provide one state for every target.');
-        }
-        const members = prepared.members.map((member, index) => {
-          const exact = activeCaptured[index];
-          const attempt = attempts[index];
-          if (member.runId !== exact.state.id) {
-            throw new Error('Aggregate preparation order does not match the captured targets.');
+    let acquiring = captured.map(({ authority }) => authority);
+    let result: EffectfulActorMutationSetRunnerResult<TResult>;
+    // Bounded by construction: every continue removes exactly one run from
+    // `acquiring`, so the conditional policy can retry at most once per target.
+    for (;;) {
+      // The executor's own optional policy is a flat run-id set, which cannot
+      // express `optionalWhenClaimSuperseded`. Recording whether the aggregate
+      // effect ran is what keeps the conditional drop below strictly pre-effect.
+      let effectStarted = false;
+      const outcome = await executor.runAll({
+        captured: acquiring,
+        optionalRunIds: [...optionalRunIds],
+        compute: (activeAuthorities) => {
+          effectStarted = true;
+          const activeRunIds = new Set(activeAuthorities.map(({ runId }) => runId));
+          for (const member of captured) {
+            if (!activeRunIds.has(member.state.id)) droppedRunIds.add(member.state.id);
           }
-          if (attempt.runId !== exact.state.id) {
-            throw new Error('Aggregate execution order does not match the captured targets.');
+          activeCaptured = captured.filter(({ state }) => activeRunIds.has(state.id));
+          return input.compute(activeCaptured);
+        },
+        commit: async (attempts, prepared) => {
+          if (prepared.members.length !== activeCaptured.length) {
+            throw new Error('Aggregate preparation must provide one state for every target.');
           }
-          return {
-            captured: exact.authority,
-            execution: attempt,
-            next: member.nextState,
-          };
-        });
-        // A release names an owned member, so a dropped optional target takes
-        // its release with it — releasing a run this transaction does not own
-        // would be an unfenced session write.
-        const releases = (input.releases ?? []).filter(
-          (release) => !droppedRunIds.has(release.runId),
-        );
-        const committed = await store.commitOwnedRunSet({
-          members,
-          ...(releases.length === 0
-            ? {}
-            : {
-                updateSession: (session) => {
-                  for (const release of releases) {
-                    projectRunbookRelease(session, release.runId, {
-                      retainClaimsAsTerminal: release.retainClaimsAsTerminal,
-                    });
-                  }
-                },
-              }),
-        });
-        return committed.kind === 'committed'
-          ? { kind: 'committed', value: prepared.value }
-          : committed;
-      },
-      ...(input.wait === undefined ? {} : { wait: input.wait }),
-    });
+          const members = prepared.members.map((member, index) => {
+            const exact = activeCaptured[index];
+            const attempt = attempts[index];
+            if (member.runId !== exact.state.id) {
+              throw new Error('Aggregate preparation order does not match the captured targets.');
+            }
+            if (attempt.runId !== exact.state.id) {
+              throw new Error('Aggregate execution order does not match the captured targets.');
+            }
+            return {
+              captured: exact.authority,
+              execution: attempt,
+              next: member.nextState,
+            };
+          });
+          // A release names an owned member, so a dropped optional target takes
+          // its release with it — releasing a run this transaction does not own
+          // would be an unfenced session write.
+          const releases = (input.releases ?? []).filter(
+            (release) => !droppedRunIds.has(release.runId),
+          );
+          const committed = await store.commitOwnedRunSet({
+            members,
+            ...(releases.length === 0
+              ? {}
+              : {
+                  updateSession: (session) => {
+                    for (const release of releases) {
+                      projectRunbookRelease(session, release.runId, {
+                        retainClaimsAsTerminal: release.retainClaimsAsTerminal,
+                      });
+                    }
+                  },
+                }),
+          });
+          return committed.kind === 'committed'
+            ? { kind: 'committed', value: prepared.value }
+            : committed;
+        },
+        ...(input.wait === undefined ? {} : { wait: input.wait }),
+      });
+      const drop = selectSupersededDrop({
+        outcome,
+        effectStarted,
+        acquiring,
+        supersededOptionalRunIds,
+        optionalRunIds,
+      });
+      if (drop === undefined) {
+        result = outcome;
+        break;
+      }
+      void logger.debug('dropping opportunistic aggregate target superseded before acquisition', {
+        runId: drop,
+        refusal: 'claim_superseded',
+      });
+      droppedRunIds.add(drop);
+      acquiring = acquiring.filter(({ runId }) => runId !== drop);
+    }
     if (result.kind !== 'aggregate_recovery_required') return result;
 
     for (const interrupted of result.attempts) {

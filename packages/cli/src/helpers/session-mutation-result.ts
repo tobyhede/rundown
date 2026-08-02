@@ -84,8 +84,14 @@ export function sessionMutationRefusalCode(
     case 'recovery_required':
       return 'RECOVERY_REQUIRED';
     default: {
+      // Name the discriminant only, never the whole refusal: an unrecognized
+      // variant is by definition one whose fields this build does not know, and
+      // serializing it wholesale would put unreviewed payload into an error
+      // message (and thence into logs).
       const _exhaustive: never = refusal;
-      throw new Error(`Unhandled session mutation refusal: ${JSON.stringify(_exhaustive)}`);
+      throw new Error(
+        `Unhandled session mutation refusal: ${(_exhaustive as { kind: string }).kind}`,
+      );
     }
   }
 }
@@ -112,9 +118,16 @@ export function renderSessionMutationRefusal(
 /**
  * Render a transactional delegation refusal under its registered symbolic code.
  *
+ * A strict superset of {@link renderSessionMutationRefusal}, and returns the same
+ * `boolean` for the same reason: it is the shared refusal-renderer protocol (see
+ * `refusal-renderers.ts`), so an aggregating switch whose sibling arms render
+ * exit-0 outcomes can `return render…(…)` from this arm. It is not a per-refusal
+ * exit disposition — every arm here refuses, so callers that map straight to
+ * `process.exitCode` assign `1` unconditionally rather than branching on it.
+ *
  * @param output - Output emitter for CLI output.
  * @param refusal - Transactional refusal returned by a core delegation seam.
- * @returns `true` because every transactional refusal requests a non-zero exit code.
+ * @returns `true` — a transactional refusal always requests a non-zero exit code.
  */
 export function renderTransactionalMutationRefusal(
   output: OutputEmitter,

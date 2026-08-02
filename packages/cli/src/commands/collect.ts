@@ -572,6 +572,15 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
           terminalReleaseMode: 'release-runbook',
           output,
           commandStreamOptions,
+          // Core verified the collector's bearer behind the collection seam and
+          // returned the delegation capabilities bound to it. The CLI never mints
+          // authority — it only carries what core handed back, and only for the
+          // run core bound it to (`outcome.targetRunId === advanced.id`, the
+          // collect target this loop drives). Without them a collect that
+          // advances into a DELEGATE step is refused `actor_context_required` on
+          // issuance, and the following turn on frontier projection.
+          issueDelegationCredential: outcome.issueDelegationCredential,
+          delegationTokenDeriver: outcome.deriveDelegationToken,
         },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a

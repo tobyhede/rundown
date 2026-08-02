@@ -80,6 +80,7 @@ import {
 } from '../helpers/transition-orchestrator.js';
 import { buildRunnableRenderContext } from '../helpers/render-context.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
+import type { RunScopedDelegationRuntime } from '../helpers/delegation-completion.js';
 import { sessionMutationRefusalCode } from '../helpers/session-mutation-result.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
@@ -273,6 +274,20 @@ export interface ExecutionLoopOptions {
 const FRONTIER_AUTHORITY_REQUIRED_MESSAGE =
   'Delegation frontier cannot be projected without verified claim authority';
 
+/**
+ * Refusal prefix for a persisted delegation frontier that the claim authority
+ * present on this continuation cannot reproduce.
+ *
+ * The sibling of {@link FRONTIER_AUTHORITY_REQUIRED_MESSAGE}: there the
+ * authority is absent, here it is present but wrong for this frontier — a
+ * rotated run-control claim whose successor no longer derives its predecessor's
+ * credentials, or a derived bearer that does not hash to the persisted
+ * verifier. Hoisted for the same reason: the `ERROR_OCCURRED` and the
+ * `RUNBOOK_STOPPED` halves of one refusal must not describe it differently.
+ */
+const FRONTIER_PROJECTION_REFUSED_MESSAGE =
+  'Delegation frontier cannot be projected by the presented claim authority';
+
 interface InlineLaunchArgs {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
@@ -284,6 +299,12 @@ interface InlineLaunchArgs {
   readonly prompted: boolean;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
+  /**
+   * This loop's own verified delegation capabilities, named with the run they
+   * belong to. Forwarded to the child's terminal flow-back, which drains and
+   * re-runs THIS run — see {@link propagateInlineChildTerminalResult}.
+   */
+  readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
 }
 
 /**
@@ -472,8 +493,17 @@ async function propagateInlineChildTerminalResult(args: {
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
+  readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
 }): Promise<'done' | 'stopped' | 'waiting'> {
-  const { manager, childRunId, loopResult, cwd, output, commandStreamOptions } = args;
+  const {
+    manager,
+    childRunId,
+    loopResult,
+    cwd,
+    output,
+    commandStreamOptions,
+    parentDelegationRuntime,
+  } = args;
   if (loopResult !== 'done' && loopResult !== 'stopped') return loopResult;
 
   const childState = await manager.load(childRunId);
@@ -485,6 +515,13 @@ async function propagateInlineChildTerminalResult(args: {
   // inline). The child's own loopResult governs the result here unless advancing
   // the parent reaches a STOP or blocked terminal, both of which surface to the
   // execution loop as 'stopped'.
+  //
+  // The composing parent IS the run whose loop launched this child, so its
+  // verified run-control authority is live in this process. Hand it on: the
+  // advance can step the parent into a DELEGATE step, and a continuation without
+  // an issuer refuses that valid nested workflow `actor_context_required`.
+  // `parentDelegationRuntime` names the run it belongs to, so the seam's walk up
+  // the remaining inline chain cannot borrow it for an ancestor.
   const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
   const propagated = await propagateChildTerminal(
     childState,
@@ -492,6 +529,7 @@ async function propagateInlineChildTerminalResult(args: {
     cwd,
     output,
     commandStreamOptions,
+    parentDelegationRuntime,
   );
   return propagated === 'stopped' || propagated === 'blocked' ? 'stopped' : loopResult;
 }
@@ -548,6 +586,7 @@ async function launchInlineChildFromIntent({
   prompted,
   output,
   commandStreamOptions,
+  parentDelegationRuntime,
 }: InlineLaunchArgs): Promise<'done' | 'stopped' | 'waiting'> {
   const parentLinkage: InlineLinkage = {
     kind: 'inline',
@@ -690,6 +729,7 @@ async function launchInlineChildFromIntent({
         cwd,
         output,
         commandStreamOptions,
+        parentDelegationRuntime,
       });
     }
 
@@ -812,6 +852,7 @@ async function launchInlineChildFromIntent({
         cwd,
         output,
         commandStreamOptions,
+        parentDelegationRuntime,
       });
     }
 
@@ -1122,7 +1163,10 @@ export async function drainResolvedCompletions({
  *   step reached. A persisted delegation frontier that cannot be projected
  *   without verified claim authority returns 'stopped' after an
  *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and the terminal release — it is
- *   a refusal, not a throw, so the run is never left on the session stack.
+ *   a refusal, not a throw, so the run is never left on the session stack. A
+ *   frontier the *present* authority cannot reproduce — a rotated issuing claim,
+ *   or a derived bearer that does not match its persisted verifier — returns
+ *   'stopped' the same way, coded `RD-821` (`DELEGATION_INVARIANT_VIOLATED`).
  * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
  *   actor/lifecycle/session services throw while advancing transitions,
  *   command execution rejects, or the emitter raises during event dispatch.
@@ -1441,9 +1485,53 @@ export async function runExecutionLoop(
           'stopped',
         );
       }
-      delegateFrontier = [
-        ...projectDelegateFrontier(persistedDelegateFrontier, delegationTokenDeriver),
-      ];
+      try {
+        delegateFrontier = [
+          ...projectDelegateFrontier(persistedDelegateFrontier, delegationTokenDeriver),
+        ];
+      } catch (error) {
+        // `projectDelegateFrontier` documents a throw, and it lands here on two
+        // paths: the deriver refuses a descriptor naming a superseded issuer
+        // claim (run-control claims rotate — `installRunControlClaim`
+        // supersedes rather than appends), or the reconstructed bearer does not
+        // hash to the persisted verifier. Either way this is a refusal of the
+        // continuation, and the same reasoning as the missing-deriver branch
+        // above applies: an escaping throw unwinds past both the emitter and
+        // `applyExecutionTerminalRelease`, so the caller gets a bare Error
+        // carrying no code and the refused run stays on the session stack,
+        // still resolving as the active runbook for every later bare command.
+        //
+        // RD-821 is what core already attaches to this exact pair of conditions
+        // (`verifyEchoedDelegationToken` in `lifecycle-command-service.ts`), so
+        // the two disclosure boundaries refuse under one code. It is NOT the
+        // neighbouring `ACTOR_CONTEXT_REQUIRED`: authority is present here, so
+        // the absent-authority code would name the wrong condition.
+        //
+        // The core detail is safe to surface — it names the frontier id or the
+        // issuer-claim divergence, never a bearer.
+        const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${getErrorMessage(error)}`;
+        emitter.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message,
+            code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+          },
+        });
+        emitter.emit({
+          type: 'RUNBOOK_STOPPED',
+          payload: {
+            position: stepPosition,
+            message,
+          },
+        });
+        return await applyExecutionTerminalRelease(
+          sessionService,
+          runbookId,
+          terminalReleaseMode,
+          emitter,
+          'stopped',
+        );
+      }
     }
 
     // Expand once: artifact-producing helpers in command code append a manifest
@@ -1526,6 +1614,15 @@ export async function runExecutionLoop(
         prompted,
         output: options.output,
         commandStreamOptions: options.commandStreamOptions,
+        // This loop IS the composing parent's execution, so its verified
+        // capabilities are exactly the authority the child's terminal flow-back
+        // needs to drain and re-run this run. Named with `runbookId` so nothing
+        // further up the inline chain can be advanced under it.
+        parentDelegationRuntime: {
+          runId: runbookId,
+          issueDelegationCredential: options.issueDelegationCredential,
+          delegationTokenDeriver: options.delegationTokenDeriver,
+        },
       });
     }
 

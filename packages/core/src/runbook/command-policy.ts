@@ -5,6 +5,10 @@ import {
   type ClaimId,
   type ClaimRecord,
 } from './claim-id.js';
+import type {
+  DelegationCredentialIssuer,
+  DelegationTokenDeriver,
+} from './delegation-credential.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -253,6 +257,28 @@ export type DelegationPolicyOutcome =
        * tokens. Present only after the one-shot frontier was consumed.
        */
       readonly reEntryObservations?: readonly ExecutionObservationEffect[];
+      /**
+       * Verified collector-bound issuer for the continuation the frontend drives
+       * next. Collection can leave the target run standing one transition short
+       * of a DELEGATE step, and machine-owned issuance needs a verified issuer at
+       * that moment; without one the continuation is refused
+       * `actor_context_required` rather than advanced. Bound to the SAME verified
+       * authority the drain issued under — the bearer holding `collect-for-run`
+       * over `targetRunId`, which is a run-control claim and therefore also holds
+       * `delegate-from-run` over it.
+       *
+       * Runtime-only, and set only on a non-terminal (`running`) outcome: a
+       * closure cannot be serialised, and must never reach persisted context, a
+       * snapshot, or a diagnostic (CLAUDE.md § Actor dependencies).
+       */
+      readonly issueDelegationCredential?: DelegationCredentialIssuer;
+      /**
+       * Same-issuer deriver for the turn AFTER issuance, when the continuation
+       * projects the persisted frontier it just stored. Necessarily the same
+       * authority as {@link issueDelegationCredential}: a descriptor naming a
+       * different issuer claim is refused RD-821. Runtime-only, never persisted.
+       */
+      readonly deriveDelegationToken?: DelegationTokenDeriver;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */

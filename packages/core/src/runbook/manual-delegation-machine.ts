@@ -1,3 +1,33 @@
+/**
+ * Typed XState seam that prepares one manual delegation issue, retry, or abort.
+ *
+ * ## Why a machine with a single state
+ *
+ * The machine has one `ready` state and three action-only self-handlers, and
+ * that is the intended shape rather than scaffolding for states still to come.
+ * Manual preparation is a single synchronous decision over an exact captured
+ * state — there is no intermediate lifecycle for a state graph to model — so
+ * the value the machine carries is dispatch, not sequencing: the command union
+ * is XState's event type, `ready.on` is proved total over that union by
+ * {@link ManualDelegationReadyHandlers}, and the delegation primitives stay
+ * behind machine dispatch as the architecture requires instead of being called
+ * directly by a service (the defect this seam was introduced to remove).
+ *
+ * Sequencing lives elsewhere by design: the prepared abort is committed through
+ * the compiled runbook machine's `MANUAL_DELEGATION_ABORT_PREPARED` transition,
+ * and the durable side of these workflows belongs to the aggregate execution
+ * fence.
+ *
+ * The design record does not settle the longer trajectory. The PR 12 planning
+ * audit requires manual delegation to be machine-owned and separately
+ * contemplates "transient per-leaf workflow substates" in the compiled runbook
+ * machine, but it does not say whether these three commands eventually migrate
+ * into that graph. Treat the single state as today's deliberate design, not as
+ * a scheduled roadmap in either direction.
+ *
+ * @module runbook/manual-delegation-machine
+ */
+
 import { assign, createActor, setup } from 'xstate';
 
 import type { RundownError } from '../errors/rundown-error.js';
@@ -75,6 +105,44 @@ type ManualDelegationReadyHandlers = {
 interface ManualDelegationContext {
   readonly state: RunbookState;
   readonly result?: ManualDelegationPreparationResult;
+  /**
+   * Unexpected throw raised by a delegation primitive, boxed for rethrow.
+   *
+   * Kept out of {@link ManualDelegationPreparationResult} on purpose: that
+   * union models domain refusals, all carrying a `RundownError`, whereas this
+   * field carries a programming or runtime failure that the caller must see
+   * unchanged. Boxing keeps `thrown !== undefined` a faithful "the action
+   * threw" test even when the thrown value is itself `undefined`.
+   */
+  readonly thrown?: { readonly error: unknown };
+}
+
+/** Context patch one delegation command produces: a result, or a captured throw. */
+type ManualDelegationOutcome =
+  | { readonly result: ManualDelegationPreparationResult }
+  | { readonly thrown: { readonly error: unknown } };
+
+/**
+ * Run one delegation primitive so no throw reaches XState's action pipeline.
+ *
+ * A throw escaping an `assign` callback does not propagate out of
+ * `actor.send()`: the send returns normally with the context unassigned, and
+ * XState re-reports the error asynchronously through its unhandled-error path,
+ * which terminates the process instead of reaching the CLI error envelope.
+ * Catching here keeps the throw inside the machine's data, so
+ * {@link prepareManualDelegation} can rethrow the original value.
+ *
+ * @param prepare - Delegation primitive call plus its result mapping.
+ * @returns The prepared result, or the boxed value the primitive threw.
+ */
+function captureManualDelegationOutcome(
+  prepare: () => ManualDelegationPreparationResult,
+): ManualDelegationOutcome {
+  try {
+    return { result: prepare() };
+  } catch (error) {
+    return { thrown: { error } };
+  }
 }
 
 /** Input bound when constructing one manual-delegation preparation machine. */
@@ -102,9 +170,17 @@ export interface ManualDelegationPreparationInput {
  * {@link RunId} brand comes from the persisted-state schema that admitted the
  * captured state — there is no re-assert at this boundary to restore it.
  *
+ * An unexpected throw from a delegation primitive is not a domain refusal, so
+ * it is never mapped onto {@link ManualDelegationPreparationResult}: the action
+ * captures it into context (see {@link captureManualDelegationOutcome}) and
+ * this function rethrows the original value, identity intact.
+ *
  * @param input - Exact state, parsed steps, verified issuer, and typed command.
  * @returns Prepared substep state or the domain refusal produced by core delegation logic.
- * @throws {Error} If the machine produced no result.
+ * @throws {unknown} Whatever a delegation primitive threw, unchanged — the same
+ *   value, not a wrapped or re-stringified copy.
+ * @throws {Error} If the dispatched command produced neither a result nor a
+ *   throw, which means the machine did not handle the event.
  */
 export function prepareManualDelegation(
   input: ManualDelegationPreparationInput,
@@ -118,8 +194,8 @@ export function prepareManualDelegation(
   const ready = machineSetup.createStateConfig({
     on: {
       ISSUE: {
-        actions: assign({
-          result: ({ context, event }) => {
+        actions: assign(({ context, event }) =>
+          captureManualDelegationOutcome(() => {
             const result = createDelegation(
               {
                 state: context.state,
@@ -145,12 +221,12 @@ export function prepareManualDelegation(
               default:
                 return { status: 'error', error: result.error };
             }
-          },
-        }),
+          }),
+        ),
       },
       RETRY: {
-        actions: assign({
-          result: ({ context, event }) => {
+        actions: assign(({ context, event }) =>
+          captureManualDelegationOutcome(() => {
             const result = retryDelegation(
               {
                 state: context.state,
@@ -174,12 +250,12 @@ export function prepareManualDelegation(
               default:
                 return { status: 'error', error: result.error };
             }
-          },
-        }),
+          }),
+        ),
       },
       ABORT: {
-        actions: assign({
-          result: ({ context, event }) => {
+        actions: assign(({ context, event }) =>
+          captureManualDelegationOutcome(() => {
             const result = abortDelegation({
               parentState: context.state,
               substepId: event.substepId,
@@ -199,8 +275,8 @@ export function prepareManualDelegation(
                 return _exhaustive;
               }
             }
-          },
-        }),
+          }),
+        ),
       },
     },
   }) satisfies { readonly on: ManualDelegationReadyHandlers };
@@ -213,7 +289,8 @@ export function prepareManualDelegation(
   actor.start();
   try {
     actor.send(input.event);
-    const result = actor.getSnapshot().context.result;
+    const { result, thrown } = actor.getSnapshot().context;
+    if (thrown !== undefined) throw thrown.error;
     if (result === undefined) throw new Error('Manual delegation machine produced no result.');
     return result;
   } finally {

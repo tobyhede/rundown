@@ -438,6 +438,82 @@ describe('RunbookCollectionService', () => {
     ]);
   });
 
+  it('carries collector-bound delegation capabilities on a still-running collection', async () => {
+    // A running collection leaves the frontend a continuation to drive, and that
+    // continuation can step INTO a DELEGATE step. Machine-owned issuance needs a
+    // verified issuer at that moment and the next turn needs the same-issuer
+    // deriver, so both travel out on the outcome — bound to the authority core
+    // verified for `collect-for-run` on this target, never minted by the caller.
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:01:00.000Z',
+        }),
+        [buildCompletionKey(activeFrame(frameKey, 1), '2')]: buildResolvedCompletion({
+          agentId: 'delegated-b',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:02:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+    jest
+      .spyOn(actorService, 'sendAndSync')
+      .mockResolvedValueOnce({
+        state: state({ substep: '2', resolvedCompletions: target.resolvedCompletions }),
+        snapshot: {},
+        effects: [],
+      })
+      .mockResolvedValueOnce({
+        state: state({ step: '2', substep: undefined, lifecycle: 'running' }),
+        snapshot: {},
+        effects: [],
+      });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
+      frame: activeFrame(frameKey, 1),
+    });
+
+    if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    const issue = outcome.issueDelegationCredential;
+    const derive = outcome.deriveDelegationToken;
+    if (!issue || !derive) throw new Error('expected delegation capabilities on a running collect');
+
+    const issued = issue({
+      parentRunId: runId,
+      parentStepId: '2.1',
+      parentFrameKey: buildFrameKey('2'),
+      parentEntry: 1,
+    });
+    // Bound to the VERIFIED COLLECTOR: the claim key core proved holds
+    // `collect-for-run` on this target — and therefore, being a run-control
+    // claim, `delegate-from-run` on it too.
+    expect(issued.credential.issuerClaimKey).toBe(claimKey);
+    // Same-issuer pair: the deriver reproduces exactly what the issuer minted,
+    // which is what the continuation's next turn needs to project the frontier.
+    expect(derive(issued.credential)).toBe(issued.token);
+    // ...and only that issuer's credentials (RD-821). The pair cannot be turned
+    // on descriptors another claim owns.
+    expect(() =>
+      derive({
+        ...issued.credential,
+        issuerClaimKey: assertClaimLookupKey('rdclk_99999999999999999999999999999999'),
+      }),
+    ).toThrow('Delegation credential belongs to a different issuer claim');
+  });
+
   it('projects retry re-entry observations through the collection outcome and consumes the frontier', async () => {
     const frameKey = buildFrameKey('1');
     const target = state({

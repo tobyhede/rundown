@@ -392,11 +392,19 @@ export function registerDelegateCommand(program: Command): void {
               case 'concurrent_modification':
               case 'missing':
               case 'aggregate_recovery_required':
-                process.exitCode = renderTransactionalMutationRefusal(output, outcome) ? 1 : 0;
+                // Every transactional refusal exits 1, like every other refusal
+                // arm here. The renderer's boolean is the shared
+                // refusal-renderer protocol (see `refusal-renderers.ts`), not a
+                // per-refusal exit disposition — a ternary on it would imply
+                // some refusal exits 0.
+                renderTransactionalMutationRefusal(output, outcome);
+                process.exitCode = 1;
                 break;
               default: {
                 const _exhaustive: never = outcome;
-                throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
+                throw new Error(
+                  `Unexpected delegate outcome: ${(_exhaustive as { kind: string }).kind}`,
+                );
               }
             }
 
@@ -536,11 +544,18 @@ export function registerDelegateCommand(program: Command): void {
             case 'concurrent_modification':
             case 'missing':
             case 'aggregate_recovery_required':
-              process.exitCode = renderTransactionalMutationRefusal(output, outcome) ? 1 : 0;
+              // Same disposition as the --retry switch above: every
+              // transactional refusal exits 1, and the renderer's boolean is the
+              // shared refusal-renderer protocol rather than a per-refusal exit
+              // disposition.
+              renderTransactionalMutationRefusal(output, outcome);
+              process.exitCode = 1;
               break;
             default: {
               const _exhaustive: never = outcome;
-              throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
+              throw new Error(
+                `Unexpected delegate outcome: ${(_exhaustive as { kind: string }).kind}`,
+              );
             }
           }
 

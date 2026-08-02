@@ -1099,6 +1099,59 @@ describe('collect command', () => {
       expect(collected.stderr).toContain('COMMAND_STDERR');
       expect(collected.stderr).not.toContain('COMMAND_STDOUT');
     });
+
+    it('forwards the collector-bound delegation capabilities when the loop reaches a later DELEGATE step', async () => {
+      // Core verifies the collector's bearer behind the collection seam and hands
+      // the delegation capabilities back on the outcome; this command must carry
+      // them into the continuation it drives. Without the forwarding the loop
+      // refuses machine-owned issuance (`actor_context_required`) the moment the
+      // command transition enters step 3, and stops the run instead of advancing
+      // it. The middle command step is what routes the continuation through the
+      // execution loop rather than core's own re-entry projection.
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Fan-out',
+            pass: 'CONTINUE',
+            substeps: [{ title: 'Task A', delegate: true, runbooks: ['child.runbook.md'] }],
+          },
+          { title: 'Local work', pass: 'CONTINUE', command: 'rd echo --result pass' },
+          {
+            title: 'Fan-out again',
+            pass: 'CONTINUE',
+            substeps: [{ title: 'Task B', delegate: true, runbooks: ['child.runbook.md'] }],
+          },
+          { title: 'Done', pass: 'COMPLETE' },
+        ],
+      });
+      const childContent = createRunbook({
+        title: 'Child',
+        steps: [{ title: 'Work', pass: 'COMPLETE' }],
+      });
+      await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), parentContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      const start = await runCliInProcess('run parent.runbook.md --allow-all', workspace);
+      expect(start.exitCode).toBe(0);
+      const token = requireFrontierToken(start.stdout, '1.1');
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)?.claim_id);
+      const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+      expect(closed.exitCode).toBe(0);
+
+      const collected = await runCliInProcess(
+        [...(await withRunTarget(['collect'], workspace)), '--allow-all'],
+        workspace,
+      );
+
+      expect(collected.exitCode).toBe(0);
+      // The continuation issued the SECOND frontier under the collector's authority.
+      expect(requireFrontierToken(collected.stdout, '3.1')).toMatch(/^rdtk_/);
+      const parent = await getActiveState(workspace);
+      expect(parent).toMatchObject({ lifecycle: 'running', step: '3', substep: '1' });
+    }, 30_000);
   });
 
   describe('error cases', () => {

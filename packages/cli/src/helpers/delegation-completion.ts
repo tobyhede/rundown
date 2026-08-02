@@ -40,7 +40,9 @@ import {
   type RunbookState,
   type ParentLinkage,
   type CommandExecutionStreamOptions,
+  type DelegationCredentialIssuer,
   type DelegationOutcome,
+  type DelegationTokenDeriver,
   type RunId,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
@@ -73,6 +75,49 @@ export function extractParentLinkage(state: RunbookState): ParentLinkage | undef
 }
 
 /**
+ * Verified claim-bound delegation capabilities, named with the ONE run they may
+ * be used for.
+ *
+ * `createDelegationCredentialIssuer` / `createDelegationTokenDeriver` close over
+ * a single verified claim bearer, and the deriver throws
+ * (`Delegation credential belongs to a different issuer claim`) for any
+ * descriptor another claim issued. Carrying `runId` alongside the callables is
+ * what lets a continuation that walks MORE than one run — the core inline
+ * upward-propagation seam recurses up the whole composing chain — apply them to
+ * the run whose authority they actually are, and to no other. Runtime-only: this
+ * never enters persisted context (CLAUDE.md § Actor dependencies).
+ */
+export interface RunScopedDelegationRuntime {
+  /** The only run these capabilities may be exercised for. */
+  readonly runId: RunId;
+  /** Issuer for machine-owned delegation issuance on `runId`. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /** Same-issuer deriver used only to project `runId`'s delegation frontier. */
+  readonly delegationTokenDeriver?: DelegationTokenDeriver;
+}
+
+/**
+ * Narrow a run-scoped delegation runtime to the run currently being advanced.
+ *
+ * @param runtime - Capabilities bound to one run, when the caller holds any.
+ * @param runId - Run the continuation is about to drive.
+ * @returns The capabilities when they belong to `runId`, otherwise an empty pair.
+ */
+function delegationRuntimeFor(
+  runtime: RunScopedDelegationRuntime | undefined,
+  runId: RunId,
+): {
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  readonly delegationTokenDeriver?: DelegationTokenDeriver;
+} {
+  if (runtime?.runId !== runId) return {};
+  return {
+    issueDelegationCredential: runtime.issueDelegationCredential,
+    delegationTokenDeriver: runtime.delegationTokenDeriver,
+  };
+}
+
+/**
  * Build the CLI-supplied inline parent-advance callable (Category A execution).
  *
  * This is the extracted execution body of the former
@@ -91,9 +136,22 @@ export function extractParentLinkage(state: RunbookState): ParentLinkage | undef
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
  *
+ * Both halves of the continuation — the drain and the loop — can step the
+ * composing parent INTO a DELEGATE step: the drain's aggregation transition is
+ * what enters the next step, and the loop's command transitions are what enter
+ * later ones. Machine-owned delegation issuance needs a verified issuer at that
+ * moment, and the following loop turn needs the same-issuer deriver to project
+ * the persisted frontier. `parentDelegationRuntime` carries both, scoped by
+ * {@link delegationRuntimeFor} to the exact run they were minted for — the core
+ * seam recurses up the whole inline chain through this one callable, and an
+ * ancestor advanced under a descendant's authority would be refused RD-821
+ * rather than helped.
+ *
  * @param cwd - Current working directory.
  * @param output - Output emitter for streamed parent events.
  * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @param parentDelegationRuntime - Verified capabilities the caller holds for one
+ *   specific run; applied only when the seam advances that run.
  * @returns The runtime callable the core seam invokes.
  * @throws {Error} If drain reports a hard failure (`target_mismatch`).
  */
@@ -101,6 +159,7 @@ export function buildAdvanceInlineParent(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
+  parentDelegationRuntime?: RunScopedDelegationRuntime,
 ): AdvanceInlineParent {
   return async ({ parentRunId, parentFrameKey, parentEntry, result }) => {
     // Core symbols used ONLY on this execution path are imported lazily too, so
@@ -133,6 +192,11 @@ export function buildAdvanceInlineParent(
     // release — report `active` (the seam treats it as handled).
     if (!parentState) return { status: 'active' };
 
+    const { issueDelegationCredential, delegationTokenDeriver } = delegationRuntimeFor(
+      parentDelegationRuntime,
+      parentRunId,
+    );
+
     const parentSteps = [...getRunbookFromState(parentState, cwd)];
     const emitter = createBridgedEmitter(parentState, output);
     const drained = await drainResolvedCompletions({
@@ -147,6 +211,7 @@ export function buildAdvanceInlineParent(
       transitionPolicy: inlinePolicy,
       computeActionResult: transitionConfig.computeActionResult,
       frameOverride: exactFrame(parentFrameKey, parentEntry),
+      issueDelegationCredential,
     });
 
     if (drained.status === 'stopped') {
@@ -180,7 +245,13 @@ export function buildAdvanceInlineParent(
         // 'defer-to-caller': the loop does NOT release parentRunId — the core seam
         // is the sole release owner and releases once (with retain) on terminal.
         // See Task 3 for the mode; RD-598 verification for why single-owner.
-        { terminalReleaseMode: 'defer-to-caller', output, commandStreamOptions },
+        {
+          terminalReleaseMode: 'defer-to-caller',
+          output,
+          commandStreamOptions,
+          issueDelegationCredential,
+          delegationTokenDeriver,
+        },
       );
       output.flush();
       if (loopResult === 'stopped') return { status: 'stopped' };
@@ -233,12 +304,15 @@ export function emitLinkageCycleDiagnostic(output: OutputEmitter, trip: LinkageC
  * @param cwd - Current working directory.
  * @param output - Output emitter for streamed parent events.
  * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @param parentDelegationRuntime - Verified delegation capabilities bound to one
+ *   run, forwarded to {@link buildAdvanceInlineParent}.
  * @returns Deps for the core `propagateTerminalChildUpward` seam.
  */
 export async function buildInlineParentAdvanceDeps(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
+  parentDelegationRuntime?: RunScopedDelegationRuntime,
 ): Promise<PropagateTerminalChildUpwardDeps> {
   const { SessionService } = await import('@rundown-org/core');
   const manager = new RunbookStateManager(cwd);
@@ -250,7 +324,12 @@ export async function buildInlineParentAdvanceDeps(
     manager,
     sessionService,
     completionService,
-    advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
+    advanceInlineParent: buildAdvanceInlineParent(
+      cwd,
+      output,
+      commandStreamOptions,
+      parentDelegationRuntime,
+    ),
   };
 }
 
@@ -401,6 +480,13 @@ export async function advanceParentForInlineChild(
  * @param output - Output emitter for CLI output
  * @param commandStreamOptions - Runtime-only routing for command subprocess
  * stdout/stderr while inline propagation continues the parent
+ * @param parentDelegationRuntime - Verified delegation capabilities the caller
+ *   holds for one specific run. The inline flow-back caller in
+ *   `services/execution.ts` is running the composing parent's own loop, so it
+ *   holds that parent's run-control authority and must hand it on: without it a
+ *   parent whose next step is a DELEGATE step is refused
+ *   `actor_context_required` rather than advanced. Scoped by run id, so the
+ *   seam's walk up the rest of the inline chain does not inherit it.
  * @returns 'not-applicable' when the child has no parent linkage; for inline,
  *          'handled' or 'stopped' (advancing the parent reached a STOP terminal);
  *          for delegation, 'reported' (the delegating run is collection pending)
@@ -412,12 +498,13 @@ export async function propagateChildTerminal(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
+  parentDelegationRuntime?: RunScopedDelegationRuntime,
 ): Promise<TerminalPropagationResult> {
   const linkage = extractParentLinkage(childState);
   if (!linkage) return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
+    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions, parentDelegationRuntime),
     childState,
     result,
   );

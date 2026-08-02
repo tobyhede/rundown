@@ -52,8 +52,32 @@ describe('sessionMutationRefusalCode', () => {
     // output under no code at all.
     const unknown = { kind: 'claim_superseded', runId: RUN_ID, message: 'nope' };
     expect(() => sessionMutationRefusalCode(unknown as SessionMutationRefusalOutcome)).toThrow(
-      /Unhandled session mutation refusal/,
+      /Unhandled session mutation refusal: claim_superseded/,
     );
+  });
+
+  it('names only the discriminant of an unknown refusal, never its payload', () => {
+    // An unrecognized variant is one whose fields this build does not know, so
+    // the guard must not serialize it wholesale into an error message that
+    // reaches stderr and logs.
+    const unknown = {
+      kind: 'future_refusal',
+      runId: RUN_ID,
+      message: 'nope',
+      claimId: 'rdc_secret_bearer_value',
+    };
+
+    expect(() => sessionMutationRefusalCode(unknown as SessionMutationRefusalOutcome)).toThrow(
+      'Unhandled session mutation refusal: future_refusal',
+    );
+    try {
+      sessionMutationRefusalCode(unknown as SessionMutationRefusalOutcome);
+    } catch (error) {
+      const thrown = error as Error;
+      expect(thrown.message).not.toContain('rdc_secret_bearer_value');
+      expect(thrown.message).not.toContain(RUN_ID);
+    }
+    expect.assertions(3);
   });
 });
 

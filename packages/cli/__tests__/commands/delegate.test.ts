@@ -22,6 +22,7 @@ import {
   findFrontierInEvents,
   requireLatestFrontierToken,
   requireEmittedRunClaim,
+  seedExecutionOwnership,
   withRunTarget,
 } from '../helpers/test-utils.js';
 
@@ -2331,6 +2332,55 @@ describe('delegate command', () => {
 
       expect(retry.exitCode).toBe(0);
       assertConformsToSchema(parseCliJsonObject(retry.stdout));
+    });
+  });
+
+  // Both `delegate` switches route the transactional refusal arms through
+  // `renderTransactionalMutationRefusal`. `abort-refusals.test.ts` pins the
+  // abort call site over the full refusal union with a mocked seam; these two
+  // pin delegate's own call sites end-to-end, so the fresh-issue and --retry
+  // paths are provably exit-1 rather than exit-1-by-inspection.
+  describe('transactional refusals', () => {
+    // Higher than any epoch the setup commands record for themselves.
+    const SEEDED_EXEC_EPOCH = 99;
+
+    it('exits 1 when a fresh issue is refused with EXECUTION_IN_PROGRESS', async () => {
+      await setupDelegation();
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active run');
+      // Resolve the bearer BEFORE seeding ownership: issuing a run-control claim
+      // is itself a guarded session mutation and would be refused afterwards.
+      const argv = await withRunTarget(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      // Seed above every epoch the setup commands already recorded — the
+      // execution_attempts row is keyed by (run_id, exec_epoch).
+      seedExecutionOwnership(workspace, state.id, SEEDED_EXEC_EPOCH);
+
+      const result = await runCliInProcess(argv, workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+      });
+    });
+
+    it('exits 1 when a --retry is refused with EXECUTION_IN_PROGRESS', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active run');
+      const argv = await withRunTarget(['delegate', '--retry', autoToken], workspace);
+      seedExecutionOwnership(workspace, state.id, SEEDED_EXEC_EPOCH);
+
+      const result = await runCliInProcess(argv, workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+      });
     });
   });
 });

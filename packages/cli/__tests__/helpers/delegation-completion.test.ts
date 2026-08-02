@@ -15,6 +15,8 @@ import type {
   InlineLinkage,
   SubstepState,
   ResolvedCompletion,
+  DelegationCredentialIssuer,
+  DelegationTokenDeriver,
   RunbookStateManager as RunbookStateManagerType,
   RunbookActorService as RunbookActorServiceType,
   SessionService as SessionServiceType,
@@ -870,6 +872,158 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     });
     expect(outcome).toEqual({ status: 'active' });
     expect(drainResolvedCompletions).not.toHaveBeenCalled();
+  });
+
+  // The continuation this callable performs — drain, then loop — can step the
+  // composing parent INTO a DELEGATE step. Both halves need the parent's verified
+  // claim authority: the drain issues the frontier, the loop projects it. Without
+  // them the machine refuses `actor_context_required` and a valid nested workflow
+  // stops.
+  describe('run-scoped delegation runtime', () => {
+    const OTHER_RUN_ID = brandRunIdForTest('rd_33333333333333333333333333333333');
+    const issueDelegationCredential = mockFn<
+      () => never
+    >() as unknown as DelegationCredentialIssuer;
+    const delegationTokenDeriver = mockFn<() => string>() as unknown as DelegationTokenDeriver;
+
+    function primeContinueThenLoop(): MockManager {
+      const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+      const manager = makeManager(new Map([[parentState.id, parentState]]));
+      wireMocks(manager, makeLifecycleService());
+      jest.mocked(drainResolvedCompletions).mockResolvedValue({
+        unresolved: 0,
+        status: 'continue',
+        applied: 1,
+        state: parentState,
+      });
+      jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+      return manager;
+    }
+
+    it('supplies the issuer to the drain and both capabilities to the loop for the bound run', async () => {
+      primeContinueThenLoop();
+      const advance = buildAdvanceInlineParent('/test', makeOutput(), undefined, {
+        runId: PARENT_RUN_ID,
+        issueDelegationCredential,
+        delegationTokenDeriver,
+      });
+
+      await advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      });
+
+      expect(drainResolvedCompletions).toHaveBeenCalledWith(
+        expect.objectContaining({ issueDelegationCredential }),
+      );
+      expect(runExecutionLoop).toHaveBeenCalledWith(
+        expect.anything(),
+        PARENT_RUN_ID,
+        expect.anything(),
+        '/test',
+        expect.any(Boolean),
+        expect.anything(),
+        expect.objectContaining({ issueDelegationCredential, delegationTokenDeriver }),
+      );
+    });
+
+    // The core seam recurses up an inline chain, invoking this same callable for
+    // every ancestor. The bound authority owns exactly ONE run, and
+    // `createDelegationTokenDeriver` refuses a descriptor issued by any other
+    // claim — so an ancestor must be advanced with no capabilities rather than
+    // with a stranger's.
+    it('withholds the capabilities when the seam advances a different run', async () => {
+      primeContinueThenLoop();
+      const advance = buildAdvanceInlineParent('/test', makeOutput(), undefined, {
+        runId: OTHER_RUN_ID,
+        issueDelegationCredential,
+        delegationTokenDeriver,
+      });
+
+      await advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      });
+
+      expect(drainResolvedCompletions).toHaveBeenCalledWith(
+        expect.objectContaining({ issueDelegationCredential: undefined }),
+      );
+      expect(runExecutionLoop).toHaveBeenCalledWith(
+        expect.anything(),
+        PARENT_RUN_ID,
+        expect.anything(),
+        '/test',
+        expect.any(Boolean),
+        expect.anything(),
+        expect.objectContaining({
+          issueDelegationCredential: undefined,
+          delegationTokenDeriver: undefined,
+        }),
+      );
+    });
+  });
+});
+
+describe('propagateChildTerminal run-scoped delegation runtime', () => {
+  it('forwards the caller-supplied parent runtime into the seam deps', async () => {
+    const issueDelegationCredential = mockFn<
+      () => never
+    >() as unknown as DelegationCredentialIssuer;
+    const delegationTokenDeriver = mockFn<() => string>() as unknown as DelegationTokenDeriver;
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: makeInlineLinkage() });
+    const manager = makeManager(new Map([[CHILD_RUN_ID, childState]]));
+    wireMocks(manager, makeLifecycleService());
+    propagateTerminalChildUpward.mockResolvedValue({ kind: 'handled' });
+
+    await propagateChildTerminal(childState, 'pass', '/test', makeOutput(), undefined, {
+      runId: PARENT_RUN_ID,
+      issueDelegationCredential,
+      delegationTokenDeriver,
+    });
+
+    // The runtime reaches the seam through the CLI-supplied advance callable, so
+    // assert it is honoured by driving that callable for the bound run.
+    const deps = propagateTerminalChildUpward.mock.calls[0][0] as {
+      advanceInlineParent: (input: {
+        parentRunId: typeof PARENT_RUN_ID;
+        parentFrameKey: FrameKey;
+        parentEntry: number;
+        result: 'pass';
+      }) => Promise<unknown>;
+    };
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    manager.load.mockResolvedValue(parentState);
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+
+    await deps.advanceInlineParent({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: brandFrameKeyForTest('1|'),
+      parentEntry: 1,
+      result: 'pass',
+    });
+
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({ issueDelegationCredential }),
+    );
+    expect(runExecutionLoop).toHaveBeenCalledWith(
+      expect.anything(),
+      PARENT_RUN_ID,
+      expect.anything(),
+      '/test',
+      expect.any(Boolean),
+      expect.anything(),
+      expect.objectContaining({ issueDelegationCredential, delegationTokenDeriver }),
+    );
   });
 });
 

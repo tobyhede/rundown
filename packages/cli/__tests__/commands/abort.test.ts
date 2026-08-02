@@ -14,6 +14,7 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import {
+  deletePersistedRunState,
   patchPersistedRunState,
   readPersistedRunState,
 } from '@rundown-org/core/testing/session-fixtures';
@@ -48,6 +49,21 @@ const _abortRefusalKindsAreExact: ExactUnion<
   'actor_context_required' | 'claim_grant_required'
 > = true;
 void _abortRefusalKindsAreExact;
+
+/**
+ * The linked-child cleanup branches `abort`'s `--text` renderer must distinguish.
+ *
+ * Pinned for the same reason, after the same failure: when `missing_child_cleaned`
+ * joined this union the renderer's if/else chain silently fell through to the
+ * pending-delegation arm and reported a linked-but-vanished child as one that was
+ * never claimed. The renderer is now an exhaustive switch, and this assertion
+ * names the contract if the union grows again.
+ */
+const _abortCleanupKindsAreExact: ExactUnion<
+  Extract<DelegationAbortOutcome, { kind: 'cancelled' }>['cleanup'],
+  'none' | 'active_child_failed' | 'terminal_child_cleaned' | 'missing_child_cleaned'
+> = true;
+void _abortCleanupKindsAreExact;
 
 describe('abort command wiring', () => {
   it('registers the abort command with its documented flags and descriptions', () => {
@@ -538,6 +554,114 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toMatch(/in-flight|child run stopped/i);
+    });
+  });
+
+  describe('cleanup rendering', () => {
+    /**
+     * Claim the delegation so the parent records a linked child.
+     *
+     * @param token - The delegation bearer to claim.
+     * @returns The linked child's run id.
+     */
+    async function claimLinkedChild(token: string): Promise<string> {
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      if (typeof claimOutput?.run_id !== 'string') {
+        throw new Error(`Expected claimed child run id:\n${claim.stdout}`);
+      }
+      return claimOutput.run_id;
+    }
+
+    it('renders the pending-delegation line when no child was ever linked', async () => {
+      // cleanup: 'none'
+      const token = await setupDelegation();
+
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(
+        /CANCELLED {2}rdtk_\S+ \(pending delegation to .*child\.runbook\.md\)/,
+      );
+    });
+
+    it('renders the in-flight stop and the propagated failure when the child was running', async () => {
+      // cleanup: 'active_child_failed'
+      const token = await setupDelegation();
+      await claimLinkedChild(token);
+
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/CANCELLED {2}rdtk_\S+ \(in-flight, child run stopped\)/);
+      expect(result.stdout).toContain('FAILED     step 1 (delegation cancelled)');
+    });
+
+    it('renders the cleanup line when the linked child had already reported', async () => {
+      // cleanup: 'terminal_child_cleaned'
+      const token = await setupDelegation();
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      expect(typeof claimOutput?.claim_id).toBe('string');
+      const failed = await runCliInProcess(
+        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        workspace,
+      );
+      expect(failed.exitCode).toBe(1);
+
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/CANCELLED {2}rdtk_\S+ \(linked child cleaned up\)/);
+    });
+
+    it('renders the stale-reference cleanup when the linked child run no longer exists', async () => {
+      // cleanup: 'missing_child_cleaned'. The parent still names a childRunId
+      // whose run has been pruned or deleted, so force-abort clears the stale
+      // link. Rendering this as a *pending* delegation would tell the operator
+      // no child was ever linked — the exact opposite of what happened, in the
+      // one situation they are debugging.
+      const token = await setupDelegation();
+      const childRunId = await claimLinkedChild(token);
+      await deletePersistedRunState(workspace.cwd, childRunId);
+
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(
+        /CANCELLED {2}rdtk_\S+ \(linked child run missing, stale reference cleaned up\)/,
+      );
+      expect(result.stdout).not.toContain('pending delegation');
+    });
+
+    it('leaves the JSON envelope unchanged when the linked child run no longer exists', async () => {
+      // `cleanup` is a text-rendering discriminator only — it is deliberately
+      // not serialised, so the JSON contract is identical to any other forced
+      // cancellation and stays schema-valid.
+      const token = await setupDelegation();
+      const childRunId = await claimLinkedChild(token);
+      await deletePersistedRunState(workspace.cwd, childRunId);
+
+      const result = await runCliInProcess(abortCommand(token, '--force'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = findActionOutput(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({
+          kind: 'abort',
+          action: 'abort',
+          status: 'cancelled',
+          force: true,
+          childRunId,
+          runbook: expect.stringContaining('child.runbook.md'),
+        }),
+      );
+      expect(output).not.toHaveProperty('cleanup');
+      const validation = validateCommandOutput('abort', output!);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
     });
   });
 

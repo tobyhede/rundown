@@ -1,9 +1,14 @@
 import { describe, expect, it } from '@jest/globals';
 import { StepDelegationSchema } from '../../src/schemas.js';
-import { prepareManualDelegation } from '../../src/runbook/manual-delegation-machine.js';
+import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
+import {
+  prepareManualDelegation,
+  type ManualDelegationPreparationEvent,
+  type ManualDelegationPreparationInput,
+} from '../../src/runbook/manual-delegation-machine.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { SubstepState } from '../../src/runbook/types.js';
+import type { RunbookState, SubstepState } from '../../src/runbook/types.js';
 import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { makeState, makeSteps } from './delegation-service-fixtures.js';
@@ -38,6 +43,58 @@ function issueFixture(): readonly SubstepState[] {
   });
   if (issued.status !== 'prepared') throw new Error('expected prepared issue');
   return issued.substepStates;
+}
+
+/** Outcome of one preparation call observed for both throw paths. */
+interface ObservedPreparation {
+  /** Value thrown synchronously out of `prepareManualDelegation`. */
+  readonly caught: unknown;
+  /** Errors that escaped asynchronously through Node's unhandled-error paths. */
+  readonly unhandled: readonly unknown[];
+}
+
+/**
+ * Run one preparation call while watching for asynchronously escaping errors.
+ *
+ * A throw raised inside an XState `assign` action does not propagate out of
+ * `actor.send`; XState re-reports it on a later event-loop turn, which
+ * terminates the process rather than reaching the CLI error envelope. Watching
+ * both paths is what makes the distinction observable: the error must arrive at
+ * `caught`, and `unhandled` must stay empty.
+ *
+ * @param input - Exact preparation input to dispatch.
+ * @returns The synchronously caught value plus anything reported asynchronously.
+ * @throws {Error} If the call returned normally instead of throwing.
+ */
+async function observePreparationThrow(
+  input: ManualDelegationPreparationInput,
+): Promise<ObservedPreparation> {
+  const unhandled: unknown[] = [];
+  const record = (error: unknown): void => {
+    unhandled.push(error);
+  };
+  process.on('uncaughtException', record);
+  process.on('unhandledRejection', record);
+  try {
+    let threw = false;
+    let caught: unknown;
+    try {
+      prepareManualDelegation(input);
+    } catch (error) {
+      threw = true;
+      caught = error;
+    }
+    // XState reports an action throw on a later event-loop turn, so drain one
+    // timer turn before concluding that nothing escaped asynchronously.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    if (!threw) throw new Error('expected prepareManualDelegation to throw');
+    return { caught, unhandled };
+  } finally {
+    process.off('uncaughtException', record);
+    process.off('unhandledRejection', record);
+  }
 }
 
 describe('prepareManualDelegation', () => {
@@ -274,6 +331,90 @@ describe('prepareManualDelegation', () => {
       status: 'error',
       error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
     });
+  });
+
+  it('rethrows an issuer throw from ISSUE unchanged instead of discarding it', async () => {
+    const boom = new Error('issuer exploded during fresh issuance');
+    const throwingIssuer: DelegationCredentialIssuer = () => {
+      throw boom;
+    };
+
+    const { caught, unhandled } = await observePreparationThrow({
+      state: makeState(),
+      steps: makeSteps(),
+      issueCredential: throwingIssuer,
+      event: {
+        type: 'ISSUE',
+        stepId: '1.1',
+        frameKey: buildFrameKey('1'),
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+      },
+    });
+
+    expect(caught).toBe(boom);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('rethrows an issuer throw from RETRY unchanged instead of discarding it', async () => {
+    const boom = new Error('issuer exploded during retry');
+    const throwingIssuer: DelegationCredentialIssuer = () => {
+      throw boom;
+    };
+
+    const { caught, unhandled } = await observePreparationThrow({
+      state: { ...makeState(), substepStates: [...issueFixture()] },
+      steps: makeSteps(),
+      issueCredential: throwingIssuer,
+      event: {
+        type: 'RETRY',
+        substepId: '1',
+        frameKey: buildFrameKey('1'),
+        allowLinkedChildRun: false,
+      },
+    });
+
+    expect(caught).toBe(boom);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('rethrows a primitive throw from ABORT unchanged instead of discarding it', async () => {
+    const boom = new Error('captured state read exploded during abort');
+    // `abortDelegation` takes no injected callable, so the failure is staged
+    // where the primitive reads the captured state. The assertion is about the
+    // action boundary, not about this particular read: any throw raised inside
+    // the ABORT action must reach the caller.
+    const hostileState: RunbookState = Object.defineProperty({ ...makeState() }, 'substepStates', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        throw boom;
+      },
+    });
+
+    const { caught, unhandled } = await observePreparationThrow({
+      state: hostileState,
+      steps: makeSteps(),
+      issueCredential: makeDelegationCredentialIssuer(),
+      event: { type: 'ABORT', substepId: '1', frameKey: buildFrameKey('1'), force: false },
+    });
+
+    expect(caught).toBe(boom);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('still reports the generic failure when a dispatched event yields no result and no throw', () => {
+    // An event the machine declares no handler for is dropped by XState, so
+    // neither a result nor a captured throw lands in context. That is the only
+    // case the generic guard is allowed to describe.
+    expect(() =>
+      prepareManualDelegation({
+        state: makeState(),
+        steps: makeSteps(),
+        issueCredential: makeDelegationCredentialIssuer(),
+        event: { type: 'UNHANDLED' } as unknown as ManualDelegationPreparationEvent,
+      }),
+    ).toThrow('Manual delegation machine produced no result.');
   });
 
   it('inherits the child run id brand from persisted-state validation, not a boundary assert', () => {

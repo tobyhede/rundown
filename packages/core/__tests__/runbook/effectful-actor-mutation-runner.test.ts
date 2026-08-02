@@ -13,6 +13,7 @@ import {
   openRunbookStore,
 } from '../../src/runbook/storage/store-registry.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
+import { CoreEffectfulMutationExecutor } from '../../src/runbook/effectful-mutation-executor.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
@@ -284,6 +285,275 @@ describe('createEffectfulActorMutationRunner', () => {
       );
       expect(compute).not.toHaveBeenCalled();
       await lease.releaseClaimed([owner.value]);
+    });
+
+    it('drops an opportunistic target superseded between capture and acquisition', async () => {
+      // The capture/acquisition window is real work, not an instant: a caller's
+      // `beforeEffect` loads steps off the filesystem and prepares an actor
+      // mutation. A terminal child's controlling claim can be released inside
+      // that window — exactly what a racing terminal-child report does — and the
+      // resulting `claim_superseded` must drop the opportunistic child rather
+      // than veto the required parent mutation.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      let computedIds: readonly RunId[] = [];
+
+      const result = await runner.runAll<string>({
+        // Dependency order mirrors the real caller: linked child first, parent last.
+        targets: [
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        releases: [{ runId: opportunistic.id }],
+        beforeEffect: async (captured) => {
+          // Both targets captured cleanly, so the drop below is provably an
+          // acquisition-layer decision rather than a capture-layer one.
+          expect(captured.map(({ state }) => state.id)).toEqual([opportunistic.id, required.id]);
+          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          return { kind: 'continue' };
+        },
+        compute: (captured) => {
+          computedIds = captured.map(({ state }) => state.id);
+          return Promise.resolve({
+            members: captured.map(({ state }) => ({
+              runId: state.id,
+              nextState: { ...state, step: '2' },
+            })),
+            value: 'done',
+          });
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'done' });
+      // Preparation sees the same shape it would have seen had the dropped
+      // target never been named.
+      expect(computedIds).toEqual([required.id]);
+      const store = await getRunbookStore(dir);
+      expect((await store.loadRun(required.id))?.step).toBe('2');
+      // The dropped target is not written, and its release goes with it.
+      expect((await store.loadRun(opportunistic.id))?.step).toBe('1');
+    });
+
+    it('refuses when an opportunistic target is contended at acquisition', async () => {
+      // The conditional policy must stay conditional. `execution_in_progress` at
+      // acquisition means another owner genuinely holds the lease; dropping the
+      // target there would commit without a member the caller named.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const contended = await seedRun('contended.runbook.md');
+      const { driver, store } = await openRunbookStore(dir);
+      const lease = new SqliteExecutionLeaseService(driver);
+      const compute = jest.fn();
+      let owner: Awaited<ReturnType<SqliteExecutionLeaseService['acquire']>> | undefined;
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: contended.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        beforeEffect: async (captured) => {
+          expect(captured.map(({ state }) => state.id)).toEqual([contended.id, required.id]);
+          const capture = await store.captureRunAuthority(contended.id);
+          if (capture.kind !== 'captured') throw new Error('contended capture failed');
+          owner = await lease.acquire(capture.authority, process.pid);
+          if (owner.kind !== 'committed') throw new Error('contended lease acquisition failed');
+          return { kind: 'continue' };
+        },
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'execution_in_progress', runId: contended.id }),
+      );
+      expect(compute).not.toHaveBeenCalled();
+      expect((await store.loadRun(required.id))?.step).toBe('1');
+      if (owner?.kind === 'committed') await lease.releaseClaimed([owner.value]);
+    });
+
+    it('still refuses when a REQUIRED target is superseded at acquisition', async () => {
+      // The conditional policy is per-target, not a blanket tolerance for
+      // `claim_superseded`: a required member losing its claim in the same window
+      // still refuses the set.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        beforeEffect: async () => {
+          unwrapSessionMutation(await sessionService.releaseRunbook(required.id));
+          return { kind: 'continue' };
+        },
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'claim_superseded', runId: required.id }),
+      );
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it('refuses instead of leaving no required target when the last one is dropped', async () => {
+      // Dropping the opportunistic target here would leave an all-optional set,
+      // which the executor rejects by throwing. This seam's contract is typed
+      // outcomes, so the real refusal is surfaced instead — the same reasoning
+      // that makes the capture loop return its last drop rather than throw.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const optional = await seedRun('optional.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: optional.id, optional: true },
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+        ],
+        beforeEffect: async () => {
+          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          return { kind: 'continue' };
+        },
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'claim_superseded', runId: opportunistic.id }),
+      );
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it('drops the superseded target while a plain optional member survives', async () => {
+      // Mixed optionality: dropping the opportunistic target still leaves a
+      // required member, so the set proceeds — and the unrelated `optional`
+      // member, which acquired cleanly, is committed rather than discarded.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const optional = await seedRun('optional.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      const required = await seedRun('required.runbook.md');
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: optional.id, optional: true },
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        beforeEffect: async () => {
+          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          return { kind: 'continue' };
+        },
+        compute: (captured) => {
+          expect(captured.map(({ state }) => state.id)).toEqual([optional.id, required.id]);
+          return Promise.resolve({
+            members: captured.map(({ state }) => ({
+              runId: state.id,
+              nextState: { ...state, step: '2' },
+            })),
+            value: 'done',
+          });
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'done' });
+      const store = await getRunbookStore(dir);
+      expect((await store.loadRun(optional.id))?.step).toBe('2');
+      expect((await store.loadRun(required.id))?.step).toBe('2');
+      expect((await store.loadRun(opportunistic.id))?.step).toBe('1');
+    });
+
+    it('never re-acquires after the aggregate effect has run', async () => {
+      // The conditional drop is sound only before the effect boundary. A refusal
+      // observed after `compute` ran describes a post-effect outcome, and
+      // re-entering acquisition there would repeat an ambiguous external effect —
+      // the one thing the fence exists to forbid.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      const refusal = {
+        kind: 'claim_superseded' as const,
+        runId: opportunistic.id,
+        message: `The presented claim no longer controls run ${opportunistic.id}.`,
+      };
+      // A second acquisition is the defect under test, so it is answered with a
+      // distinguishable outcome rather than the same refusal — a retry then fails
+      // the assertions below instead of spinning against a mock that never
+      // narrows its captured set.
+      const runAll = jest
+        .spyOn(CoreEffectfulMutationExecutor.prototype, 'runAll')
+        .mockImplementation(async (input) => {
+          if (runAll.mock.calls.length > 1) {
+            return { kind: 'missing', runId: required.id, message: 're-acquired after the effect' };
+          }
+          await input.compute(input.captured);
+          return refusal;
+        });
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        compute: (captured) =>
+          Promise.resolve({
+            members: captured.map(({ state }) => ({ runId: state.id, nextState: state })),
+            value: 'done',
+          }),
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(refusal);
+      expect(runAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('still drops a plain optional target contended at acquisition', async () => {
+      // Unconditional optionality is unchanged: `optional` drops on ANY
+      // acquisition refusal, including the `execution_in_progress` the
+      // conditional policy above must refuse.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const optional = await seedRun('optional.runbook.md');
+      const { driver, store } = await openRunbookStore(dir);
+      const lease = new SqliteExecutionLeaseService(driver);
+      let owner: Awaited<ReturnType<SqliteExecutionLeaseService['acquire']>> | undefined;
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: optional.id, optional: true }, { runId: required.id }],
+        beforeEffect: async () => {
+          const capture = await store.captureRunAuthority(optional.id);
+          if (capture.kind !== 'captured') throw new Error('optional capture failed');
+          owner = await lease.acquire(capture.authority, process.pid);
+          if (owner.kind !== 'committed') throw new Error('optional lease acquisition failed');
+          return { kind: 'continue' };
+        },
+        compute: (captured) => {
+          expect(captured.map(({ state }) => state.id)).toEqual([required.id]);
+          return Promise.resolve({
+            members: [{ runId: required.id, nextState: { ...captured[0].state, step: '2' } }],
+            value: 'done',
+          });
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'done' });
+      expect((await store.loadRun(required.id))?.step).toBe('2');
+      expect((await store.loadRun(optional.id))?.step).toBe('1');
+      if (owner?.kind === 'committed') await lease.releaseClaimed([owner.value]);
     });
 
     it('returns claim_superseded when every opportunistic target is dropped', async () => {
