@@ -860,6 +860,7 @@ export class RunbookActorService {
    * @param state - Persisted runbook state to hydrate from
    * @param steps - Parsed runbook steps for machine compilation
    * @param executionObserver - Optional non-persisted observer for command actor output
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Compiled XState machine seeded with all hydration-time context
    * @throws {Error} If `state.frontmatterOutputs` is undefined (invalid state)
    */
@@ -966,6 +967,7 @@ export class RunbookActorService {
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps for machine compilation
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Started actor, or null if state not found
    * @throws {Error} When the loaded state is invalid — specifically when
    *   `state.frontmatterOutputs` is `undefined`. Callers should treat this
@@ -1115,6 +1117,7 @@ export class RunbookActorService {
    * @param previousState - The state to hydrate the actor from (captured before the effect).
    * @param steps - Parsed runbook steps for machine compilation.
    * @param event - Runbook event to send (PASS, FAIL, GOTO, EXECUTE_COMMAND, …).
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors.
    * @returns The computed, not-yet-persisted mutation.
    * @throws {Error} If the resulting snapshot is an unsupported/invalid shape
    *   (mirrors {@link updateFromActor}).
@@ -1385,6 +1388,7 @@ export class RunbookActorService {
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Updated state, or null if state not found
    */
   async initializeState(
@@ -1593,6 +1597,7 @@ export class RunbookActorService {
    * @param options.guard - Parent-advance guard threaded into the SUCCESS-path
    *   persist only (never the effects-failure stopped-lifecycle fallback); when
    *   present the write refuses if the run has a live delegated child.
+   * @param options.runtime - Optional verified runtime capabilities for machine-owned actors.
    * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live
    *   delegated child blocks the advance. Raised by the store write beneath
    *   {@link updateFromActor}, so it is not lexically visible here — callers of the

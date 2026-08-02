@@ -5,7 +5,6 @@ import path from 'node:path';
 import type {
   ResolvedStep,
   ResolvedStepWithFor,
-  ResolvedStepWithPromptedFor,
   ResolvedStepWithSubsteps,
   Substep,
   Transitions,
@@ -117,20 +116,6 @@ function delegateForStep(name: string, substeps: readonly Substep[]): ResolvedSt
     description: `FOR step ${name}`,
     transitions: SUBSTEP_TRANSITIONS,
     forClause: { variable: 'i', start: 1, end: 10 },
-    substeps,
-  };
-}
-
-/** Build a prompted-FOR step that owns authored DELEGATE substeps. */
-function delegatePromptedForStep(
-  name: string,
-  substeps: readonly Substep[],
-): ResolvedStepWithPromptedFor {
-  return {
-    kind: 'prompted-for',
-    name,
-    description: `Prompted FOR step ${name}`,
-    transitions: SUBSTEP_TRANSITIONS,
     substeps,
   };
 }
@@ -453,7 +438,7 @@ describe('RunbookLifecycleCommandService', () => {
     });
 
     it('issues a bare delegation and persists the new substep state', async () => {
-      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
 
       const outcome = await localSeam.issueDelegation({
         mode: 'fresh',
@@ -1342,7 +1327,7 @@ describe('RunbookLifecycleCommandService', () => {
     });
 
     it('continues to refuse retry over a running linked child', async () => {
-      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),

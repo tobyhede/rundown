@@ -59,6 +59,20 @@ function enteredStep(
   );
 }
 
+function frontierToken(events: JsonEvent[], runbookSuffix: string): string | undefined {
+  for (const event of events) {
+    if (event.type !== 'step_entered') continue;
+    const frontier = event.delegateFrontier as
+      | ReadonlyArray<{ readonly runbook?: unknown; readonly token?: unknown }>
+      | undefined;
+    const entry = frontier?.find(
+      ({ runbook }) => typeof runbook === 'string' && runbook.endsWith(runbookSuffix),
+    );
+    if (typeof entry?.token === 'string') return entry.token;
+  }
+  return undefined;
+}
+
 interface StatusResponse {
   readonly file?: string;
   readonly position?: { readonly current?: string };
@@ -129,6 +143,7 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
   async function driveToImplementDelegate(): Promise<{ token: string }> {
     const start = runCli(['run', '--prompted', '--allow-all', 'exec-plan-harness'], tempDir);
     expect(start.exitCode).toBe(0);
+    let token = frontierToken(parseJsonEvents(start.stdout), 'implement-plan.runbook.md');
     for (let i = 0; i < 12; i += 1) {
       const current = status();
       const pending = current.delegations?.find(
@@ -139,9 +154,10 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
         current.file?.endsWith('execute-plan.runbook.md') &&
         current.position?.current === '2'
       ) {
-        return { token: pending.token };
+        return { token: token ?? pending.token };
       }
-      runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
+      const advanced = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
+      token ??= frontierToken(parseJsonEvents(advanced.stdout), 'implement-plan.runbook.md');
     }
     throw new Error('Did not reach execute-plan implement DELEGATE step');
   }

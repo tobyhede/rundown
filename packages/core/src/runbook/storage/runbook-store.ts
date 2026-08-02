@@ -1022,6 +1022,7 @@ export class RunbookStore {
    *
    * @param captured - Dependency-ordered authority captures to validate atomically.
    * @returns Committed void when every capture is still exact, otherwise the first refusal.
+   * @throws {Error} When a captured run or claim changed after preparation.
    */
   validateCapturedRunSet(
     captured: readonly CapturedAuthority[],

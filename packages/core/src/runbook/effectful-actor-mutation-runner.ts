@@ -98,6 +98,8 @@ export interface EffectfulActorMutationSetTarget {
    * shape it does when the target was never named.
    */
   readonly optional?: boolean;
+  /** Drop this target only when its controlling claim has already been released. */
+  readonly optionalWhenClaimSuperseded?: boolean;
 }
 
 /** Exact state and authority captured for one aggregate target. */
@@ -265,7 +267,12 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
           ? await store.captureRunAuthorityState(target.runId)
           : await store.captureAuthorityState(target.runId, target.claimKey);
       if (result.kind !== 'captured') {
-        if (!target.optional) return result;
+        if (
+          !target.optional &&
+          !(target.optionalWhenClaimSuperseded && result.kind === 'claim_superseded')
+        ) {
+          return result;
+        }
         void logger.debug('dropping optional aggregate target that could not be captured', {
           runId: target.runId,
           refusal: result.kind,

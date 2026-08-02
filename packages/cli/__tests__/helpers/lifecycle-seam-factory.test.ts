@@ -29,8 +29,6 @@ import {
 // runtime paths never exercise.
 import { buildNonDelegatingLifecycleSeam } from '../../src/helpers/lifecycle-seam-factory.js';
 
-const REFUSAL = 'non-delegating lifecycle seam does not issue delegations';
-
 describe('buildNonDelegatingLifecycleSeam', () => {
   let workspace: TestWorkspace;
 

@@ -81,6 +81,20 @@ function enteredStep(
   );
 }
 
+function frontierToken(events: JsonEvent[], runbookSuffix: string): string | undefined {
+  for (const event of events) {
+    if (event.type !== 'step_entered') continue;
+    const frontier = event.delegateFrontier as
+      | ReadonlyArray<{ readonly runbook?: unknown; readonly token?: unknown }>
+      | undefined;
+    const entry = frontier?.find(
+      ({ runbook }) => typeof runbook === 'string' && runbook.endsWith(runbookSuffix),
+    );
+    if (typeof entry?.token === 'string') return entry.token;
+  }
+  return undefined;
+}
+
 interface StatusResponse {
   readonly file?: string;
   readonly position?: { readonly current?: string };
@@ -134,6 +148,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     const start = runCli(['run', '--prompted', 'rundown:end-to-end-test'], tempDir);
     expect(start.exitCode).toBe(0);
     const events = parseJsonEvents(start.stdout);
+    let token = frontierToken(events, 'review-file.runbook.md');
 
     for (let i = 0; i < 12; i += 1) {
       const current = status();
@@ -145,9 +160,11 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
         current.file?.endsWith('review-and-collate.runbook.md') &&
         current.position?.current === '1'
       ) {
-        return { token: pending.token, events };
+        return { token: token ?? pending.token, events };
       }
-      events.push(...(await pass()));
+      const advanced = await pass();
+      events.push(...advanced);
+      token ??= frontierToken(advanced, 'review-file.runbook.md');
     }
     throw new Error('Did not reach review-and-collate DELEGATE step');
   }
@@ -255,6 +272,8 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(after.position?.current).toBe('2');
     const collate = after.delegations?.find((d) => d.runbook.endsWith('collate-files.runbook.md'));
     expect(collate?.state).toBe('pending');
-    expect(collate?.token).toEqual(expect.stringMatching(/^rdtk_/));
+    expect(frontierToken(collectEvents, 'collate-files.runbook.md')).toEqual(
+      expect.stringMatching(/^rdtk_/),
+    );
   }, 30_000);
 });

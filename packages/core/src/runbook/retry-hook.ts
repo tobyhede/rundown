@@ -133,6 +133,7 @@ function peekForStack(stack: readonly ForContext[] | undefined): ForContext | un
  * @param _parentName - Parent step name. Retained for signature stability; not
  *   consumed — frontier id comes from `delegation.contextSnapshot.at`.
  * @param steps - Resolved steps of the active runbook.
+ * @param issueCredential - Verified runtime issuer for replacement delegation credentials.
  * @returns Discriminated union: `retried` (updates working + frontier entry),
  *   `skipped` (no state or no delegation record), or `error`
  *   (rollback discipline: caller supplies its original snapshot).
@@ -251,6 +252,7 @@ export function retrySingleSubstep(
  * @param context - Current RunbookContext with mirrored substepStates
  * @param parentStep - Parent step carrying the DELEGATE substeps
  * @param steps - All resolved steps (needed for createDelegation inside retryDelegation)
+ * @param issueCredential - Verified runtime issuer, required when an active delegation is retried
  * @returns Success (new frontier + substepStates) or error (code + message, states unchanged)
  */
 export function runRetryHook(

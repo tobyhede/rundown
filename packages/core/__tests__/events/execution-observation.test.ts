@@ -76,14 +76,14 @@ describe('execution observation projection', () => {
   it('projects descriptor-bearing frontier intents into public token entries', () => {
     const tokens = [`rdtk_${'A'.repeat(32)}`, `rdtk_${'B'.repeat(32)}`] as const;
     const frontier: readonly PersistedDelegateFrontierEntry[] = tokens.map((token, index) => ({
-      id: `1.${index + 1}`,
-      runbook: `child-${index + 1}.md`,
+      id: `1.${String(index + 1)}`,
+      runbook: `child-${String(index + 1)}.md`,
       credential: {
         version: 1,
         issuerClaimKey: assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`),
         issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
         parentRunId: assertRunId(`rd_${'2'.repeat(32)}`),
-        parentStepId: `1.${index + 1}`,
+        parentStepId: `1.${String(index + 1)}`,
         parentFrameKey: buildFrameKey('1'),
         parentEntry: 1,
       },

@@ -1140,7 +1140,6 @@ export class RunbookLifecycleCommandService {
         return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
       beforeEffect: async ([captured]) => {
-        if (!captured) throw new Error('Delegation transaction did not capture its parent.');
         const capturedSteps = await this.#deps.loadSteps(captured.state);
         stepsByRun.set(captured.state.id, capturedSteps);
         const policy = resolveCommandIntent({
@@ -1247,14 +1246,13 @@ export class RunbookLifecycleCommandService {
         };
         return { kind: 'continue' };
       },
-      compute: async ([captured]) => {
-        if (!captured) throw new Error('Delegation transaction lost its parent capture.');
+      compute: ([captured]) => {
         const prepared = preparedFresh;
         if (!prepared) throw new Error('Delegation transaction lost its prepared issuance.');
-        return {
+        return Promise.resolve({
           members: [{ runId: captured.state.id, nextState: prepared.nextState }],
           value: prepared.value,
-        };
+        });
       },
     });
     return aggregate.kind === 'committed' ? aggregate.value : aggregate;
@@ -1392,7 +1390,7 @@ export class RunbookLifecycleCommandService {
     }
 
     if (!cursor) throw new Error('Retry locator did not resolve a cursor');
-    const { substepId, frameKey, stepLabel } = cursor;
+    const { substepId, frameKey } = cursor;
 
     // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
     // so a pending collection does not refuse it. Final classification is
@@ -1436,7 +1434,9 @@ export class RunbookLifecycleCommandService {
       | undefined;
     const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
       targets: [
-        ...(hasTerminalChild ? [{ runId: linkedChildRunId }] : []),
+        ...(hasTerminalChild
+          ? [{ runId: linkedChildRunId, optionalWhenClaimSuperseded: true }]
+          : []),
         { runId: freshState.id, claimKey: authority.actorContext.authority.claimKey },
       ],
       ...(hasTerminalChild
@@ -1448,9 +1448,12 @@ export class RunbookLifecycleCommandService {
         return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
       beforeEffect: async (captured) => {
-        const child = hasTerminalChild ? captured.at(0) : undefined;
-        const parent = captured.at(hasTerminalChild ? 1 : 0);
-        if (!parent || parent.state.id !== freshState.id) {
+        const child =
+          linkedChildRunId === null
+            ? undefined
+            : captured.find(({ state }) => state.id === linkedChildRunId);
+        const parent = captured.find(({ state }) => state.id === freshState.id);
+        if (parent?.state.id !== freshState.id) {
           throw new Error('Delegation retry did not capture its parent in dependency order.');
         }
         const parentSteps = await this.#deps.loadSteps(parent.state);
@@ -1524,10 +1527,7 @@ export class RunbookLifecycleCommandService {
             },
           };
         }
-        if (hasTerminalChild) {
-          if (!child || child.state.id !== linkedChildRunId) {
-            throw new Error('Delegation retry did not capture its terminal child first.');
-          }
+        if (child !== undefined) {
           const childSteps = await this.#deps.loadSteps(child.state);
           stepsByRun.set(child.state.id, childSteps);
           if (child.state.lifecycle !== 'completed' && child.state.lifecycle !== 'stopped') {
@@ -1535,7 +1535,7 @@ export class RunbookLifecycleCommandService {
               kind: 'return',
               value: {
                 kind: 'error',
-                error: Errors.delegationInFlight(exactCursor.substepId, linkedChildRunId),
+                error: Errors.delegationInFlight(exactCursor.substepId, child.state.id),
               },
             };
           }
@@ -1583,19 +1583,22 @@ export class RunbookLifecycleCommandService {
         };
         return { kind: 'continue' };
       },
-      compute: async (captured) => {
-        const child = hasTerminalChild ? captured.at(0) : undefined;
-        const parent = captured.at(hasTerminalChild ? 1 : 0);
+      compute: (captured) => {
+        const child =
+          linkedChildRunId === null
+            ? undefined
+            : captured.find(({ state }) => state.id === linkedChildRunId);
+        const parent = captured.find(({ state }) => state.id === freshState.id);
         if (!parent) throw new Error('Delegation retry lost its parent capture.');
         const prepared = preparedRetry;
         if (!prepared) throw new Error('Delegation retry lost its prepared replacement.');
-        return {
+        return Promise.resolve({
           members: [
             ...(child ? [{ runId: child.state.id, nextState: child.state }] : []),
             { runId: parent.state.id, nextState: prepared.nextState },
           ],
           value: prepared.value,
-        };
+        });
       },
     });
     return aggregate.kind === 'committed' ? aggregate.value : aggregate;
@@ -1670,7 +1673,7 @@ export class RunbookLifecycleCommandService {
       beforeEffect: async (captured) => {
         const child = scannedChild === undefined ? undefined : captured.at(0);
         const parent = captured.at(scannedChild === undefined ? 0 : 1);
-        if (!parent || parent.state.id !== parentRunId) {
+        if (parent?.state.id !== parentRunId) {
           throw new Error('Delegation abort did not capture its parent last.');
         }
         const parentSteps = await this.#deps.loadSteps(parent.state);
@@ -1717,7 +1720,7 @@ export class RunbookLifecycleCommandService {
         let nextChild: RunbookState | undefined;
         let cleanup: 'none' | 'active_child_failed' | 'terminal_child_cleaned' = 'none';
         if (scannedChild !== undefined) {
-          if (!child || child.state.id !== scannedChild.id) {
+          if (child?.state.id !== scannedChild.id) {
             throw new Error('Delegation abort did not capture its linked child first.');
           }
           if (
@@ -1774,10 +1777,10 @@ export class RunbookLifecycleCommandService {
         };
         return { kind: 'continue' };
       },
-      compute: async () => {
+      compute: () => {
         const exactPrepared = prepared;
         if (!exactPrepared) throw new Error('Delegation abort lost its prepared mutation.');
-        return {
+        return Promise.resolve({
           members: [
             ...(exactPrepared.child === undefined
               ? []
@@ -1785,7 +1788,7 @@ export class RunbookLifecycleCommandService {
             { runId: exactPrepared.parent.id, nextState: exactPrepared.parent },
           ],
           value: exactPrepared.value,
-        };
+        });
       },
     });
     return aggregate.kind === 'committed' ? aggregate.value : aggregate;

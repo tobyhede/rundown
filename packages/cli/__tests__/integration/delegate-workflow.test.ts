@@ -9,6 +9,7 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  readSession,
   parseCliJsonObject,
   parseConcatenatedJson,
   findActionOutput,
@@ -1671,6 +1672,9 @@ describe('DELEGATE re-entry and retry', () => {
       workspace,
     );
     expect(abortResult.exitCode).toBe(0);
+    expect(Object.values((await readSession(workspace)).claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: parentRunId }),
+    );
 
     // Capture T1 (cancelledAt of the aborted delegation) and the prior
     // tokenHash. The retry about to run will REPLACE this delegation
@@ -1691,7 +1695,7 @@ describe('DELEGATE re-entry and retry', () => {
     // `createDelegation` replaces the record. The command exits 0 and
     // emits a fresh token.
     const retry = await runCliInProcess(
-      await withRunTarget(['delegate', '--retry', tokenA2], workspace),
+      ['delegate', '--retry', tokenA2, '--claim-id', parentClaimId],
       workspace,
     );
     expect(retry.exitCode).toBe(0);
@@ -1735,7 +1739,7 @@ describe('DELEGATE re-entry and retry', () => {
     // Retry mints a fresh token for 1.2 and supersedes the aborted attempt: its
     // stale FAIL resolvedCompletion row is consumed and the substep reset.
     const retry = await runCliInProcess(
-      await withRunTarget(['delegate', '--retry', token2], workspace),
+      ['delegate', '--retry', token2, '--claim-id', parentClaimId],
       workspace,
     );
     expect(retry.exitCode).toBe(0);

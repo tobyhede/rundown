@@ -879,7 +879,6 @@ describe('delegate command', () => {
         workspace,
       );
       expect(result.exitCode).toBe(0);
-      const output = parseCliJsonObject(result.stdout);
 
       const state = await getActiveState(workspace);
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;

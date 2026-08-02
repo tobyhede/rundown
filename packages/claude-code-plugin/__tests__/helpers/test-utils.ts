@@ -14,6 +14,7 @@ import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const emittedRunClaims = new Map<string, Map<string, string>>();
 
 /**
  * Result from running CLI command.
@@ -60,11 +61,32 @@ export function runCli(args: string | string[], cwd: string): CliResult {
     },
   });
 
-  return {
+  const cliResult = {
     stdout: result.stdout || '',
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
+  const claims = emittedRunClaims.get(cwd) ?? new Map<string, string>();
+  for (const line of cliResult.stdout.split(/\r?\n/)) {
+    try {
+      const event = JSON.parse(line) as {
+        readonly type?: unknown;
+        readonly runbookId?: unknown;
+        readonly claim_id?: unknown;
+      };
+      if (
+        event.type === 'runbook_started' &&
+        typeof event.runbookId === 'string' &&
+        typeof event.claim_id === 'string'
+      ) {
+        claims.set(event.runbookId, event.claim_id);
+      }
+    } catch {
+      // Ignore non-JSON diagnostic lines mixed into command output.
+    }
+  }
+  emittedRunClaims.set(cwd, claims);
+  return cliResult;
 }
 
 /**
@@ -304,6 +326,8 @@ export async function withActiveRunClaim(args: readonly string[], cwd: string): 
   const sessionService = new SessionService(manager);
   const state = await sessionService.getActive();
   if (!state) throw new Error('withActiveRunClaim: no active run to target');
+  const emittedClaimId = emittedRunClaims.get(cwd)?.get(state.id);
+  if (emittedClaimId) return [...args, '--claim-id', emittedClaimId];
   const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
   return [...args, '--claim-id', claimId];
 }

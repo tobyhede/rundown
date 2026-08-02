@@ -7,6 +7,7 @@ import type { ResolveInlineRunbook } from '../../src/runbook/actors/inline-launc
 import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandFlattenedTemplateVarsForTest } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { createRunbook } from './fixtures.js';
 
 type InlineLaunchCompilerOptions = NonNullable<Parameters<typeof compileRunbookToMachine>[1]> & {
@@ -372,6 +373,7 @@ describe('inline launch compiler integration', () => {
         runbookRef,
         childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
       }),
+      issueDelegationCredential: makeDelegationCredentialIssuer(),
     });
     const actor = createActor(machine);
     actor.start();

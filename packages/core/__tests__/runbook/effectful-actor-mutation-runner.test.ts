@@ -198,12 +198,13 @@ describe('createEffectfulActorMutationRunner', () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const state = await seedRun('echo.runbook.md');
       const compute = jest.fn();
-      const realValidate = RunbookStore.prototype.validateCapturedRunSet;
+      const store = await getRunbookStore(dir);
+      const realValidate = store.validateCapturedRunSet.bind(store);
       jest
         .spyOn(RunbookStore.prototype, 'validateCapturedRunSet')
         .mockImplementationOnce(async function (this: RunbookStore, captured) {
           unwrapSessionMutation(await sessionService.releaseRunbook(state.id));
-          return realValidate.call(this, captured);
+          return realValidate(captured);
         });
 
       const result = await runner.runAll<string>({

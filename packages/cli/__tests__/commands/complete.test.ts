@@ -439,7 +439,6 @@ Do work.
         workspace,
       );
       expect(result.exitCode).toBe(0);
-      const parentState = await getActiveState(workspace);
       const token = requireLatestFrontierToken(workspace, '1.1');
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimOutput = findActionOutput(result.stdout);

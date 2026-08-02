@@ -262,7 +262,6 @@ describe('claim-id delegated children', () => {
     await runCliInProcess('run --prompted runbooks/parent-status.md', workspace);
     const parentId = (await getActiveState(workspace))!.id;
 
-    const parent = await getActiveState(workspace);
     const token1 = requireLatestFrontierToken(workspace, '1.1');
     const token2 = requireLatestFrontierToken(workspace, '1.2');
 
@@ -329,7 +328,6 @@ describe('claim-id delegated children', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.runbook.md'), childRunbook);
 
     await runCliInProcess('run --prompted runbooks/parent-secret.md', workspace);
-    const parent = await getActiveState(workspace);
     const token = requireLatestFrontierToken(workspace, '1.1');
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);

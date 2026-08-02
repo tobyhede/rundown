@@ -1756,6 +1756,7 @@ function buildParentExitAssign(
  * @param config - The parent state config (discriminated by isParentState=true)
  * @param steps - The full steps array
  * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
+ * @param issueDelegationCredential - Verified runtime issuer for delegation retry transitions
  * @returns XState state config with `always` transitions
  */
 function buildParentStateConfig(

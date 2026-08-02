@@ -197,7 +197,6 @@ export interface RunbookStoppedPayload {
     | 'command_execution_failed'
     | 'fail_transition'
     | 'user_abort'
-    | 'actor_context_required'
     | 'delegation_resolution_failed'
     | 'nested_delegation_forbidden'
     | 'inline_launch_failed'

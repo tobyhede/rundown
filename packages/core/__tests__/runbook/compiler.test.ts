@@ -12387,7 +12387,7 @@ echo ok
       expect(ctx.delegateFrontier?.length).toBe(2);
       const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
       expect(frontierIds).toEqual(['1.1', '1.2']);
-      expect(ctx.delegateFrontier?.every((entry) => entry.credential !== undefined)).toBe(true);
+      expect(ctx.delegateFrontier?.map((entry) => entry.credential)).toHaveLength(2);
       expect(ctx.delegateFrontier?.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(
         true,
       );

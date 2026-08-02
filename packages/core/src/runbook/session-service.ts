@@ -677,7 +677,7 @@ export class SessionService {
    * @param id - Runbook state ID to push and control.
    * @param prepared - Exact in-memory claim prepared before initialization.
    * @returns The installed claim after the guarded session transaction commits.
-   * @throws When the prepared claim controls a different run.
+   * @throws {Error} When the prepared claim controls a different run.
    */
   async pushRunbookWithPreparedRunControlClaim(
     id: RunId,
@@ -719,7 +719,12 @@ export class SessionService {
     return prepared;
   }
 
-  /** Install one prepared run-control claim into an in-memory session. */
+  /**
+   * Install one prepared run-control claim into an in-memory session.
+   *
+   * @param session - Session to mutate in place.
+   * @param claim - Prepared run-control claim to install.
+   */
   private installRunControlClaim(session: SessionData, claim: ClaimRecord): void {
     // Uphold the SessionDataSchema controlledRunId-uniqueness invariant: a run has
     // at most one run-control claim. Re-issuing supersedes (rotates) any existing

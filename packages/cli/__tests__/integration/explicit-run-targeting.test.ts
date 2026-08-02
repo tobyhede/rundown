@@ -9,6 +9,7 @@ import {
   findActionOutput,
   getActiveState,
   issueRunControlClaim,
+  requireEmittedRunClaim,
   parseConcatenatedJson,
   readRunbookState,
   readSession,
@@ -92,7 +93,7 @@ describe('explicit --run targeting (R1, #460)', () => {
     const parent = await getActiveState(workspace);
     if (!parent) throw new Error('Expected active parent run');
 
-    const parentClaimId = await issueRunControlClaim(workspace, parent.id);
+    const parentClaimId = requireEmittedRunClaim(workspace, parent.id);
 
     // The orchestrator names its authority to issue the delegation.
     const issued = await runCliInProcess(['delegate', '--claim-id', parentClaimId], workspace);
@@ -425,7 +426,7 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(after?.step).toBe(parent.step);
 
     // The orchestrator names its authority and navigates the same run.
-    const parentClaimId = await issueRunControlClaim(workspace, parent.id);
+    const parentClaimId = requireEmittedRunClaim(workspace, parent.id);
     const targeted = await runCliInProcess(['goto', '2', '--claim-id', parentClaimId], workspace);
     expect(targeted.exitCode).toBe(0);
     const navigated = await getActiveState(workspace);
@@ -531,7 +532,7 @@ describe('explicit --run targeting (R1, #460)', () => {
     const parent = await getActiveState(workspace);
     if (!parent) throw new Error('Expected active parent run');
 
-    const parentClaimId = await issueRunControlClaim(workspace, parent.id);
+    const parentClaimId = requireEmittedRunClaim(workspace, parent.id);
     const issued = await runCliInProcess(['delegate', '--claim-id', parentClaimId], workspace);
     const token = extractToken(issued.stdout);
     if (!token) throw new Error('Expected delegation token');

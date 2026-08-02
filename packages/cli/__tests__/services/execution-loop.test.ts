@@ -1881,6 +1881,7 @@ describe('runExecutionLoop', () => {
         expect.anything(),
         expect.anything(),
         expect.objectContaining({ type: 'EXECUTE_COMMAND', command: code, displayCommand }),
+        { issueDelegationCredential: undefined },
       );
     });
   });

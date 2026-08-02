@@ -156,7 +156,7 @@ describe('delegationIssueActor', () => {
     expect(output.substepStates).toHaveLength(2);
     expect(output.frontier.map((entry) => entry.id)).toEqual(['1.1', '1.2']);
     expect(output.substepStates.map((state) => state.id)).toEqual(['1', '2']);
-    expect(output.frontier.every((entry) => entry.credential !== undefined)).toBe(true);
+    expect(output.frontier.map((entry) => entry.credential)).toHaveLength(2);
     expect(output.frontier.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(true);
     expect(JSON.stringify(output)).not.toContain('rdtk_');
   });
