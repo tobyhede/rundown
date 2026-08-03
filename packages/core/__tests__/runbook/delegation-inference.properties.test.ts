@@ -338,18 +338,26 @@ describe('deriveDelegateFrontier invariants', () => {
     // sibling's verifier would therefore make a legitimately issued credential
     // undisclosable — so the pairing itself is the invariant, not the shape of
     // either field. Only meaningful because generated verifiers are distinct.
+    // The pairing assertions live inside a loop over the derived frontier, so a
+    // generator that never produced a disclosable entry would satisfy this
+    // property without executing a single one. Counting observations and
+    // asserting the total afterwards is what makes the property falsifiable —
+    // the same defect class F21 fixed by making `tokenHash` discriminating.
+    let observed = 0;
     fc.assert(
       fc.property(specsArb, fc.option(frameArb, { nil: undefined }), (specs, activeFrameKey) => {
         const substepStates = specs.map((spec, index) => substepFromSpec(spec, index));
         const state = makeFrontierState(STEP, activeFrameKey, substepStates);
 
         for (const entry of deriveDelegateFrontier(state)) {
+          observed += 1;
           const source = substepStates.find((ss) => ss.delegation?.credential === entry.credential);
           expect(source).toBeDefined();
           expect(entry.tokenHash).toBe(source?.delegation?.tokenHash);
         }
       }),
     );
+    expect(observed).toBeGreaterThan(0);
   });
 });
 

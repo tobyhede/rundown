@@ -17,6 +17,7 @@
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
 import { CLAIM_ID_PATTERN, CLAIM_LOOKUP_KEY_PATTERN } from '../runbook/claim-id.js';
+import { RUN_ID_PATTERN } from '../runbook/run-id.js';
 import { PublicArtifactRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
 import { ErrorCodes } from '../errors/codes.js';
@@ -314,9 +315,22 @@ export const ErrorDetailsSchema = z
       .array(
         z.object({
           /** Run whose effect outcome is ambiguous */
-          runId: z.string().describe('Run whose execution outcome is unknown'),
-          /** Execution epoch that crossed the effect boundary */
-          epoch: z.number().describe('Execution epoch that crossed the effect boundary'),
+          runId: z
+            .string()
+            .regex(RUN_ID_PATTERN)
+            .describe('Run whose execution outcome is unknown'),
+          /**
+           * Execution epoch that crossed the effect boundary.
+           *
+           * A recovery consumer addresses a run by `(runId, epoch)`, so both
+           * halves must be shapes it can act on: an unconstrained number would
+           * admit a fractional or negative epoch that names no attempt.
+           */
+          epoch: z
+            .number()
+            .int()
+            .nonnegative()
+            .describe('Execution epoch that crossed the effect boundary'),
         }),
       )
       .optional()
@@ -1289,6 +1303,21 @@ export const AbortResponseSchema = z
     force: z.boolean().optional().describe('Whether a forced linked-child teardown ran'),
     /** Child run ID (when force-cancelling claimed delegation) */
     childRunId: z.string().optional().describe('Child run ID when force-cancelling'),
+  })
+  // The TSDoc above declares two cross-field rules that the field types alone
+  // cannot express. Stating them as refinements is what stops the schema
+  // accepting an envelope the renderer never produces.
+  .refine((response) => response.status === 'cancelled' || response.cleanup === undefined, {
+    message: 'cleanup is present on a cancelled abort only',
+    path: ['cleanup'],
+  })
+  .refine((response) => response.force === undefined || response.cleanup !== undefined, {
+    message: 'force requires a cleanup branch',
+    path: ['force'],
+  })
+  .refine((response) => response.force === undefined || response.cleanup !== 'none', {
+    message: 'force is emitted only when a linked-child teardown ran, never for cleanup "none"',
+    path: ['force'],
   })
   .describe('Response from the abort command');
 

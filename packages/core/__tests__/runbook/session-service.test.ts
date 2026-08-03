@@ -458,6 +458,33 @@ describe('SessionService', () => {
       });
     });
 
+    it('refuses adoption on a credential issued after the caller captured its snapshot', async () => {
+      // The caller hands in a state it loaded earlier. Evaluating the
+      // issued-credential predicate against that snapshot is a check-then-act:
+      // a delegation minted between the caller's read and the mint would be
+      // orphaned by the rotation, which is the exact stop condition adoption
+      // exists to respect. The predicate must therefore read the run through
+      // the same transaction that installs the replacement claim.
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const original = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      // `state` is the pre-delegation snapshot the caller still holds; the run
+      // has since issued a credential.
+      await seedLiveDelegation(manager, linkageFor(state.id, 'c'));
+
+      const adoption = await sessionService.adoptRunControlClaim(state);
+
+      expect(adoption).toEqual({ kind: 'refused_credential_issued', runId: state.id });
+      // Write-free refusal: the issuing bearer must still control the run, or
+      // the credential it minted becomes underivable (#676).
+      await expect(sessionService.verifyClaimId(original.claimId)).resolves.toMatchObject({
+        status: 'verified',
+      });
+    });
+
     it('refuses adoption while the run is execution-owned', async () => {
       // Adoption is a guarded session mutation over the run it adopts. An
       // execution-owned run must not have its controlling claim replaced out

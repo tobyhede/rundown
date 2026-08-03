@@ -281,6 +281,38 @@ describe('AbortResponseSchema cleanup contract (#608)', () => {
     expect(AbortResponseSchema.safeParse({ ...base, cleanup: 'forced' }).success).toBe(false);
   });
 
+  // The three cross-field rules the TSDoc declares. Field types alone admit
+  // every combination, so without these the schema would accept envelopes the
+  // renderer never emits — and a consumer generating a client from it would
+  // branch on states that cannot occur.
+  it('accepts force alongside a real teardown branch', () => {
+    for (const cleanup of [
+      'active_child_failed',
+      'terminal_child_cleaned',
+      'missing_child_cleaned',
+    ])
+      expect(AbortResponseSchema.safeParse({ ...base, cleanup, force: true }).success).toBe(true);
+  });
+
+  it('rejects cleanup on a non-cancelled abort', () => {
+    expect(
+      AbortResponseSchema.safeParse({ ...base, status: 'already_cancelled', cleanup: 'none' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects force without a cleanup branch', () => {
+    expect(AbortResponseSchema.safeParse({ ...base, force: true }).success).toBe(false);
+  });
+
+  it('rejects force on the no-teardown branch', () => {
+    // `cleanup: 'none'` is the one branch reachable with `--force`, and it is
+    // exactly where reporting `force` would claim a teardown that never ran.
+    expect(AbortResponseSchema.safeParse({ ...base, cleanup: 'none', force: true }).success).toBe(
+      false,
+    );
+  });
+
   it('accepts emitted RundownError RD codes in error envelopes', () => {
     for (const code of ['RD-301', 'RD-403', 'RD-501', 'RD-812', 'RD-816', 'RD-819', 'RD-999']) {
       expect(

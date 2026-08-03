@@ -998,6 +998,10 @@ Do the delegated work.
     });
 
     const resume = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    // Every assertion below is about a resume that succeeded. Without this, a
+    // refusal that stopped the run would still satisfy them all provided it
+    // streamed a frontier event on its way out.
+    expect(resume.exitCode).toBe(0);
     const resumeEvents = flattenEvents(parseConcatenatedJson(resume.stdout));
 
     // The resumed child ran its command step and advanced into its DELEGATE step

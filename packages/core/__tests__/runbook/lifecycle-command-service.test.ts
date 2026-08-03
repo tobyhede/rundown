@@ -1178,6 +1178,18 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome.kind).toBe('delegated');
+      // Admitting the target is only half the contract — the issuance must also
+      // LAND on the frame `--index` named. Asserting the outcome kind alone
+      // would pass just as well if the iteration were dropped and the
+      // delegation written to the un-indexed frame `1|`.
+      const persisted = await manager.load(runId);
+      const iterationFrameKey = buildFrameKey('1', 2);
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', iterationFrameKey)?.delegation,
+      ).toBeDefined();
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'))?.delegation,
+      ).toBeUndefined();
     });
 
     it('defers an unparsable indexed target to the delegation error contract', async () => {

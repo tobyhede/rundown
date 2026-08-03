@@ -669,13 +669,23 @@ export class SessionService {
    *   blocks adoption, or the session refusal that prevented the mint.
    */
   async adoptRunControlClaim(state: RunbookState): Promise<RunControlAdoption> {
-    if (state.substepStates?.some((substep) => substep.delegation !== undefined)) {
-      return { kind: 'refused_credential_issued', runId: state.id };
-    }
-    const result = await this.issueRunControlClaim(state.id);
-    return result.kind === 'committed'
-      ? { kind: 'adopted', runtime: result.value }
-      : { kind: 'refused_session', refusal: result };
+    // The predicate reads the run through `ctx.readState`, not through the
+    // caller's `state`. Evaluating it against a snapshot captured before the
+    // transaction opened would be a check-then-act: a credential minted in
+    // between is one the replacement claim cannot reproduce, so the rotation
+    // would orphan it — the stop condition this refusal exists to enforce.
+    // `state` supplies the run id only.
+    const result = await this.mutateGuarded([state.id], (ctx) => {
+      const current = ctx.readState(state.id);
+      if (current?.substepStates?.some((substep) => substep.delegation !== undefined)) {
+        return { kind: 'refused_credential_issued' as const };
+      }
+      return { kind: 'minted' as const, claim: this.mintRunControlClaim(ctx.session, state.id) };
+    });
+    if (result.kind !== 'committed') return { kind: 'refused_session', refusal: result };
+    return result.value.kind === 'refused_credential_issued'
+      ? { kind: 'refused_credential_issued', runId: state.id }
+      : { kind: 'adopted', runtime: result.value.claim };
   }
 
   /**

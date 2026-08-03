@@ -121,7 +121,7 @@ function fixtureSteps(): readonly ResolvedStep[] {
         },
       ],
     },
-  ] as unknown as readonly ResolvedStep[];
+  ] satisfies readonly ResolvedStep[];
 }
 
 describe('INVESTIGATION: entry projection ordering vs machine credential issuance', () => {
@@ -431,7 +431,7 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
           },
         ],
       },
-    ] as unknown as readonly ResolvedStep[];
+    ] satisfies readonly ResolvedStep[];
 
     await activate(baseState());
     // ONE transition into the frame issues BOTH delegations.

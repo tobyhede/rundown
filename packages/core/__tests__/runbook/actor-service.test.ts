@@ -2759,6 +2759,13 @@ echo ok
         const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
 
         expect(updated.lastAction).toBeUndefined();
+        // The returned state and the persisted row must agree: a guard that
+        // dropped the action from the return value while still writing it
+        // through would leave malformed data on disk for the next hydration.
+        // Only the top-level field is asserted — the opaque `snapshot` blob is
+        // the machine's own serialization and legitimately still carries it.
+        const reloaded = await manager.load(state.id);
+        expect(reloaded?.lastAction).toBeUndefined();
       },
     );
   });

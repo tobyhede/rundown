@@ -328,6 +328,8 @@ hermetic
 wget
 undeletable
 undisclosable
+disclosable
+underivable
 cwds
 Hermeticity
 Trailmark

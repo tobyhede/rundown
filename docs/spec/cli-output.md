@@ -416,6 +416,60 @@ for delegated child work.
 
 ---
 
+### `rundown abort <token> --claim-id <claim_id>`
+
+Cancels a delegation. `status` is `cancelled` on the first abort and
+`already_cancelled` on a repeat.
+
+**JSON:**
+
+```json
+{
+  "kind": "abort",
+  "action": "abort",
+  "status": "cancelled",
+  "token": "rdtk_abcd...",
+  "substep": "1.1",
+  "runbook": "child.runbook.md",
+  "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cleanup": "terminal_child_cleaned",
+  "force": true
+}
+```
+
+`cleanup` reports which linked-child branch core actually ran, and is present on
+`status: "cancelled"` only:
+
+| `cleanup`                | Meaning                                                              |
+| ------------------------ | -------------------------------------------------------------------- |
+| `none`                   | No child was ever linked — a pending delegation was cancelled        |
+| `active_child_failed`    | A live claimed child was torn down and recorded as failed            |
+| `terminal_child_cleaned` | An already-terminal linked child was cleaned up                      |
+| `missing_child_cleaned`  | A stale delegated outcome was superseded; the child run has vanished |
+
+`force` is emitted **only when a linked-child teardown actually ran** — that is,
+for the three non-`none` branches. It is derived from `cleanup`, not echoed from
+the caller's `--force` argument, so it never claims a teardown that did not
+happen. A pending delegation therefore reports `"cleanup": "none"` with **no**
+`force` field, even when `--force` was passed:
+
+```json
+{
+  "kind": "abort",
+  "action": "abort",
+  "status": "cancelled",
+  "token": "rdtk_abcd...",
+  "substep": "1.1",
+  "runbook": "child.runbook.md",
+  "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cleanup": "none"
+}
+```
+
+`childRunId` is present when a claimed delegation was force-cancelled.
+
+---
+
 ## pass
 
 On a delegation-exposed run the bare form fails with `ACTOR_CONTEXT_REQUIRED` —
