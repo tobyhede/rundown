@@ -2183,6 +2183,93 @@ describe('startRunbook', () => {
     expect(createBridgedEmitterMock.mock.calls).toContainEqual([initializedState, ctx.output]);
   });
 
+  it('threads the prepared run-control claim capabilities into init, the loop, and the result', async () => {
+    // The prepared run-control claim is the ONLY source of delegation-minting
+    // authority for a default-stack run, and it has to reach three separate
+    // consumers: the machine (so a DELEGATE step can mint), the execution loop
+    // (so an auto-issued delegation mid-loop can mint and derive its bearer),
+    // and the caller (so `run --prompted --step` can hand the same capabilities
+    // to the goto context). Dropping it at any one of those three sites still
+    // starts the run and still returns `ok`, so nothing but an identity check on
+    // each hand-off distinguishes the wiring from silently unauthenticated
+    // delegation.
+    const createdState = makeState(MOCK_RUN_ID) as unknown as RunbookState;
+    const initializedState = { ...createdState };
+    const preparedRunId = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
+    const issueDelegationCredential =
+      jest.fn() as unknown as PreparedRunControlClaim['issueDelegationCredential'];
+    const deriveDelegationToken =
+      jest.fn() as unknown as PreparedRunControlClaim['deriveDelegationToken'];
+    const preparedClaim: PreparedRunControlClaim = {
+      ...preparedClaimFor(preparedRunId),
+      issueDelegationCredential,
+      deriveDelegationToken,
+    };
+    const mockInitState =
+      mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
+
+    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+
+    const ctx = makeRunPipelineContext({
+      manager: {
+        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(createdState),
+      },
+      actorService: { initializeState: mockInitState },
+      sessionService: {
+        prepareRunControlClaim: () => preparedClaim,
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }),
+        ),
+      },
+    });
+
+    const prepared: RunnableRunbook = {
+      filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'runbook.runbook.md' },
+      runId: preparedRunId,
+      rawContent: '# Test',
+      runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
+      // Matches the file's established idiom at the `runnable` identity branch:
+      // the fixture supplies only the variables this assertion reads, and the
+      // cast names the contract it is standing in for.
+      mergedVariables: { RunId: preparedRunId } as RunnableTemplateVariables,
+      runtimeVars: {},
+      stats: { steps: 1, substeps: 0 },
+      frontmatter: null,
+    };
+
+    const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
+
+    // Hand-off 1 — the machine. `initializeState`'s runtime capabilities are how
+    // a DELEGATE step reaches an issuer at all; an absent or empty third
+    // argument leaves the run able to start but unable to mint.
+    expect(mockInitState).toHaveBeenCalledWith(MOCK_RUN_ID, expect.anything(), {
+      issueDelegationCredential,
+    });
+    // Hand-off 2 — the execution loop, which needs BOTH the issuer and the
+    // token deriver. Asserting the exact function identities (not merely that
+    // some property exists) is what fails when the object literal is emptied.
+    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]).toEqual(
+      expect.objectContaining({
+        issueDelegationCredential,
+        delegationTokenDeriver: deriveDelegationToken,
+      }),
+    );
+    // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`
+    // off this result to build its goto context, so an omitted or emptied
+    // `delegationRuntime` silently strips the jump's delegation authority.
+    assertVariant(result, 'ok', true);
+    expect(result.delegationRuntime).toEqual({
+      issueDelegationCredential,
+      deriveDelegationToken,
+    });
+  });
+
   it('returns a launch-failed result when actor initialization yields no state', async () => {
     // initializeState resolving to a falsy state must abort the launch with a
     // structured launch-failed envelope — pins the `if (!initializedState) throw`

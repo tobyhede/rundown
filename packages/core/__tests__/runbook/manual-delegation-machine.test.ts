@@ -165,6 +165,82 @@ describe('prepareManualDelegation', () => {
     expect(retried.substepStates[0]?.delegation?.tokenHash).not.toBe(oldHash);
   });
 
+  it('threads ISSUE extraVars into the issued delegation and its inherited context', () => {
+    const result = prepareManualDelegation({
+      state: makeState(),
+      steps: makeSteps(),
+      issueCredential: makeDelegationCredentialIssuer(),
+      event: {
+        type: 'ISSUE',
+        stepId: '1.1',
+        frameKey: buildFrameKey('1'),
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        extraVars: { region: 'ap-southeast-2' },
+      },
+    });
+
+    expect(result.status).toBe('prepared');
+    if (result.status !== 'prepared') return;
+    const delegation = result.substepStates[0]?.delegation;
+    // `extraVars` is the ONLY channel an operator's `--input` has into the child.
+    // Dropping it at this seam issues a delegation the child then resolves
+    // against the parent's variables alone — a silently wrong run, not a refusal.
+    expect(delegation?.extraVars).toEqual({ region: 'ap-southeast-2' });
+    // Pinned on the snapshot as well because that is what the child actually
+    // reads: carrying the value on the delegation row but omitting it from the
+    // captured context would leave the operator's input equally invisible.
+    expect(delegation?.contextSnapshot.vars).toEqual(
+      expect.objectContaining({ region: 'ap-southeast-2' }),
+    );
+  });
+
+  it('merges RETRY overrides over the inherited extraVars of the superseded delegation', () => {
+    const issuer = makeDelegationCredentialIssuer();
+    const state = makeState();
+    const issued = prepareManualDelegation({
+      state,
+      steps: makeSteps(),
+      issueCredential: issuer,
+      event: {
+        type: 'ISSUE',
+        stepId: '1.1',
+        frameKey: buildFrameKey('1'),
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        extraVars: { region: 'us-east-1', tier: 'gold' },
+      },
+    });
+    if (issued.status !== 'prepared') throw new Error('expected prepared issue');
+
+    const retried = prepareManualDelegation({
+      state: { ...state, substepStates: [...issued.substepStates] },
+      steps: makeSteps(),
+      issueCredential: issuer,
+      event: {
+        type: 'RETRY',
+        substepId: '1',
+        frameKey: buildFrameKey('1'),
+        allowLinkedChildRun: false,
+        overrides: { region: 'eu-west-1' },
+      },
+    });
+
+    expect(retried.status).toBe('prepared');
+    if (retried.status !== 'prepared') return;
+    // Asymmetric on purpose: `region` must be REPLACED and `tier` must SURVIVE.
+    // A seam that drops `overrides` keeps `us-east-1`; one that replaces the
+    // inherited set wholesale loses `tier`. Only forwarding the overrides into
+    // the documented merge satisfies both halves.
+    expect(retried.substepStates[0]?.delegation?.extraVars).toEqual({
+      region: 'eu-west-1',
+      tier: 'gold',
+    });
+    expect(retried.substepStates[0]?.delegation?.contextSnapshot.vars).toEqual(
+      expect.objectContaining({ region: 'eu-west-1', tier: 'gold' }),
+    );
+  });
+
   it('prepares parent cancellation through the typed abort event', () => {
     const state = makeState();
     const issued = prepareManualDelegation({

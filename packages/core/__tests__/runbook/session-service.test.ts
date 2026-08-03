@@ -437,16 +437,22 @@ describe('SessionService', () => {
       await seedLiveDelegation(manager, linkageFor(state.id, 'c'));
       const seeded = await manager.load(state.id);
       if (!seeded) throw new Error('expected the seeded parent state');
-      // One delegated substep beside a sibling that carries none: ANY issued
-      // credential blocks adoption, so a guard requiring every substep to carry
-      // one would wrongly replace a claim that has already minted.
-      const withDelegation = {
-        ...seeded,
+      // One delegated substep beside a sibling that carries none, PERSISTED:
+      // the predicate reads the run through the transaction, so the mix has to
+      // reach the store to be seen at all. ANY issued credential blocks
+      // adoption, so a guard requiring every substep to carry one would adopt
+      // here and orphan a credential that has already been minted.
+      await manager.update(state.id, {
         substepStates: [
           { id: '1.2', frameKey: buildFrameKey('1'), status: 'running' as const },
           ...(seeded.substepStates ?? []),
         ],
-      };
+      });
+      const withDelegation = await manager.load(state.id);
+      if (!withDelegation) throw new Error('expected the mixed parent state');
+      expect(
+        withDelegation.substepStates?.map((substep) => substep.delegation !== undefined),
+      ).toEqual([false, true]);
 
       const adoption = await sessionService.adoptRunControlClaim(withDelegation);
 
@@ -482,6 +488,28 @@ describe('SessionService', () => {
       // the credential it minted becomes underivable (#676).
       await expect(sessionService.verifyClaimId(original.claimId)).resolves.toMatchObject({
         status: 'verified',
+      });
+    });
+
+    it('adopts without throwing when the run row is gone by the time the transaction reads it', async () => {
+      // The caller holds a state it loaded earlier; the run has since been
+      // pruned. Reading through the transaction means the read can legitimately
+      // come back empty, so the predicate must tolerate an absent run rather
+      // than dereference it — an unguarded read turns a benign race into a
+      // TypeError that escapes as an opaque crash instead of a typed outcome.
+      // A run with no persisted row has no substep that could have issued a
+      // credential, so there is nothing for the rotation to orphan.
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      await manager.delete(state.id);
+      await expect(manager.load(state.id)).resolves.toBeNull();
+
+      await expect(sessionService.adoptRunControlClaim(state)).resolves.toMatchObject({
+        kind: 'adopted',
       });
     });
 

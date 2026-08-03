@@ -13,6 +13,7 @@ import {
   openRunbookStore,
 } from '../../src/runbook/storage/store-registry.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
+import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { CoreEffectfulMutationExecutor } from '../../src/runbook/effectful-mutation-executor.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import type { RunId } from '../../src/runbook/run-id.js';
@@ -517,6 +518,42 @@ describe('createEffectfulActorMutationRunner', () => {
       await lease.releaseClaimed([owner.value]);
     });
 
+    it('refuses the set when an opportunistic target fails capture for any other reason', async () => {
+      // `optionalWhenClaimSuperseded` names exactly ONE refusal. Widening it at
+      // the capture stage to "any capture refusal" would silently commit an
+      // aggregate missing a member the caller named — the run is gone, not
+      // merely un-claimed, and no amount of retrying will bring it back.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realCapture = RunbookStore.prototype.captureRunAuthorityState;
+      jest
+        .spyOn(RunbookStore.prototype, 'captureRunAuthorityState')
+        .mockImplementation(async function (this: RunbookStore, runId: RunId) {
+          return runId === opportunistic.id
+            ? { kind: 'missing' as const, runId, message: 'gone' }
+            : realCapture.call(this, runId);
+        });
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: required.id },
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+        ],
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'missing', runId: opportunistic.id, message: 'gone' }),
+      );
+      expect(compute).not.toHaveBeenCalled();
+    });
+
     it('drops an opportunistic target superseded between capture and acquisition', async () => {
       // The capture/acquisition window is real work, not an instant: a caller's
       // `beforeEffect` loads steps off the filesystem and prepares an actor
@@ -936,6 +973,127 @@ describe('createEffectfulActorMutationRunner', () => {
 
       expect(result.kind).toBe('claim_superseded');
       expect(compute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('aggregate commit projection', () => {
+    /** Seed a run pushed on the default stack and holding its run-control bearer. */
+    async function seedClaimedRun(runbookPath: string) {
+      const created = await manager.create(
+        { source: 'project', path: runbookPath },
+        { title: 'Test', description: 'A test', steps: [...steps] },
+        { runbookPath },
+      );
+      await actorService.initializeState(created.id, steps);
+      const { claim } = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(created.id),
+      );
+      const state = await manager.load(created.id);
+      if (state === null) throw new Error('seed failed');
+      return { state, claimKey: claim.claimKey };
+    }
+
+    it('honours per-release claim retention across the aggregate session projection', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const retained = await seedClaimedRun('retained.runbook.md');
+      const retired = await seedClaimedRun('retired.runbook.md');
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: retained.state.id }, { runId: retired.state.id }],
+        releases: [
+          { runId: retained.state.id, retainClaimsAsTerminal: true },
+          { runId: retired.state.id },
+        ],
+        compute: (captured) =>
+          Promise.resolve({
+            members: captured.map(({ state }) => ({
+              runId: state.id,
+              nextState: { ...state, step: '2' },
+            })),
+            value: 'done',
+          }),
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'done' });
+      const session = await manager.loadSession();
+      expect(session.defaultStack).not.toContain(retained.state.id);
+      expect(session.defaultStack).not.toContain(retired.state.id);
+      // The pair is deliberately asymmetric: retention is the ONLY difference
+      // between these two releases. If the aggregate projection dropped the
+      // per-release option, both members would tombstone identically and a later
+      // `rundown pass --claim-id` against the retained run would resolve
+      // `missing` rather than `terminal`.
+      expect((await manager.loadClaim(retained.claimKey))?.status).toBe('active');
+      expect((await manager.loadClaim(retired.claimKey))?.status).toBe('superseded');
+    });
+
+    it('surfaces a refused aggregate commit instead of the prepared value', async () => {
+      // Post-effect, the commit is the last thing standing between a refusal and
+      // a caller that believes its write landed. Reporting `committed` here would
+      // hand back a value no transaction ever persisted.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const first = await seedRun('first.runbook.md');
+      const second = await seedRun('second.runbook.md');
+      const refusal = {
+        kind: 'recovery_required' as const,
+        runId: second.id,
+        epoch: assertExecutionEpoch(7),
+        message: 'aggregate commit refused',
+      };
+      jest.spyOn(RunbookStore.prototype, 'commitOwnedRunSet').mockResolvedValue(refusal);
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: first.id }, { runId: second.id }],
+        compute: (captured) =>
+          Promise.resolve({
+            members: captured.map(({ state }) => ({ runId: state.id, nextState: state })),
+            value: 'done',
+          }),
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(refusal);
+    });
+
+    it('forwards the caller-supplied wait policy to aggregate lease acquisition', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const contended = await seedRun('contended.runbook.md');
+      const { driver, store } = await openRunbookStore(dir);
+      const capture = await store.captureRunAuthority(contended.id);
+      if (capture.kind !== 'captured') throw new Error('contended capture failed');
+      const lease = new SqliteExecutionLeaseService(driver);
+      const owner = await lease.acquire(capture.authority, process.pid);
+      if (owner.kind !== 'committed') throw new Error('contended lease acquisition failed');
+      // Aborting from inside the backoff ends the wait on the first charged
+      // retry, so the assertion never races a wall-clock budget.
+      const controller = new AbortController();
+      const backoff = jest.fn(() => {
+        controller.abort();
+        return 0;
+      });
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: required.id }, { runId: contended.id }],
+        wait: { budgetMs: 10_000, backoff, signal: controller.signal },
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'execution_in_progress', runId: contended.id }),
+      );
+      // A dropped wait policy yields the SAME refusal, just immediately: the only
+      // evidence the policy actually reached the lease is that contention was
+      // retried against the caller's own backoff before giving up.
+      expect(backoff).toHaveBeenCalled();
+      expect(compute).not.toHaveBeenCalled();
+      await lease.releaseClaimed([owner.value]);
     });
   });
 

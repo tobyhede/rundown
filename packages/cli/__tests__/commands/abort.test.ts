@@ -30,7 +30,7 @@ import { validateCommandOutput } from '../helpers/schema-validator.js';
 // import + wiring test link this file into the graph so the covering tests
 // actually run against each mutant. Mirrors collect.test.ts / delegate.test.ts.
 import { registerAbortCommand } from '../../src/commands/abort.js';
-import type { DelegationAbortOutcome } from '@rundown-org/core';
+import { truncateDelegationToken, type DelegationAbortOutcome } from '@rundown-org/core';
 
 /** True only when the two unions are mutually assignable (no widening either way). */
 type ExactUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -280,6 +280,9 @@ describe('abort command - unit tests', () => {
       if (childClaimId === undefined)
         throw new Error(`Expected child claim id:\n${claimed.stdout}`);
 
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected parent state');
+
       const result = await runCliInProcess(
         ['abort', token, '--claim-id', childClaimId, '--force'],
         workspace,
@@ -294,6 +297,15 @@ describe('abort command - unit tests', () => {
           error: expect.stringContaining('rundown abort'),
         }),
       );
+      // The scoping detail is the whole difference between this refusal and the
+      // deliberately run-id-free ACTOR_CONTEXT_REQUIRED one: the caller already
+      // presented a verified bearer, so naming the run whose grant was missing
+      // is safe and is the only way they can tell WHICH authority to obtain.
+      // Dropping it (or passing `undefined` through the ternary) still emits the
+      // right code, so nothing but this assertion distinguishes the two.
+      expect(envelope.details).toEqual({ targetRunId: parent.id });
+      // The delegation bearer must never round-trip into a refusal envelope.
+      expect(JSON.stringify(envelope)).not.toContain(token);
     });
 
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {
@@ -577,6 +589,29 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toContain('child.runbook.md');
+    });
+
+    it('reports a repeat abort as already cancelled instead of emitting the JSON envelope', async () => {
+      // The `already_cancelled` arm is the only outcome whose --text rendering
+      // has no JSON-mode counterpart assertion: every other branch is pinned in
+      // JSON. Without this, deleting the --text guard (or the else arm behind
+      // it) makes `--text` silently print the machine envelope, and a human
+      // re-running an abort gets a JSON blob where a sentence was documented.
+      const token = await setupDelegation();
+      const first = await runCliInProcess(abortCommand(token, '--text'), workspace);
+      expect(first.exitCode).toBe(0);
+
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      // The truncated hint, never the raw bearer: `truncateDelegationToken` is a
+      // security contract, so the full token must not reach the terminal.
+      expect(result.stdout).toContain(`Already cancelled: ${truncateDelegationToken(token)}`);
+      expect(result.stdout).not.toContain(token);
+      // Proves the --text branch actually ran rather than the JSON one: the
+      // machine envelope's discriminants are absent.
+      expect(result.stdout).not.toContain('"status": "already_cancelled"');
+      expect(result.stdout).not.toContain('"kind": "abort"');
     });
 
     it('shows force warning when aborting claimed delegation', async () => {
