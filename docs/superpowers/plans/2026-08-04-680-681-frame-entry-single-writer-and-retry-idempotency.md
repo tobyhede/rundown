@@ -455,7 +455,13 @@ Expected: PASS.
 
 - [ ] **Step 8: Mutation-test the two new pure functions**
 
-Run:
+**Two invocations — the functions live in two files.** `advanceFrameEntry` is in
+`frame-entry.ts`; `frameKeyForCursor` is in `targeting.ts` (see finding 3 —
+`frame-entry.ts` cannot import `targeting.ts` values without a cycle). A single
+scope over `frame-entry.ts` leaves `frameKeyForCursor` and the rewritten
+`deriveActiveFrame` with no mutation coverage at all.
+
+`frame-entry.ts` is 33 lines, so a whole-file scope is appropriate:
 
 ```bash
 pnpm --filter @rundown-org/core exec stryker run \
@@ -464,10 +470,28 @@ pnpm --filter @rundown-org/core exec stryker run \
   --force
 ```
 
-Check the `Instrumented N source file(s) with M mutant(s)` line reads `N > 0`.
-Judge on **in-scope Survived / NoCoverage mutants**, not the aggregate score.
-Add a unit case for any survivor in `advanceFrameEntry` (the `Math.max` boundary
-and the `>= 1` guard are the likely ones).
+`targeting.ts` is 620 lines, so a whole-file scope would be a full run wearing a
+scoped flag. Use line ranges covering `frameKeyForCursor` and the
+`deriveActiveFrame` delegation only. Take the ranges from the diff rather than
+transcribing the numbers below — they shift as soon as anything above them moves:
+
+```bash
+git diff -U0 packages/core/src/runbook/targeting.ts | grep -E '^@@'
+# expect two hunks: the inserted frameKeyForCursor (~:247-266) and the
+# rewritten deriveActiveFrame body (~:273-284). Substitute the real numbers.
+pnpm --filter @rundown-org/core exec stryker run \
+  --mutate 'src/runbook/targeting.ts:247-266,src/runbook/targeting.ts:273-284' \
+  --testFiles '__tests__/runbook/targeting.test.ts' \
+  --force
+```
+
+Check the `Instrumented N source file(s) with M mutant(s)` line reads `N > 0` on
+**both** runs. Judge on **in-scope Survived / NoCoverage mutants**, not the
+aggregate score — a scope this narrow makes the percentage meaningless and the
+70% break threshold will fail regardless. Add a unit case for any survivor in
+`advanceFrameEntry` (the `Math.max` boundary and the `>= 1` guard are the likely
+ones) or in `frameKeyForCursor` (the `implicit` and `stepId` rejections, which
+are exactly the two checks the unification adds to two of the three call sites).
 
 - [ ] **Step 9: Format, lint and commit**
 
@@ -2158,6 +2182,19 @@ describe('resolveRetryIssuance', () => {
     ).toEqual({ kind: 'ambiguous' });
   });
 
+  it('row 8 counts rows, not distinct verifiers — two rows sharing a tokenHash are still ambiguous', () => {
+    // Corrupted state can carry the same replacement verifier on two distinct
+    // rows. `supersededBy` must therefore be a plain concatenation: any caller
+    // that dedupes it by `tokenHash` collapses these to one, drops the length
+    // to 1, and silently skips the refusal this row exists for.
+    const shared = 'hshared' as DelegationTokenHash;
+    const a = delegation({ tokenHash: shared }, { supersedesTokenHash: H });
+    const b = delegation({ tokenHash: shared }, { supersedesTokenHash: H });
+    expect(
+      resolveRetryIssuance({ locator: 'token', identityTokenHash: H, current: a, supersededBy: [a, b], frameEntry: ENTRY }),
+    ).toEqual({ kind: 'ambiguous' });
+  });
+
   it('consumed reasons are checked claimed -> cancelled -> entry_superseded', () => {
     const all = delegation(
       { childRunId: 'rd_child' as RunId, cancelledAt: '2026-08-04T00:00:00.000Z' },
@@ -2869,7 +2906,18 @@ In `beforeEffect`, insert between the child-liveness guard (which ends at
         // the captured rows carry in-transaction authority. The scan's
         // contribution is the rows it found in *other* runs, which the captured
         // parent cannot contain and which are the only way cross-run ambiguity
-        // becomes visible. Union, deduped by `tokenHash`.
+        // becomes visible.
+        //
+        // Plain concatenation — the two collections are disjoint BY
+        // CONSTRUCTION: `capturedSuperseding` reads only
+        // `parent.state.substepStates`, and `foreignSuperseding` keeps only rows
+        // whose `parentState.id !== parent.state.id`. A same-run row can reach
+        // this list only through the capture; a foreign row only through the
+        // scan. Do NOT "make it safe" with a `new Map(...)` keyed on
+        // `tokenHash`: two distinct corrupted rows can carry the same
+        // replacement verifier, and collapsing them drops `supersededBy.length`
+        // to 1, silently skipping the very refusal that exists to catch that
+        // state.
         const capturedSuperseding = (parent.state.substepStates ?? [])
           .map((row) => row.delegation)
           .filter(
@@ -2880,11 +2928,7 @@ In `beforeEffect`, insert between the child-liveness guard (which ends at
           .filter((row) => row.parentState.id !== parent.state.id)
           .map((row) => row.delegation)
           .filter((row) => row.credential.supersedesTokenHash === identityTokenHash);
-        const supersededBy = [
-          ...new Map(
-            [...capturedSuperseding, ...foreignSuperseding].map((row) => [row.tokenHash, row]),
-          ).values(),
-        ];
+        const supersededBy = [...capturedSuperseding, ...foreignSuperseding];
 
         const retryResolution = resolveRetryIssuance(
           locator.kind === 'token'
@@ -3270,17 +3314,38 @@ describe('retry idempotency edge cases', () => {
     expect(echo3).toMatchObject({ action: 'retry-already-applied', token: t3.token });
   });
 
-  it('a foreign claim replaying the retry is refused without disclosing a bearer', async () => {
-    // The echo is same-issuer only: a different --claim-id cannot reconstruct
-    // the credential, so the seam returns RD-821 and no token.
+  it('a foreign claim replaying the retry is refused on authority, before any bearer is derived', async () => {
+    // `foreignClaimId` is a run-control claim for `otherRunId` — a different,
+    // still-running stack member. Use the TOKEN locator: it is the only form
+    // where a foreign claim reaches the delegating run at all.
+    //
+    // On the --step locator this refusal is unreachable, and so is RD-821.
+    // `#issueRetry`'s non-token branch anchors through `resolveIssuanceAnchor`
+    // (`issuance-anchor.ts:90-100`), which for claim_bearer evidence resolves
+    // the target run FROM THE CLAIM via `resolveClaimTarget`. A foreign claim
+    // therefore anchors on the run it controls — or refuses stale_claim /
+    // terminal_claim — and never reaches the delegating run, let alone bearer
+    // reconstruction. RD-821 (DELEGATION_INVARIANT_VIOLATED) names a derivation
+    // failure, which is downstream of a step this call never gets to. The
+    // rotated-issuing-claim test below is the real RD-821 case: it anchors
+    // correctly and fails at derivation.
+    //
+    // With the token locator the anchor is the token's owning run, so the
+    // authority gate runs with the delegating run as target:
+    // `resolveMutationAuthority` -> `authorizeClaim` -> `grantAllows`
+    // (`claim-id.ts:557-562`) compares `grant.runId === request.runId` for
+    // `retry-delegation`. The foreign claim's grants name `otherRunId`, so the
+    // request is denied `no-authorizing-claim`, which
+    // `#resolveMutationActorContext` (`lifecycle-command-service.ts:1180-1187`)
+    // maps to `claim_grant_required` because a claim WAS presented.
     await delegateJson(['--step', '2.1', '--claim-id', claimId]);
-    await delegateJson(['--retry', '--step', '2.1', '--claim-id', claimId]);
+    const t2 = await delegateJson(['--retry', '--step', '2.1', '--claim-id', claimId]);
 
     const { stdout, stderr, exitCode } = await run([
-      'delegate', '--retry', '--step', '2.1', '--claim-id', foreignClaimId,
+      'delegate', '--retry', t2.token, '--claim-id', foreignClaimId,
     ]);
     expect(exitCode).toBe(1);
-    expect(`${stdout}${stderr}`).toContain('RD-821');
+    expect(`${stdout}${stderr}`).toContain('CLAIM_GRANT_REQUIRED');
     expect(`${stdout}${stderr}`).not.toContain('rdtk_');
   });
 
@@ -3347,7 +3412,7 @@ these contracts:
 | `claim(token)`                 | `run(['claim', token])`, then reads the minted `claim_id` off the parsed response                                                                               |
 | `rotateRunControlClaim()`      | A second `issueRunControlClaim(workspace, parentRunId)` over the same run, which supersedes the first; returns the new `claim_id`. The superseded one can no longer reconstruct credentials it minted |
 | `claimId`                      | The run-control `claim_id` captured from `runbook_started` during fixture setup                                                                                 |
-| `foreignClaimId`               | `issueRunControlClaim(workspace, otherRunId)` — a run-control claim for a **different** run, used to prove the echo is same-issuer only                          |
+| `foreignClaimId`               | `issueRunControlClaim(workspace, otherRunId)` — a run-control claim controlling `otherRunId`, **not** the delegating run. Its grants name `otherRunId`, so a `retry-delegation` request against the delegating run is denied |
 | `parentRunId` / `otherRunId`   | The fixture run's id, and a second running stack member used as the wrong `--run` target                                                                        |
 
 The fixture project needs a parent runbook with a delegating step `2` carrying a
@@ -3507,12 +3572,15 @@ a green proof. Build first, then resolve the binary from the package manifest
 rather than guessing its path:
 
 ```bash
-cd /Users/tobyhede/psrc/rundown/.worktrees/680-machine-owned-frame-entry
+# Derive the worktree root — never hardcode it. This works from anywhere inside
+# the worktree and is independent of where it was created or what it is named.
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
 pnpm run build
 
 # packages/cli/package.json declares { "bin": { "rundown": "dist/cli.js", "rd": "dist/cli.js" } }.
 # Resolve it from the manifest so a future bin rename cannot silently break this.
-RD="$PWD/packages/cli/$(node -p "require('./packages/cli/package.json').bin.rundown")"
+RD="$ROOT/packages/cli/$(node -p "require('$ROOT/packages/cli/package.json').bin.rundown")"
 test -f "$RD" || { echo "CLI not built at $RD"; exit 1; }
 
 SCRATCH="$(mktemp -d)"
