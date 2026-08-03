@@ -60,7 +60,7 @@
     "jest": "^30.4.2",
     "jest-environment-node": "^30.4.1",
     "jest-mock": "^30.4.1",
-    "ts-jest": "^29.4.11",
+    "ts-jest": "^29.4.12",
     "typescript": "^6.0.3"
   }
 }
