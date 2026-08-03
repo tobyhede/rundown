@@ -38,10 +38,12 @@ import {
   type Frame,
   type FrameKey,
   RUNS_DIR,
-  type DelegateFrontierEntry,
   type DelegationCredentialIssuer,
   type DelegationTokenDeriver,
-  projectDelegateFrontier,
+  projectAndConsumeReEntryFrontier,
+  readPersistedReEntryFrontier,
+  type ReEntryProjection,
+  CLIErrorCodes,
   DelegationLock,
   DelegationLockTimeoutError,
   type ScopedLock,
@@ -81,7 +83,10 @@ import {
 import { buildRunnableRenderContext } from '../helpers/render-context.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import type { RunScopedDelegationRuntime } from '../helpers/delegation-completion.js';
-import { sessionMutationRefusalCode } from '../helpers/session-mutation-result.js';
+import {
+  sessionMutationRefusalCode,
+  transactionalRefusalCode,
+} from '../helpers/session-mutation-result.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 export { buildStepVariables };
@@ -287,6 +292,18 @@ const FRONTIER_AUTHORITY_REQUIRED_MESSAGE =
  */
 const FRONTIER_PROJECTION_REFUSED_MESSAGE =
   'Delegation frontier cannot be projected by the presented claim authority';
+
+/**
+ * Failure text for a projected delegation frontier whose
+ * `DELEGATE_FRONTIER_CONSUMED` synchronization did not commit.
+ *
+ * Not a refusal: no authority was rejected and no credential failed
+ * verification. The frontier is still persisted and no bearer was disclosed, so
+ * the remediation is to run the step again. Hoisted for the same reason as its
+ * two siblings above.
+ */
+const FRONTIER_CONSUME_FAILED_MESSAGE =
+  'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run';
 
 interface InlineLaunchArgs {
   readonly manager: RunbookStateManager;
@@ -713,14 +730,48 @@ async function launchInlineChildFromIntent({
         return 'stopped';
       }
       await releaseLock();
+      // A resumed child's own bearer died with the process that launched it, so
+      // this continuation holds no authority for it. The composing parent's
+      // runtime is NOT a substitute — it belongs to another run, and
+      // `delegationRuntimeFor` refuses it by design — so core re-establishes the
+      // CHILD's own run-control authority. Core refuses that when the child
+      // already issued a credential the replacement could not reproduce; the
+      // continuation then runs unarmed and the machine's own
+      // `actor_context_required` refusal stands, exactly as it does today.
+      const childEmitter = createBridgedEmitter(existingChild, output);
+      const adoption = await sessionService.adoptRunControlClaim(existingChild);
+      if (adoption.kind === 'adopted') {
+        // Delivered through the single sanctioned credential channel — the
+        // `runbook_started.claim_id` field — so the orchestrator can still
+        // address the child it is about to watch run. The prior bearer is
+        // superseded by the adoption, so re-announcing is not optional. Lazily
+        // imported for the same reason the fresh branch below is: the launch
+        // pipeline is heavy and must not enter this module's static graph.
+        const { emitRunbookStarted } = await import('../helpers/runbook-pipeline.js');
+        emitRunbookStarted(
+          childEmitter,
+          existingChild,
+          !!existingChild.prompted,
+          adoption.runtime.claimId,
+        );
+      }
       const loopResult = await runExecutionLoop(
         manager,
         childRunId,
         [...getRunbookFromState(existingChild, cwd)],
         cwd,
         !!existingChild.prompted,
-        createBridgedEmitter(existingChild, output),
-        { output, commandStreamOptions },
+        childEmitter,
+        {
+          output,
+          commandStreamOptions,
+          ...(adoption.kind === 'adopted'
+            ? {
+                issueDelegationCredential: adoption.runtime.issueDelegationCredential,
+                delegationTokenDeriver: adoption.runtime.deriveDelegationToken,
+              }
+            : {}),
+        },
       );
       return await propagateInlineChildTerminalResult({
         manager,
@@ -1166,10 +1217,19 @@ export async function drainResolvedCompletions({
  *   a refusal, not a throw, so the run is never left on the session stack. A
  *   frontier the *present* authority cannot reproduce — a rotated issuing claim,
  *   or a derived bearer that does not match its persisted verifier — returns
- *   'stopped' the same way, coded `RD-821` (`DELEGATION_INVARIANT_VIOLATED`).
+ *   'stopped' the same way, coded `RD-821` (`DELEGATION_INVARIANT_VIOLATED`); a
+ *   frontier that projected but whose consume did not commit returns 'stopped'
+ *   coded `RD-829` (`DELEGATION_FRONTIER_CONSUME_FAILED`) and is retryable. All
+ *   three arms come from the shared core seam
+ *   {@link projectAndConsumeReEntryFrontier}, so `rundown collect` reports each
+ *   condition under the same code.
  * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
  *   actor/lifecycle/session services throw while advancing transitions,
  *   command execution rejects, or the emitter raises during event dispatch.
+ * @throws {InvalidRunbookStateError} If the run's persisted snapshot carries a
+ *   structurally malformed `delegateFrontier`. Per the no-migration rule this is
+ *   corrupt persisted state whose recovery path is explicit user action
+ *   (finish, stop, prune, restart), not a refusal the loop can absorb.
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
@@ -1446,101 +1506,16 @@ export async function runExecutionLoop(
 
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
     const stepIsPrompted = currentStep.kind === 'prompted-for';
-    const contextSnapshot = await actorService.getContextSnapshot(runbookId, steps);
-
-    const persistedDelegateFrontier =
-      isSubstep && contextSnapshot?.delegateFrontier && contextSnapshot.delegateFrontier.length > 0
-        ? [...contextSnapshot.delegateFrontier]
-        : undefined;
-    const delegationTokenDeriver = options.delegationTokenDeriver;
-
-    let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
-    if (persistedDelegateFrontier !== undefined) {
-      if (delegationTokenDeriver === undefined) {
-        // Same treatment as the frontier-consume failure below: a missing
-        // deriver is a refusal of this continuation, not a crash. Throwing
-        // unwound past both the emitter and applyExecutionTerminalRelease, so
-        // the caller got a bare Error carrying no code and the refused run
-        // stayed on the session stack — still resolving as the active runbook
-        // for every later bare command.
-        emitter.emit({
-          type: 'ERROR_OCCURRED',
-          payload: {
-            message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-            code: 'ACTOR_CONTEXT_REQUIRED',
-          },
-        });
-        emitter.emit({
-          type: 'RUNBOOK_STOPPED',
-          payload: {
-            position: stepPosition,
-            message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-          },
-        });
-        return await applyExecutionTerminalRelease(
-          sessionService,
-          runbookId,
-          terminalReleaseMode,
-          emitter,
-          'stopped',
-        );
-      }
-      try {
-        delegateFrontier = [
-          ...projectDelegateFrontier(persistedDelegateFrontier, delegationTokenDeriver),
-        ];
-      } catch (error) {
-        // `projectDelegateFrontier` documents a throw, and it lands here on two
-        // paths: the deriver refuses a descriptor naming a superseded issuer
-        // claim (run-control claims rotate — `installRunControlClaim`
-        // supersedes rather than appends), or the reconstructed bearer does not
-        // hash to the persisted verifier. Either way this is a refusal of the
-        // continuation, and the same reasoning as the missing-deriver branch
-        // above applies: an escaping throw unwinds past both the emitter and
-        // `applyExecutionTerminalRelease`, so the caller gets a bare Error
-        // carrying no code and the refused run stays on the session stack,
-        // still resolving as the active runbook for every later bare command.
-        //
-        // RD-821 is what core already attaches to this exact pair of conditions
-        // (`verifyEchoedDelegationToken` in `lifecycle-command-service.ts`), so
-        // the two disclosure boundaries refuse under one code. It is NOT the
-        // neighbouring `ACTOR_CONTEXT_REQUIRED`: authority is present here, so
-        // the absent-authority code would name the wrong condition.
-        //
-        // The core detail is safe to surface — it names the frontier id or the
-        // issuer-claim divergence, never a bearer.
-        const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${getErrorMessage(error)}`;
-        emitter.emit({
-          type: 'ERROR_OCCURRED',
-          payload: {
-            message,
-            code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-          },
-        });
-        emitter.emit({
-          type: 'RUNBOOK_STOPPED',
-          payload: {
-            position: stepPosition,
-            message,
-          },
-        });
-        return await applyExecutionTerminalRelease(
-          sessionService,
-          runbookId,
-          terminalReleaseMode,
-          emitter,
-          'stopped',
-        );
-      }
-    }
 
     // Expand once: artifact-producing helpers in command code append a manifest
-    // row per call, so a second expansion would duplicate the entries.
+    // row per call, so a second expansion would duplicate the entries. Sits
+    // beside the description/prompt expansions above (and ahead of the frontier
+    // seam) because the seam observes the rendered entry when it projects.
     const expandedCommandCode = command
       ? expandLoopVariablesForCommand(command.code, stepVars, helperOptions)
       : undefined;
 
-    const entryEffects = await actorService.observeExecutionUnitEntry(runbookId, steps, {
+    const entryMetadata = {
       stepId: currentState.step,
       substepId: currentState.substep,
       position: stepPosition,
@@ -1551,10 +1526,142 @@ export async function runExecutionLoop(
       commandLang: command?.lang,
       isSubstep,
       prompted: prompted || stepIsPrompted,
-      delegateFrontier,
-    });
+    };
+
+    const delegationTokenDeriver = options.delegationTokenDeriver;
+    // The authority precondition, and the only frontier question the loop asks
+    // itself: is there something to disclose that we hold no authority to
+    // disclose? The pending-frontier read is core's — the same validating reader
+    // the seam uses, so the loop never parses the persisted blob — and the
+    // `isSubstep` term matches the seam's own gate, since a non-substep entry
+    // can never disclose a frontier and so needs no authority.
+    if (
+      delegationTokenDeriver === undefined &&
+      entryMetadata.isSubstep &&
+      readPersistedReEntryFrontier(currentState).length > 0
+    ) {
+      // A missing deriver is a refusal of this continuation, not a crash.
+      // Throwing unwound past both the emitter and applyExecutionTerminalRelease,
+      // so the caller got a bare Error carrying no code and the refused run
+      // stayed on the session stack — still resolving as the active runbook for
+      // every later bare command.
+      //
+      // This is the DISCLOSURE half of "no verified claim authority"; the
+      // issuance half is the machine's own `delegationIssueActor`, which refuses
+      // `reason: 'actor_context_required'`. Both halves stop with the same
+      // reason so a consumer reads one condition.
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+          code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+        },
+      });
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position: stepPosition,
+          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+          reason: 'actor_context_required',
+        },
+      });
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
+    }
+
+    // Core owns the re-entry frontier decision — validation of the persisted
+    // blob, projection through the verified deriver, the entry observation, and
+    // the `DELEGATE_FRONTIER_CONSUMED` commit — through the same seam
+    // `rundown collect` drives. The loop contributes only rendered entry
+    // metadata and, below, emitter wiring plus the terminal release.
+    const reentry: ReEntryProjection =
+      delegationTokenDeriver === undefined
+        ? { status: 'none' }
+        : await projectAndConsumeReEntryFrontier({
+            actorService,
+            steps,
+            state: currentState,
+            deriveToken: delegationTokenDeriver,
+            entry: entryMetadata,
+          });
+
+    if (reentry.status === 'projection_refused') {
+      // The deriver refused a descriptor naming a superseded issuer claim
+      // (run-control claims rotate — `installRunControlClaim` supersedes rather
+      // than appends), or the reconstructed bearer does not hash to the
+      // persisted verifier. Either way this is a refusal of the continuation,
+      // and the same reasoning as the missing-deriver branch above applies: an
+      // escaping throw unwinds past both the emitter and
+      // `applyExecutionTerminalRelease`, so the caller gets a bare Error
+      // carrying no code and the refused run stays on the session stack.
+      //
+      // RD-821 is the code for this condition wherever it is reached — core's
+      // echo seam, and now `collect`'s re-entry too. It is NOT the neighbouring
+      // `ACTOR_CONTEXT_REQUIRED`: authority is present here, so the
+      // absent-authority code would name the wrong condition.
+      //
+      // The core detail is safe to surface — it names the frontier id or the
+      // issuer-claim divergence, never a bearer.
+      const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${reentry.message}`;
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message, code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code },
+      });
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: stepPosition, message },
+      });
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
+    }
+
+    if (reentry.status === 'consume_failed') {
+      // Transient, and distinct from the refusal above: the frontier projected
+      // but the machine did not accept the consume, so it is still persisted and
+      // no bearer was disclosed. Same code as `collect` reports for the same
+      // condition; the remediation is to retry, which is why it must not share
+      // RD-821's "the same authority refuses identically".
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: FRONTIER_CONSUME_FAILED_MESSAGE,
+          code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+        },
+      });
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: stepPosition, message: FRONTIER_CONSUME_FAILED_MESSAGE },
+      });
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
+    }
+
+    // A projected frontier has already been observed and consumed by the seam;
+    // an ordinary entry still needs observing here.
+    const entryEffects =
+      reentry.status === 'projected'
+        ? reentry.observations
+        : await actorService.observeExecutionUnitEntry(runbookId, steps, entryMetadata);
     for (const effect of entryEffects) {
       emitter.emit(effect.event);
+    }
+    if (reentry.status === 'projected') {
+      currentState = reentry.state;
     }
 
     const inlineLaunch = entryEffects
@@ -1563,36 +1670,7 @@ export async function runExecutionLoop(
       )
       .find((intent): intent is InlineLaunchIntent => intent !== undefined);
 
-    if (delegateFrontier) {
-      const consumeSync = await actorService.sendAndSync(runbookId, steps, {
-        type: 'DELEGATE_FRONTIER_CONSUMED',
-      });
-      if (!consumeSync) {
-        emitter.emit({
-          type: 'ERROR_OCCURRED',
-          payload: {
-            message: 'Failed to consume delegation frontier after STEP_ENTERED',
-          },
-        });
-        emitter.emit({
-          type: 'RUNBOOK_STOPPED',
-          payload: {
-            position: stepPosition,
-            message: 'Runbook state synchronization failed',
-          },
-        });
-        return await applyExecutionTerminalRelease(
-          sessionService,
-          runbookId,
-          terminalReleaseMode,
-          emitter,
-          'stopped',
-        );
-      }
-      currentState = consumeSync.state;
-    }
-
-    if (!delegateFrontier && inlineLaunch) {
+    if (reentry.status === 'none' && inlineLaunch) {
       if (!options.output) {
         emitter.emit({
           type: 'ERROR_OCCURRED',
@@ -1698,24 +1776,10 @@ export async function runExecutionLoop(
       },
     });
     if (fencedCommand.kind !== 'committed') {
-      const code = (() => {
-        switch (fencedCommand.kind) {
-          case 'claim_superseded':
-            return 'STALE_CLAIM';
-          case 'concurrent_modification':
-            return 'CONCURRENT_MODIFICATION';
-          case 'execution_in_progress':
-            return 'EXECUTION_IN_PROGRESS';
-          case 'recovery_required':
-            return 'RECOVERY_REQUIRED';
-          case 'missing':
-            return 'RUN_TARGET_UNAVAILABLE';
-          default: {
-            const _exhaustive: never = fencedCommand;
-            return _exhaustive;
-          }
-        }
-      })();
+      // The code, not the rendering: this refusal travels as an `ERROR_OCCURRED`
+      // event payload rather than through an emitter. Shared mapping either way,
+      // so the event and the error envelope cannot disagree about one refusal.
+      const code = transactionalRefusalCode(fencedCommand);
       emitter.emit({
         type: 'ERROR_OCCURRED',
         payload: {

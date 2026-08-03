@@ -5,17 +5,17 @@ import * as os from 'node:os';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { DelegationScanService } from '../../src/runbook/delegation-scan.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
-import {
-  hashDelegationToken,
-  generateDelegationToken,
-} from '../../src/runbook/delegation-token.js';
+import { hashDelegationToken } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/runbook/types.js';
 import {
   brandStoredOutputsForTest,
   brandEffectiveVarsForTest,
 } from '../../src/testing/effective-vars.js';
-import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
+import {
+  generateDelegationToken,
+  makeDelegationCredentialDescriptor,
+} from '../../src/testing/delegation-fixtures.js';
 
 describe('DelegationScanService', () => {
   let tmpDir: string;

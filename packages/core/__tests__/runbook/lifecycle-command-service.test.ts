@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {
   ResolvedStep,
   ResolvedStepWithFor,
+  ResolvedStepWithPromptedFor,
   ResolvedStepWithSubsteps,
   Substep,
   Transitions,
@@ -30,6 +31,8 @@ import {
   inactiveFrame,
   type CallerEvidence,
   type ClaimId,
+  type EffectfulActorMutationRunner,
+  type EffectfulActorMutationSetRunnerInput,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
   type ResolveChildRunbook,
@@ -121,6 +124,53 @@ function delegateForStep(name: string, substeps: readonly Substep[]): ResolvedSt
     transitions: SUBSTEP_TRANSITIONS,
     forClause: { variable: 'i', start: 1, end: 10 },
     substeps,
+  };
+}
+
+/**
+ * Build a prompted-FOR step that owns authored DELEGATE substeps.
+ *
+ * A FOR step whose bounds did not resolve: no `forClause`, so no iteration
+ * machinery, but `--index` still names a legitimate frame on it.
+ */
+function delegatePromptedForStep(
+  name: string,
+  substeps: readonly Substep[],
+): ResolvedStepWithPromptedFor {
+  return {
+    kind: 'prompted-for',
+    name,
+    description: `Prompted FOR step ${name}`,
+    transitions: SUBSTEP_TRANSITIONS,
+    substeps,
+  };
+}
+
+/**
+ * Decorate a mutation runner so `onFenceEntered` fires as the aggregate fence is
+ * entered — after every pre-fence resolution the seam performs (anchor,
+ * authority, positional runbook, claim-seen recording) and before the fence's
+ * own `beforeEffect` re-read.
+ *
+ * This is the concurrent-writer seam the `DelegationLock` used to provide: a
+ * document mutation landing here is invisible to any load hoisted out of
+ * `beforeEffect`, so a decision that observes it must have been made from the
+ * in-fence re-read.
+ *
+ * @param inner - The real runner to delegate to.
+ * @param onFenceEntered - Concurrent mutation to commit at fence entry.
+ * @returns A runner that fires the hook once per aggregate invocation.
+ */
+function runnerWithFenceEntryHook(
+  inner: EffectfulActorMutationRunner,
+  onFenceEntered: () => void,
+): EffectfulActorMutationRunner {
+  return {
+    run: (input) => inner.run(input),
+    runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
+      onFenceEntered();
+      return inner.runAll(input);
+    },
   };
 }
 
@@ -231,6 +281,7 @@ describe('RunbookLifecycleCommandService', () => {
     resolveChildRunbook: ResolveChildRunbook;
     loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
     loadSteps: RunbookLifecycleCommandServiceDependencies['loadSteps'];
+    actorMutationRunner: RunbookLifecycleCommandServiceDependencies['actorMutationRunner'];
   };
 
   /**
@@ -459,6 +510,57 @@ describe('RunbookLifecycleCommandService', () => {
         (s) => s.delegation?.tokenHash === outcome.tokenHash,
       );
       expect(issued).toBeDefined();
+    });
+
+    // Fresh issuance authority is `delegate-from-run`; retry authority is
+    // `retry-delegation`. `createRunControlGrants` mints both, so every fixture
+    // built on a full run-control bearer authorizes either request and cannot
+    // tell the two apart — the in-lock policy could ask for the wrong one and
+    // still be allowed. Narrowing the bearer to fresh-issuance authority alone
+    // makes the distinction observable.
+    it('issues under a bearer holding delegate-from-run but not retry-delegation', async () => {
+      const { seam: localSeam, manager: mgr } = await startSeamOnDelegateStep();
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      await patchPersistedClaim(mgr.cwd, claimKey, {
+        grants: session.claims[claimKey].grants.filter(
+          (grant) => grant.action !== 'retry-delegation',
+        ),
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: evidence,
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') throw new Error('expected delegated');
+      expect(outcome.token).toMatch(/^rdtk_/);
+    });
+
+    // The converse: retry authority alone does not authorize a fresh mint.
+    it('refuses a bearer holding retry-delegation but not delegate-from-run', async () => {
+      const { seam: localSeam, manager: mgr } = await startSeamOnDelegateStep();
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      await patchPersistedClaim(mgr.cwd, claimKey, {
+        grants: session.claims[claimKey].grants.filter(
+          (grant) => grant.action !== 'delegate-from-run',
+        ),
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: evidence,
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('claim_grant_required');
     });
 
     it("anchors fresh issuance on the claim's controlled run, not the active default (#586)", async () => {
@@ -990,6 +1092,116 @@ describe('RunbookLifecycleCommandService', () => {
       expect(serialized).not.toContain(first.token);
       expect(serialized).not.toContain(TOKEN_PREFIX);
       expect(serialized).not.toContain(DELEGATION_CLAIM_MARKER);
+    });
+
+    it('validates a fresh explicit iteration against the in-fence step reread', async () => {
+      // The `--index` legality check is state-dependent, so it must read the
+      // document the fence protects, not a snapshot taken before it. The parsed
+      // document flips from FOR to substeps exactly as the fence is entered:
+      // only a decision made from `beforeEffect`'s own reread can observe it.
+      // And the refusal must precede every effect — no extraVars resolution, no
+      // machine preparation, nothing persisted.
+      const forSteps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam, deps, manager: mgr } = buildIssuanceSeam(state, forSteps);
+      const prepareSpy = jest.spyOn(
+        RunbookActorService.prototype,
+        'prepareManualDelegationMutation',
+      );
+      const resolveExtraVars = jest.fn(async () => undefined);
+      deps.actorMutationRunner = runnerWithFenceEntryHook(deps.actorMutationRunner, () => {
+        deps.loadSteps = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+        resolveExtraVars,
+      });
+
+      expect(outcome.kind).toBe('invalid_index');
+      if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+      expect(outcome.message).toBe(
+        '--index requires step "1" to be a FOR step, but it is "substeps"',
+      );
+      expect(resolveExtraVars).not.toHaveBeenCalled();
+      expect(prepareSpy).not.toHaveBeenCalled();
+      expect((await mgr.load(state.id))?.substepStates ?? []).toHaveLength(0);
+    });
+
+    it('validates the named step rather than the first parsed step', async () => {
+      // Deliberately mis-ordered: the FOR step is FIRST and the named target is
+      // SECOND, so a positional lookup (`steps[0]`) reads a FOR step and lets
+      // the illegal `--index` through. Only a name-keyed lookup refuses. Do not
+      // reorder these — the ordering IS the assertion.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('2', [delegateSubstep('1', 'other.md')]),
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('invalid_index');
+      if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+      expect(outcome.message).toBe(
+        '--index requires step "1" to be a FOR step, but it is "substeps"',
+      );
+    });
+
+    it('accepts explicit iterations on prompted-FOR targets', async () => {
+      // A prompted-FOR step is a FOR step whose bounds did not resolve. It has
+      // no `forClause` and no iteration machinery, but `--index` still names a
+      // legitimate frame on it, so the legality check must admit it alongside
+      // `for` rather than refusing it as a non-FOR kind.
+      const steps: readonly ResolvedStep[] = [
+        delegatePromptedForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('delegated');
+    });
+
+    it('defers an unparsable indexed target to the delegation error contract', async () => {
+      // `--index` legality is only decidable for a target that parses. An
+      // unparsable one must fall THROUGH the check untouched so the delegation
+      // resolver keeps ownership of "step not found" — the guard exists to
+      // return early, not to let the lookup dereference a null parse. Without
+      // it the seam raises a TypeError that escapes as an unhandled rejection
+      // instead of a typed outcome.
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ]);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: 'not-a-step', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-814');
     });
   });
 
@@ -1763,6 +1975,72 @@ describe('RunbookLifecycleCommandService', () => {
       const after = await mgr.load(state.id);
       expect(after?.resolvedCompletions?.[key]).toBeUndefined();
       expect(Object.keys(after?.resolvedCompletions ?? {})).toHaveLength(0);
+    });
+
+    it('validates a retry iteration against the in-fence step reread', async () => {
+      // Retry's own `--index` legality check carries the same obligation as the
+      // fresh path: the parsed document flips from FOR to substeps as the fence
+      // is entered, so only a decision made from `beforeEffect`'s reread of the
+      // captured parent can observe it — and the refusal must land before any
+      // overrides resolution, machine preparation, or re-mint.
+      const forSteps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam, deps, manager: mgr } = buildIssuanceSeam(state, forSteps);
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const prepareSpy = jest.spyOn(
+        RunbookActorService.prototype,
+        'prepareManualDelegationMutation',
+      );
+      const resolveOverrides = jest.fn(async () => undefined);
+      deps.actorMutationRunner = runnerWithFenceEntryHook(deps.actorMutationRunner, () => {
+        deps.loadSteps = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: '1.1', iteration: 2 },
+        resolveOverrides,
+      });
+
+      expect(outcome.kind).toBe('invalid_index');
+      if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+      expect(outcome.message).toBe(
+        '--index requires step "1" to be a FOR step, but it is "substeps"',
+      );
+      expect(resolveOverrides).not.toHaveBeenCalled();
+      expect(prepareSpy).not.toHaveBeenCalled();
+      // No re-mint: the delegation still carries the token issued above.
+      const persisted = await mgr.load(state.id);
+      const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1', 2));
+      expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+    });
+
+    it('defers an unparsable indexed retry target to the delegation error contract', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: 'not-a-step', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      // Without the code, any error — including an unrelated throw — satisfies
+      // this test; the point is that the delegation resolver retains ownership
+      // of RD-801 (step not found) for the unparsable `--step` target, rather
+      // than the index guard dereferencing a null parse.
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-801');
     });
   });
 
@@ -3204,6 +3482,107 @@ describe('RunbookLifecycleCommandService', () => {
       expect(persisted?.step).toBe('2');
       expect(persisted?.lastResult).toBe('fail');
       expect(fenced).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * Automatic issuance requires VERIFIED RUN-CONTROL authority — the
+   * `delegate-from-run` grant on the run being advanced — not merely the
+   * `mutate-run` grant that authorized the transition itself. These tests are
+   * deliberately written against runs with NO delegation parent linkage, so
+   * they observe the authority gate structurally rather than through RD-819:
+   * the nested-delegation prohibition would refuse a delegated child before the
+   * issuer was ever exercised, which is why the weaker gate has never been
+   * exploitable — and exactly why the pin must not depend on it.
+   */
+  describe('delegation runtime authority', () => {
+    const twoSteps: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    /** Strip one grant action from the run's persisted run-control claim. */
+    async function revokeGrant(claimId: ClaimId, action: string): Promise<void> {
+      const claimKey = claimKeyFromBearer(claimId);
+      const session = await manager.loadSession();
+      await patchPersistedClaim(tmp, claimKey, {
+        grants: session.claims[claimKey].grants.filter((grant) => grant.action !== action),
+      });
+    }
+
+    it('carries the delegation runtime for a bearer holding delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.issueDelegationCredential).toBeDefined();
+      expect(outcome.deriveDelegationToken).toBeDefined();
+    });
+
+    it('withholds the delegation runtime from a transition bearer without delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      await revokeGrant(evidence.claimId, 'delegate-from-run');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // `mutate-run` still authorizes the advance itself, so the transition
+      // applies; only the issuance capability is withheld.
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.updatedState?.step).toBe('2');
+      expect(outcome.issueDelegationCredential).toBeUndefined();
+      expect(outcome.deriveDelegationToken).toBeUndefined();
+    });
+
+    it('carries the delegation runtime for a navigation bearer holding delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.issueDelegationCredential).toBeDefined();
+      expect(outcome.deriveDelegationToken).toBeDefined();
+    });
+
+    it('withholds the delegation runtime from a navigation bearer without delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      await revokeGrant(evidence.claimId, 'delegate-from-run');
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'default' },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.issueDelegationCredential).toBeUndefined();
+      expect(outcome.deriveDelegationToken).toBeUndefined();
     });
   });
 

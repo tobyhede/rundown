@@ -426,7 +426,9 @@ function renderCollectOutcome(
       // Flat passthrough: core attached the user-facing `code` on the outcome
       // (no CLI reason→code ternary — keeps "no CLI lifecycle decisions" and
       // type-driven dispatch intact). `outcome.code` is already one of
-      // `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED`.
+      // `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED`, or
+      // — for the two re-entry frontier arms of the shared seam — `RD-821` /
+      // `RD-829`, which name the condition rather than this command.
       output.error(outcome.message, outcome.code, { parentRunId: outcome.targetRunId });
       output.flush();
       return true;

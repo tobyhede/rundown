@@ -1,0 +1,209 @@
+/**
+ * Cross-path invariant for delegation credential coordinates.
+ *
+ * A credential coordinate is HMAC derivation input, so the *same* logical
+ * delegation must receive the *same* coordinate whichever path issued it. Two
+ * paths issue: the manual one (`createDelegation` called with a persisted
+ * `RunbookState`) and the machine one (`delegationIssueActor` invoked from the
+ * compiled machine). This suite pins them to each other rather than to a
+ * literal, so neither can drift without the other.
+ */
+import { describe, expect, it } from '@jest/globals';
+import fc from 'fast-check';
+import { createActor, waitFor } from 'xstate';
+
+import { assertClaimLookupKey } from '../../src/runbook/claim-id.js';
+import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import type {
+  DelegationCredentialIssuer,
+  DelegationCredentialLocation,
+} from '../../src/runbook/delegation-credential.js';
+import { createDelegation } from '../../src/runbook/delegation-service.js';
+import {
+  assertDelegationIssuanceNonce,
+  hashDelegationToken,
+} from '../../src/runbook/delegation-token.js';
+import { buildFrameKey, type FrameKey } from '../../src/runbook/targeting.js';
+import type { ResolvedStep, RunbookState, Transitions } from '../../src/runbook/types.js';
+import {
+  brandFlattenedTemplateVarsForTest,
+  brandRunIdForTest,
+} from '../../src/testing/effective-vars.js';
+
+const RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
+const ISSUER_CLAIM_KEY = assertClaimLookupKey(`rdclk_${'4'.repeat(32)}`);
+const ISSUING_FRAME: FrameKey = buildFrameKey('2');
+const OTHER_FRAME: FrameKey = buildFrameKey('1');
+const DELEGATED_STEP_ID = '2.1';
+
+const CONTINUE_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
+const DEFER_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+};
+
+/**
+ * One plain step followed by a delegating parent.
+ *
+ * The leading step exists so the machine can be snapshotted *before* it enters
+ * the delegating frame; issuance must read the seeded bootstrap mirror rather
+ * than whatever a freshly started actor happened to hold.
+ */
+const STEPS: readonly ResolvedStep[] = [
+  { kind: 'base', name: '1', description: 'Plain first step', transitions: CONTINUE_TRANSITIONS },
+  {
+    kind: 'substeps',
+    name: '2',
+    description: 'Delegating parent',
+    transitions: CONTINUE_TRANSITIONS,
+    aggregation: { strategy: 'ALL' },
+    substeps: [
+      {
+        id: '1',
+        description: 'Delegated substep',
+        transitions: DEFER_TRANSITIONS,
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      },
+    ],
+  },
+];
+
+/** Frame-entry coordinates a persisted run state can present. */
+interface FrameEntryFixture {
+  readonly activeFrameKey: FrameKey;
+  readonly activeEntry: number;
+  readonly frameEntryCounts: Readonly<Record<FrameKey, number>>;
+}
+
+/**
+ * Build an issuer that records the coordinate it was handed.
+ *
+ * @param captured - Sink the issuer appends each observed location to.
+ * @returns An issuer producing a fixed, deterministic credential.
+ */
+function recordingIssuer(captured: DelegationCredentialLocation[]): DelegationCredentialIssuer {
+  return (location) => {
+    captured.push(location);
+    const token = `rdtk_${'A'.repeat(32)}`;
+    return {
+      token,
+      tokenHash: hashDelegationToken(token),
+      credential: {
+        version: 1,
+        issuerClaimKey: ISSUER_CLAIM_KEY,
+        issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+        ...location,
+      },
+    };
+  };
+}
+
+/**
+ * Issue through the compiled machine and return the coordinate it derived.
+ *
+ * @param frameEntry - Persisted frame-entry coordinates mirrored into context.
+ * @returns The single location the machine handed to the issuer.
+ */
+async function machineLocation(
+  frameEntry: FrameEntryFixture,
+): Promise<DelegationCredentialLocation | undefined> {
+  const captured: DelegationCredentialLocation[] = [];
+  const machine = compileRunbookToMachine(STEPS, {
+    templateVars: brandFlattenedTemplateVarsForTest({ RunId: RUN_ID }),
+    resolveDelegationRunbook: async (runbookRef) => ({
+      path: `/resolved/${runbookRef}`,
+      runbookRef,
+      childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+    }),
+    issueDelegationCredential: recordingIssuer(captured),
+  });
+
+  const bootstrap = createActor(machine);
+  bootstrap.start();
+  const baseSnapshot = bootstrap.getSnapshot();
+  bootstrap.stop();
+
+  const seeded = { ...baseSnapshot, context: { ...baseSnapshot.context, frameEntry } };
+  const actor = createActor(machine, { snapshot: seeded });
+  actor.start();
+  actor.send({ type: 'PASS' });
+  await waitFor(actor, (snapshot) =>
+    (snapshot.context.substepStates ?? []).some((ss) => ss.delegation !== undefined),
+  );
+  actor.stop();
+  return captured[0];
+}
+
+/**
+ * Issue through `createDelegation` and return the coordinate it derived.
+ *
+ * @param frameEntry - Persisted frame-entry coordinates on the parent state.
+ * @returns The single location the manual path handed to the issuer.
+ */
+function manualLocation(frameEntry: FrameEntryFixture): DelegationCredentialLocation | undefined {
+  const captured: DelegationCredentialLocation[] = [];
+  const state = {
+    id: RUN_ID,
+    step: '2',
+    substepStates: [{ id: '1', frameKey: ISSUING_FRAME, status: 'pending' as const }],
+    ...frameEntry,
+  } satisfies Pick<
+    RunbookState,
+    'id' | 'step' | 'substepStates' | 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'
+  >;
+
+  const result = createDelegation(
+    {
+      state,
+      stepId: DELEGATED_STEP_ID,
+      childRunbookPath: '/resolved/child.runbook.md',
+      childRunbookRef: { source: 'project', path: '/canonical/child.runbook.md' },
+      frameKey: ISSUING_FRAME,
+      issueCredential: recordingIssuer(captured),
+    },
+    STEPS,
+  );
+  if (result.status !== 'created') {
+    throw new Error(`Manual delegation fixture did not create: ${result.status}`);
+  }
+  return captured[0];
+}
+
+describe('delegation credential coordinate: manual and machine issuance agree', () => {
+  const frameEntryArb = fc
+    .record({
+      onIssuingFrame: fc.boolean(),
+      activeEntry: fc.integer({ min: 1, max: 9 }),
+      issuingFrameCount: fc.integer({ min: 1, max: 9 }),
+      otherFrameCount: fc.integer({ min: 1, max: 9 }),
+      recordIssuingFrame: fc.boolean(),
+    })
+    .map(
+      (raw): FrameEntryFixture => ({
+        activeFrameKey: raw.onIssuingFrame ? ISSUING_FRAME : OTHER_FRAME,
+        activeEntry: raw.activeEntry,
+        frameEntryCounts: {
+          [OTHER_FRAME]: raw.otherFrameCount,
+          ...(raw.recordIssuingFrame ? { [ISSUING_FRAME]: raw.issuingFrameCount } : {}),
+        },
+      }),
+    );
+
+  it('derives the same credential coordinate from the same persisted state', async () => {
+    await fc.assert(
+      fc.asyncProperty(frameEntryArb, async (frameEntry) => {
+        const fromMachine = await machineLocation(frameEntry);
+        const fromManual = manualLocation(frameEntry);
+
+        expect(fromMachine).toBeDefined();
+        expect(fromManual).toBeDefined();
+        expect(fromMachine).toEqual(fromManual);
+      }),
+      { numRuns: 20 },
+    );
+  });
+});

@@ -8,12 +8,14 @@ import {
   isWarningResponse,
 } from '../../src/output/schema.js';
 import {
+  AbortResponseSchema,
   ArtifactAssertionInputSchema,
   ResolveSourceInfoSchema,
   CheckResponseSchema,
   DelegateResponseSchema,
   ResolveResponseSchema,
   ScenarioRunResponseSchema,
+  ErrorDetailsSchema,
   ErrorResponseSchema,
   CLIErrorCodes,
   CLIWarningCodes,
@@ -214,6 +216,69 @@ describe('isWarningResponse type guard', () => {
 describe('ErrorCodeSchema code registry', () => {
   it('registers RD-813 for non-delegatable delegation targets', () => {
     expect(CLIErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP).toBe('RD-813');
+  });
+
+  it('registers AGGREGATE_RECOVERY_REQUIRED distinctly from the single-run code (#608)', () => {
+    // The multi-run refusal is not a plural spelling of the single-run one: only
+    // it carries `details.runs`, so a consumer routing on `code` alone must be
+    // able to tell the two envelope shapes apart.
+    expect(CLIErrorCodes.AGGREGATE_RECOVERY_REQUIRED).toBe('AGGREGATE_RECOVERY_REQUIRED');
+    expect(CLIErrorCodes.AGGREGATE_RECOVERY_REQUIRED).not.toBe(CLIErrorCodes.RECOVERY_REQUIRED);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: 'The aggregate execution outcome is unknown and requires recovery.',
+        code: 'AGGREGATE_RECOVERY_REQUIRED',
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe('ErrorDetailsSchema aggregate recovery payload (#608)', () => {
+  it('declares `runs` as run-id/epoch pairs rather than leaving it to .loose()', () => {
+    const parsed = ErrorDetailsSchema.safeParse({
+      runs: [
+        { runId: 'rd_9e725b142d81dabcefb9e04919568fcd', epoch: 4 },
+        { runId: 'rd_3f0c1a7b28d94ef5a6b0c9d3e81f2a47', epoch: 1 },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+    // Declared, not merely tolerated: a loose passthrough would preserve the
+    // value without validating it, which is what the undeclared field did.
+    expect(parsed.data?.runs).toEqual([
+      { runId: 'rd_9e725b142d81dabcefb9e04919568fcd', epoch: 4 },
+      { runId: 'rd_3f0c1a7b28d94ef5a6b0c9d3e81f2a47', epoch: 1 },
+    ]);
+  });
+
+  it('rejects a runs entry with a non-numeric epoch', () => {
+    expect(ErrorDetailsSchema.safeParse({ runs: [{ runId: 'rd_x', epoch: 'four' }] }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('AbortResponseSchema cleanup contract (#608)', () => {
+  const base = {
+    kind: 'abort' as const,
+    action: 'abort' as const,
+    status: 'cancelled' as const,
+    token: 'rdtk_AAA...HHHH',
+    substep: '1.1',
+    runbook: 'child.runbook.md',
+    parentRunId: 'rd_9e725b142d81dabcefb9e04919568fcd',
+  };
+
+  it.each(['none', 'active_child_failed', 'terminal_child_cleaned', 'missing_child_cleaned'])(
+    'accepts the %s cleanup branch',
+    (cleanup) => {
+      expect(AbortResponseSchema.safeParse({ ...base, cleanup }).success).toBe(true);
+    },
+  );
+
+  it('rejects a cleanup value core cannot produce', () => {
+    expect(AbortResponseSchema.safeParse({ ...base, cleanup: 'forced' }).success).toBe(false);
   });
 
   it('accepts emitted RundownError RD codes in error envelopes', () => {

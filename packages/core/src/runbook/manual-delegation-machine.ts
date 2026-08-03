@@ -1,29 +1,11 @@
 /**
  * Typed XState seam that prepares one manual delegation issue, retry, or abort.
  *
- * ## Why a machine with a single state
- *
- * The machine has one `ready` state and three action-only self-handlers, and
- * that is the intended shape rather than scaffolding for states still to come.
- * Manual preparation is a single synchronous decision over an exact captured
- * state — there is no intermediate lifecycle for a state graph to model — so
- * the value the machine carries is dispatch, not sequencing: the command union
- * is XState's event type, `ready.on` is proved total over that union by
- * {@link ManualDelegationReadyHandlers}, and the delegation primitives stay
- * behind machine dispatch as the architecture requires instead of being called
- * directly by a service (the defect this seam was introduced to remove).
- *
- * Sequencing lives elsewhere by design: the prepared abort is committed through
- * the compiled runbook machine's `MANUAL_DELEGATION_ABORT_PREPARED` transition,
- * and the durable side of these workflows belongs to the aggregate execution
- * fence.
- *
- * The design record does not settle the longer trajectory. The PR 12 planning
- * audit requires manual delegation to be machine-owned and separately
- * contemplates "transient per-leaf workflow substates" in the compiled runbook
- * machine, but it does not say whether these three commands eventually migrate
- * into that graph. Treat the single state as today's deliberate design, not as
- * a scheduled roadmap in either direction.
+ * The design rationale — why a single-state machine is the intended shape
+ * rather than scaffolding, how the prepared abort re-enters the compiled runbook
+ * machine, and what is deliberately left open about the longer trajectory —
+ * lives in `docs/internal/architecture.md`
+ * § "Manual delegation preparation machine".
  *
  * @module runbook/manual-delegation-machine
  */

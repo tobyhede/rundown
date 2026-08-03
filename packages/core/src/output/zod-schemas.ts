@@ -63,6 +63,7 @@ export const CLISymbolicErrorCodeValues = [
   'CLAIM_BEARER_MISMATCH',
   'EXECUTION_IN_PROGRESS',
   'RECOVERY_REQUIRED',
+  'AGGREGATE_RECOVERY_REQUIRED',
   'CONCURRENT_MODIFICATION',
   'RUN_TARGET_UNAVAILABLE',
   'RUN_TARGET_MISMATCH',
@@ -143,6 +144,13 @@ export const CLIErrorCodes = {
   EXECUTION_IN_PROGRESS: 'EXECUTION_IN_PROGRESS',
   /** A session mutation was refused: the named run's execution outcome is unknown (#608) */
   RECOVERY_REQUIRED: 'RECOVERY_REQUIRED',
+  /**
+   * A multi-run mutation was refused: several runs' execution outcomes are
+   * unknown (#608). Distinct from the single-run `RECOVERY_REQUIRED` because
+   * only this envelope carries `details.runs` — the exact `(runId, epoch)` set
+   * that must be recovered before the workflow resumes.
+   */
+  AGGREGATE_RECOVERY_REQUIRED: 'AGGREGATE_RECOVERY_REQUIRED',
   /** The explicit --run target is not a running member of this session's stack */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
   /** The explicit --run target does not own the delegation retry token (delegate --retry) */
@@ -294,6 +302,25 @@ export const ErrorDetailsSchema = z
     searchedLocations: z.array(z.string()).optional().describe('Locations that were searched'),
     /** Line number where error occurred */
     line: z.number().optional().describe('Line number where the error occurred'),
+    /**
+     * Runs whose execution outcome must be recovered, on an
+     * `AGGREGATE_RECOVERY_REQUIRED` refusal only.
+     *
+     * Declared rather than left to `.loose()`: this is the one structured
+     * detail payload a refusal carries, and an undeclared field is invisible to
+     * every consumer generating a client from the schema.
+     */
+    runs: z
+      .array(
+        z.object({
+          /** Run whose effect outcome is ambiguous */
+          runId: z.string().describe('Run whose execution outcome is unknown'),
+          /** Execution epoch that crossed the effect boundary */
+          epoch: z.number().describe('Execution epoch that crossed the effect boundary'),
+        }),
+      )
+      .optional()
+      .describe('Runs that must be recovered before the refused workflow can resume'),
   })
   .describe('Additional details about an error')
   .loose();
@@ -1247,8 +1274,19 @@ export const AbortResponseSchema = z
     runbook: z.string().describe('Child runbook path'),
     /** Parent run ID */
     parentRunId: z.string().describe('Parent run ID'),
-    /** Whether --force was used */
-    force: z.boolean().optional().describe('Whether force mode was used'),
+    /**
+     * Which linked-child cleanup branch core actually ran.
+     *
+     * Present on `cancelled` only. `none` means no child was ever linked; it is
+     * deliberately distinct from `missing_child_cleaned`, which superseded a
+     * stale delegated outcome left by a child run that has since vanished.
+     */
+    cleanup: z
+      .enum(['none', 'active_child_failed', 'terminal_child_cleaned', 'missing_child_cleaned'])
+      .optional()
+      .describe('Linked-child cleanup branch that ran'),
+    /** Whether a linked child was actually torn down (derived from `cleanup`, not from the flag) */
+    force: z.boolean().optional().describe('Whether a forced linked-child teardown ran'),
     /** Child run ID (when force-cancelling claimed delegation) */
     childRunId: z.string().optional().describe('Child run ID when force-cancelling'),
   })

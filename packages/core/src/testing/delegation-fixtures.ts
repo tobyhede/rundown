@@ -13,6 +13,8 @@
  * @module testing/delegation-fixtures
  */
 
+import { randomBytes } from 'node:crypto';
+
 import type { ContextSnapshot, StepDelegation, SubstepState } from '../runbook/types.js';
 import {
   assertClaimLookupKey,
@@ -26,6 +28,8 @@ import {
 import {
   assertDelegationIssuanceNonce,
   assertDelegationTokenHash,
+  deriveDelegationToken,
+  generateDelegationIssuanceNonce,
   type DelegationCredentialDescriptor,
 } from '../runbook/delegation-token.js';
 import { assertRunId } from '../runbook/run-id.js';
@@ -34,6 +38,32 @@ import { brandEffectiveVarsForTest } from './effective-vars.js';
 
 /** Token hash used by every fixture that does not name its own. */
 const DEFAULT_TOKEN_HASH = `sha256:${'a'.repeat(64)}`;
+
+/**
+ * Mint a canonical, unpredictable delegation token for tests.
+ *
+ * Production has no random token minter: every real bearer is derived from a
+ * verified claim secret plus its persisted credential descriptor, so a free
+ * function that mints one out of `randomBytes` would produce a token no claim
+ * can reproduce — a hash-only credential that fails at the first echo or
+ * frontier projection. It lives here, behind the `./testing/*` subpath, because
+ * only tests need an arbitrary well-formed bearer (format predicates, redaction
+ * and truncation helpers, claim-marker scanning, stand-in issuers).
+ *
+ * Implemented over {@link deriveDelegationToken} with a throwaway secret and a
+ * fresh nonce so the output is exactly the shape production derivation emits.
+ *
+ * @returns A distinct token matching the canonical `rdtk_` + 32 base32 format.
+ */
+export function generateDelegationToken(): string {
+  return deriveDelegationToken(randomBytes(32).toString('base64url'), {
+    issuanceNonce: generateDelegationIssuanceNonce(),
+    parentRunId: assertRunId(`rd_${'c'.repeat(32)}`),
+    parentStepId: '1.1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+  });
+}
 
 /**
  * Build a non-secret delegation credential descriptor with valid canonical coordinates.

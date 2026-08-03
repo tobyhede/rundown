@@ -185,7 +185,7 @@ interface SupersededDropDecision<TResult> {
   readonly outcome: EffectfulActorMutationSetRunnerResult<TResult>;
   /** Whether the aggregate `compute` — the external effect — was entered. */
   readonly effectStarted: boolean;
-  /** Authorities presented to the refused acquisition. */
+  /** Authorities presented to the refused acquisition or validation. */
   readonly acquiring: readonly CapturedAuthority[];
   /** Runs the caller marked {@link EffectfulActorMutationSetTarget.optionalWhenClaimSuperseded}. */
   readonly supersededOptionalRunIds: ReadonlySet<RunId>;
@@ -212,9 +212,13 @@ interface SupersededDropDecision<TResult> {
  * an all-or-none acquisition refusal leaves nothing acquired and nothing
  * written, so a narrower retry starts from the same ground state.
  *
+ * Shared by both pre-effect refusal stages — acquisition, and the write-free
+ * `beforeEffect` revalidation — so one policy decides both rather than two
+ * transcriptions of it drifting apart.
+ *
  * @param decision - The refused outcome, effect-boundary flag, and both policies.
- * @returns The run to drop before retrying acquisition, or undefined to surface
- *   the outcome unchanged.
+ * @returns The run to drop before retrying acquisition or validation, or
+ *   undefined to surface the outcome unchanged.
  */
 function selectSupersededDrop<TResult>(
   decision: SupersededDropDecision<TResult>,
@@ -362,17 +366,6 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
       return lastDropped;
     }
 
-    const beforeEffect = await input.beforeEffect?.(captured);
-    if (beforeEffect?.kind === 'return') {
-      const validation = await store.validateCapturedRunSet(
-        captured.map(({ authority }) => authority),
-      );
-      return validation.kind === 'committed'
-        ? { kind: 'committed', value: beforeEffect.value }
-        : validation;
-    }
-
-    const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
     const optionalRunIds = new Set(
       input.targets.filter(({ optional }) => optional).map(({ runId }) => runId),
     );
@@ -385,6 +378,43 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
         )
         .map(({ runId }) => runId),
     );
+
+    const beforeEffect = await input.beforeEffect?.(captured);
+    if (beforeEffect?.kind === 'return') {
+      // The write-free return is the THIRD pre-effect stage, after capture and
+      // acquisition, and the conditional policy has to be applied at every one
+      // of them. Nothing has been written and nothing acquired here, so an
+      // opportunistic target superseded inside `beforeEffect` is exactly the
+      // case the flag names: dropping it and revalidating the rest lets the
+      // caller's own resolution stand, where surfacing `claim_superseded` would
+      // attribute a write-free refusal to a run the caller already said it
+      // would proceed without.
+      //
+      // Bounded by construction: every iteration removes exactly one authority.
+      let validating = captured.map(({ authority }) => authority);
+      for (;;) {
+        const validation = await store.validateCapturedRunSet(validating);
+        if (validation.kind === 'committed') {
+          return { kind: 'committed', value: beforeEffect.value };
+        }
+        const drop = selectSupersededDrop<TResult>({
+          outcome: validation,
+          effectStarted: false,
+          acquiring: validating,
+          supersededOptionalRunIds,
+          optionalRunIds,
+        });
+        if (drop === undefined) return validation;
+        void logger.debug('dropping opportunistic aggregate target superseded before validation', {
+          runId: drop,
+          refusal: 'claim_superseded',
+        });
+        droppedRunIds.add(drop);
+        validating = validating.filter(({ runId }) => runId !== drop);
+      }
+    }
+
+    const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
     let activeCaptured = captured;
     let acquiring = captured.map(({ authority }) => authority);
     let result: EffectfulActorMutationSetRunnerResult<TResult>;

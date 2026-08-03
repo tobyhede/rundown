@@ -80,7 +80,9 @@ describe('abort command transactional refusals', () => {
         message: 'aggregate recovery required',
         attempts: [{ runId: `rd_${'6'.repeat(32)}`, epoch: 3 }],
       },
-      code: 'RECOVERY_REQUIRED',
+      // Its own code, distinct from the single-run `RECOVERY_REQUIRED`: only
+      // this arm carries a run set in `details.runs`.
+      code: 'AGGREGATE_RECOVERY_REQUIRED',
     },
   ])('renders $outcome.kind as a command refusal', async ({ outcome, code }) => {
     abortDelegation.mockResolvedValue(outcome);

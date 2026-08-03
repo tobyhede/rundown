@@ -17,6 +17,7 @@ import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
+import type { ErrorCodes } from '../errors/codes.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import type { TransitionObservationEvent } from '../events/transition-observation.js';
 
@@ -310,9 +311,20 @@ export type DelegationPolicyOutcome =
        * decisions" and type-driven dispatch intact):
        * - `not_delegate_step` → `NOT_DELEGATE_STEP`
        * - `step_not_found` → `STEP_NOT_FOUND`
-       * - `target_mismatch` / frontier failures → `COLLECT_OPERATION_FAILED`
+       * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
+       * - `frontier_projection_refused` → `RD-821`
+       * - `frontier_consume_failed` → `RD-829`
+       *
+       * The two frontier codes name the CONDITION rather than the command, so
+       * the shared re-entry seam reports each one identically whether `collect`
+       * or the execution loop drove it (F6).
        */
-      readonly code: 'NOT_DELEGATE_STEP' | 'STEP_NOT_FOUND' | 'COLLECT_OPERATION_FAILED';
+      readonly code:
+        | 'NOT_DELEGATE_STEP'
+        | 'STEP_NOT_FOUND'
+        | 'COLLECT_OPERATION_FAILED'
+        | typeof ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code
+        | typeof ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code;
       /** Operator-facing failure message. */
       readonly message: string;
     };

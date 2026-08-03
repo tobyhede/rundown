@@ -227,6 +227,236 @@ describe('createEffectfulActorMutationRunner', () => {
       });
       expect(compute).not.toHaveBeenCalled();
     });
+
+    // The write-free stage is the third pre-effect boundary, after capture and
+    // acquisition, and the conditional policy has to hold at all three. A
+    // caller that named an opportunistic target and then resolved its command
+    // without writing anything must still see its own resolution — reporting
+    // `claim_superseded` there attributes the outcome to a run the caller
+    // already said it would proceed without.
+    it('drops an opportunistic target superseded before a write-free return', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+      const compute = jest.fn();
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        beforeEffect: async (captured) => {
+          // Both captured cleanly, so the drop is provably a validation-layer
+          // decision rather than a capture-layer one.
+          expect(captured.map(({ state }) => state.id)).toEqual([opportunistic.id, required.id]);
+          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          return { kind: 'return', value: 'derived-bearer' };
+        },
+        compute: compute as never,
+        makeRecoveryActor: (_runId: RunId, recoveryState: RunbookState) =>
+          actorService.createRecoveryActor(recoveryState, steps),
+      });
+
+      expect(result).toEqual({ kind: 'committed', value: 'derived-bearer' });
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it('still reports a REQUIRED target superseded before a write-free return', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        beforeEffect: async () => {
+          unwrapSessionMutation(await sessionService.releaseRunbook(required.id));
+          return { kind: 'return', value: 'derived-bearer' };
+        },
+        compute: jest.fn() as never,
+        makeRecoveryActor: (_runId: RunId, recoveryState: RunbookState) =>
+          actorService.createRecoveryActor(recoveryState, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'claim_superseded', runId: required.id }),
+      );
+    });
+
+    it('reports the refusal rather than emptying the required set on a write-free return', async () => {
+      // Dropping the opportunistic target here would leave nothing required to
+      // validate, which `validateCapturedRunSet` rejects by throwing. The
+      // conditional policy stays subordinate to that boundary: the real refusal
+      // is surfaced instead.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const opportunistic = await seedRun('opportunistic.runbook.md');
+
+      const result = await runner.runAll<string>({
+        targets: [{ runId: opportunistic.id, optionalWhenClaimSuperseded: true }],
+        beforeEffect: async () => {
+          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          return { kind: 'return', value: 'derived-bearer' };
+        },
+        compute: jest.fn() as never,
+        makeRecoveryActor: (_runId: RunId, recoveryState: RunbookState) =>
+          actorService.createRecoveryActor(recoveryState, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'claim_superseded', runId: opportunistic.id }),
+      );
+    });
+
+    it('does not drop execution_in_progress before a write-free return', async () => {
+      // The conditional policy must stay conditional at this stage too: an
+      // opportunistic target contended by another owner is a real refusal.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const required = await seedRun('required.runbook.md');
+      const contended = await seedRun('contended.runbook.md');
+      const { driver, store } = await openRunbookStore(dir);
+      const contendedCapture = await store.captureRunAuthority(contended.id);
+      if (contendedCapture.kind !== 'captured') throw new Error('contended capture failed');
+      const lease = new SqliteExecutionLeaseService(driver);
+
+      const result = await runner.runAll<string>({
+        targets: [
+          { runId: contended.id, optionalWhenClaimSuperseded: true },
+          { runId: required.id },
+        ],
+        beforeEffect: async () => {
+          const owner = await lease.acquire(contendedCapture.authority, process.pid);
+          if (owner.kind !== 'committed') throw new Error('contended lease acquisition failed');
+          return { kind: 'return', value: 'derived-bearer' };
+        },
+        compute: jest.fn() as never,
+        makeRecoveryActor: (_runId: RunId, recoveryState: RunbookState) =>
+          actorService.createRecoveryActor(recoveryState, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'execution_in_progress', runId: contended.id }),
+      );
+    });
+  });
+
+  describe('aggregate set invariants', () => {
+    it('rejects an aggregate set with no targets', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+
+      await expect(
+        runner.runAll<string>({
+          targets: [],
+          compute: jest.fn() as never,
+          makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+            actorService.createRecoveryActor(state, steps),
+        }),
+      ).rejects.toThrow('Aggregate actor mutation requires at least one target.');
+    });
+
+    it('rejects an aggregate set that repeats a target run', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const state = await seedRun('repeated.runbook.md');
+
+      await expect(
+        runner.runAll<string>({
+          targets: [{ runId: state.id }, { runId: state.id }],
+          compute: jest.fn() as never,
+          makeRecoveryActor: (_runId: RunId, recoveryState: RunbookState) =>
+            actorService.createRecoveryActor(recoveryState, steps),
+        }),
+      ).rejects.toThrow('Aggregate actor mutation repeats a target run.');
+    });
+
+    it('rejects a release naming a run outside the owned set', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const owned = await seedRun('owned.runbook.md');
+      const foreign = await seedRun('foreign.runbook.md');
+
+      await expect(
+        runner.runAll<string>({
+          targets: [{ runId: owned.id }],
+          releases: [{ runId: foreign.id }],
+          compute: jest.fn() as never,
+          makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+            actorService.createRecoveryActor(state, steps),
+        }),
+      ).rejects.toThrow(`Aggregate release for ${foreign.id} is outside the owned run set.`);
+    });
+
+    it('returns the recorded capture refusal when every optional target drops', async () => {
+      // The sibling invariant — an emptied set that recorded NO refusal — is
+      // unreachable by construction: it needs zero targets, which the length
+      // guard above already rejects. What is reachable, and what this pins, is
+      // that the emptied set reports the last real capture refusal rather than
+      // a synthesized one.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const missing = await seedRun('missing.runbook.md');
+      jest
+        .spyOn(RunbookStore.prototype, 'captureRunAuthorityState')
+        .mockResolvedValue({ kind: 'missing', runId: missing.id, message: 'gone' });
+
+      await expect(
+        runner.runAll<string>({
+          targets: [{ runId: missing.id, optional: true }],
+          compute: jest.fn() as never,
+          makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+            actorService.createRecoveryActor(state, steps),
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({ kind: 'missing', runId: missing.id, message: 'gone' }),
+      );
+    });
+
+    it('rejects a preparation that omits a state for a captured target', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const first = await seedRun('first.runbook.md');
+      const second = await seedRun('second.runbook.md');
+      // The commit invariant throws inside the fenced effect, which the executor
+      // otherwise downgrades to `aggregate_recovery_required`. Failing the
+      // abandon keeps the invariant error itself observable.
+      jest
+        .spyOn(SqliteExecutionLeaseService.prototype, 'abandonAllToRecovery')
+        .mockRejectedValue(new Error('leave invariant error observable'));
+
+      await expect(
+        runner.runAll<string>({
+          targets: [{ runId: first.id }, { runId: second.id }],
+          compute: (captured) =>
+            Promise.resolve({
+              members: [{ runId: captured[0].state.id, nextState: captured[0].state }],
+              value: 'done',
+            }),
+          makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+            actorService.createRecoveryActor(state, steps),
+        }),
+      ).rejects.toThrow('Aggregate preparation must provide one state for every target.');
+    });
+
+    it('rejects a preparation whose member order does not match the captured targets', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const first = await seedRun('first.runbook.md');
+      const second = await seedRun('second.runbook.md');
+      jest
+        .spyOn(SqliteExecutionLeaseService.prototype, 'abandonAllToRecovery')
+        .mockRejectedValue(new Error('leave invariant error observable'));
+
+      await expect(
+        runner.runAll<string>({
+          targets: [{ runId: first.id }, { runId: second.id }],
+          compute: (captured) =>
+            Promise.resolve({
+              members: [...captured]
+                .reverse()
+                .map(({ state }) => ({ runId: state.id, nextState: state })),
+              value: 'done',
+            }),
+          makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+            actorService.createRecoveryActor(state, steps),
+        }),
+      ).rejects.toThrow('Aggregate preparation order does not match the captured targets.');
+    });
   });
 
   describe('optional aggregate targets', () => {

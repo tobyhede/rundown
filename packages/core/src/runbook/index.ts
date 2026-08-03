@@ -35,7 +35,20 @@ export type {
   SessionMutationRefusal,
   SessionMutationResult,
 } from './storage/runbook-store.js';
-export { assertExecutionEpoch, type ExecutionEpoch } from './storage/mutation-result.js';
+// `GuardedMutationResult` and `AbandonedAttemptSetOutcome` are public for the
+// same narrow reason: a CLI renderer must DERIVE the refusal union it renders
+// from these rather than re-declaring it. A hand-restatement compiles while
+// silently de-branding `RunId`/`ExecutionEpoch` and dropping fields — the
+// "no parallel result types" defect the PR 11-head planning audit names.
+export type {
+  AbandonedAttemptSetOutcome,
+  InterruptedAttemptRef,
+} from './storage/execution-lease.js';
+export {
+  assertExecutionEpoch,
+  type ExecutionEpoch,
+  type GuardedMutationResult,
+} from './storage/mutation-result.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
@@ -81,12 +94,12 @@ export * from './claim-id.js';
 export * from './duration.js';
 export * from './last-action.js';
 export * from './transition-kernel.js';
-export {
-  prepareManualDelegation,
-  type ManualDelegationPreparationEvent,
-  type ManualDelegationPreparationInput,
-  type ManualDelegationPreparationResult,
-} from './manual-delegation-machine.js';
+// `manual-delegation-machine.js` is deliberately NOT barrelled. Publishing
+// `prepareManualDelegation` would invite a front end to drive delegation around
+// `RunbookActorService`, which owns the fenced commit — exactly the parallel
+// execution path CLAUDE.md forbids. The sanctioned entry point is
+// `RunbookActorService.prepareManualDelegationMutation`; its event and result
+// types return to this barrel if and when a front end legitimately needs them.
 export {
   generateRunId,
   RunbookStateManager,
@@ -222,6 +235,15 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
+// Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
+// above and by the CLI execution loop, which is why it is exported.
+export {
+  projectAndConsumeReEntryFrontier,
+  readPersistedReEntryFrontier,
+  type ProjectAndConsumeReEntryFrontierInput,
+  type ReEntryFrontierActorService,
+  type ReEntryProjection,
+} from './re-entry-frontier.js';
 export {
   propagateTerminalChildUpward,
   INLINE_PARENT_CYCLE_CODE,
@@ -250,7 +272,6 @@ export {
   type DelegationIssuanceOutcome,
   type ExplicitDelegationTarget,
   type FindDelegationByToken,
-  type DelegationAbortInput,
   type DelegationAbortOutcome,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
@@ -263,7 +284,6 @@ export {
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
-  type MutationAuthorityRefusalPolicy,
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
@@ -361,10 +381,11 @@ export {
   type PreparedDelegationChildUnlink,
   type PrepareDelegationChildLinkResult,
   type PrepareDelegationChildUnlinkResult,
-  type PreparedManualDelegationMutation,
   type RunbookActorServiceOptions,
-  type RunbookActorRuntimeCapabilities,
 } from './actor-service.js';
+// The two runtime capability types ARE public: a front end that owns the CLI
+// execution loop threads a verified issuer and deriver through its own option
+// bags, so it must be able to name them.
 export type {
   DelegationCredentialIssuer,
   DelegationTokenDeriver,
@@ -409,24 +430,25 @@ export {
   type DelegationCollectionPendingReadModel,
   type DelegationOutcomeReportedFact,
 } from './delegation-lifecycle-read-model.js';
+// Credential *derivation* is not public. `deriveDelegationToken` and the nonce
+// primitives around it are reachable only through the claim-bound
+// `DelegationCredentialIssuer` / `DelegationTokenDeriver` capabilities above, so
+// no consumer can mint or reproduce a bearer without a verified claim.
+// `DelegationCredentialDescriptor` stays public because it is the parameter type
+// of those two published callables — a caller that cannot name it cannot type
+// its own deriver.
 export {
   DELEGATION_CLAIM_MARKER,
-  DELEGATION_ISSUANCE_NONCE_PATTERN,
   DELEGATION_TOKEN_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
-  assertDelegationIssuanceNonce,
   assertDelegationTokenHash,
   findDelegationClaimToken,
-  generateDelegationIssuanceNonce,
-  generateDelegationToken,
   hashDelegationToken,
   isDelegationToken,
   isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
-  type DelegationCredentialCoordinate,
   type DelegationCredentialDescriptor,
-  type DelegationIssuanceNonce,
   type DelegationTokenHash,
 } from './delegation-token.js';
 export {

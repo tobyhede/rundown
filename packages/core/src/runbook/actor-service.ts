@@ -65,7 +65,7 @@ import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
-import { inferFrameEntryFromState } from './frame-entry.js';
+import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -513,6 +513,24 @@ export function extractEnteredArtifacts(
 const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
 
 /**
+ * Project the persisted frame-entry coordinates for the machine context mirror.
+ *
+ * All three fields travel together: `activeEntry` is only interpretable against
+ * the `activeFrameKey` it was recorded for, and `frameEntryCounts` supplies the
+ * answer for every other frame.
+ *
+ * @param state - Persisted runbook state.
+ * @returns The coordinates {@link inferFrameEntryFromState} consumes.
+ */
+function frameEntryCoordinatesOf(state: RunbookState): FrameEntryCoordinates {
+  return {
+    activeFrameKey: state.activeFrameKey,
+    activeEntry: state.activeEntry,
+    frameEntryCounts: state.frameEntryCounts,
+  };
+}
+
+/**
  * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
  * so hydration reflects CLI-level writes that happen between actor transitions.
  *
@@ -531,8 +549,8 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  *
  * @param machine - Compiled runbook machine used to materialise the persisted
  *                  snapshot into a full XState envelope.
- * @param state - Persisted runbook state whose `snapshot`, `substepStates`, and
- *                `substep` fields drive the overlay.
+ * @param state - Persisted runbook state whose `snapshot`, `substepStates`,
+ *                `substep`, and frame-entry fields drive the overlay.
  * @returns A hydrated snapshot with the RunbookState view merged on top, or
  *          `undefined` when `state.snapshot` is absent (initial bootstrap).
  */
@@ -554,6 +572,10 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       substep: state.substep ?? baseSnapshot.context.substep,
+      // Frame-entry coordinates advance through RunbookState (via
+      // ExecutionLifecycleService), never through the machine, so the persisted
+      // values are authoritative over anything a stale snapshot carries.
+      frameEntry: frameEntryCoordinatesOf(state),
       // The XState snapshot envelope is opaque and does not re-mint
       // non-enumerable trust brands during RunbookState parsing. Use the
       // parsed RunbookState variables as the authoritative post-load source.
@@ -906,6 +928,7 @@ export class RunbookActorService {
       helpers: this.options.helpers,
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
+      frameEntry: frameEntryCoordinatesOf(state),
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
       issueDelegationCredential: runtime?.issueDelegationCredential,
@@ -1230,10 +1253,21 @@ export class RunbookActorService {
     switch (result.status) {
       case 'prepared':
         if (event.type === 'ABORT' && previousState.snapshot !== undefined) {
-          const mutation = await this.prepareActorMutation(previousState.id, previousState, steps, {
-            type: 'MANUAL_DELEGATION_ABORT_PREPARED',
-            substepStates: result.substepStates,
-          });
+          const mutation = await this.prepareActorMutation(
+            previousState.id,
+            previousState,
+            steps,
+            {
+              type: 'MANUAL_DELEGATION_ABORT_PREPARED',
+              substepStates: result.substepStates,
+            },
+            // The round-trip hands the parent machine back the verified issuer
+            // this method already holds. Omitting it would drive a machine that
+            // cannot issue, so a transition landing on a DELEGATE frontier would
+            // refuse `actor_context_required` for an authority core just
+            // verified — a capability lost purely to argument plumbing.
+            { issueDelegationCredential: issueCredential },
+          );
           return { status: 'prepared', nextState: mutation.nextState };
         }
         return {

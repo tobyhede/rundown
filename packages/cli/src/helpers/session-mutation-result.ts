@@ -1,12 +1,19 @@
 // packages/cli/src/helpers/session-mutation-result.ts
 //
-// The single CLI rendering of a session ownership refusal (#608).
+// The single CLI rendering of a session ownership or transactional refusal (#608).
 //
 // Core returns `execution_in_progress` / `recovery_required` as typed arms of
 // `SessionMutationResult`, and every front end that can receive one renders it
 // here so the wire code, the message source, and the exit disposition cannot
 // drift between commands. The refusal's own `message` is forwarded verbatim —
 // it already names the run — rather than re-synthesized per command.
+//
+// The same applies to the wider transactional union a delegation seam returns.
+// `transactionalRefusalCode` is the ONE `kind` → code mapping for it; the sites
+// that need the emit call `renderTransactionalMutationRefusal`, the sites that
+// need the code alone (goto-workflow's structured result, execution.ts's
+// `ERROR_OCCURRED` payload) call the mapping directly. Restating the switch
+// locally is how the two aggregate renderings drifted apart.
 //
 // Deliberately NOT in `refusal-renderers.ts`: that module's renderers are swept
 // exhaustively by their own test, and this refusal is produced by the storage
@@ -19,7 +26,11 @@
 // number of CLI tests load while mocking the core barrel with a partial factory;
 // a value import would make every one of those suites fail to load.
 
-import type { SessionMutationRefusalOutcome } from '@rundown-org/core';
+import type {
+  AbandonedAttemptSetOutcome,
+  GuardedMutationResult,
+  SessionMutationRefusalOutcome,
+} from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -52,18 +63,44 @@ export function isSessionMutationRefusal(outcome: {
  */
 export type SessionMutationRefusalCode = 'EXECUTION_IN_PROGRESS' | 'RECOVERY_REQUIRED';
 
-/** Transactional refusals shared by delegation mutation commands. */
+/**
+ * Transactional refusals shared by delegation mutation commands.
+ *
+ * DERIVED from core's canonical result types, never re-declared. A structurally
+ * parallel restatement compiles, but it de-brands `RunId` / `ExecutionEpoch`
+ * down to `string` / `number`, drops the `runId` every CAS refusal carries, and
+ * lets the two spellings drift — the "no parallel result types" defect. The
+ * composition mirrors `DelegationAbortOutcome`'s own refusal arms exactly, which
+ * is the union every delegation seam actually returns.
+ */
 export type TransactionalMutationRefusal =
-  | SessionMutationRefusalOutcome
-  | {
-      readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing';
-      readonly message: string;
-    }
-  | {
-      readonly kind: 'aggregate_recovery_required';
-      readonly message: string;
-      readonly attempts: readonly { readonly runId: string; readonly epoch: number }[];
-    };
+  | Extract<
+      GuardedMutationResult<never>,
+      {
+        readonly kind:
+          | 'claim_superseded'
+          | 'concurrent_modification'
+          | 'execution_in_progress'
+          | 'recovery_required'
+          | 'missing';
+      }
+    >
+  | AbandonedAttemptSetOutcome;
+
+/**
+ * The registered symbolic codes a transactional delegation refusal is emitted under.
+ *
+ * A strict superset of {@link SessionMutationRefusalCode}. `AGGREGATE_RECOVERY_REQUIRED`
+ * is deliberately distinct from the single-run `RECOVERY_REQUIRED`: only the
+ * aggregate arm carries `details.runs`, so an agent routing on `code` must be
+ * able to tell the two envelope shapes apart without inspecting `details`.
+ */
+export type TransactionalMutationRefusalCode =
+  | SessionMutationRefusalCode
+  | 'STALE_CLAIM'
+  | 'CONCURRENT_MODIFICATION'
+  | 'RUN_TARGET_UNAVAILABLE'
+  | 'AGGREGATE_RECOVERY_REQUIRED';
 
 /**
  * Map a session ownership refusal to its registered symbolic error code.
@@ -116,6 +153,47 @@ export function renderSessionMutationRefusal(
 }
 
 /**
+ * Map a transactional delegation refusal to its registered symbolic error code.
+ *
+ * The sole `kind` → code mapping for the six-member transactional union, so the
+ * error envelope, the structured workflow result, and the `ERROR_OCCURRED`
+ * execution event cannot disagree about the same refusal. Call this at the sites
+ * that need the code itself (`goto-workflow`, `execution`); call
+ * {@link renderTransactionalMutationRefusal} at the sites that need the emit.
+ *
+ * @param refusal - Transactional refusal returned by a core delegation seam.
+ * @returns The registered code for the refusal's kind.
+ * @throws {Error} If an unrecognized refusal variant reaches the exhaustive guard.
+ */
+export function transactionalRefusalCode(
+  refusal: TransactionalMutationRefusal,
+): TransactionalMutationRefusalCode {
+  switch (refusal.kind) {
+    case 'execution_in_progress':
+    case 'recovery_required':
+      return sessionMutationRefusalCode(refusal);
+    case 'claim_superseded':
+      return 'STALE_CLAIM';
+    case 'concurrent_modification':
+      return 'CONCURRENT_MODIFICATION';
+    case 'missing':
+      return 'RUN_TARGET_UNAVAILABLE';
+    case 'aggregate_recovery_required':
+      return 'AGGREGATE_RECOVERY_REQUIRED';
+    default: {
+      // Name the discriminant only, for the same reason
+      // `sessionMutationRefusalCode` does: an unrecognized variant is one whose
+      // fields this build does not know, and serializing it wholesale would put
+      // unreviewed payload into an error message (and thence into logs).
+      const _exhaustive: never = refusal;
+      throw new Error(
+        `Unhandled transactional mutation refusal: ${(_exhaustive as { kind: string }).kind}`,
+      );
+    }
+  }
+}
+
+/**
  * Render a transactional delegation refusal under its registered symbolic code.
  *
  * A strict superset of {@link renderSessionMutationRefusal}, and returns the same
@@ -128,28 +206,25 @@ export function renderSessionMutationRefusal(
  * @param output - Output emitter for CLI output.
  * @param refusal - Transactional refusal returned by a core delegation seam.
  * @returns `true` — a transactional refusal always requests a non-zero exit code.
+ * @throws {Error} If an unrecognized refusal variant reaches the exhaustive guard.
  */
 export function renderTransactionalMutationRefusal(
   output: OutputEmitter,
   refusal: TransactionalMutationRefusal,
 ): boolean {
-  switch (refusal.kind) {
-    case 'execution_in_progress':
-    case 'recovery_required':
-      return renderSessionMutationRefusal(output, refusal);
-    case 'claim_superseded':
-      output.error(refusal.message, 'STALE_CLAIM');
-      return true;
-    case 'concurrent_modification':
-      output.error(refusal.message, 'CONCURRENT_MODIFICATION');
-      return true;
-    case 'missing':
-      output.error(refusal.message, 'RUN_TARGET_UNAVAILABLE');
-      return true;
-    case 'aggregate_recovery_required':
-      output.error(refusal.message, 'RECOVERY_REQUIRED', {
-        runs: refusal.attempts.map(({ runId, epoch }) => ({ runId, epoch })),
-      });
-      return true;
+  const code = transactionalRefusalCode(refusal);
+  if (refusal.kind === 'aggregate_recovery_required') {
+    // The one arm with structured details. Name the exact set: a multi-run
+    // refusal already carries every (runId, epoch), and rendering the message
+    // alone tells the operator recovery is needed while withholding what to
+    // recover. `epoch` is a branded `number`, so it needs no coercion to
+    // serialize — the former `Number(epoch)` was a no-op that made the two
+    // aggregate renderings look like they disagreed.
+    output.error(refusal.message, code, {
+      runs: refusal.attempts.map(({ runId, epoch }) => ({ runId, epoch })),
+    });
+    return true;
   }
+  output.error(refusal.message, code);
+  return true;
 }

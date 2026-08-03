@@ -46,7 +46,6 @@ import type {
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import {
   assertDelegationTokenHash,
-  generateDelegationToken,
   hashDelegationToken,
 } from '../../src/runbook/delegation-token.js';
 import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
@@ -61,6 +60,7 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 import {
+  generateDelegationToken,
   makeDelegatedSubstepState,
   makeDelegationCredentialDescriptor,
 } from '../../src/testing/delegation-fixtures.js';
@@ -13182,6 +13182,90 @@ echo ok
       expect(sub3?.delegation?.childRunbookPath).toBe('/resolved/child-b.runbook.md');
 
       actor.stop();
+    });
+  });
+
+  describe('delegation credential frame-entry coordinate', () => {
+    const substepDefer = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    };
+
+    /**
+     * Two steps so the machine can be started, snapshotted, and only *then*
+     * driven into the delegated frame — issuance must observe the seeded
+     * bootstrap mirror rather than whatever the fresh actor had at start.
+     */
+    function frameEntrySteps(): ResolvedStep[] {
+      return inferSteps([
+        { name: '1', description: 'Plain first step', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Parent with a delegated substep',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Delegated',
+              transitions: substepDefer,
+              runbooks: ['child.runbook.md'],
+              delegate: true,
+            },
+          ],
+        },
+      ]);
+    }
+
+    async function issuedParentEntry(
+      frameEntry: Pick<RunbookState, 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'>,
+    ): Promise<number | undefined> {
+      const machine = compileDelegationFixtureMachine(frameEntrySteps());
+      const bootstrap = createActor(machine);
+      bootstrap.start();
+      const baseSnapshot = bootstrap.getSnapshot();
+      bootstrap.stop();
+
+      // The bootstrap mirror is written by the actor service from persisted
+      // state; a compiler-level test reaches it the same way the service does,
+      // through the snapshot envelope.
+      const seeded = { ...baseSnapshot, context: { ...baseSnapshot.context, frameEntry } };
+      const actor = createActor(machine, { snapshot: seeded });
+      actor.start();
+      actor.send({ type: 'PASS' });
+      await waitFor(actor, (snapshot) =>
+        (snapshot.context.substepStates ?? []).some((ss) => ss.delegation !== undefined),
+      );
+      const delegated = actor
+        .getSnapshot()
+        .context.substepStates?.find((ss) => ss.delegation !== undefined);
+      actor.stop();
+      return delegated?.delegation?.credential.parentEntry;
+    }
+
+    it('stamps the issuing frame active entry, not a hardcoded first entry', async () => {
+      const issuingFrame = buildFrameKey('2');
+
+      await expect(
+        issuedParentEntry({
+          activeFrameKey: issuingFrame,
+          activeEntry: 2,
+          frameEntryCounts: { [issuingFrame]: 2 },
+        }),
+      ).resolves.toBe(2);
+    });
+
+    it('attributes the entry to the issuing frame, not to another active frame', async () => {
+      const issuingFrame = buildFrameKey('2');
+      const otherFrame = buildFrameKey('1');
+
+      await expect(
+        issuedParentEntry({
+          activeFrameKey: otherFrame,
+          activeEntry: 5,
+          frameEntryCounts: { [otherFrame]: 5, [issuingFrame]: 3 },
+        }),
+      ).resolves.toBe(3);
     });
   });
 

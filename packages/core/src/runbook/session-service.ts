@@ -91,6 +91,33 @@ export interface PreparedRunControlClaim {
 }
 
 /**
+ * Outcome of {@link SessionService.adoptRunControlClaim}.
+ *
+ * Refusal-biased by construction: the only `adopted` arm is one where the
+ * replaced claim provably issued nothing, so no delivered credential is
+ * orphaned by the replacement.
+ */
+export type RunControlAdoption =
+  | {
+      /** Authority was re-established; the runtime is process-memory only. */
+      readonly kind: 'adopted';
+      /** Bearer, persisted record, and claim-bound delegation capabilities. */
+      readonly runtime: PreparedRunControlClaim;
+    }
+  | {
+      /** The run already carries a credential the replacement could not reproduce. */
+      readonly kind: 'refused_credential_issued';
+      /** Run whose control could not be adopted. */
+      readonly runId: RunId;
+    }
+  | {
+      /** The guarded session mutation itself refused. */
+      readonly kind: 'refused_session';
+      /** The exact session refusal, for the caller to render. */
+      readonly refusal: SessionMutationRefusal;
+    };
+
+/**
  * Project one terminal release onto an in-memory session snapshot.
  *
  * @param session - Session snapshot to mutate in place.
@@ -613,8 +640,42 @@ export class SessionService {
    */
   async issueRunControlClaim(
     runId: RunId,
-  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+  ): Promise<SessionMutationResult<PreparedRunControlClaim>> {
     return this.mutateGuarded([runId], (ctx) => this.mintRunControlClaim(ctx.session, runId));
+  }
+
+  /**
+   * Adopt run-control authority for a run this process must drive but whose
+   * controlling bearer it does not hold.
+   *
+   * A run's bearer lives in the launching process's memory only, so a run
+   * created by a process that died is orphaned: the persisted claim record
+   * remains, but nothing can reproduce the secret it verifies. A resumed inline
+   * child is exactly that run, and without a bearer its machine cannot issue
+   * delegation credentials — the asymmetry where a freshly launched child
+   * proceeds through an authored DELEGATE step and a resumed one stops.
+   *
+   * Adoption is refused, never forced, when the run already carries a
+   * delegation issued under the claim being replaced. The credentials addendum
+   * makes that a stop condition ("minting a second run-control claim after
+   * initialization used the first"): the replacement claim could not reproduce
+   * those credentials, and `createDelegationTokenDeriver` would — correctly —
+   * refuse every echo of them, converting fail-closed into stuck-closed. A run
+   * that has issued nothing has had its first claim installed but never used,
+   * so replacing it orphans no credential.
+   *
+   * @param state - Captured state of the run whose control is being adopted.
+   * @returns The adopted runtime, a refusal naming the issued credential that
+   *   blocks adoption, or the session refusal that prevented the mint.
+   */
+  async adoptRunControlClaim(state: RunbookState): Promise<RunControlAdoption> {
+    if (state.substepStates?.some((substep) => substep.delegation !== undefined)) {
+      return { kind: 'refused_credential_issued', runId: state.id };
+    }
+    const result = await this.issueRunControlClaim(state.id);
+    return result.kind === 'committed'
+      ? { kind: 'adopted', runtime: result.value }
+      : { kind: 'refused_session', refusal: result };
   }
 
   /**
@@ -710,10 +771,7 @@ export class SessionService {
    * @param runId - Run id the minted claim controls.
    * @returns Public bearer claim id and the persisted-shape record.
    */
-  private mintRunControlClaim(
-    session: SessionData,
-    runId: RunId,
-  ): { readonly claimId: ClaimId; readonly claim: ClaimRecord } {
+  private mintRunControlClaim(session: SessionData, runId: RunId): PreparedRunControlClaim {
     const prepared = this.prepareRunControlClaim(runId);
     this.installRunControlClaim(session, prepared.claim);
     return prepared;

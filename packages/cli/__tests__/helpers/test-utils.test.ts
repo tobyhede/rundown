@@ -654,6 +654,29 @@ describe('delegation frontier helpers', () => {
       /delegation token for 1\.1/,
     );
   });
+
+  it('requireFrontierToken throws when stdout carries a bearer but no frontier advertises it', () => {
+    // A bearer printed on some other surface (a text-mode RD_CLAIM_TOKEN line,
+    // a delegate JSON envelope) is NOT evidence that the frontier emission this
+    // assertion is about still works. Scraping it would keep every caller green
+    // after the disclosure boundary regressed away.
+    const stdout = `{"type":"runbook_started"}\nRD_CLAIM_TOKEN=rdtk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n`;
+    expect(() => requireFrontierToken(stdout, '1.1')).toThrow(/delegation token for 1\.1/);
+  });
+
+  it('requireFrontierToken throws rather than guessing a token by substep position', () => {
+    // The removed fallback mapped '1.2' to the second bearer in stdout order.
+    // That resolves to a DIFFERENT substep's credential, so an id-attribution
+    // regression would return a plausible wrong token instead of failing.
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      delegateFrontier: [
+        entry('1.1', `rdtk_${'A'.repeat(32)}`),
+        entry('9.9', `rdtk_${'B'.repeat(32)}`),
+      ],
+    });
+    expect(() => requireFrontierToken(stdout, '1.2')).toThrow(/delegation token for 1\.2/);
+  });
 });
 
 describe('requireLatestFrontierToken cache', () => {

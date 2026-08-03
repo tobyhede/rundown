@@ -11,7 +11,6 @@ import {
   InvalidRunbookStateError,
   assertClaimId,
   assertClaimLookupKey,
-  assertDelegationIssuanceNonce,
   assertDelegationTokenHash,
   assertRunId,
   type AdvanceInlineParent,
@@ -23,7 +22,9 @@ import {
   type ReleaseRunbookResult,
   type SessionMutationResult,
 } from '../../src/runbook/index.js';
+import { ErrorCodes } from '../../src/errors/codes.js';
 import { createDelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
+import { assertDelegationIssuanceNonce } from '../../src/runbook/delegation-token.js';
 import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
 import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
@@ -723,7 +724,11 @@ describe('RunbookCollectionService', () => {
       kind: 'collection_failed',
       targetRunId: runId,
       reason: 'frontier_consume_failed',
-      code: 'COLLECT_OPERATION_FAILED',
+      // Was `COLLECT_OPERATION_FAILED`. The condition — a projected frontier
+      // whose consume did not commit — is reached identically from the CLI
+      // execution loop, so it carries a condition-named code rather than the
+      // collect command's bucket (F6).
+      code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
       message: 'Failed to consume delegation frontier after collect re-entry; retry collect',
     });
   });
@@ -2036,6 +2041,12 @@ describe('RunbookCollectionService', () => {
     await expect(collectWithPersistedFrontier('oops')).rejects.toBeInstanceOf(
       InvalidRunbookStateError,
     );
+    // The refusal must name the offending run: the recovery path is explicit
+    // operator action (finish/stop/prune/restart) on a specific run, so a
+    // message that does not identify one is not actionable.
+    await expect(collectWithPersistedFrontier('oops')).rejects.toThrow(
+      `Run ${runId} carries a malformed delegateFrontier`,
+    );
   });
 
   it('rejects an object (non-array) delegateFrontier in the persisted snapshot', async () => {
@@ -2109,7 +2120,10 @@ describe('RunbookCollectionService', () => {
     await expect(collectWithPersistedFrontier([rotatedIssuer])).resolves.toMatchObject({
       kind: 'collection_failed',
       reason: 'frontier_projection_refused',
-      code: 'COLLECT_OPERATION_FAILED',
+      // Was `COLLECT_OPERATION_FAILED`. A rotated/foreign issuing claim is a
+      // credential disclosure-boundary refusal, which RD-821 names — and which
+      // the execution loop already reported under RD-821 for the same input.
+      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
     });
     expect(observeEntrySpy).not.toHaveBeenCalled();
     expect(consumeSpy).not.toHaveBeenCalled();
@@ -2127,7 +2141,8 @@ describe('RunbookCollectionService', () => {
     await expect(collectWithPersistedFrontier([wrongHash])).resolves.toMatchObject({
       kind: 'collection_failed',
       reason: 'frontier_projection_refused',
-      code: 'COLLECT_OPERATION_FAILED',
+      // Was `COLLECT_OPERATION_FAILED` — see the rotated-issuer test above.
+      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
     });
     expect(observeEntrySpy).not.toHaveBeenCalled();
     expect(consumeSpy).not.toHaveBeenCalled();
@@ -2316,6 +2331,76 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       applied: 0,
       reEntryObservations: reEntryEffects,
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F6 — one condition, one code, across both entry points.
+  //
+  // `rundown collect` and `rundown run` reach the SAME re-entry frontier seam.
+  // Before the consolidation each reported its outcomes under its own code: a
+  // projection refusal was `COLLECT_OPERATION_FAILED` here and `RD-821` in the
+  // execution loop, and a consume failure was `COLLECT_OPERATION_FAILED` here
+  // and carried no code at all there. These pin the converged codes on the
+  // collect side; the
+  // execution-loop side is pinned in
+  // `packages/cli/__tests__/services/execution-loop.test.ts`.
+  // ---------------------------------------------------------------------------
+
+  it('reports a refused frontier projection under RD-821, the credential-disclosure code', async () => {
+    // A refused projection is a credential DISCLOSURE-boundary refusal, the
+    // condition RD-821 names and describes ("presenting a claim that cannot
+    // reconstruct an in-flight delegation credential"). The execution loop
+    // already refuses the identical condition under RD-821; the command driving
+    // it must not change the code.
+    const persisted = frontierEntry().persisted;
+    const rotatedIssuer = {
+      ...persisted,
+      credential: {
+        ...persisted.credential,
+        issuerClaimKey: assertClaimLookupKey(`rdclk_${'9'.repeat(32)}`),
+      },
+    };
+
+    await expect(collectWithPersistedFrontier([rotatedIssuer])).resolves.toMatchObject({
+      kind: 'collection_failed',
+      reason: 'frontier_projection_refused',
+      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+    });
+  });
+
+  it('reports a failed frontier consume under RD-829, not the collect-operation bucket', async () => {
+    // A consume failure is a DIFFERENT fact from a projection refusal —
+    // projection succeeded, the DELEGATE_FRONTIER_CONSUMED sync did not — and
+    // it is retryable. It needs its own code, carried identically by whichever
+    // entry point drove the seam.
+    const frameKey = buildFrameKey('1');
+    const retry = frontierEntry();
+    const target = state({
+      retryCount: 1,
+      snapshot: { context: { delegateFrontier: [retry.persisted] } },
+    });
+    await manager.save(target);
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: target,
+      unresolved: 1,
+      applied: [],
+    });
+    jest.spyOn(actorService, 'observeExecutionUnitEntry').mockResolvedValue([]);
+    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(frameKey, 1),
+      }),
+    ).resolves.toMatchObject({
+      kind: 'collection_failed',
+      reason: 'frontier_consume_failed',
+      code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
     });
   });
 });

@@ -37,6 +37,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
 } from './refusal-renderers.js';
+import { transactionalRefusalCode } from './session-mutation-result.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
@@ -389,22 +390,10 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     issueDelegationCredential: ctx.issueDelegationCredential,
   });
   if (mutation.kind !== 'applied') {
-    switch (mutation.kind) {
-      case 'claim_superseded':
-        return { ok: false, error: mutation.message, code: 'STALE_CLAIM' };
-      case 'concurrent_modification':
-        return { ok: false, error: mutation.message, code: 'CONCURRENT_MODIFICATION' };
-      case 'execution_in_progress':
-        return { ok: false, error: mutation.message, code: 'EXECUTION_IN_PROGRESS' };
-      case 'recovery_required':
-        return { ok: false, error: mutation.message, code: 'RECOVERY_REQUIRED' };
-      case 'missing':
-        return { ok: false, error: mutation.message, code: 'RUN_TARGET_UNAVAILABLE' };
-      default: {
-        const _exhaustive: never = mutation;
-        return _exhaustive;
-      }
-    }
+    // This site needs the code rather than the rendering — the refusal travels
+    // back to the caller as a structured result — so it calls the shared
+    // mapping directly instead of restating it.
+    return { ok: false, error: mutation.message, code: transactionalRefusalCode(mutation) };
   }
 
   output.action(

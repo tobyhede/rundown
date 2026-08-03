@@ -82,6 +82,7 @@ import { asTemplateVars } from './template-vars.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
+import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
 import { generateRunId } from './state.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
@@ -841,6 +842,24 @@ export interface RunbookContext {
    * Populated at actor bootstrap (Task 4) and updated by the retry hook.
    */
   readonly substepStates?: readonly SubstepState[];
+  /**
+   * Mirror of the persisted frame-entry coordinates, in the exact shape
+   * {@link inferFrameEntryFromState} consumes. Populated at actor bootstrap
+   * alongside `substepStates`; plain data, never written by a transition.
+   *
+   * Machine-owned delegation issuance stamps `parentEntry` into a credential
+   * coordinate that is HMAC derivation input, so it must resolve the entry
+   * through the same shared helper the manual path uses — which needs the
+   * frame history this mirror carries.
+   *
+   * The `activeFrameKey` inside it is the frame the *persisted* state named at
+   * bootstrap. It is **not** the machine's live cursor frame: derive that from
+   * `step` + `forStack` (see `runRetryHook`). Reading it as the live frame is
+   * the stale-bootstrap bug that comment warns about; its only legitimate use
+   * is telling {@link inferFrameEntryFromState} which frame `activeEntry`
+   * belongs to.
+   */
+  readonly frameEntry?: FrameEntryCoordinates;
   /** Non-secret frontier intents awaiting authorized credential delivery. */
   readonly delegateFrontier?: ReadonlyArray<PersistedDelegateFrontierEntry>;
   /** One-shot machine-owned intent for launching a non-DELEGATE child runbook inline. */
@@ -3702,6 +3721,9 @@ function checkedStateInsert(
  * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
  *   by the actor service to hydrate substep delegation state from persisted state in a single
  *   `createActor` call.
+ * @param options.frameEntry - Seeds `RunbookContext.frameEntry` at machine bootstrap so
+ *   machine-owned delegation issuance can resolve a credential's parent entry through the shared
+ *   frame-entry inference helper instead of assuming the first entry.
  * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
  * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
  * @param options.issueDelegationCredential - Verified runtime capability for machine-owned credential issuance.
@@ -3726,6 +3748,7 @@ export function compileRunbookToMachine(
     evaluationOptions?: EvaluateOutputOptions;
     helpers?: TemplateHelperRegistry;
     substepStates?: readonly SubstepState[];
+    frameEntry?: FrameEntryCoordinates;
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
     issueDelegationCredential?: DelegationCredentialIssuer;
@@ -3864,6 +3887,14 @@ export function compileRunbookToMachine(
           ...(substepId ? { substep: substepId } : {}),
           substepStates: context.substepStates,
           activeFrameKey: frameKey,
+          // Resolve the issuing frame's entry through the shared helper against
+          // the persisted coordinates, then hand `createDelegation` a state
+          // whose active frame *is* the issuing frame, so its own call to the
+          // same helper reproduces this answer. Passing the mirror's raw
+          // `activeEntry` alongside `activeFrameKey: frameKey` would attribute
+          // another frame's entry to this one.
+          activeEntry: inferFrameEntryFromState(context.frameEntry ?? {}, frameKey),
+          frameEntryCounts: context.frameEntry?.frameEntryCounts,
           parentLinkage: context.parentLinkage,
           templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
           variables: context.variables,
@@ -4708,6 +4739,7 @@ export function compileRunbookToMachine(
       finalVars: {},
       lifecycle: 'running',
       substepStates: options?.substepStates,
+      frameEntry: options?.frameEntry,
       delegateFrontier: undefined,
       inlineLaunchIntent: undefined,
       parentLinkage: options?.parentLinkage,

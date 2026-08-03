@@ -1229,6 +1229,42 @@ Code: RECOVERY_REQUIRED
 }
 ```
 
+### Aggregate recovery required
+
+The multi-run form of the refusal above. A command that mutates several runs
+atomically (a forced inline terminal cascade, an aggregate delegation abort)
+crossed its effect boundary without recording an outcome for every member, so
+more than one run needs recovery.
+
+It is a **distinct code**, not a plural spelling of `RECOVERY_REQUIRED`: only
+this envelope carries `details.runs`, the exact `(runId, epoch)` set that must
+be recovered before the workflow can resume. A consumer routing on `code` alone
+must be able to tell the two envelope shapes apart.
+
+**Text:**
+
+```text
+Error: The aggregate execution outcome is unknown and requires recovery.
+Code: AGGREGATE_RECOVERY_REQUIRED
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "The aggregate execution outcome is unknown and requires recovery.",
+  "code": "AGGREGATE_RECOVERY_REQUIRED",
+  "command": "stop",
+  "details": {
+    "runs": [
+      { "runId": "rd_9e725b142d81dabcefb9e04919568fcd", "epoch": 4 },
+      { "runId": "rd_3f0c1a7b28d94ef5a6b0c9d3e81f2a47", "epoch": 1 }
+    ]
+  }
+}
+```
+
 ### Concurrent modification
 
 The parent run changed after Rundown derived the delegated child link but before

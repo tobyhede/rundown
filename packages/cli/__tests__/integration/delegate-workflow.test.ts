@@ -1500,7 +1500,11 @@ describe('DELEGATE re-entry and retry', () => {
     // Core invariant: retry within an iteration produces a fresh token. Same
     // iteration frame, but distinct token — the iteration-retry hook does not
     // reuse the original delegation token.
-    const iter1TokenB = requireFrontierToken(collectResult.stdout, '1.1');
+    // Inside a FOR frame the frontier advertises the canonical three-level
+    // `${step}.${iteration}.${substep}` id — the same value asserted on
+    // `contextSnapshot.at` below. Asking for the two-level `1.1` matches no
+    // entry.
+    const iter1TokenB = requireFrontierToken(collectResult.stdout, '1.1.1');
     expect(iter1TokenB).not.toBe(iter1TokenA);
     expect(iterSubstep.delegation?.credential.supersedesTokenHash).toBeDefined();
     expect(iterSubstep.delegation).not.toHaveProperty('token');

@@ -6,7 +6,6 @@ import {
   deriveDelegationToken,
   findDelegationClaimToken,
   generateDelegationIssuanceNonce,
-  generateDelegationToken,
   hashDelegationToken,
   isDelegationToken,
   isDelegationTokenHash,
@@ -15,6 +14,7 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import type { FrameKey } from '../../src/runbook/targeting.js';
+import { generateDelegationToken } from '../../src/testing/delegation-fixtures.js';
 
 const DERIVATION_SECRET = 'claim-secret-that-is-never-persisted';
 const DERIVATION_COORDINATE = {
@@ -25,7 +25,11 @@ const DERIVATION_COORDINATE = {
   parentEntry: 7,
 };
 
-describe('generateDelegationToken', () => {
+// `generateDelegationToken` is a TEST FIXTURE, not production surface: nothing
+// in `src/` mints a random bearer, because a token no claim can re-derive is
+// unusable. These cases pin that the fixture the rest of this file leans on
+// still emits the canonical shape production derivation emits.
+describe('generateDelegationToken (test fixture)', () => {
   it('starts with rdtk_ prefix', () => {
     const token = generateDelegationToken();
     expect(token.startsWith(TOKEN_PREFIX)).toBe(true);

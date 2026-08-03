@@ -42,7 +42,7 @@ import {
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
 } from './refusal-renderers.js';
-import { renderSessionMutationRefusal } from './session-mutation-result.js';
+import { renderTransactionalMutationRefusal } from './session-mutation-result.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
@@ -495,20 +495,19 @@ function renderRefusal(
     case 'claim_grant_required':
       return renderClaimGrantRequiredRefusal(output, config.commandName);
     case 'unknown_run':
+      // NOT a transactional refusal: `unknown_run` is a target-resolution
+      // failure raised before any guarded mutation is attempted. It shares
+      // `RUN_TARGET_UNAVAILABLE` with the transactional `missing` arm because
+      // the operator remedy is identical, but it is not a member of that union.
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;
     case 'missing':
-      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
-      return true;
     case 'claim_superseded':
-      output.error(outcome.message, 'STALE_CLAIM');
-      return true;
     case 'concurrent_modification':
-      output.error(outcome.message, 'CONCURRENT_MODIFICATION');
-      return true;
     case 'execution_in_progress':
     case 'recovery_required':
-      return renderSessionMutationRefusal(output, outcome);
+      // Rendered by the one module that owns the kind → code mapping.
+      return renderTransactionalMutationRefusal(output, outcome);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

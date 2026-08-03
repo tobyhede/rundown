@@ -23,6 +23,8 @@ import type { ForContext } from './types.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
+import { isRunId } from './run-id.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import { Errors } from '../errors/factory.js';
 import { asTemplateVars } from './template-vars.js';
@@ -48,6 +50,7 @@ export interface RetryHookSuccess {
  * `RundownError` returned by `retryDelegation`'s `error` variant (itself a
  * translation of an inner `createDelegation` variant), or a retry-hook
  * invariant violation (RD-902 `RETRY_HOOK_NO_FRAME`,
+ * RD-903 `RETRY_HOOK_MISSING_RUN_ID`,
  * RD-904 `RETRY_HOOK_MISSING_CANONICAL_AT`,
  * RD-905 `RETRY_HOOK_STALE_SUBSTEP`). Returned with the *original*
  * `substepStates` so the caller can publish a rollback-clean assignment
@@ -81,8 +84,30 @@ export type RetryHookResult = RetryHookSuccess | RetryHookError;
  */
 export type RetryWorkingState = Pick<
   RunbookState,
-  'step' | 'substepStates' | 'templateVars' | 'forStack' | 'activeFrameKey' | 'variables'
->;
+  | 'step'
+  | 'substepStates'
+  | 'templateVars'
+  | 'forStack'
+  | 'activeFrameKey'
+  | 'activeEntry'
+  | 'frameEntryCounts'
+  | 'variables'
+> & {
+  /**
+   * Run currently executing the retry, from the machine's `RunId` template
+   * variable — never the run named by the delegation record being replaced.
+   * `parentRunId` is HMAC derivation input, so inheriting it from a stale
+   * descriptor derives the replacement against the wrong coordinate.
+   *
+   * Optional only because RETRY is universal: a frame that holds no delegation
+   * never reaches `retryDelegation` and so needs no run identity.
+   * {@link runRetryHook} refuses with RD-903 before the per-substep loop
+   * whenever the frame *does* hold a delegation and no canonical run id is
+   * available, so every value that reaches credential derivation is the
+   * verified current run id.
+   */
+  readonly id?: RunbookState['id'];
+};
 
 /**
  * Return the topmost `ForContext` on the stack, or undefined when empty.
@@ -163,10 +188,10 @@ export function retrySingleSubstep(
 
   const result: RetryDelegationResult = retryDelegation(
     {
-      state: {
-        ...working,
-        id: ss.delegation.credential.parentRunId,
-      } as RunbookState,
+      // `working` already carries the current run id and the frame-entry
+      // coordinates; the replacement credential must be derived against those,
+      // not against the descriptor it supersedes.
+      state: { ...working } as RunbookState,
       substepId: substep.id,
       frameKey: activeFrameKey,
       allowLinkedChildRun: true,
@@ -249,7 +274,15 @@ export function retrySingleSubstep(
  * On error the original substepStates are returned (not a partial mutation) so
  * the caller can apply a clean rollback.
  *
- * @param context - Current RunbookContext with mirrored substepStates
+ * Every replacement credential is derived against the *current* run: the run id
+ * comes from `context.templateVars.RunId` and the parent entry from
+ * {@link inferFrameEntryFromState} over `context.frameEntry`, both of which are
+ * HMAC derivation input. Neither is read back off the delegation record being
+ * replaced. When the frame holds a delegation and no canonical run id is
+ * available the hook refuses with RD-903 rather than deriving against a guessed
+ * identity.
+ *
+ * @param context - Current RunbookContext with mirrored substepStates and frame-entry coordinates
  * @param parentStep - Parent step carrying the DELEGATE substeps
  * @param steps - All resolved steps (needed for createDelegation inside retryDelegation)
  * @param issueCredential - Verified runtime issuer, required when an active delegation is retried
@@ -285,6 +318,21 @@ export function runRetryHook(
       substepStates,
     };
   }
+  // Second credential-derivation input, gated alongside the issuer: the run
+  // executing the retry. Absent or malformed means no coordinate can be
+  // derived, and the hook must refuse rather than fall back to the run id
+  // recorded on the descriptor it is replacing.
+  const runIdValue = context.templateVars.RunId;
+  const runId = isRunId(runIdValue) ? runIdValue : undefined;
+  if (hasDelegationToRetry && runId === undefined) {
+    const error = Errors.retryHookMissingRunId(parentStep.name);
+    return {
+      status: 'error',
+      code: error.code,
+      message: error.message,
+      substepStates,
+    };
+  }
   const credentialIssuer: DelegationCredentialIssuer =
     issueCredential ??
     (() => {
@@ -293,7 +341,8 @@ export function runRetryHook(
 
   const frontier: PersistedDelegateFrontierEntry[] = [];
   // Narrowed input for retryDelegation — only the fields it actually reads
-  // (step, substepStates, templateVars, forStack, activeFrameKey, variables).
+  // (id, step, substepStates, templateVars, forStack, activeFrameKey,
+  // activeEntry, frameEntryCounts, variables).
   // Casting a structurally-sufficient partial to RunbookState at the call site
   // avoids a full RunbookState construction while documenting the subset used.
   //
@@ -312,11 +361,18 @@ export function runRetryHook(
       : substepStates;
 
   let working: RetryWorkingState = {
+    id: runId,
     step: parentStep.name,
     substepStates: resetStates,
     templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
     forStack: context.forStack,
     activeFrameKey,
+    // Resolve the retried frame's entry through the shared helper against the
+    // persisted coordinates, then present it as the active entry of
+    // `activeFrameKey` so `createDelegation`'s own call to the same helper
+    // reproduces this answer for the frame actually being retried.
+    activeEntry: inferFrameEntryFromState(context.frameEntry ?? {}, activeFrameKey),
+    frameEntryCounts: context.frameEntry?.frameEntryCounts,
     variables: brandStoredOutputs(context.variables),
   };
 

@@ -1072,6 +1072,53 @@ function reconcileClaimTarget(
   return presented ? undefined : { kind: 'claim_bearer_mismatch' };
 }
 
+/** The runtime-only delegation capabilities one verified authority may exercise. */
+interface TransitionDelegationRuntime {
+  /** Verified runtime issuer for a transition that enters a DELEGATE frontier. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /** Same-issuer deriver used only for intentional frontier output. */
+  readonly deriveDelegationToken?: DelegationTokenDeriver;
+}
+
+/**
+ * Build the delegation runtime a transitioning caller is authorized to exercise.
+ *
+ * A lifecycle mutation that crosses into a credential-issuing state must carry
+ * VERIFIED RUN-CONTROL authority — the `delegate-from-run` grant on the run
+ * being advanced — not merely the `mutate-run` grant that authorized the
+ * transition itself. Deriving the pair from the actor context alone conflated
+ * the two: a bearer authorized to advance a run also received the capability to
+ * mint bearers from it.
+ *
+ * The check is structural on purpose. The weaker gate has never been
+ * exploitable, because the only bearer holding `mutate-run` without
+ * `delegate-from-run` is a delegated child's, and nested delegation is refused
+ * RD-819 before the issuer is exercised. That is a coincidence of two
+ * independent rules, not an authority decision, and it evaporates the day the
+ * nested prohibition moves or a narrower run-control grant set exists.
+ *
+ * Pure: reads only the verified claim's grants and the target run id. No
+ * filesystem, network, or process access.
+ *
+ * @param actorContext - Caller context after core verified bearer proof.
+ * @param runId - The run this transition mutates, and the only run the returned
+ *   capabilities may be exercised for.
+ * @returns The issuer/deriver pair when the claim authorizes delegation from
+ *   this run; an empty pair otherwise.
+ */
+function transitionDelegationRuntime(
+  actorContext: ActorContext,
+  runId: RunId,
+): TransitionDelegationRuntime {
+  if (actorContext.kind !== 'verified_claim') return {};
+  const decision = authorizeClaim(actorContext.claim, { action: 'delegate-from-run', runId });
+  if (decision.kind !== 'allowed') return {};
+  return {
+    issueDelegationCredential: createDelegationCredentialIssuer(actorContext.authority),
+    deriveDelegationToken: createDelegationTokenDeriver(actorContext.authority),
+  };
+}
+
 /**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
  * transitional delegation-issuance policy precheck.
@@ -2079,14 +2126,10 @@ export class RunbookLifecycleCommandService {
     // frontend to resolve the target first (a redundant run-state read).
     const steps = await this.#deps.loadSteps(ready.state);
 
-    const issueDelegationCredential =
-      actorContext.kind === 'verified_claim'
-        ? createDelegationCredentialIssuer(actorContext.authority)
-        : undefined;
-    const deriveDelegationToken =
-      actorContext.kind === 'verified_claim'
-        ? createDelegationTokenDeriver(actorContext.authority)
-        : undefined;
+    const { issueDelegationCredential, deriveDelegationToken } = transitionDelegationRuntime(
+      actorContext,
+      ready.state.id,
+    );
     const outcome = await this.#drive(
       input,
       steps,
@@ -2294,16 +2337,6 @@ export class RunbookLifecycleCommandService {
         : presenterAuthority?.kind === 'verified'
           ? presenterAuthority.actorContext
           : UNKNOWN_ACTOR_CONTEXT;
-    const verifiedAuthority =
-      resolution.kind === 'claim'
-        ? {
-            kind: 'bearer' as const,
-            claimId: resolution.claimId,
-            claimKey: resolution.claim.claimKey,
-          }
-        : presenterAuthority?.kind === 'verified'
-          ? presenterAuthority.authority
-          : undefined;
 
     const policy = resolveCommandIntent({
       actorContext,
@@ -2328,12 +2361,10 @@ export class RunbookLifecycleCommandService {
       state,
       steps: await this.#deps.loadSteps(state),
       terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
-      ...(verifiedAuthority === undefined
-        ? {}
-        : {
-            issueDelegationCredential: createDelegationCredentialIssuer(verifiedAuthority),
-            deriveDelegationToken: createDelegationTokenDeriver(verifiedAuthority),
-          }),
+      // Navigation can land the cursor ON a DELEGATE frontier, so the same
+      // run-control gate applies: the issuer follows `delegate-from-run`, not
+      // the `mutate-run` grant that authorized the navigation.
+      ...transitionDelegationRuntime(actorContext, state.id),
     };
   }
 

@@ -131,6 +131,26 @@ These input events are distinct from the action output recorded as
 `INLINE_LAUNCH_FAILED`) — see `packages/core/src/runbook/types.ts` and
 [§ Typed `lastAction` discriminants](#typed-lastaction-discriminants).
 
+`DELEGATION_ISSUANCE_FAILED` carries a `reason` discriminant with three
+producers, all in `delegationIssueActor`:
+
+| `reason`                       | Produced when                                                                                                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actor_context_required`       | The leaf has DELEGATE targets but the actor's `issueCredential` input is absent, so no verified claim-bound issuer can mint the credentials                                   |
+| `delegation_resolution_failed` | `inferAllDelegateSubsteps` threw for any reason other than RD-819, an authored child runbook reference did not resolve, or `createDelegation` returned a non-`created` status |
+| `nested_delegation_forbidden`  | The parent runbook is itself a claimed delegation child (RD-819); delegation is single-level                                                                                  |
+
+`actor_context_required` is the newest of the three, and is the machine-side
+half of the deterministic-credential authority model: a delegation token is
+derived from the issuing claim's secret, so a frontier the machine cannot mint
+under a verified claim is refused rather than minted unbound. All three reasons
+route through `setDelegationIssuanceFailed`, which sets `lifecycle: 'stopped'`
+and stores the reason on `lastAction`; `deriveStoppedReason` then passes the
+discriminant through verbatim, so `actor_context_required` is also the public
+`RUNBOOK_STOPPED` reason a front end renders. It is a machine-internal
+`lastAction` variant, not the `ACTOR_CONTEXT_REQUIRED` CLI error code — the two
+name the same missing authority at different boundaries.
+
 ### Transitions
 
 Default transitions when none specified:
@@ -291,6 +311,65 @@ closure. FOR iteration resolution additionally receives the unflattened initial
 template-variable seed through the same compile-time closure so file-backed
 `JsonArrayStream` sources never need to live in persisted XState context.
 
+### Manual delegation preparation machine
+
+The compiled runbook machine is not the only machine in core.
+`packages/core/src/runbook/manual-delegation-machine.ts` holds a second, much
+smaller one: `prepareManualDelegation` builds an ephemeral XState actor, `send`s
+it exactly one command, reads the result out of its context, and stops it. It is
+the dispatch seam for the three operator-initiated delegation commands —
+`ISSUE`, `RETRY`, `ABORT` — behind
+`RunbookActorService.prepareManualDelegationMutation`.
+
+**Why a machine with a single state.** The machine has one `ready` state and
+three action-only self-handlers, and that is the intended shape rather than
+scaffolding for states still to come. Manual preparation is a single synchronous
+decision over an exact captured state — there is no intermediate lifecycle for a
+state graph to model — so the value the machine carries is dispatch, not
+sequencing: the command union is XState's event type, `ready.on` is proved total
+over that union by a `satisfies ManualDelegationReadyHandlers` check (XState
+does not otherwise require `on` to be total, so a new command variant would
+compile, be silently ignored, and surface as a missing result), and the
+delegation primitives `createDelegation` / `retryDelegation` / `abortDelegation`
+stay behind machine dispatch as the architecture requires instead of being
+called directly by a service — the defect this seam was introduced to remove.
+
+Sequencing lives elsewhere by design, and the durable side of these workflows
+belongs to the aggregate execution fence: the machine performs no persistence
+and its context is never persisted. The caller commits the returned substep
+state.
+
+**Runtime authority and throws.** The verified claim-bound
+`DelegationCredentialIssuer` is bound in the machine-construction closure, never
+in machine context — the same rule as
+[§ Actor input wiring](#actor-input-wiring). A throw escaping an `assign`
+callback does not propagate out of `actor.send()`: the send returns normally
+with the context unassigned and XState re-reports the error asynchronously
+through its unhandled-error path, terminating the process instead of reaching
+the CLI error envelope. Each handler therefore boxes an unexpected throw into
+context and `prepareManualDelegation` rethrows the original value, identity
+intact. Domain refusals are separate: they are typed `status` arms
+(`already_cancelled`, `needs_force`, `child_in_flight`, `error`), never mapped
+onto a throw.
+
+**Commit path back into the compiled machine.** Only one of the three commands
+re-enters the compiled runbook machine. `prepareManualDelegationMutation` sends
+`MANUAL_DELEGATION_ABORT_PREPARED` through `prepareActorMutation` when the
+command was `ABORT` **and** the captured parent state carries a persisted
+snapshot. `ISSUE`, `RETRY`, and an `ABORT` over a state with no snapshot return
+`{ ...previousState, substepStates }` directly, without a machine event. On the
+compiled-machine side the event is a root-level `on` handler that assigns
+`context.substepStates` — no target, no guard, no derivation.
+
+The design record does not settle the longer trajectory. The PR 12 planning
+audit requires manual delegation to be machine-owned and separately contemplates
+transient per-leaf workflow substates in the compiled runbook machine, but it
+does not say whether these three commands eventually migrate into that graph.
+Migrating the `ISSUE`/`RETRY` arms onto the existing `delegationIssueActor` is a
+deferred follow-up under the delegation-lifecycle hardening epic. Treat the
+single state as today's deliberate design, not as a scheduled roadmap in either
+direction.
+
 ---
 
 ## CLI ↔ Core Event Boundary
@@ -301,23 +380,39 @@ translating snapshot transitions.
 
 ### Events the CLI sends into the machine
 
-| Event                                                                          | Source                                                          | Notes                                                                                                                             |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `PASS` / `FAIL`                                                                | `rundown pass` / `rundown fail` STDIN, substep-completion drain | Only from external user actions or pre-persisted completion records. The CLI MUST NOT synthesise these from internal observation. |
-| `GOTO { target }`                                                              | `rundown goto`                                                  | Jumps. `target` is a `StepId`. The CLI's `--index` flag is resolved before dispatch; the event itself carries no index field.     |
-| `RETRY`                                                                        | (internal — generated by retry transitions)                     |                                                                                                                                   |
-| `SET_VARIABLES { vars }`                                                       | Delegation completion                                           | Used when a child runbook reports back.                                                                                           |
-| `DELEGATE_FRONTIER_CONSUMED`                                                   | Delegation issuance                                             | Acknowledges the front end emitted the auto-issued delegation frontier.                                                           |
-| `INLINE_CHILD_STARTED { parentStepId, parentFrameKey, childRunId, startedAt }` | Inline launch side effect                                       | Records that the front end has created and started the inline child runbook for the machine-owned intent.                         |
-| `INLINE_LAUNCH_CONSUMED`                                                       | Inline launch side effect                                       | Clears the one-shot `inlineLaunchIntent` after the front end has consumed it.                                                     |
+| Event                                                                          | Source                                                          | Notes                                                                                                                                 |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `PASS` / `FAIL`                                                                | `rundown pass` / `rundown fail` STDIN, substep-completion drain | Only from external user actions or pre-persisted completion records. The CLI MUST NOT synthesise these from internal observation.     |
+| `GOTO { target }`                                                              | `rundown goto`                                                  | Jumps. `target` is a `StepId`. The CLI's `--index` flag is resolved before dispatch; the event itself carries no index field.         |
+| `RETRY`                                                                        | (internal — generated by retry transitions)                     |                                                                                                                                       |
+| `SET_VARIABLES { vars }`                                                       | Delegation completion                                           | Used when a child runbook reports back.                                                                                               |
+| `DELEGATE_FRONTIER_CONSUMED`                                                   | Delegation issuance                                             | Acknowledges the front end emitted the auto-issued delegation frontier.                                                               |
+| `INLINE_CHILD_STARTED { parentStepId, parentFrameKey, childRunId, startedAt }` | Inline launch side effect                                       | Records that the front end has created and started the inline child runbook for the machine-owned intent.                             |
+| `INLINE_LAUNCH_CONSUMED`                                                       | Inline launch side effect                                       | Clears the one-shot `inlineLaunchIntent` after the front end has consumed it.                                                         |
+| `DELEGATION_CHILD_LINKED` / `DELEGATION_CHILD_UNLINKED`                        | `RunbookActorService` (core-internal)                           | Records or clears the parent-side link to a claimed child run. Not front-end reachable.                                               |
+| `MANUAL_DELEGATION_ABORT_PREPARED { substepStates }`                           | `RunbookActorService` (core-internal)                           | Commits a machine-prepared manual `abort` back into the compiled machine. Root-level `assign` only — no target, guard, or derivation. |
 
-The set is small and stable. New CLI subcommands dispatch into existing events;
-they do not introduce new events without a corresponding state-machine handler.
-Transitional events introduced during incremental migrations (e.g. an event that
-bridges a CLI-owned side effect to a machine-owned one before the side effect
-itself moves into the machine) are scoped to the migration window and removed
-once the boundary collapses — they do not become permanent fixtures of the
-protocol.
+Two qualifications on this table, both load-bearing.
+
+**It is not the whole `RunbookEvent` union.** `FORCE_STOP`, `FORCE_COMPLETE`,
+`APPLY_CURRENT_RESOLVED_COMPLETION`, and `COMMAND_RESULT` are driven by core
+(the lifecycle command seam, the completion service, and the compiled machine's
+own command actor); `EXECUTE_COMMAND` is sent by the CLI execution loop. None of
+them appear above. `packages/core/src/runbook/compiler.ts` remains the authority
+on the union.
+
+**Not every member is CLI-originated.** The last three rows are sent by
+`RunbookActorService` inside core, not by a front end. The invariant that still
+holds — and the rule new work must satisfy — is the direction of the arrow, not
+the caller: a new CLI subcommand dispatches into existing events, and any new
+event arrives with its corresponding state-machine handler rather than as a
+protocol extension a front end can drive. Transitional events introduced during
+incremental migrations (e.g. an event that bridges a CLI-owned side effect to a
+machine-owned one before the side effect itself moves into the machine) are
+scoped to the migration window and removed once the boundary collapses — they do
+not become permanent fixtures of the protocol.
+`MANUAL_DELEGATION_ABORT_PREPARED` is the current instance of that pattern; see
+[§ Manual delegation preparation machine](#manual-delegation-preparation-machine).
 
 ### Observable events the CLI renders
 
@@ -569,6 +664,83 @@ every event (`runbookId` — an inline child's id also rides the `inlineLaunch`
 **payload** on the launch event; there is no event type named `inlineLaunch`),
 and via `rundown status` — but a run id is a selector, and only a verified
 bearer claim authorizes a mutation.
+
+### Credential disclosure boundaries and RD-821
+
+Delegation tokens are derived, not stored: persisted state holds a non-secret
+`DelegationCredentialDescriptor` plus a `tokenHash`, and the bearer is
+reconstructed on demand by a deriver bound to the exact issuing claim
+(`createDelegationTokenDeriver`). That deriver refuses a descriptor naming a
+different `issuerClaimKey`, so every surface that hands a raw bearer back to a
+caller can fail for one of two reasons: the presenting claim is not the issuing
+claim, or the reconstructed token does not hash to the verifier the parent
+recorded at issuance. Both are refusals, not successes with a degraded value —
+neither arm returns a token.
+
+There are three such disclosure boundaries, and all three refuse under one error
+code, `RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
+
+| Boundary                                                             | Surface                                                                                                                                     |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issueDelegation`'s same-issuer echo (`verifyEchoedDelegationToken`) | The seam returns `{ kind: 'error' }`; `rundown delegate` throws it into the wrapper, which emits `{"kind":"error","code":"RD-821"}`         |
+| The CLI execution loop re-entering a persisted `delegateFrontier`    | `projectDelegateFrontier` throws; the seam catches, emits `ERROR_OCCURRED` with `code: 'RD-821'`, releases the run, and returns `'stopped'` |
+| `rundown collect` re-entering a persisted frontier                   | Returns `collection_failed` with `reason: 'frontier_projection_refused'` and `code: 'RD-821'`                                               |
+
+The last two rows are the **same seam**, not two implementations of one rule:
+`projectAndConsumeReEntryFrontier`
+(`packages/core/src/runbook/re-entry-frontier.ts`) owns the persisted-blob
+validation, the projection, the entry observation, and the
+`DELEGATE_FRONTIER_CONSUMED` commit, and returns a four-arm `ReEntryProjection`.
+`collectDelegationOutcomes` and `runExecutionLoop` both switch on those arms;
+each frontend contributes only its rendered `StepEntryMetadata`, its emitter
+wiring, and its exit-code mapping. The seam commits the consume **before**
+returning observations, so a failed consume discloses no bearer on either
+surface.
+
+Three consequences worth stating explicitly.
+
+**RD-821 is now operator-reachable.** It was introduced as an unreachable-branch
+guard — `retryDelegation`'s exhaustiveness default still uses it that way — and
+its registered description in `errors/codes.ts` has been updated to name the
+operator-reachable cause. All three rows are ordinary operator conditions rather
+than internal inconsistency: rotate the run-control claim between issuance and
+disclosure and the surviving descriptor names a claim nobody can present.
+
+**It is deliberately not `ACTOR_CONTEXT_REQUIRED`.** On these paths authority is
+present — it is simply the wrong authority — so the absent-authority code would
+name the wrong condition and its remediation ("pass `--claim-id`") would tell
+the caller to do the thing it already did. Where authority is genuinely absent —
+the execution loop reaching a pending frontier with no deriver — the loop does
+refuse `ACTOR_CONTEXT_REQUIRED`, and stops with
+`reason: 'actor_context_required'`, the same reason the machine's own
+`delegationIssueActor` produces for the issuance half of that condition.
+
+**The code follows the condition, never the command.** `collect` previously
+reported a refused projection under `COLLECT_OPERATION_FAILED` — its own
+surface's registered code — with the distinguishing detail only in `reason`.
+That made one fact two codes depending on which command drove the seam, and it
+overloaded a code whose contract is "collection failed while applying delegation
+outcomes" onto a case where nothing was applied. `COLLECT_OPERATION_FAILED` now
+covers only a drain target mismatch.
+
+The frontier's other failure is a different fact and keeps its own code:
+`frontier_consume_failed` (**RD-829**, `DELEGATION_FRONTIER_CONSUME_FAILED`)
+means projection succeeded and the `DELEGATE_FRONTIER_CONSUMED` sync did not. It
+is retryable — the frontier is still persisted and no observations were surfaced
+— whereas `frontier_projection_refused` is not fixed by repetition, since the
+same authority refuses identically. Two codes because the remediations invert;
+RD-826 through RD-828 are reserved for the retry idempotency contract, so the
+frontier code takes RD-829.
+
+The fail-closed remedy the credentials design prescribes for a rotated issuing
+claim — explicit cancel and reissue — has no path today, because
+`abortDelegation` opens with `findDelegationByToken` and is therefore located by
+bearer only: cancelling needs the bearer, and producing the bearer needs the
+rotated-away claim. This is latent rather than live — the only production
+run-control mint is `pushRunbookWithPreparedRunControlClaim` at launch, and
+`issueRunControlClaim` / `pushRunbookWithRunControlClaim` have test-fixture
+callers only, so nothing rotates a run-control claim yet. It is recorded as an
+open design question in the PR 12 review-remediation addendum.
 
 ### Residual ambient session-management lane (R1 scope decision)
 

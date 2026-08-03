@@ -713,6 +713,13 @@ function recordEmittedFrontier(workspace: TestWorkspace, stdout: string): void {
  * Entries from every frontier the output carries are considered, and the LAST
  * match for `id` wins — a re-issued credential supersedes the one it replaced.
  *
+ * Resolution is EXCLUSIVELY through an emitted `step_entered.delegateFrontier`.
+ * Never scrape a bearer out of raw stdout as a fallback: a token printed on some
+ * other surface is not evidence that this disclosure boundary still works, and
+ * guessing an entry by substep position resolves to a different substep's
+ * credential — turning an id-attribution regression into a plausible wrong value
+ * instead of a failure.
+ *
  * @param stdout - Concatenated JSON output from a CLI transition
  * @param id - Optional qualified delegated substep id
  * @returns The emitted delegation bearer
@@ -723,9 +730,6 @@ export function requireFrontierToken(stdout: string, id?: string): string {
   const entry = selectFrontierEntry(entries, id);
   if (typeof entry?.token === 'string') return entry.token;
 
-  const textTokens = stdout.match(/rdtk_[A-Za-z0-9_-]{32}/g) ?? [];
-  const token = id === undefined ? textTokens[0] : textTokens[Number(id.split('.').at(-1)) - 1];
-  if (typeof token === 'string') return token;
   throw new Error(`Expected CLI output to include delegation token${id ? ` for ${id}` : ''}`);
 }
 

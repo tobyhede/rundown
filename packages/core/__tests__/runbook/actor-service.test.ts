@@ -197,6 +197,60 @@ npm test
       const actor = await actorService.createActor(state.id, mockSteps);
       expect(actor).not.toBeNull();
     });
+
+    it('mirrors persisted frame-entry coordinates into initial machine context', async () => {
+      // Machine-owned delegation issuance stamps a credential's parentEntry
+      // from this mirror, so a bootstrap that drops it silently reverts every
+      // machine-issued credential to the first entry.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const frameKey = buildFrameKey('1');
+      const otherFrameKey = buildFrameKey('2');
+      await manager.update(state.id, {
+        activeFrameKey: frameKey,
+        activeEntry: 3,
+        frameEntryCounts: replace({ [frameKey]: 3, [otherFrameKey]: 5 }),
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(actor.getSnapshot().context.frameEntry).toEqual({
+        activeFrameKey: frameKey,
+        activeEntry: 3,
+        frameEntryCounts: { [frameKey]: 3, [otherFrameKey]: 5 },
+      });
+      actor.stop();
+    });
+
+    it('overlays persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
+      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const first = await actorService.createActor(created.id, mockSteps);
+      if (!first) throw new Error('expected an actor');
+      const snapshot = first.getPersistedSnapshot();
+      first.stop();
+
+      // Frame entries advance through RunbookState, never through the machine,
+      // so the persisted values must win over anything the snapshot carries.
+      const frameKey = buildFrameKey('1');
+      await manager.update(created.id, {
+        snapshot,
+        activeFrameKey: frameKey,
+        activeEntry: 4,
+        frameEntryCounts: replace({ [frameKey]: 4 }),
+      });
+
+      const actor = await actorService.createActor(created.id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(actor.getSnapshot().context.frameEntry).toEqual({
+        activeFrameKey: frameKey,
+        activeEntry: 4,
+        frameEntryCounts: { [frameKey]: 4 },
+      });
+      actor.stop();
+    });
   });
 
   describe('updateFromActor', () => {
@@ -1969,6 +2023,35 @@ echo ok
           }),
         ]),
       );
+    });
+
+    // The snapshot-backed abort re-enters the parent machine, and that machine
+    // can step into a DELEGATE frontier whose issuance actor needs the very
+    // issuer this method already holds. Dropping it on the round-trip hands the
+    // machine a bare continuation, so the frontier refuses
+    // `actor_context_required` for a caller whose authority was verified.
+    it('forwards the verified issuer as runtime capability on the prepared abort round-trip', async () => {
+      const issued = await issueDelegation();
+      const captured = { ...issued, snapshot: { value: 'persisted' } };
+      const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
+        previousState: captured,
+        nextState: captured,
+        snapshot: { value: 'next' },
+        effects: [],
+      });
+      const issueCredential = makeDelegationCredentialIssuer();
+
+      await actorService.prepareManualDelegationMutation(
+        captured,
+        makeDelegationSteps(),
+        { type: 'ABORT', substepId: '1', frameKey, force: false },
+        issueCredential,
+      );
+
+      expect(prepareSpy).toHaveBeenCalledTimes(1);
+      expect(prepareSpy.mock.calls[0][4]).toEqual({
+        issueDelegationCredential: issueCredential,
+      });
     });
   });
 

@@ -359,9 +359,13 @@ export const ErrorCodes = {
     category: ErrorCategory.DELEGATION,
     title: 'Delegation invariant violated',
     description:
-      `A delegation operation reached an unreachable result branch. This indicates ` +
-      `an internal inconsistency in delegation state handling rather than stale ` +
-      `runbook source. Inspect the reported reason and the persisted run state.`,
+      `A delegation credential failed verification, or a delegation operation ` +
+      `reached an unreachable result branch. The operator-reachable cause is ` +
+      `presenting a claim that cannot reconstruct an in-flight delegation ` +
+      `credential — typically a rotated or foreign issuing claim — in which case ` +
+      `no bearer is disclosed. Otherwise it indicates an internal inconsistency ` +
+      `in delegation state handling rather than stale runbook source. Inspect the ` +
+      `reported reason and the persisted run state.`,
     docSlug: 'delegation-invariant-violated',
   },
   DELEGATION_RUNBOOK_MISMATCH: {
@@ -396,6 +400,24 @@ export const ErrorCodes = {
       'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator. The durable claim latch refuses a claim once the parent advances, ends, resets, or reissues the token.',
     docSlug: 'delegation-superseded',
   },
+  // RD-826..RD-828 are reserved by the PR 12 review-remediation addendum for the
+  // retry idempotency contract (DELEGATION_REPLACEMENT_CONSUMED,
+  // DELEGATION_RETRY_IDENTITY_UNMATCHED, DELEGATION_SUPERSESSION_AMBIGUOUS).
+  // That phase is blocked, so the next frontier code takes RD-829 rather than
+  // claiming a reserved number.
+  DELEGATION_FRONTIER_CONSUME_FAILED: {
+    code: 'RD-829',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation frontier consume failed',
+    description:
+      `A persisted delegation re-entry frontier projected successfully, but the ` +
+      `machine did not accept the DELEGATE_FRONTIER_CONSUMED synchronization, so ` +
+      `the frontier is still pending and its freshly derived bearers were not ` +
+      `surfaced. This is transient, not a refusal: no authority was rejected and ` +
+      `no credential failed verification. Retry the operation — the next attempt ` +
+      `re-projects and re-consumes the same frontier.`,
+    docSlug: 'delegation-frontier-consume-failed',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated
@@ -413,6 +435,19 @@ export const ErrorCodes = {
       `This indicates upstream state corruption (actor hydration bug, state-file ` +
       `tampering, or missing frame setup in a new feature path).`,
     docSlug: 'retry-hook-no-frame',
+  },
+  RETRY_HOOK_MISSING_RUN_ID: {
+    code: 'RD-903',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook has no current run id',
+    description:
+      `The retry hook must re-issue delegation credentials against the run that ` +
+      `is executing the retry, and reads that run's id from the machine's ` +
+      `\`RunId\` template variable. The variable is absent or is not a canonical ` +
+      `\`rd_<32 hex>\` id, so no credential coordinate can be derived. The run id ` +
+      `is HMAC derivation input, so the hook refuses rather than deriving against ` +
+      `a guessed or inherited identity.`,
+    docSlug: 'retry-hook-missing-run-id',
   },
   RETRY_HOOK_MISSING_CANONICAL_AT: {
     code: 'RD-904',

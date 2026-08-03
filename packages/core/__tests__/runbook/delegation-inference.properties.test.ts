@@ -165,7 +165,12 @@ function substepFromSpec(spec: DelegationSpec, index: number): SubstepState {
         parentFrameKey: spec.frameKey,
         parentEntry: index + 1,
       }),
-      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      // Derived from `index` so no two generated delegations share a verifier.
+      // A constant hash here would silently disarm every assertion that pairs a
+      // projected entry with its source substep: mis-attribution, stale-versus-
+      // superseded selection, and hash miscomputation all become unobservable
+      // when every candidate value is byte-identical.
+      tokenHash: assertDelegationTokenHash(`sha256:${index.toString(16).padStart(64, '0')}`),
       childRunbookPath: 'child.runbook.md',
       childRunbookRef: { source: 'project', path: 'child.runbook.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
@@ -324,6 +329,26 @@ describe('deriveDelegateFrontier invariants', () => {
           expect(normalise(shuffledFrontier)).toEqual(normalise(baseFrontier));
         },
       ),
+    );
+  });
+
+  it('pairs each entry with the verifier of the substep that issued it', () => {
+    // The disclosure boundary re-derives a bearer from `credential` and refuses
+    // unless it hashes to `tokenHash`. Pairing an entry's descriptor with a
+    // sibling's verifier would therefore make a legitimately issued credential
+    // undisclosable — so the pairing itself is the invariant, not the shape of
+    // either field. Only meaningful because generated verifiers are distinct.
+    fc.assert(
+      fc.property(specsArb, fc.option(frameArb, { nil: undefined }), (specs, activeFrameKey) => {
+        const substepStates = specs.map((spec, index) => substepFromSpec(spec, index));
+        const state = makeFrontierState(STEP, activeFrameKey, substepStates);
+
+        for (const entry of deriveDelegateFrontier(state)) {
+          const source = substepStates.find((ss) => ss.delegation?.credential === entry.credential);
+          expect(source).toBeDefined();
+          expect(entry.tokenHash).toBe(source?.delegation?.tokenHash);
+        }
+      }),
     );
   });
 });

@@ -327,12 +327,19 @@ export type ClaimResult =
 
 /**
  * Emit RUNBOOK_STARTED event with metadata.
+ *
+ * Exported because it is the SOLE delivery channel for a run-control bearer,
+ * and two sites now start a run's execution: this launch pipeline, and the
+ * resumed inline-child continuation that adopts a fresh bearer for an orphaned
+ * run. A second transcription of the payload would let the two disagree about
+ * which field carries the credential.
+ *
  * @param emitter - Event emitter for publishing execution events
  * @param runbookState - Current runbook state with title and description
  * @param prompted - Whether the runbook is running in prompted mode
  * @param claimId - Optional run-control bearer minted for the orchestrator
  */
-function emitRunbookStarted(
+export function emitRunbookStarted(
   emitter: ExecutionEventEmitter,
   runbookState: RunbookState,
   prompted: boolean,

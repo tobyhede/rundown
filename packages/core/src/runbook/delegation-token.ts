@@ -115,19 +115,6 @@ function encodeBase32(buf: Buffer): string {
 }
 
 /**
- * Generate a cryptographically random delegation token.
- *
- * Format: `rdtk_` prefix + 32 base32 characters from 20 random bytes.
- * Total length: 37 characters.
- *
- * @returns Opaque delegation token string
- */
-export function generateDelegationToken(): string {
-  const bytes = randomBytes(20);
-  return TOKEN_PREFIX + encodeBase32(bytes);
-}
-
-/**
  * Generate a fresh public nonce for one delegation credential issuance.
  *
  * @returns A canonical 32-byte base64url nonce.

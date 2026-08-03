@@ -103,7 +103,14 @@ export function registerAbortCommand(program: Command): void {
                     substep: outcome.substepId,
                     runbook: outcome.childRunbookPath,
                     parentRunId: outcome.parentRunId,
-                    ...(options.force ? { force: true } : {}),
+                    // JSON is the agent surface, so it carries what core DID:
+                    // the four-way cleanup branch, and a `force` derived from
+                    // it. Reporting `options.force` echoed the caller's own
+                    // argv and claimed a forced teardown on a pending
+                    // delegation where none happened — `cleanup: 'none'` is
+                    // reachable with `--force`, every other branch is not.
+                    cleanup: outcome.cleanup,
+                    ...(outcome.cleanup === 'none' ? {} : { force: true }),
                     ...(outcome.childRunId === null ? {} : { childRunId: outcome.childRunId }),
                   });
                 } else {

@@ -134,6 +134,7 @@ materialised
 materialising
 mdast
 misattributes
+miscomputation
 microstep
 minimatch
 Misordered
@@ -326,6 +327,7 @@ shims
 hermetic
 wget
 undeletable
+undisclosable
 cwds
 Hermeticity
 Trailmark

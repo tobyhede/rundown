@@ -8,8 +8,9 @@ import type {
 } from '../../src/runbook/types.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
+import { brandEffectiveVarsForTest, brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import {
   makeDelegationCredentialDescriptor,
   makeDelegationCredentialIssuer,
@@ -37,6 +38,10 @@ const HASH_STALE = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
 const HASH_ORPHAN = assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`);
 const HASH_NO_AT = assertDelegationTokenHash(`sha256:${'e'.repeat(64)}`);
 const issueCredential = makeDelegationCredentialIssuer();
+/** Run id of the run the hook is executing inside. */
+const CURRENT_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
+/** Run id baked into the persisted descriptor by `makeDelegationCredentialDescriptor`. */
+const DESCRIPTOR_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 
 describe('asTemplateVars', () => {
   it('passes through strings, numbers, arrays, and objects unchanged', () => {
@@ -168,7 +173,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       variables: {},
       forStack: [],
       substepCompletedCount: 0,
-      templateVars: {},
+      templateVars: { RunId: CURRENT_RUN_ID },
       frontmatterOutputs: [],
       finalVars: {},
       lifecycle: 'running' as const,
@@ -176,6 +181,32 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     };
 
     return { context, parentStep, steps, originalSubstepStates };
+  }
+
+  /** Drive `retryDelegation` to its `retried` variant with a canonical `at`. */
+  function mockRetried(originalSubstepStates: readonly SubstepState[]): void {
+    mockedRetryDelegation.mockReturnValue({
+      status: 'retried',
+      token: 'rdtk_new_token',
+      tokenHash: HASH_NEW,
+      delegation: {
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: HASH_NEW,
+        childRunbookPath: 'child-1.md',
+        childRunbookRef: { source: 'project', path: 'child-1.md' },
+        childRunId: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cancelledAt: null,
+        contextSnapshot: {
+          vars: brandEffectiveVarsForTest({}),
+          ancestors: [],
+          step: '1',
+          substep: '1',
+          at: '1.1',
+        },
+      },
+      updatedSubstepStates: [...originalSubstepStates],
+    });
   }
 
   it('refuses an active delegation retry when verified claim authority is absent', () => {
@@ -393,7 +424,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
         },
       ],
       substepCompletedCount: 0,
-      templateVars: {},
+      templateVars: { RunId: CURRENT_RUN_ID },
       frontmatterOutputs: [],
       finalVars: {},
       lifecycle: 'running' as const,
@@ -480,7 +511,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       variables: {},
       forStack: [],
       substepCompletedCount: 0,
-      templateVars: {},
+      templateVars: { RunId: CURRENT_RUN_ID },
       frontmatterOutputs: [],
       finalVars: {},
       lifecycle: 'running' as const,
@@ -537,5 +568,105 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       expect(result.message).toMatch(/no contextSnapshot\.at/);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
+  });
+
+  it('refuses an active delegation retry (RD-903) when the run id is absent', () => {
+    const base = buildInputs();
+    const context = { ...base.context, templateVars: {} };
+
+    const result = runRetryHook(context, base.parentStep, base.steps, issueCredential);
+
+    expect(result).toEqual({
+      status: 'error',
+      code: 'RD-903',
+      message: expect.stringContaining('Retry hook has no current run id'),
+      substepStates: base.originalSubstepStates,
+    });
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
+  it('refuses an active delegation retry (RD-903) when the run id is malformed', () => {
+    const base = buildInputs();
+    const context = { ...base.context, templateVars: { RunId: 'not-a-run-id' } };
+
+    const result = runRetryHook(context, base.parentStep, base.steps, issueCredential);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe('RD-903');
+      expect(result.substepStates).toBe(base.originalSubstepStates);
+    }
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
+  it('retries a frame with no delegation even without a run id (RETRY is universal)', () => {
+    const base = buildInputs();
+    const context = {
+      ...base.context,
+      templateVars: {},
+      substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'done' as const }],
+    };
+
+    const result = runRetryHook(context, base.parentStep, base.steps);
+
+    expect(result.status).toBe('success');
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
+  it('re-issues against the current run id, not the persisted descriptor run id', () => {
+    // `parentRunId` is HMAC derivation input. Reading it out of the delegation
+    // record being replaced re-derives the replacement against whatever run the
+    // stale descriptor names instead of the run actually executing the retry.
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    expect(originalSubstepStates[0]?.delegation?.credential.parentRunId).toBe(DESCRIPTOR_RUN_ID);
+    mockRetried(originalSubstepStates);
+
+    const result = runRetryHook(context, parentStep, steps, issueCredential);
+
+    expect(result.status).toBe('success');
+    expect(mockedRetryDelegation.mock.calls[0]?.[0].state.id).toBe(CURRENT_RUN_ID);
+  });
+
+  it('threads the mirrored frame entry into the replacement issuance', () => {
+    const base = buildInputs();
+    const frameKey = buildFrameKey('1');
+    // Extra property on a non-fresh object: the context mirror this hook must
+    // read is the same one the actor service writes at bootstrap.
+    const context = {
+      ...base.context,
+      frameEntry: {
+        activeFrameKey: frameKey,
+        activeEntry: 4,
+        frameEntryCounts: { [frameKey]: 4 },
+      },
+    };
+    mockRetried(base.originalSubstepStates);
+
+    const result = runRetryHook(context, base.parentStep, base.steps, issueCredential);
+
+    expect(result.status).toBe('success');
+    const passedState = mockedRetryDelegation.mock.calls[0]?.[0].state;
+    expect(inferFrameEntryFromState(passedState, frameKey)).toBe(4);
+  });
+
+  it('attributes the entry to the retried frame, not to another active frame', () => {
+    const base = buildInputs();
+    const frameKey = buildFrameKey('1');
+    const otherFrame = buildFrameKey('9');
+    const context = {
+      ...base.context,
+      frameEntry: {
+        activeFrameKey: otherFrame,
+        activeEntry: 7,
+        frameEntryCounts: { [otherFrame]: 7, [frameKey]: 3 },
+      },
+    };
+    mockRetried(base.originalSubstepStates);
+
+    const result = runRetryHook(context, base.parentStep, base.steps, issueCredential);
+
+    expect(result.status).toBe('success');
+    const passedState = mockedRetryDelegation.mock.calls[0]?.[0].state;
+    expect(inferFrameEntryFromState(passedState, frameKey)).toBe(3);
   });
 });
