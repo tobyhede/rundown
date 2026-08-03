@@ -62,6 +62,16 @@ Every task's requirements implicitly include this section.
   as a proxy for the JSON contract.
 - **Type-driven dispatch.** New decisions return discriminated unions the caller
   narrows on; no `if` chains over raw string discriminants.
+- **How to read the TypeScript in test steps.** A test block in this plan
+  specifies the **binding assertions** — what must be true, in the shape it must
+  be asserted. The surrounding harness is the implementer's: fixtures, seeding
+  and setup helpers are named but not implemented here, because inventing their
+  bodies would fix decisions that belong with the file's existing conventions.
+  Every helper a block names has a one-line contract at its point of first use —
+  what it seeds and what it returns. Build it to that contract, reusing the
+  neighbouring tests' fixtures, and treat the assertions as the part you may not
+  change. Production code blocks are the opposite: they are literal, and the
+  surrounding lines they slot between are cited by line number.
 
 ---
 
@@ -507,9 +517,23 @@ A9, after the projection is gone.
 
 - [ ] **Step 1: Write the failing machine tests**
 
-Append to `packages/core/__tests__/runbook/compiler.test.ts`. Use the file's
-existing fixture helpers for step construction; the assertions below are the
-contract.
+Append to `packages/core/__tests__/runbook/compiler.test.ts`. The assertions are
+the contract; build the fixtures on the file's existing step-construction helpers
+(`createRunbook` and neighbours) to these contracts. Tasks A3 and A4 reuse the
+same set, so define them once at the top of the describe block.
+
+| Fixture                    | Shape                                                                                                   |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `options`                   | The compile option bag used throughout this file, plus `frameEntry: { frameEntryCounts: {} }`            |
+| `recordingIssuer()`         | A `DelegationCredentialIssuer` double that appends each `DelegationCredentialLocation` it is handed to a `locations` array and returns a valid descriptor; `lastLocation` is `locations.at(-1)` |
+| `delegatingSteps()`         | Plain step `1` (PASS CONTINUE) then substep-bearing step `2` with one DELEGATE substep (`runbooks: ['child.runbook.md']`, DEFER transitions) and `aggregation: { strategy: 'ALL' }` |
+| `delegatingRetrySteps()`    | `delegatingSteps()` with step `2`'s FAIL transition carrying `retry: 1`, so an ALL-aggregation failure drives the parent retry hook |
+| `aggregationRetrySteps()`   | As `delegatingRetrySteps()` but with a plain (non-DELEGATE) substep — exercises the retry re-entry without issuance |
+| `parentArtifactSteps()`     | Step `2` has substeps **and** step-level `artifacts`, so entering `2.1` routes through `step::2::__parent-entry::1` |
+| `forLoopSteps(n)`           | Step `2` is a FOR step over `n` iterations with one substep per iteration                                |
+| `forIterationRetrySteps()`  | A FOR step whose `forClause.transitions.fail` carries `retry: 1`, so a failure retries *within* the iteration frame |
+| `twoSubstepSteps()`         | Step `2` with two plain substeps, both DEFER, so PASS advances `2.1 → 2.2` inside one frame              |
+| `retryBudgetSteps()`        | Step `1` with `fail: { retry: 1, action: STOP }`, so FAIL routes through `step::1::fail-retry` and back  |
 
 ```typescript
 describe('machine-owned frame entry', () => {
@@ -2028,10 +2052,18 @@ export function resolveRetryIssuance(capture: RetryIssuanceCapture): RetryIssuan
 | step / active | `Hs` set, cancelled                 | `rotatable`                             | `retried`               | yes    |
 | step / active | `Hs` set, `!entryCurrent`           | `rotatable`                             | `retried`               | yes    |
 
-Rows 8 and 9 are decided at the scan boundary, before the resolver runs (Task
-B4). Rows 1, 12 and their outcomes are produced by machinery that already exists
-— `inferRunbookFromStep` raises RD-801, and the child-liveness guard raises
-RD-823 *before* the resolver is called — so both resolve to `rotatable` here.
+**Row 8 is this resolver's, not the seam's.** The seam scans the supersession
+index unconditionally and hands the result in; it never inspects the length.
+Deciding ambiguity in the locator would make it invisible whenever `findByToken`
+also hits — precisely the "row 8 outranks row 2" case below — so the priority
+lives here and only here.
+
+Row 9 (`not located → token-not-found`) is the one genuine locator concern: it is
+the fallthrough once both lookups miss, decided before any capture exists, so
+there is nothing for a resolver to be handed. Rows 1 and 12 reach here as
+`rotatable` because their outcomes come from machinery that already exists —
+`inferRunbookFromStep` raises RD-801, and the child-liveness guard raises RD-823
+*before* the resolver is called.
 
 - [ ] **Step 1: Write one failing test per decision-table row**
 
@@ -2292,6 +2324,11 @@ function unobservedReplacement(delegation: StepDelegation, frameEntry: number): 
  * runs immediately before this call — both reach here, if at all, as
  * `rotatable`.
  *
+ * Ambiguity, by contrast, is decided **here** and nowhere else. The caller
+ * scans the supersession index unconditionally and passes the result in
+ * `supersededBy` without inspecting its length, so a caller that also matched a
+ * current row cannot mask it.
+ *
  * @param capture - The locator-discriminated capture taken inside the transaction.
  * @returns The discriminated resolution.
  */
@@ -2412,7 +2449,7 @@ describe('retry idempotency error codes', () => {
 
   it('never carries a bearer token in a refusal envelope', () => {
     const error = Errors.delegationReplacementConsumed('2.1', 'claimed');
-    expect(JSON.stringify(error.toJSON())).not.toContain('rddt_');
+    expect(JSON.stringify(error.toJSON())).not.toContain('rdtk_');
   });
 
   it('names the consumption reason in the message', () => {
@@ -2517,9 +2554,16 @@ bearer. #681"
 
 - Modify: `packages/core/src/runbook/lifecycle-command-service.ts` — the
   `DelegationIssuanceOutcome` union (`:288-356`), the token locator (`:1442-1471`),
-  the seam dependency bag, `verifyEchoedDelegationToken` (`:418-442`), and
-  `beforeEffect` (`:1660-1691`)
+  the seam dependency bag (`:152`, `:174`), `verifyEchoedDelegationToken`
+  (`:418-442`), and `beforeEffect` (`:1660-1691`)
+- Modify: `packages/cli/src/commands/delegate.ts:629-642`,
+  `packages/cli/src/helpers/lifecycle-seam-factory.ts:57-67` — the two production
+  construction sites of the seam's dependency bag
 - Test: `packages/core/__tests__/runbook/lifecycle-command-service.test.ts`
+- Test (dependency-bag updates only):
+  `packages/core/__tests__/runbook/claim-seen.test.ts`,
+  `packages/core/__tests__/runbook/guarded-drain-composition.test.ts`,
+  `packages/core/__tests__/runbook/entry-projection-ordering.test.ts`
 
 **Interfaces:**
 
@@ -2545,15 +2589,45 @@ bearer. #681"
       }
     ```
 
-  - New seam dependency:
-    `findDelegationsBySupersededToken?: (token: string) => Promise<readonly TokenScanResult[]>`.
+  - New **required** seam dependency, mirroring the existing
+    `FindDelegationByToken` type (`lifecycle-command-service.ts:174`) and its
+    required field (`:152`):
+
+    ```typescript
+    export type FindDelegationsBySupersededToken = (
+      token: string,
+    ) => Promise<readonly TokenScanResult[]>;
+    ```
+
+    Required, never optional. An optional dependency consumed as
+    `(await deps.findDelegationsBySupersededToken?.(t)) ?? []` fails **open**:
+    any construction site that omits it silently reverts every replayed retry to
+    `token-not-found` — the exact behaviour #681 exists to add — and the failure
+    is invisible because the fallback is a legal empty result. Making it
+    required turns each omission into a compile error, per "invalid states are
+    unrepresentable".
+
   - Extracted helper
     `verifyDerivedBearer(credential, tokenHash, subject, deriveToken): EchoedDelegationToken`,
     with `verifyEchoedDelegationToken` re-expressed in terms of it.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `packages/core/__tests__/runbook/lifecycle-command-service.test.ts`:
+Append to `packages/core/__tests__/runbook/lifecycle-command-service.test.ts`.
+`seam`, `manager`, `runId` and `evidence()` are the file's existing fixtures
+(`:207`, `startSeamOnDelegateStep` at `:321`). The seed helpers this block needs
+are new; build them on `startSeamOnDelegateStep` and give them these contracts:
+
+| Helper                                        | Seeds                                                                                                       | Returns                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `seedDelegation()`                            | An active run parked on delegating step `2`, substep `2.1` carrying one freshly issued, unclaimed delegation | `void`                         |
+| `currentToken()`                              | Nothing — reads the bearer currently recorded at `2.1` from committed state                                 | `Promise<string>`              |
+| `seedRotatedAndClaimed()`                     | `seedDelegation()`, one retry to T2, then a committed claim linking a child run to T2                       | `{ t1: string; t2: string }`   |
+| `seedRotatedThenReplacedByUnrelatedDelegation()` | `seedDelegation()`, one retry to T2, then overwrite `2.1`'s row with a delegation whose `tokenHash` and `supersedesTokenHash` both name neither T1 nor T2 | `{ t1: string }` |
+| `seedTwoRowsSuperseding()`                    | `seedDelegation()`, one retry to T2, then write a **second** substep row in the same frame whose credential also records `hash(T1)` as `supersedesTokenHash`. T1 is no longer any row's `tokenHash`, so `findDelegationByToken(T1)` misses | `{ t1: string }` |
+| `seedTwoRowsSupersedingWithLiveCurrent()`     | As above, but leaves T1 as the `tokenHash` of a third row so `findDelegationByToken(T1)` **hits** — the corrupted state that is only reachable because the supersession scan is unconditional | `{ t1: string }` |
+| `gotoBackIntoTheDelegatingFrame()`            | Drives `seam.runNavigationMutation` to `{ step: '2', substep: '1' }`, bumping the frame entry               | `void`                         |
+| `retryUnderRotatedClaim()`                    | `seedDelegation()`, one retry, then rotates the run-control claim and replays the retry under the new one   | the `DelegationIssuanceOutcome` |
 
 ```typescript
 describe('#issueRetry idempotency', () => {
@@ -2603,11 +2677,14 @@ describe('#issueRetry idempotency', () => {
     // the cursor's row carries an unrelated delegation: neither its tokenHash
     // nor its supersedesTokenHash names T1.
     const { t1 } = await seedRotatedThenReplacedByUnrelatedDelegation();
+    const beforeState = await manager.load(runId);
+
     const outcome = await seam.issueDelegation({ mode: 'retry', callerEvidence: evidence(), locator: { kind: 'token', token: t1 } });
     expect((outcome as { error: RundownError }).error.code).toBe(
       'DELEGATION_RETRY_IDENTITY_UNMATCHED',
     );
-    expect(await manager.load(runId)).toEqual(await beforeState);
+    // A refusal writes nothing.
+    expect(await manager.load(runId)).toEqual(beforeState);
   });
 
   it('refuses RD-828 when two rows supersede the bearer', async () => {
@@ -2618,7 +2695,20 @@ describe('#issueRetry idempotency', () => {
     expect((outcome as { error: RundownError }).error.code).toBe(
       'DELEGATION_SUPERSESSION_AMBIGUOUS',
     );
-    expect(JSON.stringify(outcome)).not.toContain('rddt_');
+    expect(JSON.stringify(outcome)).not.toContain('rdtk_');
+  });
+
+  it('refuses RD-828 even when findByToken also matches the named bearer', async () => {
+    // The reachability pin for the unconditional scan. T1 is still a current
+    // tokenHash, so `findDelegationByToken` HITS. If the supersession scan were
+    // a fallback that ran only on a miss, the two superseding rows would be
+    // invisible and this would resolve `rotatable` — the resolver's stated
+    // "row 8 outranks row 2" priority would never actually run.
+    const { t1 } = await seedTwoRowsSupersedingWithLiveCurrent();
+    const outcome = await seam.issueDelegation({ mode: 'retry', callerEvidence: evidence(), locator: { kind: 'token', token: t1 } });
+    expect((outcome as { error: RundownError }).error.code).toBe(
+      'DELEGATION_SUPERSESSION_AMBIGUOUS',
+    );
   });
 
   it('rotates rather than echoing after a GOTO advanced the frame entry', async () => {
@@ -2645,7 +2735,7 @@ describe('#issueRetry idempotency', () => {
     // A rotated issuing claim cannot reconstruct the credential: RD-821, no token.
     const outcome = await retryUnderRotatedClaim();
     expect((outcome as { error: RundownError }).error.code).toBe('DELEGATION_INVARIANT_VIOLATED');
-    expect(JSON.stringify(outcome)).not.toContain('rddt_');
+    expect(JSON.stringify(outcome)).not.toContain('rdtk_');
   });
 });
 ```
@@ -2728,7 +2818,7 @@ function verifyEchoedDelegationToken(
 }
 ```
 
-- [ ] **Step 5: Add the superseded-token fallback to the token locator**
+- [ ] **Step 5: Add the unconditional superseded-token scan to the token locator**
 
 In `#issueRetry`'s token branch (`:1442-1471`), after
 `const scan = await this.#deps.findDelegationByToken(locator.token);` and before
@@ -2736,25 +2826,30 @@ the `if (!scan)` early return:
 
 ```typescript
       // `findByToken` matches `tokenHash` only, so a replayed retry naming a
-      // bearer that has since been rotated away resolves to nothing there. Fall
-      // back to the supersession index so the replay reaches the resolver rather
-      // than dying as `token-not-found` before any predicate could run.
-      const superseding = scan
-        ? []
-        : ((await this.#deps.findDelegationsBySupersededToken?.(locator.token)) ?? []);
-      if (superseding.length > 1) {
-        return {
-          kind: 'error',
-          error: Errors.delegationSupersessionAmbiguous(superseding[0].substepId ?? superseding[0].stepId),
-        };
-      }
-      const located = scan ?? superseding[0];
+      // bearer that has since been rotated away resolves to nothing there.
+      //
+      // The supersession index is scanned UNCONDITIONALLY — not as a fallback
+      // when `findByToken` misses. Skipping it on a hit would make "more than
+      // one attempt records this bearer as superseded" invisible in exactly the
+      // case where a current row also matches, which is the corrupted state the
+      // refusal exists for. Scanning always is the fail-closed choice, and it is
+      // what lets `resolveRetryIssuance` remain the single place the priority
+      // between ambiguity and a matching current row is expressed. This seam
+      // decides nothing from the result but *where* the target run is.
+      const supersedingScan = await this.#deps.findDelegationsBySupersededToken(locator.token);
+      const located = scan ?? supersedingScan[0];
       if (!located) return { kind: 'token-not-found', token: locator.token };
 ```
 
-Then replace every subsequent use of `scan` in that branch with `located`.
+Then replace every subsequent use of `scan` in that branch with `located`, and
+carry `supersedingScan` into `beforeEffect` (declare it in `#issueRetry`'s outer
+scope alongside `cursor`, defaulting to `[]` on the non-token locators).
 `identityTokenHash` for the capture is `hashDelegationToken(locator.token)`;
 compute it once here and close over it.
+
+There is deliberately **no** RD-828 return here. Row 9 (`not located →
+token-not-found`) is a locator concern and stays — it is decided before any
+capture exists — but row 8 is a resolver row and is emitted in Step 6.
 
 - [ ] **Step 6: Call the resolver from `beforeEffect`**
 
@@ -2769,18 +2864,35 @@ In `beforeEffect`, insert between the child-liveness guard (which ends at
         // the fresh path, where `resolveDelegationIssuance` decides
         // echo-versus-issue in `beforeEffect` and the machine runs only on the
         // issuable branch.
+        // `supersededBy` is derived primarily from the CAPTURED parent state:
+        // the disk scan ran before this transaction took its capture, so only
+        // the captured rows carry in-transaction authority. The scan's
+        // contribution is the rows it found in *other* runs, which the captured
+        // parent cannot contain and which are the only way cross-run ambiguity
+        // becomes visible. Union, deduped by `tokenHash`.
+        const capturedSuperseding = (parent.state.substepStates ?? [])
+          .map((row) => row.delegation)
+          .filter(
+            (row): row is StepDelegation =>
+              row?.credential.supersedesTokenHash === identityTokenHash,
+          );
+        const foreignSuperseding = supersedingScan
+          .filter((row) => row.parentState.id !== parent.state.id)
+          .map((row) => row.delegation)
+          .filter((row) => row.credential.supersedesTokenHash === identityTokenHash);
+        const supersededBy = [
+          ...new Map(
+            [...capturedSuperseding, ...foreignSuperseding].map((row) => [row.tokenHash, row]),
+          ).values(),
+        ];
+
         const retryResolution = resolveRetryIssuance(
           locator.kind === 'token'
             ? {
                 locator: 'token',
                 identityTokenHash,
                 current: exactSubstep?.delegation,
-                supersededBy: (parent.state.substepStates ?? [])
-                  .map((row) => row.delegation)
-                  .filter(
-                    (row): row is StepDelegation =>
-                      row?.credential.supersedesTokenHash === identityTokenHash,
-                  ),
+                supersededBy,
                 frameEntry: inferFrameEntryFromState(parent.state, exactCursor.frameKey),
               }
             : {
@@ -2853,34 +2965,100 @@ In `beforeEffect`, insert between the child-liveness guard (which ends at
 next to `cursor` at the top of `#issueRetry` and narrow with the `locator.kind`
 check above.
 
-- [ ] **Step 7: Add the seam dependency and its production wiring**
+- [ ] **Step 7: Declare the required dependency**
 
-Add `findDelegationsBySupersededToken` to the seam's dependency interface beside
-`findDelegationByToken`, and wire it wherever the seam is constructed in
-production — `packages/cli/src/commands/delegate.ts`'s `buildDelegateSeam` is
-the one that matters for `rundown delegate`. Search for existing
-`findDelegationByToken:` construction sites and add the sibling to each:
+In `packages/core/src/runbook/lifecycle-command-service.ts`, add the field
+immediately after `findDelegationByToken` (`:152`) — **not** optional:
 
-```bash
-rg -n 'findDelegationByToken:' packages --glob '!**/__tests__/**'
+```typescript
+  /**
+   * Locate every delegation across runs that records a plain-text token as
+   * superseded.
+   *
+   * CLI-bound; wraps `DelegationScanService.findBySupersededToken`. Required,
+   * like its `findDelegationByToken` sibling: the retry `token` locator scans
+   * this index unconditionally, and an omitted dependency would silently return
+   * every replayed retry to `token-not-found` rather than failing loudly.
+   */
+  readonly findDelegationsBySupersededToken: FindDelegationsBySupersededToken;
 ```
+
+and the type beside `FindDelegationByToken` (`:174`):
+
+```typescript
+/**
+ * Where the seam obtains every delegation superseding a given plain-text token.
+ *
+ * @param token - Plain-text delegation bearer that may have been superseded.
+ * @returns Every matching scan result; empty when none match.
+ */
+export type FindDelegationsBySupersededToken = (
+  token: string,
+) => Promise<readonly TokenScanResult[]>;
+```
+
+- [ ] **Step 8: Supply it at every construction site**
+
+Making the field required turns each omission into a compile error, so `tsc`
+finds them — but fix them from this list rather than discovering them one at a
+time. Eight literal dependency objects need the new field. Two sites that spread
+`...deps` (`lifecycle-command-service.test.ts:1837` and `:2161`) inherit it and
+need **no** edit.
+
+Production:
+
+| Site                                                | Wiring                                                                    |
+| ---------------------------------------------------- | --------------------------------------------------------------------------- |
+| `packages/cli/src/commands/delegate.ts:629` (`buildDelegateSeam`, field at `:641`) | real scan over the same `manager`                       |
+| `packages/cli/src/helpers/lifecycle-seam-factory.ts:57` (field at `:66`)           | real scan over the same `manager`                       |
+
+Both take the same shape as their `findDelegationByToken` neighbour:
 
 ```typescript
     findDelegationsBySupersededToken: (token) =>
       new DelegationScanService(manager).findBySupersededToken(token),
 ```
 
-- [ ] **Step 8: Run the tests and verify they pass**
+Tests:
+
+| Site                                                                       | Wiring                    |
+| --------------------------------------------------------------------------- | --------------------------- |
+| `packages/core/__tests__/runbook/claim-seen.test.ts:304` (field at `:313`)  | `async () => []`          |
+| `packages/core/__tests__/runbook/claim-seen.test.ts:417` (field at `:426`)  | `async () => []`          |
+| `packages/core/__tests__/runbook/guarded-drain-composition.test.ts:99` (field at `:108`) | `async () => []` |
+| `packages/core/__tests__/runbook/lifecycle-command-service.test.ts:207` (field at `:221`) | `async () => []` |
+| `packages/core/__tests__/runbook/lifecycle-command-service.test.ts:318` (the `deps` literal returned at `:321`) | real scan over `manager` |
+| `packages/core/__tests__/runbook/entry-projection-ordering.test.ts:153` (field at `:165`; the file Task A8 renamed) | real scan over `manager` |
+
+The three `async () => []` stubs are the seams whose suites never call
+`issueDelegation`, matching their existing `findDelegationByToken: async () => undefined`
+stub. The two real-scan sites drive genuine retry flows and must see the index.
+
+Verify none were missed:
+
+```bash
+pnpm --filter @rundown-org/core exec tsc --noEmit && pnpm --filter @rundown-org/cli exec tsc --noEmit
+rg -n 'findDelegationByToken:' packages | wc -l
+rg -n 'findDelegationsBySupersededToken:' packages | wc -l
+```
+
+The two counts must match (`findDelegationByToken:` also appears at the two
+spread-override sites, which override only that one field — so expect the
+superseded count to be two lower, and confirm the difference is exactly those
+two lines and nothing else).
+
+- [ ] **Step 9: Run the tests and verify they pass**
 
 ```bash
 pnpm --filter @rundown-org/core exec jest __tests__/runbook/lifecycle-command-service.test.ts
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 npx biome check --config-path=. --write packages/core/src/runbook/lifecycle-command-service.ts \
-  packages/cli/src/commands/delegate.ts packages/core/__tests__/runbook/lifecycle-command-service.test.ts
+  packages/cli/src/commands/delegate.ts packages/cli/src/helpers/lifecycle-seam-factory.ts \
+  packages/core/__tests__/runbook
 git add packages/core/src packages/cli/src packages/core/__tests__
 git commit -m "feat(core): apply the retry idempotency contract in #issueRetry
 
@@ -2889,7 +3067,12 @@ before resolveOverrides. Adds the retry-already-applied outcome carrying the
 re-derived current bearer (verified against its persisted hash before
 disclosure) and refuses RD-826/827/828. A replayed retry naming a rotated-away
 bearer now resolves through the supersession index instead of dying as
-token-not-found. #681"
+token-not-found.
+
+The supersession scan is unconditional and its result is handed to the resolver
+untouched, so ambiguity stays decidable in the one place the priority is
+expressed. Its dependency is required, not optional: an omitted one would fail
+open, returning every replayed retry to token-not-found. #681"
 ```
 
 ---
@@ -2913,7 +3096,20 @@ token-not-found. #681"
 
 - [ ] **Step 1: Write the failing tests (JSON first)**
 
-In `packages/cli/__tests__/commands/delegate.test.ts`:
+In `packages/cli/__tests__/commands/delegate.test.ts`. This suite's real harness
+is `createTestWorkspace` + `runCliInProcess(args, workspace)` (returning
+`{ stdout, stderr, exitCode }`), `issueRunControlClaim(workspace, runId)`,
+`parseCliJsonObject` and `extractToken`, all from `../helpers/test-utils.js`.
+The blocks below use two local wrappers over them — define them in the describe
+block rather than adding suite-wide helpers:
+
+| Wrapper           | Contract                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `runDelegate(args)` | `runCliInProcess(['delegate', ...args], workspace)` — returns `{ stdout, stderr, exitCode }` unchanged           |
+| `claimId`           | The run-control claim id from `issueRunControlClaim(workspace, runId)` during this describe's `beforeEach`      |
+
+The fixture must be parked on a delegating step whose substep `2.1` names
+`child.runbook.md` and carries a delegation issued in the same setup.
 
 ```typescript
 it('emits action retry-already-applied with the current bearer (JSON default)', async () => {
@@ -2924,7 +3120,7 @@ it('emits action retry-already-applied with the current bearer (JSON default)', 
     action: 'retry-already-applied',
     step: '2.1',
     runbook: 'child.runbook.md',
-    token: expect.stringMatching(/^rddt_/),
+    token: expect.stringMatching(/^rdtk_/),
     token_hash: expect.any(String),
     parent_run_id: expect.stringMatching(/^rd_/),
   });
@@ -2947,7 +3143,7 @@ it('renders the echo for humans with --text', async () => {
 
 In `packages/cli/__tests__/commands/delegate-refusals.test.ts`, one case per new
 code asserting the JSON error envelope carries `code: 'RD-826' | 'RD-827' | 'RD-828'`,
-exit code 1, and **no** `rddt_` substring anywhere in stdout or stderr.
+exit code 1, and **no** `rdtk_` substring anywhere in stdout or stderr.
 
 - [ ] **Step 2: Run and verify failure**
 
@@ -3085,7 +3281,7 @@ describe('retry idempotency edge cases', () => {
     ]);
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain('RD-821');
-    expect(`${stdout}${stderr}`).not.toContain('rddt_');
+    expect(`${stdout}${stderr}`).not.toContain('rdtk_');
   });
 
   it('a rotated issuing claim dead-ends the echo with RD-821, not a partial token', async () => {
@@ -3100,7 +3296,7 @@ describe('retry idempotency edge cases', () => {
     ]);
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain('RD-821');
-    expect(`${stdout}${stderr}`).not.toContain('rddt_');
+    expect(`${stdout}${stderr}`).not.toContain('rdtk_');
   });
 
   it('--run with a superseded token still refuses run_target_mismatch on the wrong run', async () => {
@@ -3138,11 +3334,24 @@ describe('retry idempotency edge cases', () => {
 });
 ```
 
-`delegateJson` runs `rundown delegate …` in the default JSON mode and returns the
-parsed stdout; `run` returns `{ stdout, stderr, exitCode }` unparsed for the
-refusal cases. Both come from the existing helpers in
-`packages/cli/__tests__/integration/`; add thin local wrappers if the file's
-neighbours name them differently.
+Build the harness on `packages/cli/__tests__/helpers/test-utils.js` — the
+integration suites' shared source of `createTestWorkspace`,
+`runCliInProcess(args, workspace)`, `issueRunControlClaim(workspace, runId)`,
+`parseCliJsonObject` and `extractToken`. Define these local wrappers over them to
+these contracts:
+
+| Helper                        | Contract                                                                                                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run(argv)`                    | `runCliInProcess(argv, workspace)` — returns `{ stdout, stderr, exitCode }` unparsed. Used for every refusal case, where the body is an error envelope rather than a delegate response |
+| `delegateJson(args)`           | `run(['delegate', ...args])`, asserts `exitCode === 0`, and returns `JSON.parse(stdout)`. Every call site reads `.action` and/or `.token`, so it must satisfy at minimum `{ action: string; token: string }` — the full `DelegateResponseSchema` shape |
+| `claim(token)`                 | `run(['claim', token])`, then reads the minted `claim_id` off the parsed response                                                                               |
+| `rotateRunControlClaim()`      | A second `issueRunControlClaim(workspace, parentRunId)` over the same run, which supersedes the first; returns the new `claim_id`. The superseded one can no longer reconstruct credentials it minted |
+| `claimId`                      | The run-control `claim_id` captured from `runbook_started` during fixture setup                                                                                 |
+| `foreignClaimId`               | `issueRunControlClaim(workspace, otherRunId)` — a run-control claim for a **different** run, used to prove the echo is same-issuer only                          |
+| `parentRunId` / `otherRunId`   | The fixture run's id, and a second running stack member used as the wrong `--run` target                                                                        |
+
+The fixture project needs a parent runbook with a delegating step `2` carrying a
+DELEGATE substep `2.1` — the same shape Task B5's tests use.
 
 - [ ] **Step 2: Run them**
 
@@ -3223,9 +3432,9 @@ The current bearer is echoed so the caller can rotate deliberately by naming it.
 
 ```text
 ALREADY    step 2.1 -> child.runbook.md
-Token:     rddt_…
+Token:     rdtk_…
 
-RD_CLAIM_TOKEN=rddt_…
+RD_CLAIM_TOKEN=rdtk_…
 ```
 
 **JSON:**
@@ -3236,7 +3445,7 @@ RD_CLAIM_TOKEN=rddt_…
   "action": "retry-already-applied",
   "step": "2.1",
   "runbook": "child.runbook.md",
-  "token": "rddt_…",
+  "token": "rdtk_…",
   "token_hash": "…",
   "parent_run_id": "rd_…"
 }
@@ -3290,39 +3499,139 @@ Judge on in-scope Survived / NoCoverage mutants. Non-negotiable kills:
 Re-check anything reported as surviving with
 `--related-tests` before concluding the suite genuinely misses it.
 
-- [ ] **Step 3: Manual end-to-end proof in a scratch project**
+- [ ] **Step 3: Build the workspace CLI and stand up the scratch project**
 
-Run #681's acceptance sequence verbatim, from a temporary directory outside the
-repo:
+The proof must exercise **this branch's** CLI, not whatever `rundown` resolves to
+on `PATH` — a globally installed release would run the old behaviour and report
+a green proof. Build first, then resolve the binary from the package manifest
+rather than guessing its path:
 
 ```bash
-rundown run parent.runbook.md                          # capture claim_id
-rundown delegate --step 1.1 --claim-id <C>             # T1
-rundown delegate --retry --step 1.1 --claim-id <C>     # rotates -> T2
-rundown delegate --retry --step 1.1 --claim-id <C>     # ECHOES T2, no write, exit 0
-rundown delegate --retry <T2> --claim-id <C>           # intentional rotation -> T3
-rundown delegate --retry <T1> --claim-id <C>           # RD-826 or token-not-found
+cd /Users/tobyhede/psrc/rundown/.worktrees/680-machine-owned-frame-entry
+pnpm run build
+
+# packages/cli/package.json declares { "bin": { "rundown": "dist/cli.js", "rd": "dist/cli.js" } }.
+# Resolve it from the manifest so a future bin rename cannot silently break this.
+RD="$PWD/packages/cli/$(node -p "require('./packages/cli/package.json').bin.rundown")"
+test -f "$RD" || { echo "CLI not built at $RD"; exit 1; }
+
+SCRATCH="$(mktemp -d)"
+mkdir -p "$SCRATCH/.rundown/runbooks"
+cd "$SCRATCH"
 ```
 
-Record and check three things:
+Write the two runbooks the sequence needs. `parent.runbook.md` parks the run on
+a delegating step `1` whose substep `1.1` is an authored DELEGATE target naming
+`child.runbook.md`:
 
-1. **Two rotations committed** — T2 and T3 are distinct bearers, and
-   `.rundown/runs/<id>.json` records exactly two supersessions.
-2. **The echo writes no persisted state** — hash the run state file before and
-   after the third command and confirm they match:
+````bash
+cat > parent.runbook.md <<'EOF'
+---
+name: retry-idempotency-proof
+---
+
+# Retry idempotency proof
+
+## 1. Delegate one child
+
+- ALL
+
+### 1.1 Hand the work to a child
+
+- DELEGATE
+- child.runbook.md
+
+Wait for the child to report.
+
+- PASS DEFER
+- FAIL DEFER
+
+## 2. Finish
+
+Nothing to do.
+
+- PASS COMPLETE
+- FAIL STOP
+EOF
+
+cat > .rundown/runbooks/child.runbook.md <<'EOF'
+---
+name: child
+---
+
+# Child
+
+## 1. Do the work
+
+Report the outcome.
+
+- PASS COMPLETE
+- FAIL STOP
+EOF
+````
+
+- [ ] **Step 4: Run #681's acceptance sequence and check the three properties**
+
+```bash
+"$RD" run parent.runbook.md                          # capture claim_id -> C, and the run id
+"$RD" delegate --step 1.1 --claim-id "$C"            # T1
+"$RD" delegate --retry --step 1.1 --claim-id "$C"    # rotates -> T2
+"$RD" delegate --retry --step 1.1 --claim-id "$C"    # ECHOES T2, no write, exit 0
+"$RD" delegate --retry "$T2" --claim-id "$C"         # intentional rotation -> T3
+"$RD" delegate --retry "$T1" --claim-id "$C"         # RD-826 or token-not-found
+```
+
+Every command emits JSON by default; read `.token` off each response and keep
+`STATE=".rundown/runs/<run id>.json"`.
+
+1. **Two rotations committed.** `T1`, `T2` and `T3` are three distinct bearers,
+   and each rotation is verifiable **at the moment it happens** — not
+   retrospectively. `replaceIssuedDelegation` → `replaceSubstepStateEntry`
+   substitutes the `(id, frameKey)` row wholesale (`targeting.ts:565`, whose own
+   TSDoc says "substitutes the entry wholesale"), so after the second rotation
+   the row carries only `supersedesTokenHash = hash(T2)` — the T2→T1 link is
+   gone and a count of supersessions in the final file is not observable.
+   Capture the state after each rotation instead:
 
    ```bash
-   shasum .rundown/runs/<id>.json  # before and after the echoing command
+   # after the T2 rotation
+   cp "$STATE" /tmp/after-t2.json
+   node -e 'const h=require("crypto").createHash("sha256").update(process.argv[1]).digest("hex");
+     const s=require("/tmp/after-t2.json");
+     const d=s.substepStates.find(r=>r.delegation).delegation;
+     console.assert(d.credential.supersedesTokenHash==="sha256:"+h, "T2 must supersede T1");' "$T1"
+
+   # after the T3 rotation
+   cp "$STATE" /tmp/after-t3.json
+   node -e 'const h=require("crypto").createHash("sha256").update(process.argv[1]).digest("hex");
+     const s=require("/tmp/after-t3.json");
+     const d=s.substepStates.find(r=>r.delegation).delegation;
+     console.assert(d.credential.supersedesTokenHash==="sha256:"+h, "T3 must supersede T2");' "$T2"
    ```
 
-3. **No full token in any refusal envelope** — the fifth command's stdout and
-   stderr contain no `rddt_`-prefixed string:
+   (Match the hash encoding to `hashDelegationToken` in
+   `packages/core/src/runbook/delegation-token.ts` — read it rather than assuming
+   the `sha256:` prefix.)
+
+2. **The echo writes no persisted state.** Hash the run state file either side of
+   the third command and confirm the digests match:
 
    ```bash
-   rundown delegate --retry <T1> --claim-id <C> 2>&1 | grep -c 'rddt_'  # must print 0
+   shasum "$STATE"                                       # before
+   "$RD" delegate --retry --step 1.1 --claim-id "$C"     # the echo
+   shasum "$STATE"                                       # must be identical
    ```
 
-- [ ] **Step 4: Commit anything the gate or the manual proof turned up**
+3. **No full token in any refusal envelope.** The fifth command's stdout and
+   stderr contain no `rdtk_`-prefixed string:
+
+   ```bash
+   "$RD" delegate --retry "$T1" --claim-id "$C" 2>&1 | grep -c 'rdtk_'  # must print 0
+   ```
+
+Clean up with `rm -rf "$SCRATCH"` once all three hold.
+
+- [ ] **Step 5: Commit anything the gate or the manual proof turned up**
 
 ```bash
 git add -A
@@ -3363,7 +3672,7 @@ of Option 1 ("The machine owns the entry bump") plus its Follow-on section.
 | `resolveRetryIssuance` implemented per the addendum's decision table (15 rows, token and step/active locators) | Task B2           |
 | RD-826/827/828 registered and documented in `docs/reference/cli.md` and `docs/spec/cli-output.md`           | Tasks B3, B7      |
 | Edge cases: frame re-entry with a surviving replacement, retry-of-a-retry chains, foreign-claim replay, rotated issuing claim, `--run` + superseded token, replacement claimed by a terminal vs live child | Task B6 |
-| Manual end-to-end proof: two rotations committed, the echo writes no persisted state, no full token in any refusal envelope | Task B8, Step 3   |
+| Manual end-to-end proof: two rotations committed, the echo writes no persisted state, no full token in any refusal envelope | Task B8, Steps 3–4 |
 
 ### Cross-cutting
 
@@ -3373,3 +3682,6 @@ of Option 1 ("The machine owns the entry bump") plus its Follow-on section.
 | Mutation coverage judged on in-scope survivors, scoped correctly     | Tasks A1 Step 8, A11 Step 2, B1 Step 5, B2 Step 6, B8 Step 2 |
 | Part A production change reviewable separately from its test churn   | Task A6 and Task A7 are separate commits |
 | No persisted-state migration, fallback, or shim anywhere in the diff | Global Constraints; enforced by review |
+| No fail-open wiring: the supersession lookup is a required dependency supplied at every construction site | Task B4 Steps 7–8 |
+| Ambiguity (row 8) is decidable in every case, including when `findByToken` also matches | Task B4 Step 5 (unconditional scan) + Task B4 Step 1 (`findByToken also matches` test) |
+| The manual proof exercises this branch's built CLI, not a `PATH` release | Task B8 Step 3 |
