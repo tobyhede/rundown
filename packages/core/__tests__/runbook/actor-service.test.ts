@@ -2690,6 +2690,77 @@ echo ok
         },
       });
     });
+
+    // `isPersistableLastAction` gates what reaches persisted state, and its
+    // DELEGATION_ISSUANCE_FAILED arm accepts exactly three reasons. Each is a
+    // distinct machine outcome an operator must still be able to read off a
+    // stopped run: `actor_context_required` is the one a resumed inline child
+    // produces when it holds no delegation authority. Accepting each
+    // individually — and rejecting everything else — is what stops the arm
+    // silently narrowing or widening.
+    it.each([
+      'actor_context_required',
+      'delegation_resolution_failed',
+      'nested_delegation_forbidden',
+    ])('persists a terminal DELEGATION_ISSUANCE_FAILED with reason %s', async (reason) => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          lifecycle: 'stopped',
+          retryCount: 0,
+          lastAction: {
+            type: 'DELEGATION_ISSUANCE_FAILED' as const,
+            origin: 'direct',
+            reason,
+            message: 'no authority',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+      expect(updated.lastAction).toEqual({
+        type: 'DELEGATION_ISSUANCE_FAILED',
+        origin: 'direct',
+        reason,
+        message: 'no authority',
+      });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', reason },
+      });
+    });
+
+    // The two rejection halves of the same conjunction: an unrecognised reason
+    // with a valid message, and a recognised reason with a non-string message.
+    // Both must drop the action rather than persist a malformed one.
+    it.each([
+      { label: 'an unrecognised reason', reason: 'credential_expired', message: 'no authority' },
+      { label: 'a non-string message', reason: 'actor_context_required', message: 42 },
+    ])(
+      'drops a terminal DELEGATION_ISSUANCE_FAILED carrying $label',
+      async ({ reason, message }) => {
+        const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+          runbookPath: 'test.md',
+        });
+        const actor = mockActor({
+          value: 'STOPPED',
+          context: {
+            variables: {},
+            lifecycle: 'stopped',
+            retryCount: 0,
+            lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', origin: 'direct', reason, message },
+          },
+        });
+
+        const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+        expect(updated.lastAction).toBeUndefined();
+      },
+    );
   });
 
   describe('implicit ForContext filtering', () => {

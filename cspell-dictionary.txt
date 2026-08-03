@@ -358,6 +358,8 @@ unsynchronized
 precheck
 frontends
 recognises
+recognised
+unrecognised
 reconstructable
 fanout
 unsupplied
