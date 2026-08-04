@@ -79,9 +79,10 @@ export class DelegationScanService {
    * substep states for a credential whose `supersedesTokenHash` matches.
    *
    * Returns **all** matches rather than the first, because "more than one
-   * attempt records this bearer as superseded" is a distinct, refusable
-   * condition (RD-828). It is unreachable by construction; surfacing it as data
-   * is what lets the caller refuse rather than silently resolve one of them.
+   * attempt records this bearer as superseded" is a distinct condition the
+   * caller must refuse (RD-828). It is unreachable by construction; surfacing
+   * it as data is what lets the caller refuse rather than silently resolve one
+   * of them.
    *
    * Same O(N) full-scan cost profile as {@link findByToken} — see its
    * performance note.

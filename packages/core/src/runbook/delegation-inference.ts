@@ -949,7 +949,11 @@ export function resolveRetryIssuance(capture: RetryIssuanceCapture): RetryIssuan
   if (current === undefined) return { kind: 'rotatable' };
   if (current.tokenHash === capture.identityTokenHash) return { kind: 'rotatable' };
 
-  const replacement = capture.supersededBy[0];
+  // `.at(0)`, not `[0]`: an index read is typed as always-present under this
+  // tsconfig, which would make the guard below read as dead code while an empty
+  // `supersededBy` still yields `undefined` at runtime. Row 7 ("matches neither
+  // Hc nor Hs") is exactly that case, so the type has to admit it.
+  const replacement = capture.supersededBy.at(0);
   if (replacement === undefined) return { kind: 'identity-unmatched' };
   if (replacement.childRunId !== null) {
     return { kind: 'replacement-consumed', reason: 'claimed' };

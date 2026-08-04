@@ -1316,7 +1316,7 @@ describe('resolveTargetedDelegation', () => {
 
 describe('resolveRetryIssuance', () => {
   const H = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
-  const HOTHER = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+  const H_OTHER = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
   const ENTRY = 3;
 
   /**
@@ -1334,7 +1334,7 @@ describe('resolveRetryIssuance', () => {
     cred: Partial<StepDelegation['credential']> = {},
   ): StepDelegation =>
     makeActiveDelegation({
-      tokenHash: HOTHER,
+      tokenHash: H_OTHER,
       ...over,
       credential: makeDelegationCredentialDescriptor({ parentEntry: ENTRY, ...cred }),
     });

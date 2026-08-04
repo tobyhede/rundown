@@ -1625,7 +1625,11 @@ export class RunbookLifecycleCommandService {
       // between ambiguity and a matching current row is expressed. This seam
       // decides nothing from the result but *where* the target run is.
       supersedingScan = await this.#deps.findDelegationsBySupersededToken(locator.token);
-      const located = scan ?? supersedingScan[0];
+      // `.at(0)` for the same reason as `resolveRetryIssuance`'s `replacement`:
+      // an index read is typed as always-present, so the guard below would read
+      // as dead code even though an empty scan yields `undefined` and must fall
+      // through to `token-not-found`.
+      const located = scan ?? supersedingScan.at(0);
       if (!located)
         return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
       // Fail-closed: an explicit `--run` that names a different run than the
