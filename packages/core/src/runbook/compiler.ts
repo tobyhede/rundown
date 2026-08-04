@@ -76,13 +76,23 @@ import {
   type OutputVars,
 } from './output-evaluator.js';
 import type { MachineExecutionObserver } from '../events/execution-observation.js';
-import { buildFrameKey, deriveExecutionAt, findSubstepState, type FrameKey } from './targeting.js';
+import {
+  buildFrameKey,
+  deriveExecutionAt,
+  findSubstepState,
+  frameKeyForCursor,
+  type FrameKey,
+} from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
-import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
+import {
+  advanceFrameEntry,
+  inferFrameEntryFromState,
+  type FrameEntryCoordinates,
+} from './frame-entry.js';
 import { generateRunId } from './state.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
@@ -736,6 +746,14 @@ function buildArtifactRuntimeScope(
 // Typed constants for empty array values that need explicit types
 // (bare `[]` infers as `never[]`, not the required array type).
 const EMPTY_FOR_STACK: RunbookContext['forStack'] = Object.freeze([]);
+/** One-shot marker declaring a GOTO-driven frame re-entry (consumed by `syncFrameEntry`). */
+const FRAME_REENTRY_GOTO: NonNullable<RunbookContext['frameReentry']> = Object.freeze({
+  cause: 'GOTO' as const,
+});
+/** One-shot marker declaring a RETRY-driven frame re-entry (consumed by `syncFrameEntry`). */
+const FRAME_REENTRY_RETRY: NonNullable<RunbookContext['frameReentry']> = Object.freeze({
+  cause: 'RETRY' as const,
+});
 const EMPTY_RESULTS = Object.freeze([]) as unknown as NonNullable<
   RunbookContext['iterationResults']
 >;
@@ -843,23 +861,33 @@ export interface RunbookContext {
    */
   readonly substepStates?: readonly SubstepState[];
   /**
-   * Mirror of the persisted frame-entry coordinates, in the exact shape
-   * {@link inferFrameEntryFromState} consumes. Populated at actor bootstrap
-   * alongside `substepStates`; plain data, never written by a transition.
+   * Authoritative frame-entry coordinates, in the shape
+   * {@link inferFrameEntryFromState} consumes.
    *
-   * Machine-owned delegation issuance stamps `parentEntry` into a credential
-   * coordinate that is HMAC derivation input, so it must resolve the entry
-   * through the same shared helper the manual path uses — which needs the
-   * frame history this mirror carries.
+   * The machine is the sole writer: {@link advanceFrameEntry} runs as an entry
+   * action on every step/substep leaf state, and `deriveActorStatePatch`
+   * persists the result. It is seeded at bootstrap only for a run that has no
+   * snapshot yet.
    *
-   * The `activeFrameKey` inside it is the frame the *persisted* state named at
-   * bootstrap. It is **not** the machine's live cursor frame: derive that from
-   * `step` + `forStack` (see `runRetryHook`). Reading it as the live frame is
-   * the stale-bootstrap bug that comment warns about; its only legitimate use
-   * is telling {@link inferFrameEntryFromState} which frame `activeEntry`
-   * belongs to.
+   * Plain data — it serialises into the persisted snapshot cleanly and carries
+   * no function references or process-runtime values.
    */
   readonly frameEntry?: FrameEntryCoordinates;
+  /**
+   * One-shot declaration that the transition now running is a frame re-entry.
+   *
+   * Written by every GOTO/RETRY transition assign, consumed and cleared by the
+   * first leaf `syncFrameEntry` that follows. The split exists because a
+   * transition knows *that* it re-enters but not yet *which* frame — the FOR
+   * iteration is only current after the leaf's `initForStack` runs — and
+   * because one transition can drive several state entries
+   * (`__parent-entry::` routing), which a one-shot marker survives and a
+   * `lastAction` read does not.
+   *
+   * Never present in a settled snapshot: every transition that sets it is
+   * followed in the same macrostep by the leaf entry that consumes it.
+   */
+  readonly frameReentry?: { readonly cause: 'GOTO' | 'RETRY' };
   /** Non-secret frontier intents awaiting authorized credential delivery. */
   readonly delegateFrontier?: ReadonlyArray<PersistedDelegateFrontierEntry>;
   /** One-shot machine-owned intent for launching a non-DELEGATE child runbook inline. */
@@ -1535,6 +1563,7 @@ function buildSimpleGotoAssign(options: {
       ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
       : 0,
     retryMax: undefined,
+    frameReentry: FRAME_REENTRY_GOTO,
     substep: options.resolvedSubstepId,
     ...(resetSubstepStates
       ? {
@@ -1710,6 +1739,7 @@ function buildParentExitAssign(
           substepCompletedCount: 0,
           deferredResults: EMPTY_RESULTS,
           lastAction: makeAggregationLastAction(buildGotoLastAction(parentAction.target)),
+          frameReentry: FRAME_REENTRY_GOTO,
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
@@ -1726,6 +1756,7 @@ function buildParentExitAssign(
             }
           : {}),
         lastAction: makeAggregationLastAction(buildGotoLastAction(parentAction.target)),
+        frameReentry: FRAME_REENTRY_GOTO,
       });
     }
     case 'STOP':
@@ -1850,16 +1881,34 @@ function buildParentStateConfig(
         // RETRY_ERROR lastAction before the priority-0 guard could fire).
         target: formatStateId(stepName),
         actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
+          // `runRetryHook` runs as a TRANSITION action, so the leaf
+          // `syncFrameEntry` that follows cannot make the entry current for it.
+          // Advance here, hand the hook the advanced coordinates, and do NOT set
+          // `frameReentry` — the entry action would otherwise score this bump a
+          // second time.
+          const frameEntry = advanceFrameEntry(
+            context.frameEntry ?? {},
+            frameKeyForCursor(parentStep.name, context.forStack),
+            true,
+          );
           // Run the retry hook: iterate every delegated substep in the active
           // frame, re-issue their delegations, collect new tokens into a
           // frontier. Uniform re-delegation (docs/spec/language.md §4.2, §5). Never throws.
-          const hook = runRetryHook(context, parentStep, steps, issueDelegationCredential);
+          const hook = runRetryHook(
+            { ...context, frameEntry },
+            parentStep,
+            steps,
+            issueDelegationCredential,
+          );
           if (hook.status === 'error') {
             // RETRY_ERROR variant: structurally distinct LastAction type. The
             // priority-0 always entry routes to STOPPED on this discriminant
             // — no counter increments, no frontier population, no substep
             // reset. Aggregation origin mirrors the sibling RETRY emission:
             // both sit on the parent-aggregation retry path.
+            //
+            // RETRY_ERROR routes to STOPPED and re-enters no frame, so the
+            // advance is discarded with the rest of the retry.
             return {
               lastAction: makeAggregationLastAction({
                 type: 'RETRY_ERROR' as const,
@@ -1870,6 +1919,7 @@ function buildParentStateConfig(
             };
           }
           return {
+            frameEntry,
             // Aggregation origin marks this RETRY as aggregation-driven (spec §3.5).
             lastAction: makeAggregationLastAction({ type: 'RETRY' as const }),
             parentRetryCount: context.parentRetryCount + 1,
@@ -1972,12 +2022,29 @@ function buildParentStateConfig(
           // priority-0 RETRY_ERROR guard could fire.
           target: formatStateId(stepName),
           actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
+            // `runRetryHook` runs as a TRANSITION action, so the leaf
+            // `syncFrameEntry` that follows cannot make the entry current for
+            // it. Advance here, hand the hook the advanced coordinates, and do
+            // NOT set `frameReentry` — the entry action would otherwise score
+            // this bump a second time. This site does not reset `forStack`, so
+            // the frame key is the current iteration's and the advance is a
+            // same-frame re-entry.
+            const frameEntry = advanceFrameEntry(
+              context.frameEntry ?? {},
+              frameKeyForCursor(parentStep.name, context.forStack),
+              true,
+            );
             // Run the retry hook: iterate every delegated substep in the
             // current iteration frame, re-issue their delegations, collect new
             // tokens into a frontier. Uniform re-delegation within the frame
             // (docs/spec/language.md §4.2, §5). activeFrameKey scopes the hook to this
             // iteration — other iterations' substep states remain untouched.
-            const hook = runRetryHook(context, parentStep, steps, issueDelegationCredential);
+            const hook = runRetryHook(
+              { ...context, frameEntry },
+              parentStep,
+              steps,
+              issueDelegationCredential,
+            );
             if (hook.status === 'error') {
               // RETRY_ERROR variant: structurally distinct LastAction type.
               // The sibling priority-0 always entry on the parent state
@@ -1995,6 +2062,7 @@ function buildParentStateConfig(
               };
             }
             return {
+              frameEntry,
               iterationRetryCount: context.iterationRetryCount + 1,
               // Counter contract on FOR-iteration retry (see docs/internal/architecture.md §Retry Counters):
               //   iterationRetryCount — machine-invariant counter used by the iteration
@@ -2661,6 +2729,7 @@ function buildRecoveryReconcileTransitions(
         deferredResults: EMPTY_RESULTS,
         ...targetPatch,
         lastAction: buildGotoLastActionFromEvent(first.substepId),
+        frameReentry: FRAME_REENTRY_GOTO,
       }),
     };
   });
@@ -2794,6 +2863,7 @@ function buildRetryStateConfig(
           lastAction: makeDirectLastAction({ type: 'RETRY' as const }),
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
+          frameReentry: FRAME_REENTRY_RETRY,
         }),
       },
       ...(rawEntries as RunbookAlwaysEntry[]),
@@ -3139,6 +3209,7 @@ function buildGotoTransition(
             !isImplicit || !!targetStepObj.aggregation,
           ),
         lastAction: makeDirectLastAction(buildGotoLastAction(target)),
+        frameReentry: FRAME_REENTRY_GOTO,
         parentRetryCount:
           targetStepObj.name === stepName
             ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
@@ -3868,17 +3939,35 @@ export function compileRunbookToMachine(
     ],
     onError: forResolutionFailureTransition,
   });
+  /**
+   * Build the entry action that makes `context.frameEntry` current for a leaf.
+   *
+   * Appended AFTER the leaf's existing entry actions so it runs after
+   * `initForStack` has made the FOR iteration current — that is what makes a
+   * loop-back register as a frame switch with no extra wiring. It runs before
+   * the leaf's initial child's `invoke` input factory is read, so
+   * `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
+   *
+   * @param stepName - The step this leaf belongs to.
+   * @returns The XState assign action.
+   */
+  const buildSyncFrameEntry = (stepName: string) =>
+    runbookSetup.assign({
+      frameEntry: ({ context }: { context: RunbookContext }): FrameEntryCoordinates =>
+        advanceFrameEntry(
+          context.frameEntry ?? {},
+          frameKeyForCursor(stepName, context.forStack),
+          context.frameReentry !== undefined,
+        ),
+      frameReentry: undefined,
+    });
   const buildDelegationIssueInvokeBlock = (
     stepName: string,
     substepId: string | undefined,
   ): NonNullable<RunbookStateConfig['invoke']> => ({
     src: 'delegationIssueActor' as const,
     input: ({ context }: { context: RunbookContext }) => {
-      const activeFor = peekForStack(context.forStack);
-      const frameKey = buildFrameKey(
-        stepName,
-        activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
-      );
+      const frameKey = frameKeyForCursor(stepName, context.forStack);
       const runIdValue = context.templateVars.RunId;
       return {
         state: {
@@ -4204,6 +4293,7 @@ export function compileRunbookToMachine(
     const leafEntryActions = [
       ...currentEntryActions,
       ...(shouldClearLeafEntryArtifacts ? [clearCurrentEntryArtifacts] : []),
+      buildSyncFrameEntry(config.stepName),
     ];
     const owningStep = steps.find((step) => step.name === config.stepName);
     const needsIteration = owningStep !== undefined && leafNeedsIterationResolution(owningStep);
@@ -4312,6 +4402,7 @@ export function compileRunbookToMachine(
                   !forStepForTarget.implicit || !!forStepForTarget.step.aggregation,
                 ),
               lastAction: buildGotoLastActionFromEvent(target.substepId),
+              frameReentry: FRAME_REENTRY_GOTO,
               parentRetryCount:
                 target.stepName === config.stepName
                   ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
@@ -4389,6 +4480,7 @@ export function compileRunbookToMachine(
             lastMessage: undefined,
             retryCount: ({ context }) => context.retryCount + 1,
             retryMax: retryMaxFromTransitions,
+            frameReentry: FRAME_REENTRY_RETRY,
           }),
           target: routeThroughParentArtifactsIfNeeded(config.id, steps),
         },

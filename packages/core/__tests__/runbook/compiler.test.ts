@@ -48,7 +48,10 @@ import {
   assertDelegationTokenHash,
   hashDelegationToken,
 } from '../../src/runbook/delegation-token.js';
-import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
+import type {
+  DelegationCredentialIssuer,
+  DelegationCredentialLocation,
+} from '../../src/runbook/delegation-credential.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { activeFrame, buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -13259,13 +13262,23 @@ echo ok
       const issuingFrame = buildFrameKey('2');
       const otherFrame = buildFrameKey('1');
 
+      // Entering the issuing frame from another frame is a frame switch, and
+      // the machine now performs that bump itself before issuance reads the
+      // coordinates: `max(counts[issuing] = 3, activeEntry = 5) + 1 = 6`. The
+      // ordinal is run-global and monotonic, so it advances past the other
+      // frame's entry rather than resuming this frame's recorded count.
+      //
+      // Before #680 this stamped 3 — the machine read the pre-transition
+      // mirror while the post-machine projection committed 6. The claim this
+      // case makes is unchanged: the entry belongs to the ISSUING frame and is
+      // never the other frame's `activeEntry` (5).
       await expect(
         issuedParentEntry({
           activeFrameKey: otherFrame,
           activeEntry: 5,
           frameEntryCounts: { [otherFrame]: 5, [issuingFrame]: 3 },
         }),
-      ).resolves.toBe(3);
+      ).resolves.toBe(6);
     });
   });
 
@@ -13484,6 +13497,387 @@ echo ok
 
       expect(actor.getSnapshot().context.iterationResults).toEqual(uninterrupted);
       expect(uninterrupted).toEqual(['pass', 'pass', 'pass']);
+      actor.stop();
+    });
+  });
+
+  describe('machine-owned frame entry', () => {
+    const DEFER_BOTH = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    };
+    const FAIL_RETRY_ONCE = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+    };
+    const DELEGATE_SUBSTEP = {
+      id: '1',
+      description: 'Hand the work to a child',
+      transitions: DEFER_BOTH,
+      runbooks: ['child.runbook.md'],
+      delegate: true,
+    };
+
+    /**
+     * A {@link DelegationCredentialIssuer} that records every location it is
+     * handed, so a case can read back the `parentEntry` the machine stamped.
+     */
+    type RecordingIssuer = DelegationCredentialIssuer & {
+      readonly locations: DelegationCredentialLocation[];
+    };
+
+    /** Build a fresh recording issuer; `locations` accumulates in issuance order. */
+    function recordingIssuer(): RecordingIssuer {
+      const locations: DelegationCredentialLocation[] = [];
+      const issue = (location: DelegationCredentialLocation) => {
+        locations.push(location);
+        const token = generateDelegationToken();
+        return {
+          token,
+          tokenHash: hashDelegationToken(token),
+          credential: makeDelegationCredentialDescriptor(location),
+        };
+      };
+      return Object.assign(issue, { locations });
+    }
+
+    // `parentArtifactSteps()` routes through `__parent-entry::`, whose invoked
+    // artifact resolver refuses without `evaluationOptions.cwd`. The directory
+    // only has to exist — resolution computes a URI and never reads the file.
+    let cwd: string;
+    beforeEach(async () => {
+      cwd = await mkdtemp(path.join(tmpdir(), 'rundown-frame-entry-'));
+    });
+    afterEach(async () => {
+      await rm(cwd, { recursive: true, force: true });
+    });
+
+    /** Compile with the delegation fixture option bag, plus an empty frame-entry seed. */
+    function compileFixture(
+      steps: ResolvedStep[],
+      issuer: DelegationCredentialIssuer = ISSUE_DELEGATION_CREDENTIAL,
+    ): ReturnType<typeof compileRunbookToMachine> {
+      return compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
+          ContextId: 'ctx1',
+          WorkPath: '.rundown/work',
+          RunbookRef: { source: 'project', path: 'parent.md' },
+        }),
+        resolveDelegationRunbook: async (runbookRef) => ({
+          path: `/resolved/${runbookRef}`,
+          runbookRef,
+          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+        }),
+        issueDelegationCredential: issuer,
+        evaluationOptions: { cwd },
+        frameEntry: { frameEntryCounts: {} },
+      });
+    }
+
+    /** Settle every pending machine effect (artifact resolution, issuance, FOR iterate). */
+    async function settle(actor: ReturnType<typeof createActor>): Promise<void> {
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 5000,
+      });
+    }
+
+    /** Read the machine's authoritative entry ordinal. */
+    function entryOf(actor: ReturnType<typeof createActor>): number {
+      return (actor.getSnapshot().context as RunbookContext).frameEntry?.activeEntry ?? 0;
+    }
+
+    /** Plain step `1` (PASS CONTINUE), then delegating parent `2` with one DELEGATE substep. */
+    const delegatingSteps = (): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Delegating parent',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [DELEGATE_SUBSTEP],
+        },
+      ]);
+
+    /** `delegatingSteps()` with step 2 FAIL carrying `retry: 1`, driving the parent retry hook. */
+    const delegatingRetrySteps = (): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Delegating parent',
+          transitions: FAIL_RETRY_ONCE,
+          aggregation: { strategy: 'ALL' },
+          substeps: [DELEGATE_SUBSTEP],
+        },
+      ]);
+
+    /** As `delegatingRetrySteps()` but with a plain substep — retry re-entry without issuance. */
+    const aggregationRetrySteps = (): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Aggregating parent',
+          transitions: FAIL_RETRY_ONCE,
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Plain sub', transitions: DEFER_BOTH }],
+        },
+      ]);
+
+    /** Step `2` has substeps AND step-level artifacts, so `2.1` routes via `__parent-entry::1`. */
+    const parentArtifactSteps = (): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Parent with artifacts',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          artifacts: [{ name: 'ParentPath', rawToken: 'parent.json' }],
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFER_BOTH },
+            { id: '2', description: 'Sub 2', transitions: DEFER_BOTH },
+          ],
+        },
+      ]);
+
+    /** Step `2` is a FOR step over `n` iterations with one substep per iteration. */
+    const forLoopSteps = (n: number): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Loop',
+          forClause: { start: 1, end: n, ...DEFAULT_FOR_ITERATION },
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Sub', transitions: DEFER_BOTH }],
+        },
+        { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** A FOR step whose iteration FAIL carries `retry: 1`, retrying inside the iteration frame. */
+    const forIterationRetrySteps = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '2',
+          description: 'Loop',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
+            },
+            aggregation: { strategy: 'ALL' as const },
+          },
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Sub', transitions: DEFER_BOTH }],
+        },
+        { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** Step `2` with two plain DEFER substeps, so PASS advances 2.1 -> 2.2 inside one frame. */
+    const twoSubstepSteps = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '2',
+          description: 'Parent',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFER_BOTH },
+            { id: '2', description: 'Sub 2', transitions: DEFER_BOTH },
+          ],
+        },
+        { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** Step `1` with `fail: { retry: 1, action: STOP }`, routing via `step::1::fail-retry`. */
+    const retryBudgetSteps = (): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Retryable', transitions: FAIL_RETRY_ONCE },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    it('advances the entry on entry to a leaf state, before its invoked children run', async () => {
+      // The credential the machine stamps must equal the entry the machine
+      // holds once the transition settles.
+      const issuer = recordingIssuer();
+      const actor = createActor(compileFixture(delegatingSteps(), issuer));
+      actor.start();
+
+      expect((actor.getSnapshot().context as RunbookContext).frameEntry).toEqual({
+        activeFrameKey: buildFrameKey('1'),
+        activeEntry: 1,
+        frameEntryCounts: { [buildFrameKey('1')]: 1 },
+      });
+
+      actor.send({ type: 'PASS' });
+      await settle(actor);
+
+      // The frame switch bumped BEFORE `__issue-delegations` read the context.
+      expect(entryOf(actor)).toBe(2);
+      expect(issuer.locations.at(-1)?.parentEntry).toBe(2);
+      actor.stop();
+    });
+
+    it('does not double-bump when a substep routes through __parent-entry::', async () => {
+      // The parent declares ARTIFACTS, so entering substep 2.1 routes
+      // step::2::__parent-entry::1 -> step::2::1 — two state entries, one frame.
+      const actor = createActor(compileFixture(parentArtifactSteps()));
+      actor.start();
+      const before = entryOf(actor);
+      actor.send({ type: 'PASS' });
+      await settle(actor);
+      expect(entryOf(actor)).toBe(before + 1);
+      actor.stop();
+    });
+
+    it('bumps exactly once per FOR iteration advance', async () => {
+      const actor = createActor(compileFixture(forLoopSteps(3)));
+      actor.start();
+      await settle(actor);
+      const entries: number[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        entries.push(entryOf(actor));
+        actor.send({ type: 'PASS' });
+        await settle(actor);
+      }
+      // Each loop-back is a frame switch (2|1 -> 2|2 -> 2|3): +1 each, never +2.
+      expect(entries).toEqual([entries[0], entries[0] + 1, entries[0] + 2]);
+      actor.stop();
+    });
+
+    it('does not bump when advancing between substeps of the same frame', async () => {
+      const actor = createActor(compileFixture(twoSubstepSteps()));
+      actor.start();
+      await settle(actor);
+      const before = entryOf(actor);
+      actor.send({ type: 'PASS' }); // 2.1 DEFER -> advance to 2.2, same frame
+      await settle(actor);
+      expect(entryOf(actor)).toBe(before);
+      actor.stop();
+    });
+
+    it('attaches the entry sync to the leaf, not to the __parent-entry:: pass-through', () => {
+      const states = (
+        compileFixture(parentArtifactSteps()).config as {
+          states?: Record<string, { entry?: unknown }>;
+        }
+      ).states;
+      // The transient artifact pass-through carries exactly one entry action
+      // (clearCurrentEntryArtifacts). The leaf carries the action array that
+      // syncFrameEntry is appended to.
+      expect(Array.isArray(states?.['step::2::__parent-entry::1']?.entry)).toBe(false);
+      expect(Array.isArray(states?.['step::2::1']?.entry)).toBe(true);
+    });
+
+    it('bumps once on a same-frame GOTO and clears the marker', async () => {
+      const actor = createActor(compileFixture(twoSubstepSteps()));
+      actor.start();
+      actor.send({ type: 'PASS' }); // now on 2.2
+      await settle(actor);
+      const before = entryOf(actor);
+
+      actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
+      await settle(actor);
+
+      expect(entryOf(actor)).toBe(before + 1);
+      expect((actor.getSnapshot().context as RunbookContext).frameReentry).toBeUndefined();
+      actor.stop();
+    });
+
+    it('bumps once on a GOTO that routes through __parent-entry::', async () => {
+      // The step declares ARTIFACTS, so one GOTO drives TWO state entries.
+      const actor = createActor(compileFixture(parentArtifactSteps()));
+      actor.start();
+      actor.send({ type: 'PASS' });
+      await settle(actor);
+      const before = entryOf(actor);
+
+      actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
+      await settle(actor);
+
+      expect(entryOf(actor)).toBe(before + 1);
+      actor.stop();
+    });
+
+    it('bumps once when a step-level retry budget re-enters the leaf', async () => {
+      // Step "1" has FAIL retry: 1, so ::fail-retry self-targets back to step::1.
+      const actor = createActor(compileFixture(retryBudgetSteps()));
+      actor.start();
+      await settle(actor);
+      const before = entryOf(actor);
+      actor.send({ type: 'FAIL' });
+      await settle(actor);
+      expect(entryOf(actor)).toBe(before + 1);
+      expect((actor.getSnapshot().context as RunbookContext).frameReentry).toBeUndefined();
+      actor.stop();
+    });
+
+    it('never leaves frameReentry set in a settled snapshot', async () => {
+      const actor = createActor(compileFixture(twoSubstepSteps()));
+      actor.start();
+      const events = [
+        { type: 'PASS' } as const,
+        { type: 'GOTO', target: { step: '2', substep: '1' } } as const,
+      ];
+      for (const event of events) {
+        actor.send(event);
+        await settle(actor);
+        const persisted = actor.getPersistedSnapshot() as { context: RunbookContext };
+        expect(persisted.context.frameReentry).toBeUndefined();
+      }
+      actor.stop();
+    });
+
+    it('stamps the retried credential with the entry the same transition commits', async () => {
+      // Parent "2" aggregates ALL with FAIL retry: 1 over one DELEGATE substep.
+      const issuer = recordingIssuer();
+      const actor = createActor(compileFixture(delegatingRetrySteps(), issuer));
+      actor.start();
+      actor.send({ type: 'PASS' }); // into frame 2, fresh issuance at entry 2
+      await settle(actor);
+      expect(issuer.locations.at(-1)?.parentEntry).toBe(2);
+
+      actor.send({ type: 'FAIL' }); // aggregation retry -> runRetryHook re-issues
+      await settle(actor);
+
+      const committed = (actor.getSnapshot().context as RunbookContext).frameEntry;
+      expect(committed?.activeEntry).toBe(3);
+      expect(issuer.locations.at(-1)?.parentEntry).toBe(3);
+      expect(issuer.locations.at(-1)?.parentEntry).toBe(committed?.activeEntry);
+      actor.stop();
+    });
+
+    it('bumps exactly once for an aggregation RETRY into the first substep', async () => {
+      const actor = createActor(compileFixture(aggregationRetrySteps()));
+      actor.start();
+      actor.send({ type: 'PASS' });
+      await settle(actor);
+      const before = entryOf(actor);
+      actor.send({ type: 'FAIL' });
+      await settle(actor);
+      expect(entryOf(actor)).toBe(before + 1);
+      actor.stop();
+    });
+
+    it('bumps exactly once for a FOR-iteration retry within the same iteration frame', async () => {
+      const actor = createActor(compileFixture(forIterationRetrySteps()));
+      actor.start();
+      await settle(actor);
+      const before = entryOf(actor);
+      actor.send({ type: 'FAIL' });
+      await settle(actor);
+      // Same iteration frame, one retry: +1, and the iteration did NOT advance.
+      expect(entryOf(actor)).toBe(before + 1);
+      expect((actor.getSnapshot().context as RunbookContext).frameEntry?.activeFrameKey).toBe(
+        buildFrameKey('2', 1),
+      );
       actor.stop();
     });
   });
