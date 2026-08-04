@@ -22,6 +22,7 @@ export * from './targeting.js';
 // delegation-liveness classifier, matching the DelegationScanService pattern.
 export {
   classifyDelegationLiveness,
+  frameKeyForCursor,
   type DelegationLiveness,
   type DelegationLivenessLinkage,
   type DelegationLivenessParent,
@@ -410,7 +411,7 @@ export type {
   DelegationRuntimeCapabilities,
   DelegationTokenDeriver,
 } from './delegation-credential.js';
-export { inferFrameEntryFromState } from './frame-entry.js';
+export { advanceFrameEntry, inferFrameEntryFromState } from './frame-entry.js';
 export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,

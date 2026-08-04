@@ -16,6 +16,7 @@ import {
   exactFrame,
   findSubstepState,
   frameHasExactEntry,
+  frameKeyForCursor,
   getActiveForContext,
   inactiveFrame,
   parseCompletionKey,
@@ -787,5 +788,40 @@ describe('targeting helpers', () => {
       const state = parent({ activeFrameKey: buildFrameKey('other'), activeEntry: undefined });
       expect(classifyDelegationLiveness(state, linkage).kind).toBe('live');
     });
+  });
+});
+
+describe('frameKeyForCursor', () => {
+  const forContext = (over: Partial<ForContext> = {}): ForContext =>
+    ({
+      stepId: '2',
+      iteration: 3,
+      start: 1,
+      implicit: false,
+      ...over,
+    }) as ForContext;
+
+  it('returns the bare step frame with no FOR stack', () => {
+    expect(frameKeyForCursor('2', undefined)).toBe(buildFrameKey('2'));
+    expect(frameKeyForCursor('2', [])).toBe(buildFrameKey('2'));
+  });
+
+  it('includes the iteration when the top context belongs to the step', () => {
+    expect(frameKeyForCursor('2', [forContext()])).toBe(buildFrameKey('2', 3));
+  });
+
+  it('ignores an implicit top context', () => {
+    expect(frameKeyForCursor('2', [forContext({ implicit: true })])).toBe(buildFrameKey('2'));
+  });
+
+  it('ignores a top context belonging to a different step', () => {
+    expect(frameKeyForCursor('3', [forContext()])).toBe(buildFrameKey('3'));
+  });
+
+  it('agrees with deriveActiveFrame for the same cursor', () => {
+    const forStack = [forContext()];
+    expect(frameKeyForCursor('2', forStack)).toBe(
+      deriveActiveFrame({ step: '2', forStack } as never).frameKey,
+    );
   });
 });

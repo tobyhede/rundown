@@ -246,6 +246,28 @@ export function getActiveForContext(
 }
 
 /**
+ * Derive the frame key for an execution cursor.
+ *
+ * The single frame-key derivation. It replaces three subtly different ones that
+ * agreed only by accident: `deriveActiveFrame` checked both `implicit` and
+ * `stepId`, while `deriveActorStatePatch` and `buildDelegationIssueInvokeBlock`
+ * filtered `implicit` but never compared `stepId`. Once the machine's entry
+ * ordinal depends on the frame key matching what committed-state readers
+ * compute, that accident becomes load-bearing, so all three route here.
+ *
+ * @param stepName - The step the cursor sits on.
+ * @param forStack - The live FOR context stack, or undefined.
+ * @returns The frame key: `step|iteration` when a non-implicit FOR context for
+ *   this step is on top of the stack, otherwise `step|`.
+ */
+export function frameKeyForCursor(
+  stepName: string,
+  forStack: readonly ForContext[] | undefined,
+): FrameKey {
+  return buildFrameKey(stepName, getActiveForContext(forStack, stepName)?.iteration);
+}
+
+/**
  * Derive active runtime frame from persisted runbook state.
  *
  * @param state - Current runbook state
@@ -258,7 +280,7 @@ export function deriveActiveFrame(state: RunbookState): {
 } {
   const activeFor = getActiveForContext(state.forStack, state.step);
   return {
-    frameKey: buildFrameKey(state.step, activeFor?.iteration),
+    frameKey: frameKeyForCursor(state.step, state.forStack),
     step: state.step,
     ...(activeFor ? { iteration: activeFor.iteration } : {}),
   };
