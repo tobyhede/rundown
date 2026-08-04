@@ -1461,6 +1461,108 @@ Code: RUN_TARGET_MISMATCH
 }
 ```
 
+### Retry already applied
+
+`rundown delegate --retry` when the retry has already been applied and the
+replacement shows no committed evidence its bearer was used. Nothing is written
+and the exit code is 0 — this is a successful idempotent replay, not a refusal.
+The current bearer is echoed so the caller can rotate deliberately by naming it.
+
+**Text:**
+
+```text
+ALREADY    step 2.1 -> child.runbook.md
+Token:     rdtk_...
+
+RD_CLAIM_TOKEN=rdtk_...
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "delegate",
+  "action": "retry-already-applied",
+  "step": "2.1",
+  "runbook": "child.runbook.md",
+  "token": "rdtk_...",
+  "token_hash": "sha256:...",
+  "parent_run_id": "rd_..."
+}
+```
+
+### Delegation replacement consumed
+
+`rundown delegate --retry <token>` where the named bearer was already replaced
+and the replacement shows committed evidence of use — claimed by a child,
+aborted, or its frame entry advanced. Minting a third bearer over work already
+in progress is refused. No envelope carries a full token.
+
+**Text:**
+
+```text
+Error: the replacement for this bearer shows committed evidence of use (claimed)
+Code: RD-826
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "the replacement for this bearer shows committed evidence of use (claimed)",
+  "code": "RD-826",
+  "command": "delegate"
+}
+```
+
+### Delegation retry identity unmatched
+
+`rundown delegate --retry <token>` where the named bearer identifies neither the
+delegation currently recorded at the target nor one that it superseded.
+
+**Text:**
+
+```text
+Error: the named bearer matches neither the current delegation nor one it superseded
+Code: RD-827
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "the named bearer matches neither the current delegation nor one it superseded",
+  "code": "RD-827",
+  "command": "delegate"
+}
+```
+
+### Delegation supersession ambiguous
+
+More than one delegation attempt records the named bearer as superseded, so
+there is no single replacement to echo or judge. Unreachable by construction: it
+is refused, never resolved.
+
+**Text:**
+
+```text
+Error: more than one delegation attempt records this bearer as superseded
+Code: RD-828
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "more than one delegation attempt records this bearer as superseded",
+  "code": "RD-828",
+  "command": "delegate"
+}
+```
+
 ### Invalid run id
 
 The `--run` value is malformed. A run id is `rd_` followed by 32 hexadecimal
