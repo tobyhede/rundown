@@ -23,7 +23,7 @@ import {
   assertDelegationIssuanceNonce,
   hashDelegationToken,
 } from '../../src/runbook/delegation-token.js';
-import { advanceFrameEntry } from '../../src/runbook/frame-entry.js';
+import { advanceFrameEntry, inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
 import { buildFrameKey, type FrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, RunbookState, Transitions } from '../../src/runbook/types.js';
 import {
@@ -72,6 +72,91 @@ const STEPS: readonly ResolvedStep[] = [
     ],
   },
 ];
+
+/** As {@link STEPS}, but the parent's FAIL carries a retry budget so `runRetryHook` re-issues. */
+const RETRY_STEPS: readonly ResolvedStep[] = [
+  { kind: 'base', name: '1', description: 'Plain first step', transitions: CONTINUE_TRANSITIONS },
+  {
+    kind: 'substeps',
+    name: '2',
+    description: 'Delegating parent',
+    transitions: {
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 1, action: { type: 'STOP' } },
+    },
+    aggregation: { strategy: 'ALL' },
+    substeps: [
+      {
+        id: '1',
+        description: 'Delegated substep',
+        transitions: DEFER_TRANSITIONS,
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      },
+    ],
+  },
+];
+
+/**
+ * Drive a real actor to issuance and return the credential beside the
+ * coordinates the machine itself ends up holding.
+ *
+ * Fresh path: PASS into the delegating frame, where `delegationIssueActor`
+ * mints. Retry path: PASS then FAIL, so ALL aggregation fails and
+ * `runRetryHook` re-issues a superseding credential. Because the machine is the
+ * single writer, `context.frameEntry` after the transition is exactly what
+ * `deriveActorStatePatch` commits — so it stands in for committed state here.
+ *
+ * @param startEntry - Entry the issuing frame starts on.
+ * @param viaRetry - Whether to take the `runRetryHook` re-issuance path.
+ * @returns The last issued location and the machine's settled coordinates.
+ * @throws {Error} When no credential was issued.
+ */
+async function issueThroughMachine(
+  startEntry: number,
+  viaRetry: boolean,
+): Promise<{
+  location: DelegationCredentialLocation;
+  committed: { activeFrameKey?: FrameKey; activeEntry?: number };
+}> {
+  const captured: DelegationCredentialLocation[] = [];
+  const machine = compileRunbookToMachine(viaRetry ? RETRY_STEPS : STEPS, {
+    templateVars: brandFlattenedTemplateVarsForTest({ RunId: RUN_ID }),
+    resolveDelegationRunbook: async (runbookRef) => ({
+      path: `/resolved/${runbookRef}`,
+      runbookRef,
+      childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+    }),
+    issueDelegationCredential: recordingIssuer(captured),
+    frameEntry: {
+      activeFrameKey: OTHER_FRAME,
+      activeEntry: startEntry,
+      frameEntryCounts: { [OTHER_FRAME]: startEntry },
+    },
+  });
+
+  const actor = createActor(machine);
+  actor.start();
+  actor.send({ type: 'PASS' });
+  await waitFor(actor, (snapshot) =>
+    (snapshot.context.substepStates ?? []).some((ss) => ss.delegation !== undefined),
+  );
+  if (viaRetry) {
+    actor.send({ type: 'FAIL' });
+    await waitFor(actor, (snapshot) => captured.length > 1 || snapshot.status !== 'active');
+  }
+  const committed = actor.getSnapshot().context.frameEntry ?? {};
+  actor.stop();
+
+  // Without this the retry arm could silently degrade to a second run of the
+  // fresh path and the property would still pass.
+  if (viaRetry && captured.length < 2) {
+    throw new Error(`retry path did not re-issue: captured ${String(captured.length)}`);
+  }
+  const location = captured.at(-1);
+  if (!location) throw new Error('no credential was issued');
+  return { location, committed };
+}
 
 /** Frame-entry coordinates a persisted run state can present. */
 interface FrameEntryFixture {
@@ -218,6 +303,25 @@ describe('delegation credential coordinate: manual and machine issuance agree', 
         expect(fromMachine).toEqual(fromManual);
       }),
       { numRuns: 20 },
+    );
+  });
+
+  it('property: a machine-stamped parentEntry equals the entry committed state reports', async () => {
+    // The invariant #681's `unobservedReplacement` predicate rests on, across
+    // BOTH machine-owned issuance paths. A lag on either would make its fourth
+    // conjunct false for exactly the credentials the contract exists to judge.
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 20 }), // starting entry for the issuing frame
+        fc.boolean(), // fresh issuance vs runRetryHook re-issuance
+        async (startEntry, viaRetry) => {
+          const { location, committed } = await issueThroughMachine(startEntry, viaRetry);
+          expect(location.parentEntry).toBe(
+            inferFrameEntryFromState(committed, location.parentFrameKey),
+          );
+        },
+      ),
+      { numRuns: 50 },
     );
   });
 });
