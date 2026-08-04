@@ -188,7 +188,6 @@ type TransitionApplicationResult =
 
 interface ObserveAndOrchestrateArgs {
   sessionService: SessionService;
-  lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
   runbookId: RunId;
   steps: ResolvedStep[];
@@ -200,14 +199,6 @@ interface ObserveAndOrchestrateArgs {
   command?: string;
   syncSnapshot: unknown;
   postState: RunbookState;
-  /**
-   * Whether `postState` already carries committed active-entry metadata.
-   *
-   * The fenced command path projects active-entry inside its `compute` and
-   * commits it with the state, so re-deriving here would score the SAME
-   * transition as a second frame switch and bump the entry twice.
-   */
-  entryAlreadyProjected?: boolean;
 }
 
 type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
@@ -922,7 +913,6 @@ async function launchInlineChildFromIntent({
 
 async function observeAndOrchestrate({
   sessionService,
-  lifecycleService,
   emitter,
   runbookId,
   steps,
@@ -934,11 +924,8 @@ async function observeAndOrchestrate({
   command,
   syncSnapshot,
   postState,
-  entryAlreadyProjected,
 }: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
-  const updatedState = entryAlreadyProjected
-    ? postState
-    : (await lifecycleService.ensureActiveEntry(runbookId, currentState, postState)).state;
+  const updatedState = postState;
 
   const orchestration = await orchestrateTransition({
     sessionService,
@@ -1153,7 +1140,6 @@ export async function drainResolvedCompletions({
       const currentStep = findStepOrThrow(steps, applied.stateBefore.step);
       const observed = await observeAndOrchestrate({
         sessionService,
-        lifecycleService,
         emitter,
         runbookId,
         steps,
@@ -1265,8 +1251,7 @@ export async function runExecutionLoop(
     options.actorMutationRunner ?? createEffectfulActorMutationRunner(cwd);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
-  let currentState: RunbookState = ensuredInitial.state;
+  let currentState: RunbookState = state;
 
   if (currentState.lifecycle === 'stopped') {
     const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
@@ -1754,7 +1739,7 @@ export async function runExecutionLoop(
         retainClaimsAsTerminal: true,
       },
       compute: async (capturedState) => {
-        previousState = lifecycleService.deriveActiveEntry(capturedState).state;
+        previousState = capturedState;
         const prepared = await actorService.prepareActorMutation(
           runbookId,
           previousState,
@@ -1770,12 +1755,7 @@ export async function runExecutionLoop(
           },
           { issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential },
         );
-        const projected = lifecycleService.deriveActiveEntry(
-          prepared.nextState,
-          previousState,
-          true,
-        );
-        return { ...prepared, previousState, nextState: projected.state };
+        return { ...prepared, previousState };
       },
     });
     if (fencedCommand.kind !== 'committed') {
@@ -1830,7 +1810,6 @@ export async function runExecutionLoop(
 
     const transitionResult = await observeCommandTransition({
       sessionService,
-      lifecycleService,
       emitter,
       runbookId,
       steps,
@@ -1841,8 +1820,6 @@ export async function runExecutionLoop(
       result: commandOutput.result,
       transitionPolicy: terminalPolicy,
       command: displayCommand,
-      // `compute` above projected and committed active-entry with the state.
-      entryAlreadyProjected: true,
     });
     if (transitionResult.status === 'done') {
       return 'done';

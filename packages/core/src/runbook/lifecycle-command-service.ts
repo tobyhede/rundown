@@ -2622,7 +2622,7 @@ export class RunbookLifecycleCommandService {
         : {}),
       makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, input.steps),
       compute: async (capturedState) => {
-        previousState = this.#deps.lifecycleService.deriveActiveEntry(capturedState).state;
+        previousState = capturedState;
         const prepared = await this.#deps.actorService.prepareActorMutation(
           capturedState.id,
           previousState,
@@ -2630,14 +2630,7 @@ export class RunbookLifecycleCommandService {
           { type: 'GOTO', target: input.target },
           { issueDelegationCredential: input.issueDelegationCredential },
         );
-        // Projected WITHOUT scoring this GOTO as a transition. The execution
-        // loop this hands off to derives the same metadata with no previous
-        // state, so scoring it here would count one navigation as a frame
-        // re-entry and bump `activeEntry` a second time. That entry is what an
-        // inline launch intent pins its `parentEntry` to, so an extra bump
-        // makes a recovered intent stop matching its own child's linkage.
-        const projected = this.#deps.lifecycleService.deriveActiveEntry(prepared.nextState);
-        return { ...prepared, previousState, nextState: projected.state };
+        return { ...prepared, previousState };
       },
     });
     if (result.kind !== 'committed') return result;
@@ -3372,7 +3365,7 @@ export class RunbookLifecycleCommandService {
         },
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
         compute: async (capturedState) => {
-          const initial = lifecycleService.deriveActiveEntry(capturedState).state;
+          const initial = capturedState;
           const cursor =
             explicitTarget === undefined
               ? activeCursor(initial)
@@ -3408,8 +3401,6 @@ export class RunbookLifecycleCommandService {
           for (;;) {
             const currentStep = this.#findStep(steps, state.step);
             if (!resolvedStepHasSubsteps(currentStep) || !state.substep) break;
-            const projected = lifecycleService.deriveActiveEntry(state).state;
-            state = projected;
             const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
             const entry = state.activeEntry ?? 1;
             const completions = state.resolvedCompletions ?? {};
@@ -3434,7 +3425,7 @@ export class RunbookLifecycleCommandService {
               },
               { issueDelegationCredential },
             );
-            const next = lifecycleService.deriveActiveEntry(prepared.nextState, state, true).state;
+            const next = prepared.nextState;
             const observation = deriveTransitionObservation({
               steps,
               currentStep,
@@ -3594,7 +3585,7 @@ export class RunbookLifecycleCommandService {
         },
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, transitionSteps),
         compute: async (capturedState) => {
-          previousState = lifecycleService.deriveActiveEntry(capturedState).state;
+          previousState = capturedState;
           const prepared = await actorService.prepareActorMutation(
             capturedState.id,
             previousState,
@@ -3602,12 +3593,7 @@ export class RunbookLifecycleCommandService {
             { type: eventType },
             { issueDelegationCredential },
           );
-          const projected = lifecycleService.deriveActiveEntry(
-            prepared.nextState,
-            previousState,
-            true,
-          );
-          return { ...prepared, previousState, nextState: projected.state };
+          return { ...prepared, previousState };
         },
       });
 

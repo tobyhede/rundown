@@ -1480,13 +1480,7 @@ export class RunbookCompletionService {
       if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
         return { status: 'continue', state, unresolved: 0, applied };
       }
-      const ensured = await this.lifecycleService.ensureActiveEntry(
-        args.runbookId,
-        undefined,
-        state,
-      );
-      state = ensured.state;
-      const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
+      const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
       const requestedFrame = args.frameOverride;
       if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
         // The cursor has moved off the override frame. Two cases:
@@ -1521,7 +1515,7 @@ export class RunbookCompletionService {
         };
       }
 
-      const entry = state.activeEntry ?? ensured.entry;
+      const entry = state.activeEntry ?? 1;
       const activeTargetFrame = activeFrame(activeFrameKey, entry);
       const resolved = await this.lifecycleService.listResolvedCompletions(
         args.runbookId,
@@ -1547,7 +1541,7 @@ export class RunbookCompletionService {
         return { status: 'continue', state, unresolved, applied };
       }
 
-      const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
+      const validated = this.resolveAgainstCurrentCursor(state, current.completion, { entry });
       if (!(currentCursorValidatedBrand in validated)) return { ...validated, unresolved, applied };
 
       const result = await this.actorService.sendAndSync(
