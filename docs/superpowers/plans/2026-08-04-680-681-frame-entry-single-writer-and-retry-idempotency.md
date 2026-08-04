@@ -1572,7 +1572,9 @@ Expected: PASS, 5/5.
 
 ```bash
 npx biome check --config-path=. --write packages/core/__tests__/runbook/entry-projection-ordering.test.ts
-git add -A packages/core/__tests__/runbook
+# `git mv` in Step 1 already staged the deletion of the old path; stage the new
+# file by name rather than sweeping the directory.
+git add packages/core/__tests__/runbook/entry-projection-ordering.test.ts
 git commit -m "test: flip the entry-projection investigation into a regression pin
 
 All five cases now assert that the stamped parentEntry equals the entry
@@ -2652,15 +2654,18 @@ bearer. #681"
 
 Append to `packages/core/__tests__/runbook/lifecycle-command-service.test.ts`.
 `seam`, `manager`, `runId` and `evidence()` are the file's existing fixtures
-(`:207`, `startSeamOnDelegateStep` at `:321`). The seed helpers this block needs
-are new; build them on `startSeamOnDelegateStep` and give them these contracts:
+(`:207`, `startSeamOnDelegateStep` at `:321`). `buildIssuanceSeam` and
+`runControlEvidence` are this suite's existing local-seam fixtures — see their
+use at `:1109-1121` and `:2160-2175`. The seed helpers below are new; build them
+on `startSeamOnDelegateStep` and give them these contracts:
 
 | Helper                                        | Seeds                                                                                                       | Returns                        |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `seedDelegation()`                            | An active run parked on delegating step `2`, substep `2.1` carrying one freshly issued, unclaimed delegation | `void`                         |
-| `currentToken()`                              | Nothing — reads the bearer currently recorded at `2.1` from committed state                                 | `Promise<string>`              |
+| `seedDelegation(mgr?, state?)`                | An active run parked on delegating step `2`, substep `2.1` carrying one freshly issued, unclaimed delegation. Defaults to the suite's shared `manager`/`runId`; takes an explicit pair for the locally-built seam | `void`   |
+| `currentToken(mgr?, state?)`                  | Nothing — reads the bearer currently recorded at `2.1` from committed state                                 | `Promise<string>`              |
 | `seedRotatedAndClaimed()`                     | `seedDelegation()`, one retry to T2, then a committed claim linking a child run to T2                       | `{ t1: string; t2: string }`   |
-| `seedRotatedThenReplacedByUnrelatedDelegation()` | `seedDelegation()`, one retry to T2, then overwrite `2.1`'s row with a delegation whose `tokenHash` and `supersedesTokenHash` both name neither T1 nor T2 | `{ t1: string }` |
+| `overwriteWithUnrelatedDelegation(mgr, state)` | **Not a seed** — an in-flight mutation invoked from the wrapped scan dep. Replaces `2.1`'s row with a delegation whose `tokenHash` is `unrelatedTokenHash` and whose `supersedesTokenHash` names neither T1 nor T2, via `mgr.updateWithState`. Awaited, so it is ordered strictly between the scan and the capture | `Promise<void>` |
+| `unrelatedTokenHash`                          | A module-level `DelegationTokenHash` constant the overwrite writes and the assertion reads                  | —                              |
 | `seedTwoRowsSuperseding()`                    | `seedDelegation()`, one retry to T2, then write a **second** substep row in the same frame whose credential also records `hash(T1)` as `supersedesTokenHash`. T1 is no longer any row's `tokenHash`, so `findDelegationByToken(T1)` misses | `{ t1: string }` |
 | `seedTwoRowsSupersedingWithLiveCurrent()`     | As above, but leaves T1 as the `tokenHash` of a third row so `findDelegationByToken(T1)` **hits** — the corrupted state that is only reachable because the supersession scan is unconditional | `{ t1: string }` |
 | `gotoBackIntoTheDelegatingFrame()`            | Drives `seam.runNavigationMutation` to `{ step: '2', substep: '1' }`, bumping the frame entry               | `void`                         |
@@ -2709,19 +2714,49 @@ describe('#issueRetry idempotency', () => {
     expect((outcome as { error: RundownError }).error.code).toBe('DELEGATION_REPLACEMENT_CONSUMED');
   });
 
-  it('refuses RD-827 when the bearer matches neither attempt', async () => {
-    // T1 is located by the scan, but by the time the transaction captures state
-    // the cursor's row carries an unrelated delegation: neither its tokenHash
-    // nor its supersedesTokenHash names T1.
-    const { t1 } = await seedRotatedThenReplacedByUnrelatedDelegation();
-    const beforeState = await manager.load(runId);
+  it('refuses RD-827 when the bearer matches neither attempt at capture time', async () => {
+    // RD-827 is "located before capture, identity unmatched AT capture". That
+    // ordering has to be produced, not assumed: a state that already carries the
+    // unrelated row before `issueDelegation` runs makes BOTH lookups miss and
+    // returns `token-not-found` before a transaction exists.
+    //
+    // Use the concurrent-writer seam this suite already uses at `:2160-2175`:
+    // wrap `findDelegationByToken` so it resolves the real scan (locating T1),
+    // THEN awaits the mutation that overwrites the row, then returns the now
+    // stale scan result. `beforeEffect` re-reads inside the fence and sees a
+    // delegation matching neither `Hc` nor `Hs`.
+    //
+    // `runnerWithFenceEntryHook` (`:164`) is the wrong tool here: its callback
+    // is `() => void` and there is no synchronous state-write API, so an async
+    // overwrite started from it races `runAll` instead of preceding the capture.
+    const { seam: localSeam, deps, manager: mgr, state } = buildIssuanceSeam(/* delegating step */);
+    await seedDelegation(mgr, state);
+    const t1 = await currentToken(mgr, state);
 
-    const outcome = await seam.issueDelegation({ mode: 'retry', callerEvidence: evidence(), locator: { kind: 'token', token: t1 } });
+    const realScan = deps.findDelegationByToken;
+    const localSeamRacing = new RunbookLifecycleCommandService({
+      ...deps,
+      findDelegationByToken: async (token) => {
+        const found = await realScan(token);
+        if (found) await overwriteWithUnrelatedDelegation(mgr, state);
+        return found;
+      },
+    });
+    const outcome = await localSeamRacing.issueDelegation({
+      mode: 'retry',
+      callerEvidence: runControlEvidence(state.id),
+      locator: { kind: 'token', token: t1 },
+    });
     expect((outcome as { error: RundownError }).error.code).toBe(
       'DELEGATION_RETRY_IDENTITY_UNMATCHED',
     );
-    // A refusal writes nothing.
-    expect(await manager.load(runId)).toEqual(beforeState);
+    // The refusal minted nothing: the row still holds exactly the unrelated
+    // delegation the hook wrote. (Do NOT snapshot before the call and compare —
+    // the hook's own overwrite lands between, so that comparison always fails.)
+    const after = await mgr.load(state.id);
+    const row = (after?.substepStates ?? []).find((entry) => entry.delegation);
+    expect(row?.delegation?.tokenHash).toBe(unrelatedTokenHash);
+    expect(row?.delegation?.credential.supersedesTokenHash).not.toBe(hashDelegationToken(t1));
   });
 
   it('refuses RD-828 when two rows supersede the bearer', async () => {
@@ -2873,16 +2908,20 @@ the `if (!scan)` early return:
       // what lets `resolveRetryIssuance` remain the single place the priority
       // between ambiguity and a matching current row is expressed. This seam
       // decides nothing from the result but *where* the target run is.
-      const supersedingScan = await this.#deps.findDelegationsBySupersededToken(locator.token);
+      supersedingScan = await this.#deps.findDelegationsBySupersededToken(locator.token);
       const located = scan ?? supersedingScan[0];
-      if (!located) return { kind: 'token-not-found', token: locator.token };
+      if (!located) return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
 ```
 
-Then replace every subsequent use of `scan` in that branch with `located`, and
-carry `supersedingScan` into `beforeEffect` (declare it in `#issueRetry`'s outer
-scope alongside `cursor`, defaulting to `[]` on the non-token locators).
-`identityTokenHash` for the capture is `hashDelegationToken(locator.token)`;
-compute it once here and close over it.
+Then replace every subsequent use of `scan` in that branch with `located`.
+`supersedingScan` is declared in `#issueRetry`'s outer scope alongside `cursor`
+as `let supersedingScan: readonly TokenScanResult[] = [];` so `beforeEffect` can
+close over it; it stays `[]` on the step/active locators. Nothing else is
+hoisted — Step 6 computes the identity hash inside its own branch.
+
+The `tokenHint` (rather than the raw `token`) on the refusal is Task B5 Step 5's
+change; if B5 has not landed yet, write `token: locator.token` here and change
+both construction sites there.
 
 There is deliberately **no** RD-828 return here. Row 9 (`not located →
 token-not-found`) is a locator concern and stays — it is decided before any
@@ -2918,33 +2957,42 @@ In `beforeEffect`, insert between the child-liveness guard (which ends at
         // replacement verifier, and collapsing them drops `supersededBy.length`
         // to 1, silently skipping the very refusal that exists to catch that
         // state.
-        const capturedSuperseding = (parent.state.substepStates ?? [])
-          .map((row) => row.delegation)
-          .filter(
-            (row): row is StepDelegation =>
-              row?.credential.supersedesTokenHash === identityTokenHash,
-          );
-        const foreignSuperseding = supersedingScan
-          .filter((row) => row.parentState.id !== parent.state.id)
-          .map((row) => row.delegation)
-          .filter((row) => row.credential.supersedesTokenHash === identityTokenHash);
-        const supersededBy = [...capturedSuperseding, ...foreignSuperseding];
-
-        const retryResolution = resolveRetryIssuance(
-          locator.kind === 'token'
-            ? {
-                locator: 'token',
-                identityTokenHash,
-                current: exactSubstep?.delegation,
-                supersededBy,
-                frameEntry: inferFrameEntryFromState(parent.state, exactCursor.frameKey),
-              }
-            : {
-                locator: 'step',
-                current: exactSubstep?.delegation,
-                frameEntry: inferFrameEntryFromState(parent.state, exactCursor.frameKey),
-              },
-        );
+        //
+        // Build the capture inside an explicit `if`, not a ternary over a
+        // separately derived `identityTokenHash` const. Narrowing `locator.kind`
+        // in a ternary narrows `locator`, not a const computed from it, so a
+        // hoisted `const identityTokenHash = locator.kind === 'token' ? hash(...)
+        // : undefined` stays `DelegationTokenHash | undefined` and is not
+        // assignable to the capture's required field. Computing the hash inside
+        // the branch makes the type follow from the branch.
+        const frameEntry = inferFrameEntryFromState(parent.state, exactCursor.frameKey);
+        let retryResolution: RetryIssuanceResolution;
+        if (locator.kind === 'token') {
+          const identityTokenHash = hashDelegationToken(locator.token);
+          const capturedSuperseding = (parent.state.substepStates ?? [])
+            .map((row) => row.delegation)
+            .filter(
+              (row): row is StepDelegation =>
+                row?.credential.supersedesTokenHash === identityTokenHash,
+            );
+          const foreignSuperseding = supersedingScan
+            .filter((row) => row.parentState.id !== parent.state.id)
+            .map((row) => row.delegation)
+            .filter((row) => row.credential.supersedesTokenHash === identityTokenHash);
+          retryResolution = resolveRetryIssuance({
+            locator: 'token',
+            identityTokenHash,
+            current: exactSubstep?.delegation,
+            supersededBy: [...capturedSuperseding, ...foreignSuperseding],
+            frameEntry,
+          });
+        } else {
+          retryResolution = resolveRetryIssuance({
+            locator: 'step',
+            current: exactSubstep?.delegation,
+            frameEntry,
+          });
+        }
         switch (retryResolution.kind) {
           case 'ambiguous':
             return {
@@ -3004,10 +3052,11 @@ In `beforeEffect`, insert between the child-liveness guard (which ends at
         }
 ```
 
-`identityTokenHash` is `undefined` on the step/active path; declare it as
-`const identityTokenHash = locator.kind === 'token' ? hashDelegationToken(locator.token) : undefined;`
-next to `cursor` at the top of `#issueRetry` and narrow with the `locator.kind`
-check above.
+`identityTokenHash` is computed **inside** the `locator.kind === 'token'` branch
+above and exists nowhere else — do not hoist it to `#issueRetry`'s outer scope.
+`supersedingScan` is the one value that does need hoisting: declare it beside
+`cursor` as `let supersedingScan: readonly TokenScanResult[] = [];` and assign it
+in Step 5's token branch, so `beforeEffect` can close over it.
 
 - [ ] **Step 7: Declare the required dependency**
 
@@ -3074,7 +3123,7 @@ Tests:
 | `packages/core/__tests__/runbook/lifecycle-command-service.test.ts:318` (the `deps` literal returned at `:321`) | real scan over `manager` |
 | `packages/core/__tests__/runbook/entry-projection-ordering.test.ts:153` (field at `:165`; the file Task A8 renamed) | real scan over `manager` |
 
-The three `async () => []` stubs are the seams whose suites never call
+The **four** `async () => []` stubs are the seams whose suites never call
 `issueDelegation`, matching their existing `findDelegationByToken: async () => undefined`
 stub. The two real-scan sites drive genuine retry flows and must see the index.
 
@@ -3082,14 +3131,23 @@ Verify none were missed:
 
 ```bash
 pnpm --filter @rundown-org/core exec tsc --noEmit && pnpm --filter @rundown-org/cli exec tsc --noEmit
-rg -n 'findDelegationByToken:' packages | wc -l
-rg -n 'findDelegationsBySupersededToken:' packages | wc -l
+rg -n 'findDelegationByToken:' packages | wc -l                 # expect 11
+rg -n 'findDelegationsBySupersededToken:' packages | wc -l      # expect 9
 ```
 
-The two counts must match (`findDelegationByToken:` also appears at the two
-spread-override sites, which override only that one field — so expect the
-superseded count to be two lower, and confirm the difference is exactly those
-two lines and nothing else).
+**11 and 9, not two equal numbers.** `findDelegationByToken:` currently appears
+11 times: the interface declaration (`lifecycle-command-service.ts:152`), the 2
+production sites, the 6 test literal objects above — and 2 spread-override sites
+that override only that one field and inherit everything else:
+
+- `packages/core/__tests__/runbook/lifecycle-command-service.test.ts:1839` (stale
+  snapshot fixture)
+- `packages/core/__tests__/runbook/lifecycle-command-service.test.ts:2163`
+  (aborting-seam concurrent-writer fixture)
+
+Those two get no sibling, so the new field lands at 9. If the second count is
+anything but 9, diff the two `rg` outputs and confirm the only lines present in
+the first and absent from the second are exactly `:1839` and `:2163`.
 
 - [ ] **Step 9: Run the tests and verify they pass**
 
@@ -3129,14 +3187,22 @@ open, returning every replayed retry to token-not-found. #681"
   `:535-540` (fresh switch's unreachable arm)
 - Modify: `packages/core/src/output/zod-schemas.ts:1433-1475`
   (`DelegateResponseSchema`)
+- Modify: `packages/core/src/runbook/lifecycle-command-service.ts:312`, `:1444`,
+  `:1497` — the `token-not-found` outcome's payload
 - Test: `packages/cli/__tests__/commands/delegate.test.ts`
 - Test: `packages/cli/__tests__/commands/delegate-refusals.test.ts`
+- Test: `packages/cli/__tests__/helpers/lifecycle-seam-factory.test.ts:67`
 
 **Interfaces:**
 
 - Consumes: the `retry-already-applied` outcome (B4).
-- Produces: JSON action `retry-already-applied` on the `delegate` response, with
-  the same field set as `retried`.
+- Produces:
+  - JSON action `retry-already-applied` on the `delegate` response, with the same
+    field set as `retried`.
+  - `DelegationIssuanceOutcome`'s `token-not-found` member changes from
+    `{ kind: 'token-not-found'; token: string }` to
+    `{ kind: 'token-not-found'; tokenHint: string }`, where `tokenHint` is
+    already truncated by `truncateDelegationToken` at the core boundary.
 
 - [ ] **Step 1: Write the failing tests (JSON first)**
 
@@ -3254,18 +3320,114 @@ The three new error codes need no new arm: they arrive as
 `{ kind: 'error', error: RundownError }` and are thrown into the existing
 `withErrorHandling` envelope, exactly like RD-823 today.
 
-- [ ] **Step 5: Run the tests and verify they pass, then commit**
+- [ ] **Step 5: Stop the `token-not-found` refusal echoing the raw bearer**
+
+**This is a blocker for Task B8's manual proof, not a nicety.** The proof's third
+property is "no full token in any refusal envelope", and the sequence's final
+command lands on `token-not-found`, not RD-826: after T3 replaces T2 the row
+carries only `supersedesTokenHash = hash(T2)`, so nothing records T1 and both
+lookups miss (#681's acceptance list permits either outcome). Today's renderer is
+
+```typescript
+              case 'token-not-found':
+                failRetry(output, `token ${outcome.token} not found`, 'TOKEN_NOT_FOUND');
+```
+
+which interpolates the raw bearer straight into the stdout error envelope —
+`grep -c 'rdtk_'` prints 1 and the proof fails. This is the F8 class the branch
+already treats as a defect, and the sibling command has already closed it:
+`abort.ts:49` throws `Errors.tokenNotFound(token)`, whose factory truncates *in
+the factory* (`factory.ts:111-121`) precisely so "no caller can reintroduce the
+leak by passing the raw value".
+
+**Decision — the field comes off the core outcome, replaced by a truncated
+hint.** `DelegationIssuanceOutcome`'s `token-not-found` member becomes:
+
+```typescript
+  | { readonly kind: 'token-not-found'; readonly tokenHint: string }
+```
+
+with both construction sites (`lifecycle-command-service.ts:1444`, `:1497`)
+producing `truncateDelegationToken(locator.token)`.
+
+The reason, on record. The raw `token` field has exactly one reader —
+`delegate.ts:319`, the leaking line. `rg 'token-not-found' packages` shows the
+other hits are a different union (`runbook-pipeline.ts:219`'s
+`{ reason: 'token-not-found'; token: string }`, and `claim.ts:40` over that same
+claim-failure union), plus `delegate.ts:536`, which names only `outcome.kind`.
+So the field is removable. A *pure* drop was considered and rejected:
+`abort.test.ts:495-499` pins "Redacted, not dropped: the truncated hint stays so
+an operator can still correlate the refusal with the token they presented", and
+dropping the hint on `delegate` alone would leave two public forms of the same
+refusal disagreeing with no stated reason. Carrying a pre-truncated `tokenHint`
+satisfies both: no raw bearer can travel on this outcome (unrepresentable, not
+merely unrendered), and the operator hint survives.
+
+Renderer:
+
+```typescript
+              case 'token-not-found':
+                // Never interpolate the bearer. `tokenHint` is already truncated
+                // at the core boundary; the raw value is unrepresentable here.
+                failRetry(
+                  output,
+                  `no delegation matches token ${outcome.tokenHint}`,
+                  'TOKEN_NOT_FOUND',
+                );
+```
+
+The symbolic `TOKEN_NOT_FOUND` code is unchanged, so `docs/spec/cli-output.md`
+needs no edit for this step and the exit disposition is identical.
+
+- [ ] **Step 6: Update the three tests that pin the old text**
+
+Two assert the message, one asserts the outcome shape:
+
+| Test                                                             | Change                                                              |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `packages/cli/__tests__/commands/delegate.test.ts:1766`          | `/token .* not found/i` → `/no delegation matches token/i`          |
+| `packages/cli/__tests__/commands/delegate.test.ts:1792`          | same, keeping its `--input-file` priority assertions untouched      |
+| `packages/cli/__tests__/helpers/lifecycle-seam-factory.test.ts:67` | `{ kind: 'token-not-found', token: … }` → `{ kind: 'token-not-found', tokenHint: … }` |
+
+Then add the redaction pin, modelled on `abort.test.ts:481`:
+
+```typescript
+it('never serialises the raw bearer into the delegate --retry token-not-found envelope', async () => {
+  // cspell:disable-next-line
+  const bearer = 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
+  const result = await runDelegate(['--retry', bearer, '--claim-id', claimId]);
+
+  expect(result.exitCode).not.toBe(0);
+  const combined = result.stdout + result.stderr;
+  expect(combined).not.toContain(bearer);
+  // Redacted, not dropped — the operator can still correlate the refusal.
+  expect(combined).toContain('rdtk_AAA...HHHH');
+});
+```
+
+- [ ] **Step 7: Run the tests and verify they pass, then commit**
 
 ```bash
-pnpm --filter @rundown-org/cli exec jest __tests__/commands/delegate.test.ts __tests__/commands/delegate-refusals.test.ts
+pnpm --filter @rundown-org/cli exec jest __tests__/commands/delegate.test.ts \
+  __tests__/commands/delegate-refusals.test.ts __tests__/helpers/lifecycle-seam-factory.test.ts
+pnpm --filter @rundown-org/core exec jest __tests__/runbook/lifecycle-command-service.test.ts
 npx biome check --config-path=. --write packages/cli/src/commands/delegate.ts \
-  packages/core/src/output/zod-schemas.ts packages/cli/__tests__/commands
-git add packages/cli/src packages/core/src/output/zod-schemas.ts packages/cli/__tests__/commands
+  packages/core/src/runbook/lifecycle-command-service.ts \
+  packages/core/src/output/zod-schemas.ts packages/cli/__tests__/commands \
+  packages/cli/__tests__/helpers/lifecycle-seam-factory.test.ts
+git add packages/cli/src packages/core/src/runbook/lifecycle-command-service.ts \
+  packages/core/src/output/zod-schemas.ts packages/cli/__tests__
 git commit -m "feat(cli): render the retry-already-applied delegate outcome
 
 New JSON action with the same field set as retried, plus its --text rendering
 and a DelegateResponseSchema arm. RD-826/827/828 travel through the existing
-error envelope. #681"
+error envelope.
+
+Also closes an F8-class bearer leak on the same command: the token-not-found
+refusal interpolated the raw bearer into the stdout error envelope. The core
+outcome now carries a pre-truncated tokenHint instead of the raw token, so the
+leak is unrepresentable rather than merely unrendered — matching what
+abort.ts:49 already does through Errors.tokenNotFound. #681"
 ```
 
 ---
@@ -3588,12 +3750,12 @@ mkdir -p "$SCRATCH/.rundown/runbooks"
 cd "$SCRATCH"
 ```
 
-Write the two runbooks the sequence needs. `parent.runbook.md` parks the run on
-a delegating step `1` whose substep `1.1` is an authored DELEGATE target naming
-`child.runbook.md`:
+Now write the two runbooks the sequence needs — **with the file-writing tool, not
+a shell heredoc.** Create `$SCRATCH/parent.runbook.md` with exactly this content
+(a delegating step `1` whose substep `1.1` is an authored DELEGATE target naming
+`child.runbook.md`):
 
-````bash
-cat > parent.runbook.md <<'EOF'
+```markdown
 ---
 name: retry-idempotency-proof
 ---
@@ -3620,9 +3782,11 @@ Nothing to do.
 
 - PASS COMPLETE
 - FAIL STOP
-EOF
+```
 
-cat > .rundown/runbooks/child.runbook.md <<'EOF'
+And `$SCRATCH/.rundown/runbooks/child.runbook.md`:
+
+```markdown
 ---
 name: child
 ---
@@ -3635,76 +3799,109 @@ Report the outcome.
 
 - PASS COMPLETE
 - FAIL STOP
-EOF
-````
-
-- [ ] **Step 4: Run #681's acceptance sequence and check the three properties**
-
-```bash
-"$RD" run parent.runbook.md                          # capture claim_id -> C, and the run id
-"$RD" delegate --step 1.1 --claim-id "$C"            # T1
-"$RD" delegate --retry --step 1.1 --claim-id "$C"    # rotates -> T2
-"$RD" delegate --retry --step 1.1 --claim-id "$C"    # ECHOES T2, no write, exit 0
-"$RD" delegate --retry "$T2" --claim-id "$C"         # intentional rotation -> T3
-"$RD" delegate --retry "$T1" --claim-id "$C"         # RD-826 or token-not-found
 ```
 
-Every command emits JSON by default; read `.token` off each response and keep
-`STATE=".rundown/runs/<run id>.json"`.
+- [ ] **Step 4: Run #681's acceptance sequence, capturing state as you go**
 
-1. **Two rotations committed.** `T1`, `T2` and `T3` are three distinct bearers,
-   and each rotation is verifiable **at the moment it happens** — not
-   retrospectively. `replaceIssuedDelegation` → `replaceSubstepStateEntry`
-   substitutes the `(id, frameKey)` row wholesale (`targeting.ts:565`, whose own
-   TSDoc says "substitutes the entry wholesale"), so after the second rotation
-   the row carries only `supersedesTokenHash = hash(T2)` — the T2→T1 link is
-   gone and a count of supersessions in the final file is not observable.
-   Capture the state after each rotation instead:
+Every command emits JSON by default, so each value is extracted from the previous
+response rather than transcribed. Run these **in order** — the two rotation
+captures are interleaved deliberately: `replaceIssuedDelegation` →
+`replaceSubstepStateEntry` substitutes the `(id, frameKey)` row wholesale
+(`targeting.ts:565`, whose own TSDoc says "substitutes the entry wholesale"), so
+the T2→T1 link is destroyed by the T3 rotation. Capturing after the sequence
+finishes proves nothing.
+
+```bash
+# 1. Start the run. `runbook_started` carries both the claim id and the run id.
+"$RD" run parent.runbook.md > /tmp/run.json
+C=$(node -p "require('/tmp/run.json').claim_id")
+RUN=$(node -p "require('/tmp/run.json').runbookId")
+STATE="$SCRATCH/.rundown/runs/$RUN.json"
+
+# 2. Fresh issuance -> T1.
+T1=$(node -p "JSON.parse(require('child_process').execSync(
+  process.env.RD + ' delegate --step 1.1 --claim-id ' + process.env.C).toString()).token" \
+  RD="$RD" C="$C")
+
+# 3. First rotation -> T2. Capture the row IMMEDIATELY: this is the only moment
+#    the T2->T1 supersession link exists in persisted state.
+T2=$(node -p "JSON.parse(require('child_process').execSync(
+  process.env.RD + ' delegate --retry --step 1.1 --claim-id ' + process.env.C).toString()).token" \
+  RD="$RD" C="$C")
+cp "$STATE" /tmp/after-t2.json
+
+# 4. Replay -> ECHO. Digest either side; they must match.
+shasum "$STATE" > /tmp/before-echo.txt
+"$RD" delegate --retry --step 1.1 --claim-id "$C" > /tmp/echo.json
+shasum "$STATE" > /tmp/after-echo.txt
+
+# 5. Deliberate rotation by naming T2 -> T3. Capture again.
+T3=$(node -p "JSON.parse(require('child_process').execSync(
+  process.env.RD + ' delegate --retry ' + process.env.T2 + ' --claim-id ' + process.env.C).toString()).token" \
+  RD="$RD" T2="$T2" C="$C")
+cp "$STATE" /tmp/after-t3.json
+
+# 6. Replay the now-unreachable T1 -> refusal (RD-826 or token-not-found;
+#    #681's acceptance list permits either).
+"$RD" delegate --retry "$T1" --claim-id "$C" > /tmp/refusal.txt 2>&1 || true
+```
+
+Then check the three properties.
+
+1. **Two rotations committed**, each verified at the moment it happened:
 
    ```bash
-   # after the T2 rotation
-   cp "$STATE" /tmp/after-t2.json
-   node -e 'const h=require("crypto").createHash("sha256").update(process.argv[1]).digest("hex");
-     const s=require("/tmp/after-t2.json");
-     const d=s.substepStates.find(r=>r.delegation).delegation;
-     console.assert(d.credential.supersedesTokenHash==="sha256:"+h, "T2 must supersede T1");' "$T1"
-
-   # after the T3 rotation
-   cp "$STATE" /tmp/after-t3.json
-   node -e 'const h=require("crypto").createHash("sha256").update(process.argv[1]).digest("hex");
-     const s=require("/tmp/after-t3.json");
-     const d=s.substepStates.find(r=>r.delegation).delegation;
-     console.assert(d.credential.supersedesTokenHash==="sha256:"+h, "T3 must supersede T2");' "$T2"
+   node -e '
+     const { createHash } = require("crypto");
+     const h = (t) => "sha256:" + createHash("sha256").update(t).digest("hex");
+     const link = (f) => require(f).substepStates.find((r) => r.delegation).delegation
+       .credential.supersedesTokenHash;
+     const [t1, t2, t3] = process.argv.slice(1);
+     if (new Set([t1, t2, t3]).size !== 3) throw new Error("bearers must be distinct");
+     if (link("/tmp/after-t2.json") !== h(t1)) throw new Error("T2 must supersede T1");
+     if (link("/tmp/after-t3.json") !== h(t2)) throw new Error("T3 must supersede T2");
+     console.log("two rotations committed");
+   ' "$T1" "$T2" "$T3"
    ```
 
-   (Match the hash encoding to `hashDelegationToken` in
-   `packages/core/src/runbook/delegation-token.ts` — read it rather than assuming
-   the `sha256:` prefix.)
+   The `sha256:` prefix comes from `hashDelegationToken`
+   (`packages/core/src/runbook/delegation-token.ts:255-258`) — read it rather
+   than trusting this snippet if the assertion fails.
 
-2. **The echo writes no persisted state.** Hash the run state file either side of
-   the third command and confirm the digests match:
+2. **The echo wrote no persisted state:**
 
    ```bash
-   shasum "$STATE"                                       # before
-   "$RD" delegate --retry --step 1.1 --claim-id "$C"     # the echo
-   shasum "$STATE"                                       # must be identical
+   diff /tmp/before-echo.txt /tmp/after-echo.txt && echo "echo wrote nothing"
+   node -p "require('/tmp/echo.json').action"   # must be retry-already-applied
    ```
 
-3. **No full token in any refusal envelope.** The fifth command's stdout and
-   stderr contain no `rdtk_`-prefixed string:
+3. **No full token in the refusal envelope:**
 
    ```bash
-   "$RD" delegate --retry "$T1" --claim-id "$C" 2>&1 | grep -c 'rdtk_'  # must print 0
+   grep -c 'rdtk_' /tmp/refusal.txt   # must print 0
    ```
 
-Clean up with `rm -rf "$SCRATCH"` once all three hold.
+   This is the property Task B5 Step 5 exists to make achievable: before that
+   change the `token-not-found` renderer interpolated the raw bearer and this
+   printed 1.
+
+When all three hold, remove the scratch directory the run created —
+`$SCRATCH` (echo it first so you delete the path you think you are deleting) —
+and the six `/tmp` capture files. Do this deliberately rather than through a
+scripted recursive delete.
 
 - [ ] **Step 5: Commit anything the gate or the manual proof turned up**
 
+Stage explicit paths — never `git add -A`, which would sweep in the scratch
+project and any unrelated working-tree change:
+
 ```bash
-git add -A
+git add packages/core/__tests__ packages/cli/__tests__
 git commit -m "test: close the final mutation and end-to-end gaps for #680/#681"
 ```
+
+If the proof turned up a production fix rather than a test gap, add that file by
+name too and say so in the message.
 
 ---
 
