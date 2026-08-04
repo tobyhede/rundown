@@ -323,8 +323,36 @@ export function registerDelegateCommand(program: Command): void {
                   output.message(`RD_CLAIM_TOKEN=${outcome.token}`);
                 }
                 break;
+              case 'retry-already-applied':
+                // Idempotent replay: the replacement already exists and shows no
+                // committed evidence of use, so nothing was written. The current
+                // bearer is echoed so a caller who genuinely wants a new one can
+                // rotate deliberately by naming it.
+                if (!options.text) {
+                  output.json({
+                    kind: 'delegate',
+                    action: 'retry-already-applied',
+                    step: outcome.stepLabel,
+                    runbook: outcome.runbookPath,
+                    token: outcome.token,
+                    token_hash: outcome.tokenHash,
+                    parent_run_id: outcome.parentRunId,
+                  });
+                } else {
+                  output.message(`ALREADY    step ${outcome.stepLabel} -> ${outcome.runbookPath}`);
+                  output.message(`Token:     ${outcome.token}`);
+                  output.message('');
+                  output.message(`RD_CLAIM_TOKEN=${outcome.token}`);
+                }
+                break;
               case 'token-not-found':
-                failRetry(output, `token ${outcome.token} not found`, 'TOKEN_NOT_FOUND');
+                // Never interpolate the bearer. `tokenHint` is already truncated
+                // at the core boundary; the raw value is unrepresentable here.
+                failRetry(
+                  output,
+                  `no delegation matches token ${outcome.tokenHint}`,
+                  'TOKEN_NOT_FOUND',
+                );
                 break;
               case 'no-active-runbook':
                 // Reached only by the --step form (the inferred form pre-checks
@@ -544,6 +572,7 @@ export function registerDelegateCommand(program: Command): void {
               }
               break;
             case 'retried':
+            case 'retry-already-applied':
             case 'token-not-found':
             case 'run_target_mismatch':
             case 'retry_target_required':
@@ -651,6 +680,8 @@ function buildDelegateSeam(
     },
     findDelegationByToken: async (token) =>
       (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+    findDelegationsBySupersededToken: (token) =>
+      new DelegationScanService(manager).findBySupersededToken(token),
   });
 }
 

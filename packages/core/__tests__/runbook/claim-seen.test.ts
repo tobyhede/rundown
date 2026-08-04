@@ -311,6 +311,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       loadSteps: () => seamSteps,
       resolveChildRunbook: async () => undefined,
       findDelegationByToken: async () => undefined,
+      findDelegationsBySupersededToken: async () => [],
     });
     const state = await manager.create({ source: 'project', path: 'seam.md' }, mockRunbook, {
       runbookPath: 'seam.md',
@@ -424,6 +425,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       loadSteps: () => seamSteps,
       resolveChildRunbook: async () => undefined,
       findDelegationByToken: async () => undefined,
+      findDelegationsBySupersededToken: async () => [],
     });
     const { claimId, claim } = unwrapSessionMutation(
       await sessionService.issueRunControlClaim(runId),

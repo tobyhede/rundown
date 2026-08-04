@@ -106,6 +106,8 @@ describe('one mutation, one entry bump', () => {
       }),
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+      findDelegationsBySupersededToken: (token) =>
+        new DelegationScanService(manager).findBySupersededToken(token),
     });
   });
 

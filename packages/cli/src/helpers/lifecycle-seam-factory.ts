@@ -65,6 +65,8 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
     resolveChildRunbook: refuseIssuance,
     findDelegationByToken: async (token) =>
       (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+    findDelegationsBySupersededToken: (token) =>
+      new DelegationScanService(manager).findBySupersededToken(token),
   });
   return { manager, sessionService, seam };
 }

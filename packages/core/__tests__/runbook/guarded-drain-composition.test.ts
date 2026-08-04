@@ -106,6 +106,7 @@ describe('guarded drain composition (real store, real predicate)', () => {
       loadSteps: () => steps,
       resolveChildRunbook: async () => undefined,
       findDelegationByToken: async () => undefined,
+      findDelegationsBySupersededToken: async () => [],
     });
   });
 

@@ -4,6 +4,7 @@ import {
   SessionService,
   RunbookLifecycleCommandService,
   DELEGATION_TOKEN_PREFIX,
+  truncateDelegationToken,
 } from '@rundown-org/core';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
@@ -65,7 +66,8 @@ describe('buildNonDelegatingLifecycleSeam', () => {
         }),
       ).resolves.toEqual({
         kind: 'token-not-found',
-        token: `${DELEGATION_TOKEN_PREFIX}never_resolved`,
+        // Redacted at the core boundary: the outcome cannot carry a raw bearer.
+        tokenHint: truncateDelegationToken(`${DELEGATION_TOKEN_PREFIX}never_resolved`),
       });
     });
 

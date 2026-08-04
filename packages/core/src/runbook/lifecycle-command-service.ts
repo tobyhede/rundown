@@ -31,12 +31,20 @@ import {
   type DelegationTokenDeriver,
 } from './delegation-credential.js';
 import type { TokenScanResult } from './delegation-scan.js';
-import { hashDelegationToken } from './delegation-token.js';
+import {
+  hashDelegationToken,
+  truncateDelegationToken,
+  type DelegationCredentialDescriptor,
+  type DelegationTokenHash,
+} from './delegation-token.js';
 import {
   resolveDelegationIssuance,
+  resolveRetryIssuance,
   type DelegationIssuanceResolution,
   type RequestedRunbookArg,
+  type RetryIssuanceResolution,
 } from './delegation-inference.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -85,7 +93,13 @@ import {
   inactiveFrame,
   replaceSubstepStateEntry,
 } from './targeting.js';
-import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
+import type {
+  ResolvedStep,
+  RunbookState,
+  StepDelegation,
+  SubstepState,
+  TemplateVarValue,
+} from './types.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { PreparedActorMutation } from './effectful-mutation-executor.js';
@@ -152,6 +166,16 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * active run.
    */
   readonly findDelegationByToken: FindDelegationByToken;
+  /**
+   * Locate every delegation across runs that records a plain-text token as
+   * superseded.
+   *
+   * CLI-bound; wraps `DelegationScanService.findBySupersededToken`. Required,
+   * like its {@link findDelegationByToken} sibling: the retry `token` locator
+   * scans this index unconditionally, and an omitted dependency would silently
+   * return every replayed retry to `token-not-found` rather than failing loudly.
+   */
+  readonly findDelegationsBySupersededToken: FindDelegationsBySupersededToken;
 }
 
 /**
@@ -174,6 +198,16 @@ export type ResolveChildRunbook = (
  * @returns The scan result, or `undefined` when no run owns the token.
  */
 export type FindDelegationByToken = (token: string) => Promise<TokenScanResult | undefined>;
+
+/**
+ * Where the seam obtains every delegation superseding a given plain-text token.
+ *
+ * @param token - Plain-text delegation bearer that may have been superseded.
+ * @returns Every matching scan result; empty when none match.
+ */
+export type FindDelegationsBySupersededToken = (
+  token: string,
+) => Promise<readonly TokenScanResult[]>;
 
 /**
  * How a retry locates its target delegation.
@@ -311,7 +345,32 @@ export type DelegationIssuanceOutcome =
       readonly tokenHash: string;
       readonly parentRunId: RunId;
     }
-  | { readonly kind: 'token-not-found'; readonly token: string }
+  | {
+      /**
+       * The retry was already applied: a replacement exists with no committed
+       * evidence its bearer was used. The response echoes that bearer so the
+       * caller can rotate deliberately by naming it. Nothing was written.
+       */
+      readonly kind: 'retry-already-applied';
+      readonly stepLabel: string;
+      readonly runbookPath: string;
+      readonly token: string;
+      readonly tokenHash: string;
+      readonly parentRunId: RunId;
+    }
+  | {
+      /**
+       * Refusal: no delegation matches the named bearer, on either the current
+       * `tokenHash` index or the supersession index.
+       *
+       * Carries a pre-truncated `tokenHint`, never the raw bearer. The hint is
+       * built at this boundary by {@link truncateDelegationToken}, so the leak
+       * is unrepresentable on this outcome rather than merely unrendered —
+       * matching what `Errors.tokenNotFound` already does for `rundown abort`.
+       */
+      readonly kind: 'token-not-found';
+      readonly tokenHint: string;
+    }
   | { readonly kind: 'no-active-runbook' }
   | UnknownRunRefusal
   | {
@@ -422,47 +481,49 @@ type EchoedDelegationToken =
   | { readonly kind: 'unverifiable'; readonly error: RundownError };
 
 /**
- * Reconstruct and verify the bearer token for an already-issued delegation
- * before the seam echoes it.
+ * Reconstruct and verify a bearer before any seam discloses it.
  *
- * An echo is a credential disclosure, so it is gated on the same invariant
+ * An echo is a credential disclosure, so it is gated on the invariant
  * `projectDelegateFrontier` enforces at the observation boundary: the token
  * reconstructed from the persisted descriptor MUST hash to the verifier the
  * parent recorded at issuance. Without that check the seam would hand back
  * whatever the descriptor happens to derive to, which is a forged or corrupted
  * record's own choosing.
  *
- * Derivation itself can fail — a rotated issuing claim can no longer reproduce a
- * credential minted by its predecessor, and the deriver throws for that. That
- * throw must not escape as an untyped error from a command seam whose contract
- * is typed data, so it collapses into the same refusal as a mismatch. Neither
- * arm carries the reconstructed token, so a caller cannot leak a bearer it was
+ * Derivation itself can fail — a rotated issuing claim cannot reproduce its
+ * predecessor's credential — and that throw must not escape a seam whose
+ * contract is typed data, so it collapses into the same refusal. Neither arm
+ * carries the reconstructed token, so a caller cannot leak a bearer it was
  * refused.
  *
- * @param echo - The `already-issued` resolution the seam matched.
+ * @param credential - The persisted, non-secret credential descriptor.
+ * @param tokenHash - The verifier recorded alongside it.
+ * @param subject - Step or substep label used in the refusal message.
  * @param deriveToken - Verified runtime deriver bound to the presenting claim.
  * @returns The verified bearer, or the typed refusal to return in its place.
  */
-function verifyEchoedDelegationToken(
-  echo: Extract<DelegationIssuanceResolution, { readonly kind: 'already-issued' }>,
+function verifyDerivedBearer(
+  credential: DelegationCredentialDescriptor,
+  tokenHash: DelegationTokenHash,
+  subject: string,
   deriveToken: DelegationTokenDeriver,
 ): EchoedDelegationToken {
   let token: string;
   try {
-    token = deriveToken(echo.credential);
+    token = deriveToken(credential);
   } catch {
     return {
       kind: 'unverifiable',
       error: Errors.delegationInvariantViolated(
-        `the presented claim cannot reconstruct the in-flight delegation credential for ${echo.stepId}`,
+        `the presented claim cannot reconstruct the in-flight delegation credential for ${subject}`,
       ),
     };
   }
-  if (hashDelegationToken(token) !== echo.tokenHash) {
+  if (hashDelegationToken(token) !== tokenHash) {
     return {
       kind: 'unverifiable',
       error: Errors.delegationInvariantViolated(
-        `reconstructed delegation credential for ${echo.stepId} does not match its persisted verifier`,
+        `reconstructed delegation credential for ${subject} does not match its persisted verifier`,
       ),
     };
   }
@@ -473,6 +534,20 @@ function verifyEchoedDelegationToken(
   // token unreachable without passing verification.
   // Stryker disable next-line StringLiteral: equivalent — the 'verified' discriminant is never read
   return { kind: 'verified', token };
+}
+
+/**
+ * Verify the bearer an already-issued fresh delegation would echo.
+ *
+ * @param echo - The `already-issued` resolution the seam matched.
+ * @param deriveToken - Verified runtime deriver bound to the presenting claim.
+ * @returns The verified bearer, or the typed refusal to return in its place.
+ */
+function verifyEchoedDelegationToken(
+  echo: Extract<DelegationIssuanceResolution, { readonly kind: 'already-issued' }>,
+  deriveToken: DelegationTokenDeriver,
+): EchoedDelegationToken {
+  return verifyDerivedBearer(echo.credential, echo.tokenHash, echo.stepId, deriveToken);
 }
 
 /**
@@ -1534,37 +1609,52 @@ export class RunbookLifecycleCommandService {
 
     let targetRunId: RunId;
     let cursor: RetryCursor | undefined;
+    let supersedingScan: readonly TokenScanResult[] = [];
 
     if (locator.kind === 'token') {
       const scan = await this.#deps.findDelegationByToken(locator.token);
-      if (!scan) return { kind: 'token-not-found', token: locator.token };
+      // `findByToken` matches `tokenHash` only, so a replayed retry naming a
+      // bearer that has since been rotated away resolves to nothing there.
+      //
+      // The supersession index is scanned UNCONDITIONALLY — not as a fallback
+      // when `findByToken` misses. Skipping it on a hit would make "more than
+      // one attempt records this bearer as superseded" invisible in exactly the
+      // case where a current row also matches, which is the corrupted state the
+      // refusal exists for. Scanning always is the fail-closed choice, and it is
+      // what lets `resolveRetryIssuance` remain the single place the priority
+      // between ambiguity and a matching current row is expressed. This seam
+      // decides nothing from the result but *where* the target run is.
+      supersedingScan = await this.#deps.findDelegationsBySupersededToken(locator.token);
+      const located = scan ?? supersedingScan[0];
+      if (!located)
+        return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
       // Fail-closed: an explicit `--run` that names a different run than the
       // token's owner is refused, never silently discarded. The message echoes
       // only the caller-supplied id — never the token's actual owning run
       // (accident barrier).
-      if (input.targetRunId !== undefined && scan.parentState.id !== input.targetRunId) {
+      if (input.targetRunId !== undefined && located.parentState.id !== input.targetRunId) {
         return {
           kind: 'run_target_mismatch',
           runId: input.targetRunId,
           message: `Run ${input.targetRunId} does not own the supplied delegation token.`,
         };
       }
-      targetRunId = scan.parentState.id;
-      const substepId = scan.substepId ?? scan.stepId;
+      targetRunId = located.parentState.id;
+      const substepId = located.substepId ?? located.stepId;
       // The canonical contextSnapshot.at surfaces FOR-iteration retries as e.g.
       // "1.2.1". `buildContextSnapshot` derives `at` unconditionally, so a
       // persisted snapshot always carries it; its absence means the snapshot is
       // from an incompatible/older persisted shape. Fail closed per the
       // no-migration rule (reject; never reconstruct the label from legacy
       // `substep`/`stepId` fields) — mirroring the downstream staleness gate.
-      const snapshot = scan.delegation.contextSnapshot;
+      const snapshot = located.delegation.contextSnapshot;
       if (snapshot.at === undefined) {
         return {
           kind: 'error',
-          error: Errors.delegationSnapshotStale(substepId, scan.stepId),
+          error: Errors.delegationSnapshotStale(substepId, located.stepId),
         };
       }
-      cursor = { substepId, frameKey: scan.frameKey, stepLabel: snapshot.at };
+      cursor = { substepId, frameKey: located.frameKey, stepLabel: snapshot.at };
     } else {
       const anchored = await this.#resolveIssuanceAnchor(input);
       if (anchored.kind !== 'ok') {
@@ -1590,7 +1680,8 @@ export class RunbookLifecycleCommandService {
 
     const freshState = await this.#deps.loadRun(targetRunId);
     if (!freshState) {
-      if (locator.kind === 'token') return { kind: 'token-not-found', token: locator.token };
+      if (locator.kind === 'token')
+        return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
       return locator.kind === 'active'
         ? { kind: 'retry_target_required' }
         : { kind: 'no-active-runbook' };
@@ -1826,6 +1917,124 @@ export class RunbookLifecycleCommandService {
                 error: Errors.delegationInFlight(exactCursor.substepId, child.state.id),
               },
             };
+          }
+        }
+        // Retry idempotency (#681). Placed exactly here on purpose: after the
+        // linked-child guards, whose refusals outrank a committed-result echo,
+        // and BEFORE `resolveOverrides`, which is deliberately deferred so a bad
+        // `--input-file` cannot mask a higher-priority precondition. This mirrors
+        // the fresh path, where `resolveDelegationIssuance` decides
+        // echo-versus-issue in `beforeEffect` and the machine runs only on the
+        // issuable branch.
+        //
+        // `supersededBy` is derived primarily from the CAPTURED parent state:
+        // the disk scan ran before this transaction took its capture, so only
+        // the captured rows carry in-transaction authority. The scan's
+        // contribution is the rows it found in *other* runs, which the captured
+        // parent cannot contain and which are the only way cross-run ambiguity
+        // becomes visible.
+        //
+        // Plain concatenation — the two collections are disjoint BY
+        // CONSTRUCTION: `capturedSuperseding` reads only
+        // `parent.state.substepStates`, and `foreignSuperseding` keeps only rows
+        // whose `parentState.id !== parent.state.id`. A same-run row can reach
+        // this list only through the capture; a foreign row only through the
+        // scan. Do NOT "make it safe" with a `new Map(...)` keyed on
+        // `tokenHash`: two distinct corrupted rows can carry the same
+        // replacement verifier, and collapsing them drops `supersededBy.length`
+        // to 1, silently skipping the very refusal that exists to catch that
+        // state.
+        //
+        // Build the capture inside an explicit `if`, not a ternary over a
+        // separately derived `identityTokenHash` const. Narrowing `locator.kind`
+        // in a ternary narrows `locator`, not a const computed from it, so a
+        // hoisted `const identityTokenHash = locator.kind === 'token' ? hash(...)
+        // : undefined` stays `DelegationTokenHash | undefined` and is not
+        // assignable to the capture's required field. Computing the hash inside
+        // the branch makes the type follow from the branch.
+        const frameEntry = inferFrameEntryFromState(parent.state, exactCursor.frameKey);
+        let retryResolution: RetryIssuanceResolution;
+        if (locator.kind === 'token') {
+          const identityTokenHash = hashDelegationToken(locator.token);
+          const capturedSuperseding = (parent.state.substepStates ?? [])
+            .map((row) => row.delegation)
+            .filter(
+              (row): row is StepDelegation =>
+                row?.credential.supersedesTokenHash === identityTokenHash,
+            );
+          const foreignSuperseding = supersedingScan
+            .filter((row) => row.parentState.id !== parent.state.id)
+            .map((row) => row.delegation)
+            .filter((row) => row.credential.supersedesTokenHash === identityTokenHash);
+          retryResolution = resolveRetryIssuance({
+            locator: 'token',
+            identityTokenHash,
+            current: exactSubstep?.delegation,
+            supersededBy: [...capturedSuperseding, ...foreignSuperseding],
+            frameEntry,
+          });
+        } else {
+          retryResolution = resolveRetryIssuance({
+            locator: 'step',
+            current: exactSubstep?.delegation,
+            frameEntry,
+          });
+        }
+        switch (retryResolution.kind) {
+          case 'ambiguous':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationSupersessionAmbiguous(exactCursor.substepId),
+              },
+            };
+          case 'identity-unmatched':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationRetryIdentityUnmatched(exactCursor.substepId),
+              },
+            };
+          case 'replacement-consumed':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationReplacementConsumed(
+                  exactCursor.substepId,
+                  retryResolution.reason,
+                ),
+              },
+            };
+          case 'already-replaced': {
+            const echoed = verifyDerivedBearer(
+              retryResolution.delegation.credential,
+              retryResolution.delegation.tokenHash,
+              exactCursor.substepId,
+              deriveToken,
+            );
+            if (echoed.kind === 'unverifiable') {
+              return { kind: 'return', value: { kind: 'error', error: echoed.error } };
+            }
+            return {
+              kind: 'return',
+              value: {
+                kind: 'retry-already-applied',
+                stepLabel: exactCursor.stepLabel,
+                runbookPath: retryResolution.delegation.childRunbookPath,
+                token: echoed.token,
+                tokenHash: retryResolution.delegation.tokenHash,
+                parentRunId: parent.state.id,
+              },
+            };
+          }
+          case 'rotatable':
+            break;
+          default: {
+            const _exhaustive: never = retryResolution;
+            throw new Error(`Unhandled retry resolution: ${JSON.stringify(_exhaustive)}`);
           }
         }
         const overrides = await input.resolveOverrides?.();

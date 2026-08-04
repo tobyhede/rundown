@@ -142,6 +142,8 @@ describe('entry projection ordering: machine credential issuance agrees with com
       }),
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+      findDelegationsBySupersededToken: (token) =>
+        new DelegationScanService(manager).findBySupersededToken(token),
     });
   });
 

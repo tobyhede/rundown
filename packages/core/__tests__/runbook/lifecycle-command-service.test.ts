@@ -253,6 +253,7 @@ describe('RunbookLifecycleCommandService', () => {
       // issueDelegation suites build their own seam via startSeamOnDelegateStep.
       resolveChildRunbook: async () => undefined,
       findDelegationByToken: async () => undefined,
+      findDelegationsBySupersededToken: async () => [],
     });
   });
 
@@ -352,6 +353,8 @@ describe('RunbookLifecycleCommandService', () => {
       }),
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+      findDelegationsBySupersededToken: (token) =>
+        new DelegationScanService(manager).findBySupersededToken(token),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }

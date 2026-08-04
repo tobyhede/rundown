@@ -1786,7 +1786,96 @@ describe('delegate command', () => {
       );
 
       expect(retry.exitCode).not.toBe(0);
-      expect(retry.stdout + retry.stderr).toMatch(/token .* not found/i);
+      expect(retry.stdout + retry.stderr).toMatch(/no delegation matches token/i);
+    });
+
+    it('never serialises the raw bearer into the token-not-found envelope', async () => {
+      // Redaction is enforced at the core boundary: the outcome carries a
+      // pre-truncated hint, so no renderer can reintroduce the leak.
+      await setupDelegation();
+      // cspell:disable-next-line
+      const bearer = 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
+
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', bearer], workspace),
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const combined = result.stdout + result.stderr;
+      expect(combined).not.toContain(bearer);
+      // Redacted, not dropped — the operator can still correlate the refusal.
+      expect(combined).toContain('rdtk_AAA...HHHH');
+    });
+
+    it('emits action retry-already-applied with the current bearer (JSON default)', async () => {
+      await setupDelegation();
+      const first = parseCliJsonObject(
+        (
+          await runCliInProcess(
+            await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+            workspace,
+          )
+        ).stdout,
+      );
+      expect(first.action).toBe('retried');
+
+      const replay = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
+
+      expect(replay.exitCode).toBe(0);
+      const body = parseCliJsonObject(replay.stdout);
+      expect(body).toEqual({
+        kind: 'delegate',
+        action: 'retry-already-applied',
+        step: '1.1',
+        runbook: expect.stringContaining('child.runbook.md'),
+        token: first.token,
+        token_hash: expect.any(String),
+        parent_run_id: expect.stringMatching(/^rd_/),
+      });
+      expect(() => DelegateResponseSchema.parse(body)).not.toThrow();
+    });
+
+    it('renders the echo for humans with --text', async () => {
+      await setupDelegation();
+      await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
+
+      const replay = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1', '--text'], workspace),
+        workspace,
+      );
+
+      expect(replay.exitCode).toBe(0);
+      expect(replay.stdout).toContain('ALREADY    step 1.1 ->');
+      expect(replay.stdout).toContain('RD_CLAIM_TOKEN=');
+    });
+
+    it('rotates again when the caller names the current bearer', async () => {
+      await setupDelegation();
+      const first = parseCliJsonObject(
+        (
+          await runCliInProcess(
+            await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+            workspace,
+          )
+        ).stdout,
+      );
+
+      const rotated = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', String(first.token)], workspace),
+        workspace,
+      );
+
+      expect(rotated.exitCode).toBe(0);
+      const body = parseCliJsonObject(rotated.stdout);
+      expect(body.action).toBe('retried');
+      expect(body.token).not.toBe(first.token);
     });
 
     it('prioritizes TOKEN_NOT_FOUND over --input-file validation on the token form (regression)', async () => {
@@ -1812,7 +1901,7 @@ describe('delegate command', () => {
 
       expect(retry.exitCode).not.toBe(0);
       const combined = retry.stdout + retry.stderr;
-      expect(combined).toMatch(/token .* not found/i);
+      expect(combined).toMatch(/no delegation matches token/i);
       // The bad --input-file is never read — the missing-file envelope and the
       // path never appear.
       expect(combined).not.toContain('does-not-exist.yaml');
