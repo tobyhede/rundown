@@ -422,4 +422,222 @@ describe('DelegationScanService', () => {
       expect(result!.substepId).toBe('50');
     });
   });
+
+  describe('findBySupersededToken', () => {
+    /** A delegation whose credential records `supersededToken` as the bearer it replaced. */
+    function makeReplacement(ownToken: string, supersededToken: string): StepDelegation {
+      return {
+        ...makeDelegation(ownToken),
+        credential: makeDelegationCredentialDescriptor({
+          supersedesTokenHash: hashDelegationToken(supersededToken),
+        }),
+      };
+    }
+
+    it('returns the row whose credential supersedes the named token', async () => {
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_PARENT_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('2'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+          ],
+        }),
+      );
+
+      const rows = await scanner.findBySupersededToken(t1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].frameKey).toBe(buildFrameKey('2'));
+      expect(rows[0].substepId).toBe('1');
+    });
+
+    it('returns every matching row, not the first hit', async () => {
+      // Row 8 of the retry decision table is only expressible if the scan
+      // surfaces the ambiguity rather than resolving it.
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_PARENT_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('2'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+            {
+              id: '2',
+              frameKey: buildFrameKey('2'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+          ],
+        }),
+      );
+
+      expect(await scanner.findBySupersededToken(t1)).toHaveLength(2);
+    });
+
+    it('returns an empty array when nothing supersedes the token', async () => {
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_PARENT_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeDelegation(generateDelegationToken()),
+            },
+          ],
+        }),
+      );
+
+      expect(await scanner.findBySupersededToken(t1)).toEqual([]);
+    });
+
+    it('does not match on tokenHash', async () => {
+      // A token that is CURRENT, not superseded, is findByToken's job.
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_PARENT_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeDelegation(t1),
+            },
+          ],
+        }),
+      );
+
+      expect(await scanner.findBySupersededToken(t1)).toEqual([]);
+    });
+
+    it('scans across runs', async () => {
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_ONE_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeDelegation(generateDelegationToken()),
+            },
+          ],
+        }),
+      );
+      await writeState(
+        makeState(RUN_TWO_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+          ],
+        }),
+      );
+
+      const rows = await scanner.findBySupersededToken(t1);
+      expect(rows.map((row) => row.parentState.id)).toEqual([RUN_TWO_ID]);
+    });
+
+    it('reports the step from the delegation context snapshot', async () => {
+      const t1 = generateDelegationToken();
+      const delegation = makeReplacement(generateDelegationToken(), t1);
+      await writeState(
+        makeState(RUN_CONTEXT_STEP_ID, {
+          step: '9',
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('2'),
+              status: 'pending',
+              delegation: {
+                ...delegation,
+                contextSnapshot: { ...delegation.contextSnapshot, step: '2' },
+              },
+            },
+          ],
+        }),
+      );
+
+      const rows = await scanner.findBySupersededToken(t1);
+      expect(rows[0].stepId).toBe('2');
+    });
+
+    it('falls back to the run cursor when the snapshot carries no step', async () => {
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_NO_DELEGATION_LINKAGE_ID, {
+          step: '7',
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('7'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+          ],
+        }),
+      );
+
+      const rows = await scanner.findBySupersededToken(t1);
+      expect(rows[0].stepId).toBe('7');
+    });
+
+    it('skips substeps that carry no delegation at all', async () => {
+      const t1 = generateDelegationToken();
+      await writeState(
+        makeState(RUN_NO_DELEGATION_ID, {
+          substepStates: [
+            { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+            {
+              id: '2',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+          ],
+        }),
+      );
+
+      const rows = await scanner.findBySupersededToken(t1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].substepId).toBe('2');
+    });
+
+    it('returns an empty array when no states exist', async () => {
+      expect(await scanner.findBySupersededToken(generateDelegationToken())).toEqual([]);
+    });
+
+    it('skips a run that has no substep states at all', async () => {
+      // Distinct from "no states exist": the scan must tolerate a run whose
+      // `substepStates` is absent rather than empty.
+      const t1 = generateDelegationToken();
+      await writeState(makeState(RUN_NO_SUBSTEPS_ID));
+      await writeState(
+        makeState(RUN_TARGET_ID, {
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeReplacement(generateDelegationToken(), t1),
+            },
+          ],
+        }),
+      );
+
+      const rows = await scanner.findBySupersededToken(t1);
+      expect(rows.map((row) => row.parentState.id)).toEqual([RUN_TARGET_ID]);
+    });
+  });
 });

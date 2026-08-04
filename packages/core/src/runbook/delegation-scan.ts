@@ -71,6 +71,47 @@ export class DelegationScanService {
   }
 
   /**
+   * Find every delegation that records the given raw token as superseded.
+   *
+   * {@link findByToken} matches `tokenHash` only, so a replayed retry naming a
+   * bearer that has since been rotated away resolves to nothing there. This is
+   * the companion lookup: it hashes the token and scans every active run's
+   * substep states for a credential whose `supersedesTokenHash` matches.
+   *
+   * Returns **all** matches rather than the first, because "more than one
+   * attempt records this bearer as superseded" is a distinct, refusable
+   * condition (RD-828). It is unreachable by construction; surfacing it as data
+   * is what lets the caller refuse rather than silently resolve one of them.
+   *
+   * Same O(N) full-scan cost profile as {@link findByToken} — see its
+   * performance note.
+   *
+   * @param rawToken - The plain-text delegation token that may have been superseded.
+   * @returns Every matching scan result, in state-listing order; empty when none match.
+   */
+  async findBySupersededToken(rawToken: string): Promise<readonly TokenScanResult[]> {
+    const hash = hashDelegationToken(rawToken);
+    const states = await this.manager.list();
+    const matches: TokenScanResult[] = [];
+
+    for (const state of states) {
+      for (const ss of state.substepStates ?? []) {
+        if (ss.delegation?.credential.supersedesTokenHash === hash) {
+          matches.push({
+            parentState: state,
+            stepId: ss.delegation.contextSnapshot.step ?? state.step,
+            substepId: ss.id,
+            frameKey: ss.frameKey,
+            delegation: ss.delegation,
+          });
+        }
+      }
+    }
+
+    return matches;
+  }
+
+  /**
    * Find an orphaned child run that carries the given token hash in its linkage.
    *
    * Used during crash recovery: if the parent's childRunId wasn't set before
