@@ -21,6 +21,7 @@ import {
   isPostDelegateAggregationCursor,
   resolveDelegateTarget,
   resolveDelegationIssuance,
+  resolveRetryIssuance,
   resolveTargetedDelegation,
   type DelegationInferenceState,
   type FrameKey,
@@ -1310,5 +1311,284 @@ describe('resolveTargetedDelegation', () => {
     expect(resolveTargetedDelegation(empty, '1.1', frameKey, requested)).toEqual({
       kind: 'issuable',
     });
+  });
+});
+
+describe('resolveRetryIssuance', () => {
+  const H = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+  const HOTHER = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+  const ENTRY = 3;
+
+  /**
+   * A delegation row for the decision table.
+   *
+   * Defaults are the "no committed evidence of use" shape: unclaimed,
+   * uncancelled, stamped at the frame's current entry.
+   *
+   * @param over - Row-level overrides (tokenHash, childRunId, cancelledAt).
+   * @param cred - Credential-level overrides (supersedesTokenHash, parentEntry).
+   * @returns The delegation row.
+   */
+  const delegation = (
+    over: Partial<StepDelegation> = {},
+    cred: Partial<StepDelegation['credential']> = {},
+  ): StepDelegation =>
+    makeActiveDelegation({
+      tokenHash: HOTHER,
+      ...over,
+      credential: makeDelegationCredentialDescriptor({ parentEntry: ENTRY, ...cred }),
+    });
+
+  // --- token locator -------------------------------------------------------
+  it('row 1 — token, row or delegation absent -> rotatable', () => {
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: undefined,
+        supersededBy: [],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
+  it('row 2 — token, H === Hc -> rotatable', () => {
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: delegation({ tokenHash: H }),
+        supersededBy: [],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
+  it('row 3 — token, H === Hs, unobserved, entryCurrent -> already-replaced', () => {
+    const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY });
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: replacement,
+        supersededBy: [replacement],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'already-replaced', delegation: replacement });
+  });
+
+  it('row 4 — token, H === Hs, childRunId set -> replacement-consumed(claimed)', () => {
+    const replacement = delegation(
+      { childRunId: brandRunIdForTest(`rd_${'d'.repeat(32)}`) },
+      { supersedesTokenHash: H },
+    );
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: replacement,
+        supersededBy: [replacement],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'replacement-consumed', reason: 'claimed' });
+  });
+
+  it('row 5 — token, H === Hs, cancelled -> replacement-consumed(cancelled)', () => {
+    const replacement = delegation(
+      { cancelledAt: '2026-08-04T00:00:00.000Z' },
+      { supersedesTokenHash: H },
+    );
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: replacement,
+        supersededBy: [replacement],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'replacement-consumed', reason: 'cancelled' });
+  });
+
+  it('row 6 — token, H === Hs, entry advanced -> replacement-consumed(entry_superseded)', () => {
+    const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY - 1 });
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: replacement,
+        supersededBy: [replacement],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'replacement-consumed', reason: 'entry_superseded' });
+  });
+
+  it('row 6b — the fourth conjunct is exact equality, never >= or a tolerance', () => {
+    for (const stamped of [ENTRY - 1, ENTRY + 1]) {
+      const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: stamped });
+      expect(
+        resolveRetryIssuance({
+          locator: 'token',
+          identityTokenHash: H,
+          current: replacement,
+          supersededBy: [replacement],
+          frameEntry: ENTRY,
+        }),
+      ).toEqual({ kind: 'replacement-consumed', reason: 'entry_superseded' });
+    }
+  });
+
+  it('row 7 — token, matches neither Hc nor Hs -> identity-unmatched', () => {
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: delegation(),
+        supersededBy: [],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'identity-unmatched' });
+  });
+
+  it('row 8 — token, more than one row supersedes H -> ambiguous', () => {
+    const a = delegation({}, { supersedesTokenHash: H });
+    const b = delegation({}, { supersedesTokenHash: H });
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: a,
+        supersededBy: [a, b],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('row 8 outranks row 2 — ambiguity refuses even when the current row matches', () => {
+    const a = delegation({ tokenHash: H }, { supersedesTokenHash: H });
+    const b = delegation({}, { supersedesTokenHash: H });
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: a,
+        supersededBy: [a, b],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('row 8 counts rows, not distinct verifiers — two rows sharing a tokenHash are still ambiguous', () => {
+    // Corrupted state can carry the same replacement verifier on two distinct
+    // rows. `supersededBy` must therefore be a plain concatenation: any caller
+    // that dedupes it by `tokenHash` collapses these to one, drops the length
+    // to 1, and silently skips the refusal this row exists for.
+    const shared = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
+    const a = delegation({ tokenHash: shared }, { supersedesTokenHash: H });
+    const b = delegation({ tokenHash: shared }, { supersedesTokenHash: H });
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: a,
+        supersededBy: [a, b],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('consumed reasons are checked claimed -> cancelled -> entry_superseded', () => {
+    const all = delegation(
+      {
+        childRunId: brandRunIdForTest(`rd_${'e'.repeat(32)}`),
+        cancelledAt: '2026-08-04T00:00:00.000Z',
+      },
+      { supersedesTokenHash: H, parentEntry: ENTRY - 1 },
+    );
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: all,
+        supersededBy: [all],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'replacement-consumed', reason: 'claimed' });
+  });
+
+  it('cancelled outranks entry_superseded when both hold', () => {
+    const both = delegation(
+      { cancelledAt: '2026-08-04T00:00:00.000Z' },
+      { supersedesTokenHash: H, parentEntry: ENTRY - 1 },
+    );
+    expect(
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: both,
+        supersededBy: [both],
+        frameEntry: ENTRY,
+      }),
+    ).toEqual({ kind: 'replacement-consumed', reason: 'cancelled' });
+  });
+
+  // --- step / active locator ----------------------------------------------
+  it('row 10 — step, Hs undefined -> rotatable', () => {
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: delegation(), frameEntry: ENTRY }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
+  it('row 10b — step, no delegation at the cursor -> rotatable', () => {
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: undefined, frameEntry: ENTRY }),
+    ).toEqual({
+      kind: 'rotatable',
+    });
+  });
+
+  it('row 11 — step, Hs set, unobserved, entryCurrent -> already-replaced', () => {
+    const replacement = delegation({}, { supersedesTokenHash: H });
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: replacement, frameEntry: ENTRY }),
+    ).toEqual({ kind: 'already-replaced', delegation: replacement });
+  });
+
+  it('rows 12/13 — step, Hs set, linked child -> rotatable', () => {
+    const replacement = delegation(
+      { childRunId: brandRunIdForTest(`rd_${'f'.repeat(32)}`) },
+      { supersedesTokenHash: H },
+    );
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: replacement, frameEntry: ENTRY }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
+  it('row 14 — step, Hs set, cancelled -> rotatable', () => {
+    const replacement = delegation(
+      { cancelledAt: '2026-08-04T00:00:00.000Z' },
+      { supersedesTokenHash: H },
+    );
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: replacement, frameEntry: ENTRY }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
+  it('row 15 — step, Hs set, entry advanced -> rotatable', () => {
+    const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY - 1 });
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: replacement, frameEntry: ENTRY }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
+  it('never throws and performs no I/O', () => {
+    expect(() =>
+      resolveRetryIssuance({
+        locator: 'token',
+        identityTokenHash: H,
+        current: undefined,
+        supersededBy: [],
+        frameEntry: 1,
+      }),
+    ).not.toThrow();
   });
 });

@@ -357,6 +357,7 @@ export {
   // eslint-disable-next-line @typescript-eslint/no-deprecated
   resolveDelegateTarget,
   resolveDelegationIssuance,
+  resolveRetryIssuance,
   // eslint-disable-next-line @typescript-eslint/no-deprecated
   resolveTargetedDelegation,
   type DelegateTargetResolution,
@@ -367,6 +368,9 @@ export {
   type RequestedRunbookArg,
   type ResolvedDelegationRunbook,
   type ResolveDelegationRunbook,
+  type RetryIssuanceCapture,
+  type RetryIssuanceResolution,
+  type RetryReplacementConsumedReason,
   type TargetedDelegateResolution,
 } from './delegation-inference.js';
 export {

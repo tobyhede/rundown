@@ -826,3 +826,137 @@ export function inferAllDelegateSubsteps(
 
   return results;
 }
+
+/**
+ * Why a retry replacement is treated as consumed.
+ *
+ * Each value names committed evidence that the superseded bearer's replacement
+ * was presented — never an inference about whether it was observed.
+ */
+export type RetryReplacementConsumedReason = 'claimed' | 'cancelled' | 'entry_superseded';
+
+/**
+ * Everything {@link resolveRetryIssuance} decides from, captured inside the
+ * deciding transaction.
+ *
+ * Discriminated on `locator` so the token-only fields cannot be read on the
+ * step/active path, and vice versa.
+ */
+export type RetryIssuanceCapture =
+  | {
+      /** The retry named a bearer token. */
+      readonly locator: 'token';
+      /** Hash of the bearer the caller named. */
+      readonly identityTokenHash: DelegationTokenHash;
+      /** The delegation currently recorded at the resolved `(substepId, frameKey)`. */
+      readonly current: StepDelegation | undefined;
+      /** Every captured row whose credential records `identityTokenHash` as superseded. */
+      readonly supersededBy: readonly StepDelegation[];
+      /** `inferFrameEntryFromState(capturedState, frameKey)` for the resolved frame. */
+      readonly frameEntry: number;
+    }
+  | {
+      /** The retry named a step, or inferred the active substep. */
+      readonly locator: 'step';
+      /** The delegation currently recorded at the resolved `(substepId, frameKey)`. */
+      readonly current: StepDelegation | undefined;
+      /** `inferFrameEntryFromState(capturedState, frameKey)` for the resolved frame. */
+      readonly frameEntry: number;
+    };
+
+/**
+ * Whether the named retry should rotate, echo, or refuse.
+ *
+ * - `rotatable` — mint a replacement (the caller's existing retry path).
+ * - `already-replaced` — a replacement exists with no committed evidence it was
+ *   used; echo it and write nothing.
+ * - `replacement-consumed` — the replacement shows committed evidence of use.
+ * - `identity-unmatched` — the named bearer identifies neither the current
+ *   attempt nor one it superseded.
+ * - `ambiguous` — more than one attempt records the bearer as superseded.
+ */
+export type RetryIssuanceResolution =
+  | { readonly kind: 'rotatable' }
+  | { readonly kind: 'already-replaced'; readonly delegation: StepDelegation }
+  | { readonly kind: 'replacement-consumed'; readonly reason: RetryReplacementConsumedReason }
+  | { readonly kind: 'identity-unmatched' }
+  | { readonly kind: 'ambiguous' };
+
+/**
+ * `unobservedReplacement(state, frameKey, D)` — no committed evidence that the
+ * bearer `D` replaced was ever presented.
+ *
+ * All four conjuncts are required. The fourth is not defensive: a delegation row
+ * is keyed `(id, frameKey)` with no entry component and `resetReopenedSubsteps`
+ * preserves `delegation` across frame re-entry, so without it a replay after a
+ * GOTO would echo a bearer `classifyDelegationLiveness` has already closed as
+ * `cursor-advanced` — an unclaimable token, strictly worse than rotating.
+ *
+ * @param delegation - The replacement row being judged.
+ * @param frameEntry - The entry committed state reports for the row's frame.
+ * @returns True when the replacement shows no committed evidence of use.
+ */
+function unobservedReplacement(delegation: StepDelegation, frameEntry: number): boolean {
+  return (
+    delegation.credential.supersedesTokenHash !== undefined &&
+    delegation.childRunId === null &&
+    delegation.cancelledAt === null &&
+    delegation.credential.parentEntry === frameEntry
+  );
+}
+
+/**
+ * Decide whether a `delegate --retry` should rotate, echo a committed
+ * replacement, or refuse.
+ *
+ * Implements the ratified 15-row decision table
+ * (`docs/superpowers/plans/2026-08-03-608-pr12-review-remediation-addendum.md`
+ * § "Retry idempotency contract"). Pure: no I/O, never throws. The caller
+ * narrows on the returned variant rather than re-checking any predicate.
+ *
+ * Rows the caller owns and this resolver deliberately does not: "not located"
+ * (`token-not-found`) is decided at the scan boundary before a capture exists,
+ * and "live linked child" (RD-823) is refused by the child-liveness guard that
+ * runs immediately before this call — both reach here, if at all, as
+ * `rotatable`.
+ *
+ * Ambiguity, by contrast, is decided **here** and nowhere else. The caller
+ * scans the supersession index unconditionally and passes the result in
+ * `supersededBy` without inspecting its length, so a caller that also matched a
+ * current row cannot mask it.
+ *
+ * @param capture - The locator-discriminated capture taken inside the transaction.
+ * @returns The discriminated resolution.
+ */
+export function resolveRetryIssuance(capture: RetryIssuanceCapture): RetryIssuanceResolution {
+  if (capture.locator === 'step') {
+    const current = capture.current;
+    if (current === undefined) return { kind: 'rotatable' };
+    if (current.credential.supersedesTokenHash === undefined) return { kind: 'rotatable' };
+    return unobservedReplacement(current, capture.frameEntry)
+      ? { kind: 'already-replaced', delegation: current }
+      : { kind: 'rotatable' };
+  }
+
+  // Ambiguity outranks every other token-locator row: with more than one
+  // superseding attempt there is no single replacement to echo or judge, so the
+  // contract refuses rather than picking one.
+  if (capture.supersededBy.length > 1) return { kind: 'ambiguous' };
+
+  const current = capture.current;
+  if (current === undefined) return { kind: 'rotatable' };
+  if (current.tokenHash === capture.identityTokenHash) return { kind: 'rotatable' };
+
+  const replacement = capture.supersededBy[0];
+  if (replacement === undefined) return { kind: 'identity-unmatched' };
+  if (replacement.childRunId !== null) {
+    return { kind: 'replacement-consumed', reason: 'claimed' };
+  }
+  if (replacement.cancelledAt !== null) {
+    return { kind: 'replacement-consumed', reason: 'cancelled' };
+  }
+  if (replacement.credential.parentEntry !== capture.frameEntry) {
+    return { kind: 'replacement-consumed', reason: 'entry_superseded' };
+  }
+  return { kind: 'already-replaced', delegation: replacement };
+}
