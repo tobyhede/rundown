@@ -225,6 +225,60 @@ The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
 consumes (see [§ CLI ↔ Core Event Boundary](#cli--core-event-boundary)).
 
+### Frame entry ownership
+
+The XState machine is the single writer of frame entry.
+`RunbookContext.frameEntry` holds
+`{ activeFrameKey, activeEntry, frameEntryCounts }` and is advanced by
+`syncFrameEntry`, an `assign` appended after the existing entry actions on every
+step/substep **leaf** state. `deriveActorStatePatch` mirrors the result into
+`RunbookState.activeEntry` / `frameEntryCounts`.
+
+Two ordering facts make the placement correct:
+
+- **After `initForStack`.** FOR-stack initialisation lives in the same
+  entry-action slot, so appending puts the sync after the iteration is current.
+  A FOR loop-back therefore reads as a frame switch with no extra wiring.
+- **Before the leaf's invoked children.** A compound state's `entry` assign runs
+  before its initial child's `invoke` input factory is read, so
+  `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
+
+`syncFrameEntry` is **not** attached to `step::N::__parent-entry::M`: those are
+same-frame artifact pass-throughs that route on to the real leaf, and bumping
+there would double-count.
+
+The bump rule lives in `advanceFrameEntry` (`frame-entry.ts`) and the frame-key
+derivation in `frameKeyForCursor` (`targeting.ts`), the single derivation that
+`deriveActiveFrame`, `deriveActorStatePatch` and
+`buildDelegationIssueInvokeBlock` all route through. The entry ordinal is
+run-global and monotonic —
+`max(frameEntryCounts[target] ?? 0, previousActiveEntry) + 1` — not
+per-frame-local; `classifyDelegationLiveness` and completion-key scoping depend
+on that form.
+
+**Re-entry is declared, not inferred.** Every transition that writes a `GOTO` or
+`RETRY` `lastAction` also writes the one-shot `context.frameReentry` marker,
+which the first following `syncFrameEntry` consumes and clears. The split is
+deliberate: a transition knows _that_ it re-enters but not yet _which_ frame
+(the FOR iteration is only current after the leaf's `initForStack` runs), and
+one transition can drive several state entries — `__parent-entry::` routing is
+two — which a one-shot marker survives and a `lastAction` read does not.
+`RETRY_ERROR` sets no marker; it routes to `STOPPED` and enters no frame.
+
+**The two `runRetryHook` sites are the exception.** `runRetryHook` is invoked
+from a transition `assign`, and transition actions run before the target's entry
+actions, so `syncFrameEntry` cannot serve it. Both sites call
+`advanceFrameEntry` inline, hand the hook the advanced coordinates, and
+deliberately set no marker — the entry action that follows is then a no-op for
+that frame. On a FOR parent the frame they advance is the **bare step frame**,
+not the iteration frame: the loop has exhausted by the time the parent
+aggregation resolves, so `frameKeyForCursor` finds no active FOR context. That
+is the same derivation `runRetryHook` performs on the coordinates it receives,
+so the two agree by construction. The parent-aggregation site then assigns
+`forStack: EMPTY_FOR_STACK`, and the leaf `initForStack` that follows rebuilds
+the loop at `forClause.start` — a second, genuinely different frame, scored once
+by the entry action.
+
 ### Delegated Command Infrastructure Terminals
 
 Command execution is a machine-owned Category C side effect. The command actor
@@ -310,6 +364,13 @@ into `compileRunbookToMachine` and threaded into every per-state `invoke.input`
 closure. FOR iteration resolution additionally receives the unflattened initial
 template-variable seed through the same compile-time closure so file-backed
 `JsonArrayStream` sources never need to live in persisted XState context.
+
+`context.frameEntry` is the canonical event-time-bound dependency: machine-owned
+delegation issuance reads it inside `buildDelegationIssueInvokeBlock`'s `input`
+factory at fire time, after the leaf's `syncFrameEntry` entry action has made it
+current (see [§ Frame entry ownership](#frame-entry-ownership)). It is plain
+data and serialises into the persisted snapshot; no function reference or
+process-runtime value travels with it.
 
 ### Manual delegation preparation machine
 
