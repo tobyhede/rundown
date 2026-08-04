@@ -4207,6 +4207,27 @@ echo ok
       expect(again?.activeEntry).toBe(state.activeEntry);
       expect(again?.frameEntryCounts).toEqual(state.frameEntryCounts);
     });
+
+    it('writes no frame-entry patch when the snapshot carries no context at all', async () => {
+      // `PersistedRunbookSnapshot.context` is optional, so this shape is
+      // representable and the patch must read through it rather than assume it.
+      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await manager.update(created.id, {
+        activeEntry: 5,
+        frameEntryCounts: replace({ [FRAME_1]: 5 }),
+      });
+      const actor = {
+        getPersistedSnapshot: () => ({ value: 'step::1' }),
+      } as unknown as AnyActorRef;
+
+      const { state } = await actorService.updateFromActor(created.id, actor, mockSteps);
+
+      // Untouched: the patch omitted both fields rather than clearing them.
+      expect(state.activeEntry).toBe(5);
+      expect(state.frameEntryCounts).toEqual({ [FRAME_1]: 5 });
+    });
   });
 });
 

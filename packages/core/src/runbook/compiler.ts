@@ -746,6 +746,14 @@ function buildArtifactRuntimeScope(
 // Typed constants for empty array values that need explicit types
 // (bare `[]` infers as `never[]`, not the required array type).
 const EMPTY_FOR_STACK: RunbookContext['forStack'] = Object.freeze([]);
+// ACCEPTED EQUIVALENT MUTANTS: `ObjectLiteral -> {}` on both constants below.
+// `syncFrameEntry` consumes the marker by presence alone (`frameReentry !==
+// undefined`) — the bump is identical for GOTO and RETRY — so emptying either
+// literal cannot change behaviour and no test can kill it. `cause` is carried
+// for diagnosis: it is the only record of WHY a transition declared a re-entry,
+// readable from an inspected mid-macrostep snapshot. It is deliberately not a
+// dispatch discriminant; if a future arm needs to branch on it, that arm is
+// what makes these mutants killable.
 /** One-shot marker declaring a GOTO-driven frame re-entry (consumed by `syncFrameEntry`). */
 const FRAME_REENTRY_GOTO: NonNullable<RunbookContext['frameReentry']> = Object.freeze({
   cause: 'GOTO' as const,
