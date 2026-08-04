@@ -1,43 +1,21 @@
 /**
- * INVESTIGATION — not a behaviour contract.
+ * Regression pin for #680: the machine is the single writer of frame entry.
  *
- * Question: does a machine-issued delegation credential stamp a `parentEntry`
- * that disagrees with the entry the *committed* `RunbookState` ends up carrying
- * for the same frame?
- *
- * Why it matters: a planned idempotency contract's central predicate includes
- * the conjunct
- *
- *   D.credential.parentEntry === inferFrameEntryFromState(state, frameKey)
- *
- * evaluated against committed state. If the stamped value systematically lags
- * the committed one, that conjunct is always false for exactly the cases the
- * contract exists to cover, and the contract silently degrades to today's
- * unconditional re-mint while appearing implemented.
+ * A machine-issued delegation credential must stamp the `parentEntry` that the
+ * *committed* `RunbookState` carries for the same frame, on every issuance
+ * path. Part B's `unobservedReplacement` predicate compares those two values
+ * directly, so a lag on either machine-owned path would silently degrade the
+ * retry idempotency contract to an unconditional re-mint while reading as
+ * implemented.
  *
  * Method: drive real transitions through the real
  * `RunbookLifecycleCommandService` — the production caller that sequences
  * `RunbookActorService.prepareActorMutation` (which runs the machine, and
- * therefore issues credentials) against
- * `ExecutionLifecycleService.deriveActiveEntry` (which projects the entry) —
- * then read the credential back off committed state and compare.
+ * therefore issues credentials) — then read the credential back off committed
+ * state and compare.
  *
- * Result (five cases below): the lag is REAL, off by exactly one, on BOTH
- * machine-owned issuance paths — fresh (`delegationIssueActor`) and retry
- * (`runRetryHook`) — and absent on the two paths that do not re-project the
- * entry after the machine runs (GOTO navigation, manual `issueDelegation`).
- * Each case asserts the OBSERVED numbers, so this file stays green and pins the
- * finding; the `not.toBe` assertions spell out that the fourth conjunct is
- * false exactly where it must be true.
- *
- * Mechanism: `#driveTopLevel` and `#driveSubstepFenced` in
- * `lifecycle-command-service.ts` call
- * `deriveActiveEntry(prepared.nextState, previousState, true)` AFTER
- * `prepareActorMutation` has already run the machine. With `transitioned=true`,
- * `deriveActiveEntryProjection` bumps the entry on `switchedFrame` (fresh
- * issuance always enters the frame it issues for) and on `reenteredSameFrame`
- * (GOTO/RETRY). The machine, meanwhile, reads `RunbookContext.frameEntry` — a
- * bootstrap mirror of the PRE-transition coordinates.
+ * All five cases assert agreement. Before #680 the first, second and fifth
+ * lagged the committed value by exactly one.
  */
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -124,7 +102,7 @@ function fixtureSteps(): readonly ResolvedStep[] {
   ] satisfies readonly ResolvedStep[];
 }
 
-describe('INVESTIGATION: entry projection ordering vs machine credential issuance', () => {
+describe('entry projection ordering: machine credential issuance agrees with committed state', () => {
   let tmp: string;
   let manager: RunbookStateManager;
   let actorService: RunbookActorService;
@@ -257,49 +235,43 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
     return entry.delegation;
   }
 
-  it('LAGS: machine-owned FRESH issuance, carried into the frame by PASS', async () => {
+  it('AGREES: machine-owned FRESH issuance, carried into the frame by PASS', async () => {
     await activate(baseState());
 
-    // PASS on plain step 1 -> the machine enters step 2's DELEGATE substep and
-    // `delegationIssueActor` mints a credential, all inside
-    // `prepareActorMutation`. `#driveTopLevel` then calls
-    // `deriveActiveEntry(prepared.nextState, previousState, true)` — AFTER the
-    // machine ran — and `switchedFrame` bumps the entry.
+    // PASS on plain step 1 -> the machine enters step 2's DELEGATE substep. The
+    // leaf's `syncFrameEntry` advances the entry BEFORE `delegationIssueActor`
+    // reads it, and `deriveActorStatePatch` commits that same value, so the
+    // stamp and the commit are one number written once.
     await drive('pass');
 
     const committed = await loadCommitted();
     const delegation = delegationFor(committed, FRAME_2);
 
     expect(delegation.credential.parentFrameKey).toBe(FRAME_2);
-    // Stamped inside the machine, from the bootstrap mirror of the PREVIOUS state.
-    expect(delegation.credential.parentEntry).toBe(1);
-    // Committed after the post-machine projection scored the frame switch.
+    expect(delegation.credential.parentEntry).toBe(2);
     expect(committed.activeFrameKey).toBe(FRAME_2);
     expect(committed.activeEntry).toBe(2);
     expect(committed.frameEntryCounts).toEqual({ [FRAME_1]: 1, [FRAME_2]: 2 });
     expect(inferFrameEntryFromState(committed, FRAME_2)).toBe(2);
 
-    // THE DEFECT, asserted as observed: the fourth conjunct is FALSE for a
-    // credential this very transition issued.
-    expect(delegation.credential.parentEntry).not.toBe(
-      inferFrameEntryFromState(committed, FRAME_2),
-    );
+    // The fourth conjunct holds for a credential this very transition issued.
+    expect(delegation.credential.parentEntry).toBe(inferFrameEntryFromState(committed, FRAME_2));
   });
 
-  it('LAGS: machine-owned RETRY re-issuance re-entering the same frame', async () => {
+  it('AGREES: machine-owned RETRY re-issuance re-entering the same frame', async () => {
     await activate(baseState());
     await drive('pass');
 
     const afterFresh = await loadCommitted();
     const fresh = delegationFor(afterFresh, FRAME_2);
-    expect(fresh.credential.parentEntry).toBe(1);
+    expect(fresh.credential.parentEntry).toBe(2);
     expect(afterFresh.activeEntry).toBe(2);
 
     // FAIL the delegated substep -> parent aggregation fails -> retry(1) ->
-    // `runRetryHook` re-issues a SUPERSEDING credential inside the same machine
-    // transition. `#driveSubstepFenced` then calls
-    // `deriveActiveEntry(prepared.nextState, state, true)` and
-    // `reenteredSameFrame` (lastAction RETRY, same frame) bumps the entry again.
+    // `runRetryHook` re-issues a SUPERSEDING credential. The hook runs as a
+    // TRANSITION action, so that assign advances `frameEntry` inline and hands
+    // the hook the advanced coordinates rather than relying on the leaf entry
+    // action that runs after it.
     await drive('fail');
 
     const committed = await loadCommitted();
@@ -313,31 +285,21 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
     expect(replacement.cancelledAt).toBeNull();
     expect(committed.lastAction).toEqual({ origin: 'aggregation', type: 'RETRY' });
 
-    // Stamped from the pre-transition mirror...
-    expect(replacement.credential.parentEntry).toBe(2);
-    // ...while the committed state advanced past it in the same transaction.
+    expect(replacement.credential.parentEntry).toBe(3);
     expect(committed.activeEntry).toBe(3);
     expect(committed.frameEntryCounts).toEqual({ [FRAME_1]: 1, [FRAME_2]: 3 });
     expect(inferFrameEntryFromState(committed, FRAME_2)).toBe(3);
 
-    // THE DEFECT: the conjunct is false for the retry case the contract targets,
-    // and it is off by exactly one entry.
-    expect(replacement.credential.parentEntry).not.toBe(
-      inferFrameEntryFromState(committed, FRAME_2),
-    );
-    expect(inferFrameEntryFromState(committed, FRAME_2) - replacement.credential.parentEntry).toBe(
-      1,
-    );
+    // The conjunct holds for the retry case the contract targets.
+    expect(replacement.credential.parentEntry).toBe(inferFrameEntryFromState(committed, FRAME_2));
   });
 
   it('AGREES: machine-owned FRESH issuance carried into the frame by GOTO', async () => {
-    // Same machine issuance, different caller. `runNavigationMutation` projects
-    // with `deriveActiveEntry(prepared.nextState)` — no previous state, and
-    // `transitioned` left false — deliberately, so one `rd goto` cannot bump the
-    // entry twice (see its comment about inline launch intents pinning
-    // `parentEntry`). With no bump, the stamped value and the committed value
-    // coincide. The divergence is caused by the post-machine SCORING, not by the
-    // machine issuing early per se.
+    // `rundown goto` into a new frame now bumps the entry, like every other
+    // frame-entering transition. The old `transitioned=false` workaround existed
+    // only because two writers could each score one navigation; with a single
+    // writer the correct number under the stated rule ("entry increments when
+    // execution enters a frame from another frame") is 2.
     await activate(baseState());
 
     const allowed = await seam.resolveRunNavigation({
@@ -364,10 +326,10 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
     const committed = await loadCommitted();
     const delegation = delegationFor(committed, FRAME_2);
 
-    expect(delegation.credential.parentEntry).toBe(1);
+    expect(delegation.credential.parentEntry).toBe(2);
     expect(committed.activeFrameKey).toBe(FRAME_2);
-    expect(committed.activeEntry).toBe(1);
-    expect(inferFrameEntryFromState(committed, FRAME_2)).toBe(1);
+    expect(committed.activeEntry).toBe(2);
+    expect(inferFrameEntryFromState(committed, FRAME_2)).toBe(2);
     expect(delegation.credential.parentEntry).toBe(inferFrameEntryFromState(committed, FRAME_2));
   });
 
@@ -399,7 +361,7 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
     expect(committed.activeEntry).toBe(afterFresh.activeEntry);
   });
 
-  it('LAGS: machine-owned FRESH issuance is frame-scoped, so EVERY substep in the frame lags', async () => {
+  it('AGREES: machine-owned FRESH issuance is frame-scoped, so EVERY substep in the frame agrees', async () => {
     // Anti-loophole for case 1. `delegationIssueActor` calls
     // `inferAllDelegateSubsteps`, so entering a frame issues a credential for
     // every DELEGATE substep it holds, in the same transition. There is no
@@ -451,10 +413,8 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
 
     for (const [id, delegation] of byId) {
       expect(delegation.credential.parentStepId).toBe(`2.${id}`);
-      expect(delegation.credential.parentEntry).toBe(1);
-      expect(delegation.credential.parentEntry).not.toBe(
-        inferFrameEntryFromState(committed, FRAME_2),
-      );
+      expect(delegation.credential.parentEntry).toBe(2);
+      expect(delegation.credential.parentEntry).toBe(inferFrameEntryFromState(committed, FRAME_2));
     }
   });
 });
