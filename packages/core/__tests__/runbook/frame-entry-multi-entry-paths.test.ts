@@ -33,11 +33,9 @@ import {
   createEffectfulActorMutationRunner,
   type CallerEvidence,
   type ClaimId,
-  type FrameKey,
   type LifecycleTerminalReleasePolicy,
   type ResolvedStep,
   type RunbookState,
-  type StepDelegation,
   type Transitions,
 } from '../../src/runbook/index.js';
 import { inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
@@ -215,26 +213,6 @@ describe('one mutation, one entry bump', () => {
     const state = await manager.load(runId);
     if (!state) throw new Error('committed state missing');
     return state;
-  }
-
-  /**
-   * Find the single delegation recorded against a frame.
-   *
-   * @param state - State to search.
-   * @param frameKey - Frame the delegation must belong to.
-   * @returns The delegation record.
-   * @throws {Error} When no delegation exists on that frame.
-   */
-  function delegationFor(state: RunbookState, frameKey: FrameKey): StepDelegation {
-    const entry = (state.substepStates ?? []).find(
-      (ss) => ss.frameKey === frameKey && ss.delegation !== undefined,
-    );
-    if (!entry?.delegation) {
-      throw new Error(
-        `no delegation on frame ${frameKey}; substepStates=${JSON.stringify(state.substepStates)}`,
-      );
-    }
-    return entry.delegation;
   }
 
   it('__parent-entry:: artifact routing: a GOTO into an artifact-declaring parent bumps by exactly 1', async () => {

@@ -3340,7 +3340,7 @@ export class RunbookLifecycleCommandService {
     explicitTarget?: ExplicitTransitionTarget,
     issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, actorMutationRunner, completionService, lifecycleService } = this.#deps;
+    const { actorService, actorMutationRunner, completionService } = this.#deps;
     let preparedOutcome:
       | {
           readonly events: readonly TransitionObservationEvent[];
@@ -3548,7 +3548,7 @@ export class RunbookLifecycleCommandService {
     guardOpenChildren: boolean,
     issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, lifecycleService, actorMutationRunner } = this.#deps;
+    const { actorService, actorMutationRunner } = this.#deps;
     // Exhaustive map from command to engine event. A `never` fallthrough makes a
     // future `TransitionCommandName` member a compile error here rather than a
     // silent collapse to FAIL (see CLAUDE.md § No silent mapping).

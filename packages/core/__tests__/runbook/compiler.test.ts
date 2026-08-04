@@ -13515,7 +13515,7 @@ echo ok
       description: 'Hand the work to a child',
       transitions: DEFER_BOTH,
       runbooks: ['child.runbook.md'],
-      delegate: true,
+      delegate: true as const,
     };
 
     /**
@@ -13584,7 +13584,7 @@ echo ok
 
     /** Read the machine's authoritative entry ordinal. */
     function entryOf(actor: ReturnType<typeof createActor>): number {
-      return (actor.getSnapshot().context as RunbookContext).frameEntry?.activeEntry ?? 0;
+      return actor.getSnapshot().context.frameEntry?.activeEntry ?? 0;
     }
 
     /** Plain step `1` (PASS CONTINUE), then delegating parent `2` with one DELEGATE substep. */
@@ -13710,7 +13710,7 @@ echo ok
       const actor = createActor(compileFixture(delegatingSteps(), issuer));
       actor.start();
 
-      expect((actor.getSnapshot().context as RunbookContext).frameEntry).toEqual({
+      expect(actor.getSnapshot().context.frameEntry).toEqual({
         activeFrameKey: buildFrameKey('1'),
         activeEntry: 1,
         frameEntryCounts: { [buildFrameKey('1')]: 1 },
@@ -13787,7 +13787,7 @@ echo ok
       await settle(actor);
 
       expect(entryOf(actor)).toBe(before + 1);
-      expect((actor.getSnapshot().context as RunbookContext).frameReentry).toBeUndefined();
+      expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
       actor.stop();
     });
 
@@ -13815,7 +13815,7 @@ echo ok
       actor.send({ type: 'FAIL' });
       await settle(actor);
       expect(entryOf(actor)).toBe(before + 1);
-      expect((actor.getSnapshot().context as RunbookContext).frameReentry).toBeUndefined();
+      expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
       actor.stop();
     });
 
@@ -13829,7 +13829,7 @@ echo ok
       for (const event of events) {
         actor.send(event);
         await settle(actor);
-        const persisted = actor.getPersistedSnapshot() as { context: RunbookContext };
+        const persisted = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
         expect(persisted.context.frameReentry).toBeUndefined();
       }
       actor.stop();
@@ -13847,7 +13847,7 @@ echo ok
       actor.send({ type: 'FAIL' }); // aggregation retry -> runRetryHook re-issues
       await settle(actor);
 
-      const committed = (actor.getSnapshot().context as RunbookContext).frameEntry;
+      const committed = actor.getSnapshot().context.frameEntry;
       expect(committed?.activeEntry).toBe(3);
       expect(issuer.locations.at(-1)?.parentEntry).toBe(3);
       expect(issuer.locations.at(-1)?.parentEntry).toBe(committed?.activeEntry);
@@ -13875,9 +13875,7 @@ echo ok
       await settle(actor);
       // Same iteration frame, one retry: +1, and the iteration did NOT advance.
       expect(entryOf(actor)).toBe(before + 1);
-      expect((actor.getSnapshot().context as RunbookContext).frameEntry?.activeFrameKey).toBe(
-        buildFrameKey('2', 1),
-      );
+      expect(actor.getSnapshot().context.frameEntry?.activeFrameKey).toBe(buildFrameKey('2', 1));
       actor.stop();
     });
   });

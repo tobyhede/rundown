@@ -243,8 +243,8 @@ Two ordering facts make the placement correct:
   before its initial child's `invoke` input factory is read, so
   `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
 
-`syncFrameEntry` is **not** attached to `step::N::__parent-entry::M`: those are
-same-frame artifact pass-throughs that route on to the real leaf, and bumping
+`syncFrameEntry` is **not** attached to `step::N::__parent-entry::M`: each is a
+same-frame artifact pass-through that routes on to the real leaf, and bumping
 there would double-count.
 
 The bump rule lives in `advanceFrameEntry` (`frame-entry.ts`) and the frame-key

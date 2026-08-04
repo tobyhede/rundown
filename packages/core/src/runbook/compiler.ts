@@ -3951,7 +3951,7 @@ export function compileRunbookToMachine(
    * @param stepName - The step this leaf belongs to.
    * @returns The XState assign action.
    */
-  const buildSyncFrameEntry = (stepName: string) =>
+  const buildSyncFrameEntry = (stepName: string): ReturnType<typeof runbookSetup.assign> =>
     runbookSetup.assign({
       frameEntry: ({ context }: { context: RunbookContext }): FrameEntryCoordinates =>
         advanceFrameEntry(

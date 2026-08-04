@@ -49,17 +49,6 @@ type RecoveryRefusal = Extract<
   { readonly kind: 'recovery_required' }
 >;
 
-// Permissive runbook-state shape used by lifecycle / actor mocks. The real
-// runtime types include branded fields whose constructors are tied to the
-// state machine; tests only need to flow `step`, `activeEntry`, and
-// `activeFrameKey` through, so we narrow to a small structural surface.
-type LifecycleStateLike = {
-  step?: string;
-  activeEntry?: number;
-  activeFrameKey?: string;
-  [key: string]: unknown;
-};
-
 // Mock dependencies
 const mockActorService = {
   sendAndSync: mockFn<
