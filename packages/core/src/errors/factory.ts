@@ -202,6 +202,27 @@ export const Errors = {
       message: `child run ${childRunId} is still linked; run "rundown abort <token> --claim-id <claim_id> --force" before retrying`,
     }),
 
+  delegationReplacementConsumed: (
+    step: string,
+    reason: 'claimed' | 'cancelled' | 'entry_superseded',
+  ): RundownError =>
+    new RundownError('DELEGATION_REPLACEMENT_CONSUMED', {
+      step,
+      message: `the replacement for this bearer shows committed evidence of use (${reason})`,
+    }),
+
+  delegationRetryIdentityUnmatched: (step: string): RundownError =>
+    new RundownError('DELEGATION_RETRY_IDENTITY_UNMATCHED', {
+      step,
+      message: 'the named bearer matches neither the current delegation nor one it superseded',
+    }),
+
+  delegationSupersessionAmbiguous: (step: string): RundownError =>
+    new RundownError('DELEGATION_SUPERSESSION_AMBIGUOUS', {
+      step,
+      message: 'more than one delegation attempt records this bearer as superseded',
+    }),
+
   claimSeenUnreadable: (claimKey: string, lastSeenAt: string): RundownError =>
     new RundownError('CLAIM_SEEN_UNREADABLE', {
       // These keys are NOT arbitrary — `RundownError.formatMessage` renders a

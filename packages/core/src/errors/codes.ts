@@ -453,11 +453,30 @@ export const ErrorCodes = {
       'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator. The durable claim latch refuses a claim once the parent advances, ends, resets, or reissues the token.',
     docSlug: 'delegation-superseded',
   },
-  // RD-826..RD-828 are reserved by the PR 12 review-remediation addendum for the
-  // retry idempotency contract (DELEGATION_REPLACEMENT_CONSUMED,
-  // DELEGATION_RETRY_IDENTITY_UNMATCHED, DELEGATION_SUPERSESSION_AMBIGUOUS).
-  // That phase is blocked, so the next frontier code takes RD-829 rather than
-  // claiming a reserved number.
+  DELEGATION_REPLACEMENT_CONSUMED: {
+    code: 'RD-826',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation replacement consumed',
+    description:
+      'The named bearer was already replaced, and the replacement shows committed evidence of use — it was claimed, cancelled, or its frame entry advanced. Retrying it would mint a third bearer over work already in progress. Target the current delegation instead, or abort it and re-delegate.',
+    docSlug: 'delegation-replacement-consumed',
+  },
+  DELEGATION_RETRY_IDENTITY_UNMATCHED: {
+    code: 'RD-827',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation retry identity unmatched',
+    description:
+      'The named bearer identifies neither the delegation currently recorded at the target nor one that it superseded. The retry is refused rather than re-minted against an identity the parent does not recognise.',
+    docSlug: 'delegation-retry-identity-unmatched',
+  },
+  DELEGATION_SUPERSESSION_AMBIGUOUS: {
+    code: 'RD-828',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation supersession ambiguous',
+    description:
+      'More than one delegation attempt records this bearer as superseded, so there is no single replacement to echo or judge. Unreachable by construction; it is refused, never resolved. Prune invalid runbook state and restart execution.',
+    docSlug: 'delegation-supersession-ambiguous',
+  },
   DELEGATION_FRONTIER_CONSUME_FAILED: {
     code: 'RD-829',
     category: ErrorCategory.DELEGATION,
