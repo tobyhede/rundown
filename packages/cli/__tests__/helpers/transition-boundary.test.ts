@@ -21,7 +21,6 @@ describe('CLI transition boundary', () => {
       'utf8',
     );
 
-    expect(source).not.toMatch(/\bensureActiveEntry\s*\(/);
     expect(source).not.toMatch(/\binitializeSubsteps\s*\(/);
     expect(source).not.toMatch(/lastAction\s*:\s*\{\s*type\s*:\s*['"]START['"]/);
   });

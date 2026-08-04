@@ -223,17 +223,20 @@ npm test
       actor.stop();
     });
 
-    it('overlays persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
+    it('does not overlay persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
       const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
       const first = await actorService.createActor(created.id, mockSteps);
       if (!first) throw new Error('expected an actor');
       const snapshot = first.getPersistedSnapshot();
+      const seeded = first.getSnapshot().context.frameEntry;
       first.stop();
 
-      // Frame entries advance through RunbookState, never through the machine,
-      // so the persisted values must win over anything the snapshot carries.
+      // The machine is the sole writer of frame entry, so once a snapshot
+      // exists its own context is authoritative. Overlaying RunbookState on top
+      // of it at the hydration boundary would re-introduce a second writer, so
+      // a divergent persisted value must NOT win.
       const frameKey = buildFrameKey('1');
       await manager.update(created.id, {
         snapshot,
@@ -244,11 +247,8 @@ npm test
 
       const actor = await actorService.createActor(created.id, mockSteps);
       if (!actor) throw new Error('expected an actor');
-      expect(actor.getSnapshot().context.frameEntry).toEqual({
-        activeFrameKey: frameKey,
-        activeEntry: 4,
-        frameEntryCounts: { [frameKey]: 4 },
-      });
+      expect(actor.getSnapshot().context.frameEntry).toEqual(seeded);
+      expect(actor.getSnapshot().context.frameEntry?.activeEntry).not.toBe(4);
       actor.stop();
     });
   });
@@ -4138,6 +4138,74 @@ echo ok
         harness.service.stopActor(harness.actor);
         await rm(harness.testDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('frame-entry persistence', () => {
+    const FRAME_1 = buildFrameKey('1');
+    const FRAME_2 = buildFrameKey('2');
+    const twoStepStructure = createRunbook(`## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Second
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+    /** Create a run and bootstrap it, returning its id and the seeded state. */
+    async function bootstrap(): Promise<{ id: string; state: RunbookState }> {
+      const created = await manager.create(
+        { source: 'project', path: 'frame-entry.md' },
+        { title: 'Frame entry', description: 'Frame entry', steps: twoStepStructure },
+        { runbookPath: 'frame-entry.md', frontmatterOutputs: [] },
+      );
+      const state = await actorService.initializeState(created.id, twoStepStructure);
+      if (!state) throw new Error('bootstrap failed');
+      return { id: created.id, state };
+    }
+
+    it('seeds the coordinates at bootstrap with no ensureActiveEntry call', async () => {
+      const { state } = await bootstrap();
+      expect(state.activeEntry).toBe(1);
+      expect(state.frameEntryCounts).toEqual({ [FRAME_1]: 1 });
+    });
+
+    it('persists activeEntry and frameEntryCounts from machine context', async () => {
+      const { id, state } = await bootstrap();
+      const prepared = await actorService.prepareActorMutation(id, state, twoStepStructure, {
+        type: 'PASS',
+      });
+      expect(prepared.nextState.activeEntry).toBe(2);
+      expect(prepared.nextState.frameEntryCounts).toEqual({ [FRAME_1]: 1, [FRAME_2]: 2 });
+    });
+
+    it('keeps the cursor-derived activeFrameKey in agreement with context.frameEntry', async () => {
+      // `deriveActorStatePatch` deliberately keeps deriving `activeFrameKey`
+      // from the cursor rather than mirroring `context.frameEntry.activeFrameKey`.
+      // This is the standing check that the unified frame-key derivation holds.
+      const { id, state } = await bootstrap();
+      const prepared = await actorService.prepareActorMutation(id, state, twoStepStructure, {
+        type: 'PASS',
+      });
+      const context = (prepared.snapshot as { context: RunbookContext }).context;
+      expect(prepared.nextState.activeFrameKey).toBe(context.frameEntry?.activeFrameKey);
+    });
+
+    it('writes no frame-entry patch on a terminal snapshot', async () => {
+      const { id, state } = await bootstrap();
+      const prepared = await actorService.prepareActorMutation(id, state, twoStepStructure, {
+        type: 'FAIL',
+      });
+      expect(prepared.nextState.lifecycle).toBe('stopped');
+      expect(prepared.nextState.activeEntry).toBe(state.activeEntry);
+    });
+
+    it('does not re-run the entry action when an actor is rehydrated', async () => {
+      const { id, state } = await bootstrap();
+      const again = await actorService.initializeState(id, twoStepStructure);
+      expect(again?.activeEntry).toBe(state.activeEntry);
+      expect(again?.frameEntryCounts).toEqual(state.frameEntryCounts);
     });
   });
 });

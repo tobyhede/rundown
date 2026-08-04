@@ -23,6 +23,7 @@ import {
   assertDelegationIssuanceNonce,
   hashDelegationToken,
 } from '../../src/runbook/delegation-token.js';
+import { advanceFrameEntry } from '../../src/runbook/frame-entry.js';
 import { buildFrameKey, type FrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, RunbookState, Transitions } from '../../src/runbook/types.js';
 import {
@@ -196,8 +197,21 @@ describe('delegation credential coordinate: manual and machine issuance agree', 
   it('derives the same credential coordinate from the same persisted state', async () => {
     await fc.assert(
       fc.asyncProperty(frameEntryArb, async (frameEntry) => {
+        // The two paths issue at different points in a frame's life, so "the
+        // same persisted state" means the same COMMITTED state, not the same
+        // pre-transition mirror.
+        //
+        // Machine issuance runs inside the transition that enters the issuing
+        // frame: `syncFrameEntry` advances first, `delegationIssueActor` reads
+        // the advanced value, and `deriveActorStatePatch` commits it. Manual
+        // issuance runs against a run already parked in the frame, so its input
+        // is that committed value. Feeding the manual path the advanced
+        // coordinates is what puts both on the same footing; handing it the
+        // pre-entry mirror would compare the entry before a frame switch
+        // against the entry after one.
+        const committed = advanceFrameEntry(frameEntry, ISSUING_FRAME, false);
         const fromMachine = await machineLocation(frameEntry);
-        const fromManual = manualLocation(frameEntry);
+        const fromManual = manualLocation(committed as FrameEntryFixture);
 
         expect(fromMachine).toBeDefined();
         expect(fromManual).toBeDefined();

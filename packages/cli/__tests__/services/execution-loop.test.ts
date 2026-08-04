@@ -3,7 +3,6 @@ import type {
   DelegationRuntimeCapabilities,
   DelegationTokenDeriver,
   ExecutionEventEmitter,
-  ExecutionLifecycleService,
   ReleaseRunbookResult,
   RunbookActorService,
   RunbookStateManager,
@@ -123,23 +122,6 @@ const mockSessionService = {
   >().mockResolvedValue({ kind: 'refused_credential_issued' }),
 };
 
-const ensureActiveEntryFn =
-  mockFn<
-    (
-      id: string,
-      prev: unknown,
-      state: LifecycleStateLike | null | undefined,
-    ) => Promise<{ state: LifecycleStateLike; frameKey: string; entry: number }>
-  >();
-ensureActiveEntryFn.mockImplementation(async (_id, _prev, state) => ({
-  state: {
-    ...(state ?? {}),
-    activeEntry: state?.activeEntry ?? 1,
-    activeFrameKey: `${state?.step ?? '1'}|`,
-  },
-  frameKey: `${state?.step ?? '1'}|`,
-  entry: state?.activeEntry ?? 1,
-}));
 const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
 listResolvedCompletionsFn.mockResolvedValue([]);
 const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
@@ -155,8 +137,6 @@ const mockCompletionService = {
 
 const mockLifecycleService = {
   setLastResult: jest.fn() as any,
-  ensureActiveEntry: ensureActiveEntryFn,
-  deriveActiveEntry: mockFn<ExecutionLifecycleService['deriveActiveEntry']>(),
   listResolvedCompletions: listResolvedCompletionsFn,
   consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
@@ -286,7 +266,7 @@ const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
 const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
 
 // PREVIOUSLY UNCOVERED MUTANTS in the fenced command block of execution.ts
-// (#485). All three are now killed; recorded here so none regresses back into
+// (#485). Both are now killed; recorded here so neither regresses back into
 // an unreachable position, and so the next reader knows WHERE each is killed.
 // The common cause was that this suite replaces the mutation runner with a
 // double that only ever calls `compute`, and replaces core wholesale — so no
@@ -299,13 +279,6 @@ const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as
 //    `execution-recovery-actor.test.ts`, which drives the real
 //    `createEffectfulActorMutationRunner` against a temp project dir so the
 //    loop's own closure builds the recovery actor the fence then drives.
-//  - `deriveActiveEntry(..., true)` (`execution.ts:1776`), `BooleanLiteral ->
-//    false`. The flag only changes the projection when the command re-enters the
-//    SAME frame under a GOTO/RETRY last action; on an ordinary advance the frame
-//    key already differs, so both values bump the entry identically. Killed by
-//    'same-frame re-entry projected inside the fenced command' below, which
-//    needs the `deriveActiveEntry` double to honour the flag — see its
-//    implementation in `beforeEach`.
 //  - `{ issueDelegationCredential: options.delegationRuntime?.… }`
 //    (`execution.ts:1771`), `ObjectLiteral -> {}`. That argument is the only
 //    route by which the verified issuer reaches the machine's
@@ -315,6 +288,10 @@ const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as
 //    exist here — `DelegationRuntimeCapabilities` is branded by a
 //    module-private symbol whose sole producer is inside core — so it is killed
 //    by `execution-delegation-issuance.test.ts`.
+//
+// The third, `deriveActiveEntry(..., true)`, is gone with the projection it
+// belonged to: the machine owns the entry bump (#680), so the CLI no longer
+// projects one.
 
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
@@ -476,65 +453,6 @@ describe('runExecutionLoop', () => {
     mockManager.update.mockResolvedValue(undefined);
     mockManager.delete.mockResolvedValue(undefined);
 
-    mockLifecycleService.ensureActiveEntry.mockReset();
-    mockLifecycleService.ensureActiveEntry.mockImplementation(
-      async (_id: string, _prev: unknown, state: any) => ({
-        state: {
-          ...(state ?? {}),
-          activeEntry: state?.activeEntry ?? 1,
-          activeFrameKey: `${String(state?.step ?? '1')}|`,
-        },
-        frameKey: `${String(state?.step ?? '1')}|`,
-        entry: state?.activeEntry ?? 1,
-      }),
-    );
-    mockLifecycleService.deriveActiveEntry.mockReset();
-    // Mirrors core's `deriveActiveEntryProjection` (execution-lifecycle-service.ts)
-    // over the frame-key derivation this suite's fixtures use (step only, no FOR
-    // iteration). A one-parameter double that returned `state.activeEntry ?? 1`
-    // structurally ignored BOTH `previousState` and `transitioned`, which made the
-    // loop's `deriveActiveEntry(prepared.nextState, previousState, true)` call
-    // indistinguishable from the same call with `false` — an unkillable mutant no
-    // scenario could reach. The flag only changes the projection on a same-frame
-    // re-entry (GOTO/RETRY), so it has to be honoured here for that scenario to
-    // observe anything.
-    mockLifecycleService.deriveActiveEntry.mockImplementation(
-      (state, previousState, transitioned) => {
-        const frameKey = actualCore.buildFrameKey(state.step);
-        const fromFrameKey =
-          previousState === undefined ? undefined : actualCore.buildFrameKey(previousState.step);
-        const frameEntryCounts: Record<string, number> = { ...(state.frameEntryCounts ?? {}) };
-        const knownEntry = frameEntryCounts[frameKey] ?? 0;
-        let entry = state.activeEntry ?? knownEntry;
-        if (!entry || entry < 1) entry = knownEntry > 0 ? knownEntry : 1;
-
-        const lastActionType = state.lastAction?.type;
-        const reenteredSameFrame =
-          transitioned === true &&
-          fromFrameKey === frameKey &&
-          (lastActionType === 'GOTO' || lastActionType === 'RETRY');
-        const switchedFrame =
-          transitioned === true && fromFrameKey !== undefined && fromFrameKey !== frameKey;
-
-        if (!state.activeFrameKey || state.activeEntry === undefined) {
-          entry = knownEntry > 0 ? knownEntry : 1;
-        } else if (reenteredSameFrame || switchedFrame || state.activeFrameKey !== frameKey) {
-          entry = Math.max(knownEntry, entry) + 1;
-        }
-        frameEntryCounts[frameKey] = Math.max(frameEntryCounts[frameKey] ?? 0, entry);
-
-        return {
-          state: {
-            ...state,
-            activeEntry: entry,
-            activeFrameKey: frameKey,
-            frameEntryCounts,
-          },
-          frameKey,
-          entry,
-        };
-      },
-    );
     mockLifecycleService.listResolvedCompletions.mockReset();
     mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
@@ -784,17 +702,12 @@ describe('runExecutionLoop', () => {
           applied: [],
         };
       });
-    mockLifecycleService.ensureActiveEntry.mockImplementation(
-      async (_id: string, previous: unknown, next: any) => {
-        order.push(`observe-${String(next?.substep ?? 'step')}`);
-        return {
-          state: next,
-          frameKey: '1|',
-          entry: 1,
-          previous,
-        };
-      },
-    );
+    // The observation probe is the emitter, which is what "observes" actually
+    // means here. It used to be the `ensureActiveEntry` projection call, but
+    // frame entry is machine-owned now (#680) and the loop no longer projects.
+    mockEmitter.emit.mockImplementation((event: { type: string }) => {
+      order.push(`emit:${event.type}`);
+    });
 
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
@@ -817,19 +730,18 @@ describe('runExecutionLoop', () => {
       unresolved: 0,
       applied: 2,
     });
-    expect(order).toEqual(['apply-1', 'observe-2', 'apply-2', 'observe-step', 'empty']);
-    expect(mockLifecycleService.ensureActiveEntry).toHaveBeenNthCalledWith(
-      1,
-      runbookId,
-      beforeFirst,
-      afterFirst,
-    );
-    expect(mockLifecycleService.ensureActiveEntry).toHaveBeenNthCalledWith(
-      2,
-      runbookId,
-      afterFirst,
-      afterSecond,
-    );
+    // The applies are strictly ordered and each one's observation lands before
+    // the next apply begins — that interleaving is the whole claim.
+    expect(order.filter((entry) => !entry.startsWith('emit:'))).toEqual([
+      'apply-1',
+      'apply-2',
+      'empty',
+    ]);
+    const at = (label: string): number => order.indexOf(label);
+    const emittedBetween = (from: string, to: string): string[] =>
+      order.slice(at(from) + 1, at(to)).filter((entry) => entry.startsWith('emit:'));
+    expect(emittedBetween('apply-1', 'apply-2').length).toBeGreaterThan(0);
+    expect(emittedBetween('apply-2', 'empty').length).toBeGreaterThan(0);
   });
 
   it('preserves unresolved completion count when draining fails', async () => {
@@ -940,12 +852,6 @@ describe('runExecutionLoop', () => {
         unresolved: 0,
         applied: [],
       });
-    mockLifecycleService.ensureActiveEntry.mockResolvedValue({
-      state: after,
-      frameKey: '2|',
-      entry: 1,
-    });
-
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
