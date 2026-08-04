@@ -932,7 +932,9 @@ export function resolveRetryIssuance(capture: RetryIssuanceCapture): RetryIssuan
   if (capture.locator === 'step') {
     const current = capture.current;
     if (current === undefined) return { kind: 'rotatable' };
-    if (current.credential.supersedesTokenHash === undefined) return { kind: 'rotatable' };
+    // Row 10 ("Hs undefined -> rotatable") needs no branch of its own: it is
+    // the first conjunct of `unobservedReplacement`. Restating it here would
+    // make the two mask each other, leaving neither reachable by a test.
     return unobservedReplacement(current, capture.frameEntry)
       ? { kind: 'already-replaced', delegation: current }
       : { kind: 'rotatable' };

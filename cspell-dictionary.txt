@@ -362,6 +362,7 @@ unparseable
 unsynchronized
 precheck
 frontends
+recognise
 recognises
 recognised
 unrecognised
