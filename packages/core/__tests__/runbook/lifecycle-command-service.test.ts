@@ -53,6 +53,7 @@ import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { Errors } from '../../src/errors/factory.js';
 import type { DelegationAbortOutcome } from '../../src/runbook/lifecycle-command-service.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
+import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
@@ -4865,6 +4866,161 @@ describe('RunbookLifecycleCommandService', () => {
    * issuer was ever exercised, which is why the weaker gate has never been
    * exploitable — and exactly why the pin must not depend on it.
    */
+  describe('verified issuer reaches the machine on every transition path', () => {
+    // Three seams forward the verified issuer as the `runtime` argument to
+    // `prepareActorMutation`, and that argument is the ONLY route it takes to
+    // `delegationIssueActor`. Replacing the object literal with `{}` drives the
+    // machine with no authority to mint, so a transition landing on a DELEGATE
+    // frontier refuses `actor_context_required` and stops the run — for a
+    // caller that HELD the authority. The literal survived mutation at every
+    // site; nothing pinned the hand-off.
+    //
+    // These assert at the machine boundary rather than by driving issuance to
+    // completion. Machine-owned issuance is covered by the compiler and
+    // actor-service suites, and reproducing its full input here (resolver,
+    // artifact roots, seeded RunId) would test that path a third time rather
+    // than the thing that was untested: whether THIS seam hands the issuer
+    // across. The issuer is exercised, not merely counted — a forwarded value
+    // that cannot mint fails the same assertion an absent one does.
+    const stepsLandingOnDelegate: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      delegateStep('2', [delegateSubstep('1', 'child.md')]),
+    ];
+
+    /**
+     * Capture the `runtime` argument every `prepareActorMutation` call receives.
+     *
+     * @returns Accessor for the captured runtime arguments, in call order.
+     */
+    function captureRuntimeArgs(): () => ReadonlyArray<
+      { readonly issueDelegationCredential?: DelegationCredentialIssuer } | undefined
+    > {
+      const seen: Array<
+        { readonly issueDelegationCredential?: DelegationCredentialIssuer } | undefined
+      > = [];
+      const real = actorService.prepareActorMutation.bind(actorService);
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockImplementation(async (id, previous, steps, event, runtime) => {
+          seen.push(runtime);
+          return await real(id, previous, steps, event, runtime);
+        });
+      return () => seen;
+    }
+
+    /**
+     * Assert a forwarded runtime carries an issuer that actually mints.
+     *
+     * @param runtime - The runtime argument the seam handed to the machine.
+     */
+    function expectWorkingIssuer(
+      runtime: { readonly issueDelegationCredential?: DelegationCredentialIssuer } | undefined,
+    ): void {
+      const issue = runtime?.issueDelegationCredential;
+      expect(issue).toBeDefined();
+      if (!issue) return;
+      const issued = issue({
+        parentRunId: runId,
+        parentStepId: '2.1',
+        parentFrameKey: buildFrameKey('2'),
+        parentEntry: 1,
+      });
+      expect(issued.token).toMatch(/^rdtk_/);
+      expect(issued.credential.issuerClaimKey).toBeDefined();
+    }
+
+    it('forwards a working issuer through a pass/fail transition', async () => {
+      loadStepsImpl = () => stepsLandingOnDelegate;
+      await activate(baseState());
+      const runtimeArgs = captureRuntimeArgs();
+
+      await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      const seen = runtimeArgs();
+      expect(seen.length).toBeGreaterThan(0);
+      expectWorkingIssuer(seen.at(-1));
+    });
+
+    it('forwards a working issuer through a GOTO', async () => {
+      loadStepsImpl = () => stepsLandingOnDelegate;
+      await activate(baseState());
+
+      const allowed = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+      });
+      expect(allowed.kind).toBe('allowed');
+      if (allowed.kind !== 'allowed') return;
+      expect(allowed.delegationRuntime).toBeDefined();
+      const runtimeArgs = captureRuntimeArgs();
+
+      await seam.runNavigationMutation({
+        runId,
+        callerEvidence: runControlEvidence(runId),
+        steps: stepsLandingOnDelegate,
+        target: { step: '2' },
+        terminalReleaseMode: allowed.terminalReleaseMode,
+        ...(allowed.delegationRuntime === undefined
+          ? {}
+          : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
+      });
+
+      const seen = runtimeArgs();
+      expect(seen.length).toBeGreaterThan(0);
+      expectWorkingIssuer(seen.at(-1));
+    });
+
+    it('forwards a working issuer through the substep completion drain', async () => {
+      // The third site: `#driveSubstepFenced` records the explicit substep
+      // completion and then DRAINS, and each drained apply is its own
+      // `prepareActorMutation`. That apply can advance the cursor onto a
+      // DELEGATE frontier just as a top-level transition can, so it needs the
+      // issuer for the same reason.
+      const substepSteps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
+            { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+          ],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        delegateStep('2', [delegateSubstep('1', 'child.md')]),
+      ];
+      loadStepsImpl = () => substepSteps;
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+      const runtimeArgs = captureRuntimeArgs();
+
+      await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId: '1.1' },
+      });
+
+      const seen = runtimeArgs();
+      expect(seen.length).toBeGreaterThan(0);
+      expectWorkingIssuer(seen.at(-1));
+    });
+  });
+
   describe('delegation runtime authority', () => {
     const twoSteps: ResolvedStep[] = [
       { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },

@@ -2362,11 +2362,21 @@ export class RunbookLifecycleCommandService {
       guardOpenChildren,
       delegationRuntime?.issueDelegationCredential,
     );
+    // Equivalent mutant on the third conjunct: forcing it false skips the early
+    // return and yields `{ ...outcome, delegationRuntime: undefined }` instead of
+    // `outcome` untouched. Those differ only in whether the KEY is present — the
+    // value is `undefined` either way — and no consumer observes key presence:
+    // all ten read the value (`.delegationRuntime`,
+    // `?.issueDelegationCredential`), none uses `in` or `Object.hasOwn`. The
+    // opposite direction IS killed, by "carries the delegation runtime for a
+    // bearer holding delegate-from-run".
+    // Stryker disable ConditionalExpression: equivalent — absent key and undefined value are indistinguishable to every consumer
     if (
       outcome.kind !== 'applied' ||
       outcome.loop.kind !== 'run' ||
       delegationRuntime === undefined
     ) {
+      // Stryker restore ConditionalExpression
       return outcome;
     }
     return { ...outcome, delegationRuntime };
