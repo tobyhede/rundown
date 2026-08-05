@@ -4,12 +4,14 @@ import type { Command } from 'commander';
 import {
   activeFrame,
   buildFrameKey,
+  createEffectfulActorMutationRunner,
   deriveActiveFrame,
   ExecutionEventEmitter,
   inactiveFrame,
   RunbookCollectionService,
   RunbookCompletionService,
   type ClaimId,
+  type CollectionWorkflowResult,
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
@@ -32,6 +34,10 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
+import {
+  isTransactionalMutationRefusal,
+  renderTransactionalMutationRefusal,
+} from '../helpers/session-mutation-result.js';
 import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
@@ -309,7 +315,7 @@ function renderAppliedOutcome(
 }
 
 /**
- * Render a core {@link DelegationPolicyOutcome} onto the CLI's collect output
+ * Render a core {@link CollectionWorkflowResult} onto the CLI's collect output
  * contract. JSON is the agent-facing contract (CLAUDE.md § CLI Output
  * Standards); `--text` emits the equivalent human message for the non-error
  * statuses (`output.error` already honors text mode for the error arms).
@@ -337,10 +343,19 @@ function renderAppliedOutcome(
  */
 function renderCollectOutcome(
   output: OutputEmitter,
-  outcome: DelegationPolicyOutcome,
+  outcome: CollectionWorkflowResult,
   text: boolean | undefined,
   emitter: ExecutionEventEmitter,
 ): boolean {
+  // The transactional arms are rendered by the SHARED renderer, not restated
+  // here: `transitionalRefusalCode` is the one `kind` → code mapping, and
+  // `transitions.ts`, `terminal-command.ts`, `delegate.ts`, and `abort.ts`
+  // already route through it. Collect was the last holdout. Narrowing first
+  // keeps the collection-specific switch below exhaustive over the policy union
+  // alone, so its `never` guard still catches an unhandled collection variant.
+  if (isTransactionalMutationRefusal(outcome)) {
+    return renderTransactionalMutationRefusal(output, outcome);
+  }
   switch (outcome.kind) {
     case 'allowed':
       // Unreachable: collectDelegationOutcomes never returns the raw `allowed`
@@ -483,6 +498,10 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     sessionService: ctx.sessionService,
+    // The whole collection now commits through the same core-owned fence as
+    // every other delegation seam, so the CLI hands core the runner rather than
+    // driving a sequence of separately committed writes.
+    actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
   });
 
@@ -581,8 +600,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
           // collect target this loop drives). Without them a collect that
           // advances into a DELEGATE step is refused `actor_context_required` on
           // issuance, and the following turn on frontier projection.
-          issueDelegationCredential: outcome.issueDelegationCredential,
-          delegationTokenDeriver: outcome.deriveDelegationToken,
+          delegationRuntime: outcome.delegationRuntime,
         },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a

@@ -146,6 +146,23 @@ export interface AggregateTerminalRelease {
   readonly runId: RunId;
   /** Preserve matching claims as terminal evidence. */
   readonly retainClaimsAsTerminal?: boolean;
+  /**
+   * When the release fires, relative to the run's PREPARED lifecycle.
+   *
+   * - `always` (the default) — the caller already knows the member reaches
+   *   terminal in this transaction, as force-abort does when it force-stops a
+   *   linked child. Preserves the original unconditional behaviour.
+   * - `terminal` — release only if the prepared state actually completes or
+   *   stops. For a caller whose preparation DECIDES the lifecycle, such as a
+   *   collect whose drain may or may not advance the target to terminal, the
+   *   condition is not knowable when the input is built, and releasing a run
+   *   that stayed `running` would drop a live run off session targeting.
+   *
+   * This mirrors {@link EffectfulActorMutationRunnerInput.terminalRelease}'s
+   * `onComplete`/`onStopped` flags, which the single-run path has always
+   * evaluated against the prepared state for the same reason.
+   */
+  readonly when?: 'always' | 'terminal';
 }
 
 /** Public contract for one dependency-ordered aggregate actor mutation. */
@@ -458,10 +475,18 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
           });
           // A release names an owned member, so a dropped optional target takes
           // its release with it — releasing a run this transaction does not own
-          // would be an unfenced session write.
-          const releases = (input.releases ?? []).filter(
-            (release) => !droppedRunIds.has(release.runId),
+          // would be an unfenced session write. A `when: 'terminal'` release is
+          // additionally gated on the PREPARED lifecycle, evaluated here because
+          // this is the first point the prepared states exist.
+          const preparedLifecycles = new Map(
+            prepared.members.map(({ runId, nextState }) => [runId, nextState.lifecycle]),
           );
+          const releases = (input.releases ?? []).filter((release) => {
+            if (droppedRunIds.has(release.runId)) return false;
+            if (release.when !== 'terminal') return true;
+            const lifecycle = preparedLifecycles.get(release.runId);
+            return lifecycle === 'completed' || lifecycle === 'stopped';
+          });
           const committed = await store.commitOwnedRunSet({
             members,
             ...(releases.length === 0

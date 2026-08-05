@@ -243,6 +243,7 @@ synchronise
 synthesise
 syscall
 syscalls
+targetable
 tcsh
 testctx
 testuser
@@ -264,6 +265,7 @@ unasserted
 unclaimable
 unist
 unknowncommand
+unmodelled
 unrepresentable
 unstarted
 unsandboxed

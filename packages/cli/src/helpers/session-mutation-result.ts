@@ -88,6 +88,49 @@ export type TransactionalMutationRefusal =
   | AbandonedAttemptSetOutcome;
 
 /**
+ * Narrow a `kind`-discriminated outcome to a transactional mutation refusal.
+ *
+ * The wider twin of {@link isSessionMutationRefusal}, for a union that adds the
+ * transactional arms to an unrelated result — `CollectionWorkflowResult` being
+ * the case that motivated it, where the alternative is repeating six kind
+ * literals at the call site and letting them drift from
+ * {@link transactionalRefusalCode}'s switch.
+ *
+ * Derived from the union rather than spelled as a literal list, so a member
+ * added to {@link TransactionalMutationRefusal} is recognized here without a
+ * second edit. The runtime check stays a `Set` membership test on the
+ * discriminant; only its contents are type-derived.
+ *
+ * @param outcome - Any outcome discriminated by a `kind` string.
+ * @param outcome.kind - The outcome's discriminant.
+ * @returns True when `outcome` is one of the transactional refusal arms.
+ */
+export function isTransactionalMutationRefusal(outcome: {
+  readonly kind: string;
+}): outcome is TransactionalMutationRefusal {
+  return (TRANSACTIONAL_REFUSAL_KINDS as ReadonlySet<string>).has(outcome.kind);
+}
+
+/**
+ * The discriminants of {@link TransactionalMutationRefusal}.
+ *
+ * Typed as `ReadonlySet<TransactionalMutationRefusal['kind']>` and initialized
+ * from an array annotated with the same element type, so dropping a member is a
+ * type error rather than a silently narrower guard. `Set` cannot enforce
+ * exhaustiveness on its own — the annotation is what ties this to the union.
+ */
+const TRANSACTIONAL_REFUSAL_KINDS: ReadonlySet<TransactionalMutationRefusal['kind']> = new Set<
+  TransactionalMutationRefusal['kind']
+>([
+  'claim_superseded',
+  'concurrent_modification',
+  'execution_in_progress',
+  'recovery_required',
+  'missing',
+  'aggregate_recovery_required',
+]);
+
+/**
  * The registered symbolic codes a transactional delegation refusal is emitted under.
  *
  * A strict superset of {@link SessionMutationRefusalCode}. `AGGREGATE_RECOVERY_REQUIRED`

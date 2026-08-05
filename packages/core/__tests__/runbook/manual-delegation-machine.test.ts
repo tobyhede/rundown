@@ -2,18 +2,26 @@ import { describe, expect, it } from '@jest/globals';
 import { StepDelegationSchema } from '../../src/schemas.js';
 import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
 import {
+  createDelegation,
+  retryDelegation,
+  type CreateDelegationResult,
+  type RetryDelegationResult,
+} from '../../src/runbook/delegation-service.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import {
   prepareManualDelegation,
   type ManualDelegationPreparationEvent,
   type ManualDelegationPreparationInput,
 } from '../../src/runbook/manual-delegation-machine.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { RunbookState, SubstepState } from '../../src/runbook/types.js';
+import type { ResolvedStep, RunbookState, SubstepState } from '../../src/runbook/types.js';
 import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
-import { makeState, makeSteps } from './delegation-service-fixtures.js';
+import { makeSimpleSteps, makeState, makeSteps } from './delegation-service-fixtures.js';
 
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
 
 /** Attach a claimed child run to every issued delegation in the given substep states. */
 function linkChildRun(
@@ -43,6 +51,187 @@ function issueFixture(): readonly SubstepState[] {
   });
   if (issued.status !== 'prepared') throw new Error('expected prepared issue');
   return issued.substepStates;
+}
+
+/** Build the typed ISSUE command every refusal fixture varies by step id alone. */
+function issueEvent(stepId: string): Extract<ManualDelegationPreparationEvent, { type: 'ISSUE' }> {
+  return {
+    type: 'ISSUE',
+    stepId,
+    frameKey: buildFrameKey('1'),
+    childRunbookPath: 'child.md',
+    childRunbookRef: { source: 'project', path: 'child.md' },
+  };
+}
+
+/** Captured state, resolved steps, and the typed command one refusal needs. */
+interface RefusalFixture<E extends ManualDelegationPreparationEvent> {
+  readonly state: RunbookState;
+  readonly steps: readonly ResolvedStep[];
+  readonly event: E;
+}
+
+type IssueRefusalFixture = RefusalFixture<
+  Extract<ManualDelegationPreparationEvent, { type: 'ISSUE' }>
+>;
+type RetryRefusalFixture = RefusalFixture<
+  Extract<ManualDelegationPreparationEvent, { type: 'RETRY' }>
+>;
+
+/**
+ * Every `CreateDelegationResult` arm the ISSUE handler folds into `error`.
+ *
+ * Keyed by arm rather than listed, so the mapped type is total: adding a
+ * refusal to {@link CreateDelegationResult} fails this table to compile, which
+ * is the test-side mirror of the handler's `never` exhaustiveness guard. The
+ * two arms excluded here are the ones with their own mapping — `created`
+ * becomes `prepared`, `delegation_claimed` becomes `child_in_flight` — and both
+ * are pinned by their own tests above.
+ */
+const ISSUE_REFUSAL_FIXTURES: {
+  readonly [K in Exclude<
+    CreateDelegationResult['status'],
+    'created' | 'delegation_claimed'
+  >]: () => IssueRefusalFixture;
+} = {
+  // Guard 0: a claimed child may not delegate further (single-level invariant).
+  parent_is_delegated: () => ({
+    state: makeState({
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      },
+    }),
+    steps: makeSteps(),
+    event: issueEvent('1.1'),
+  }),
+  // Step '9' is absent from the resolved runbook.
+  step_not_found: () => ({ state: makeState(), steps: makeSteps(), event: issueEvent('9.9') }),
+  // Step '1' has substeps, so a bare step id cannot name a delegation target.
+  substep_required: () => ({ state: makeState(), steps: makeSteps(), event: issueEvent('1') }),
+  // Step '1' authors substeps '1' and '2' only.
+  substep_not_found: () => ({ state: makeState(), steps: makeSteps(), event: issueEvent('1.9') }),
+  // The captured frontier is step '1'; the command targets step '2'.
+  step_not_current: () => ({ state: makeState(), steps: makeSteps('2'), event: issueEvent('2.1') }),
+  // A bare step at the frontier exposes no substep to attach a delegation to.
+  not_delegatable: () => ({ state: makeState(), steps: makeSimpleSteps(), event: issueEvent('1') }),
+  // Substep '1' already carries an unclaimed, uncancelled delegation.
+  delegation_exists: () => ({
+    state: makeState({ substepStates: [...issueFixture()] }),
+    steps: makeSteps(),
+    event: issueEvent('1.1'),
+  }),
+};
+
+/**
+ * Every `RetryDelegationResult` arm the RETRY handler folds into `error`.
+ *
+ * Total over the union for the same reason as {@link ISSUE_REFUSAL_FIXTURES};
+ * `retried` maps to `prepared` and `in_flight` to `child_in_flight`, each
+ * pinned by its own test above.
+ */
+const RETRY_REFUSAL_FIXTURES: {
+  readonly [K in Exclude<
+    RetryDelegationResult['status'],
+    'retried' | 'in_flight'
+  >]: () => RetryRefusalFixture;
+} = {
+  // Substep '1' exists in the captured state but carries no delegation.
+  not_found: () => ({
+    state: makeState(),
+    steps: makeSteps(),
+    event: {
+      type: 'RETRY',
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+      allowLinkedChildRun: false,
+    },
+  }),
+  // The delegation was issued while step '1' was current; the frontier moved on.
+  not_current: () => ({
+    state: makeState({ substepStates: [...issueFixture()], step: '2' }),
+    steps: makeSteps(),
+    event: {
+      type: 'RETRY',
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+      allowLinkedChildRun: false,
+    },
+  }),
+  // A snapshot with no owning step predates the `contextSnapshot.step`
+  // guarantee, so the currency check has nothing to compare against.
+  error: () => ({
+    state: makeState({
+      substepStates: issueFixture().map((substep) => {
+        if (substep.delegation === undefined) return substep;
+        const { step: _droppedOwnerStep, ...staleSnapshot } = substep.delegation.contextSnapshot;
+        return {
+          ...substep,
+          delegation: { ...substep.delegation, contextSnapshot: staleSnapshot },
+        };
+      }),
+    }),
+    steps: makeSteps(),
+    event: {
+      type: 'RETRY',
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+      allowLinkedChildRun: false,
+    },
+  }),
+};
+
+/**
+ * Drive one ISSUE fixture straight through `createDelegation`.
+ *
+ * Asserting `status: 'error'` alone cannot tell the arms apart, so a fixture
+ * that drifted onto a neighbouring refusal would keep the suite green while
+ * silently vacating the arm it claims to cover. Running the primitive with the
+ * options the handler builds makes "this fixture reaches THAT arm" observable,
+ * and hands back the exact `RundownError` the mapping must forward untouched.
+ *
+ * @param fixture - Captured state, resolved steps, and the typed issue command.
+ * @returns The primitive's own discriminated result for the fixture.
+ */
+function refuseIssueDirectly(fixture: IssueRefusalFixture): CreateDelegationResult {
+  return createDelegation(
+    {
+      state: fixture.state,
+      stepId: fixture.event.stepId,
+      childRunbookPath: fixture.event.childRunbookPath,
+      childRunbookRef: fixture.event.childRunbookRef,
+      ancestors: [],
+      frameKey: fixture.event.frameKey,
+      issueCredential: makeDelegationCredentialIssuer(),
+    },
+    fixture.steps,
+  );
+}
+
+/**
+ * Drive one RETRY fixture straight through `retryDelegation`.
+ *
+ * Same role as {@link refuseIssueDirectly} for the retry handler's arms.
+ *
+ * @param fixture - Captured state, resolved steps, and the typed retry command.
+ * @returns The primitive's own discriminated result for the fixture.
+ */
+function refuseRetryDirectly(fixture: RetryRefusalFixture): RetryDelegationResult {
+  return retryDelegation(
+    {
+      state: fixture.state,
+      substepId: fixture.event.substepId,
+      frameKey: fixture.event.frameKey,
+      allowLinkedChildRun: fixture.event.allowLinkedChildRun,
+      issueCredential: makeDelegationCredentialIssuer(),
+    },
+    fixture.steps,
+  );
 }
 
 /** Outcome of one preparation call observed for both throw paths. */
@@ -394,6 +583,60 @@ describe('prepareManualDelegation', () => {
       error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
     });
   });
+
+  // The ISSUE and RETRY handlers enumerate every refusal arm instead of
+  // catching the tail with a bare `default`. Enumerating is only equivalent if
+  // each named arm still forwards `result.error` verbatim, so each arm gets its
+  // own case here rather than being represented by whichever refusal a generic
+  // fixture happened to reach.
+  it.each(Object.entries(ISSUE_REFUSAL_FIXTURES))(
+    'maps the %s issue refusal to the generic error status with the primitive error',
+    (arm, buildFixture) => {
+      const fixture = buildFixture();
+      const direct = refuseIssueDirectly(fixture);
+
+      expect(direct.status).toBe(arm);
+      if (direct.status === 'created' || direct.status === 'delegation_claimed') {
+        throw new Error(`fixture for ${arm} reached ${direct.status}, which is not error-mapped`);
+      }
+
+      const mapped = prepareManualDelegation({
+        ...fixture,
+        issueCredential: makeDelegationCredentialIssuer(),
+      });
+
+      expect(mapped).toEqual({ status: 'error', error: direct.error });
+      // Compared explicitly because `code` is a getter, not an own property, so
+      // deep equality above never reads it — and the code is what the CLI error
+      // envelope surfaces to the operator.
+      expect((mapped as { readonly error: { readonly code: string } }).error.code).toBe(
+        direct.error.code,
+      );
+    },
+  );
+
+  it.each(Object.entries(RETRY_REFUSAL_FIXTURES))(
+    'maps the %s retry refusal to the generic error status with the primitive error',
+    (arm, buildFixture) => {
+      const fixture = buildFixture();
+      const direct = refuseRetryDirectly(fixture);
+
+      expect(direct.status).toBe(arm);
+      if (direct.status === 'retried' || direct.status === 'in_flight') {
+        throw new Error(`fixture for ${arm} reached ${direct.status}, which is not error-mapped`);
+      }
+
+      const mapped = prepareManualDelegation({
+        ...fixture,
+        issueCredential: makeDelegationCredentialIssuer(),
+      });
+
+      expect(mapped).toEqual({ status: 'error', error: direct.error });
+      expect((mapped as { readonly error: { readonly code: string } }).error.code).toBe(
+        direct.error.code,
+      );
+    },
+  );
 
   it('maps an abort against a substep with no delegation to the generic error status', () => {
     const refused = prepareManualDelegation({

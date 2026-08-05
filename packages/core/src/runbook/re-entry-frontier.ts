@@ -62,6 +62,117 @@ export type ReEntryFrontierActorService = Pick<
   'observeExecutionUnitEntry' | 'sendAndSync'
 >;
 
+/**
+ * Actor-service surface the FENCED half of the re-entry seam needs.
+ *
+ * Narrower than {@link ReEntryFrontierActorService} and deliberately excludes
+ * `sendAndSync`: the fenced twin derives its consume rather than committing one,
+ * so a caller cannot accidentally reach the unfenced write through it.
+ */
+export type PrepareReEntryFrontierActorService = Pick<RunbookActorService, 'prepareActorMutation'>;
+
+/**
+ * Outcome of PREPARING a re-entry frontier projection and consume.
+ *
+ * The same classification as {@link ReEntryProjection} minus `consume_failed`:
+ * a derivation cannot half-commit, so the only way the consume does not land is
+ * that the enclosing transaction refused, which the caller reports as its own
+ * transactional refusal rather than as a frontier-specific retryable failure.
+ * The `projected` arm carries what the commit must persist and what may be
+ * disclosed only after it does.
+ */
+export type PreparedReEntryProjection =
+  | { readonly status: 'none' }
+  | {
+      /** The frontier reconstructed its bearers and the consume was derived. */
+      readonly status: 'projected';
+      /** Prepared state after `DELEGATE_FRONTIER_CONSUMED`, for the owned commit. */
+      readonly nextState: RunbookState;
+      /**
+       * Entry metadata carrying the reconstructed bearers, to be observed ONLY
+       * after the commit lands. Held as data rather than as rendered
+       * observations because observation reads committed state — deriving it
+       * here would disclose bearers a refused commit never consumed.
+       */
+      readonly entry: StepEntryMetadata;
+    }
+  | {
+      /** A disclosure boundary refused the projection. */
+      readonly status: 'projection_refused';
+      /**
+       * Refusal detail from the projector. Safe to surface: it names the
+       * frontier id or the issuer-claim divergence, never a bearer.
+       */
+      readonly message: string;
+    };
+
+/** Inputs for {@link prepareReEntryFrontierConsume}. */
+export interface PrepareReEntryFrontierConsumeInput {
+  /** Actor service used to derive the consume transition. */
+  readonly actorService: PrepareReEntryFrontierActorService;
+  /** Parsed runbook steps for the run carrying the frontier. */
+  readonly steps: readonly ResolvedStep[];
+  /** The EXACT state captured under the caller's lease. */
+  readonly state: RunbookState;
+  /** Verified same-issuer deriver, bound to the exact issuing claim. */
+  readonly deriveToken: DelegationTokenDeriver;
+  /** Frontend-rendered entry metadata for the execution unit being re-entered. */
+  readonly entry: Omit<StepEntryMetadata, 'delegateFrontier'>;
+}
+
+/**
+ * Derive a frontier projection and its consume against one captured state.
+ *
+ * The fenced twin of {@link projectAndConsumeReEntryFrontier}, sharing its
+ * disclosure boundary verbatim — same reader, same projector, same refusal arm —
+ * and differing only in WHEN the consume lands. The unfenced seam commits the
+ * consume itself and returns rendered observations; this one returns the
+ * prepared state plus the entry metadata to observe, leaving both the commit and
+ * the disclosure to the caller's transaction.
+ *
+ * The ordering guarantee is preserved and in fact strengthened: the unfenced
+ * seam guarantees "no bearers disclosed unless the consume committed" by
+ * committing first, which leaves it exposed to a consume that commits while the
+ * surrounding work does not. Here the caller cannot observe until its ONE commit
+ * has landed, so a refused transaction discloses nothing and consumes nothing.
+ *
+ * @param input - Actor service, steps, captured state, verified deriver, and entry metadata.
+ * @returns The prepared re-entry outcome.
+ * @throws {InvalidRunbookStateError} When the persisted snapshot carries a
+ *   `delegateFrontier` that is not an array of structurally valid entries. Per
+ *   the no-migration rule this is corrupt/incompatible persisted state, and the
+ *   recovery path is explicit user action (finish, stop, prune, restart).
+ * @throws {Error} If {@link RunbookActorService.prepareActorMutation} rejects the
+ *   derived snapshot (invalid shape, actor error state).
+ */
+export async function prepareReEntryFrontierConsume(
+  input: PrepareReEntryFrontierConsumeInput,
+): Promise<PreparedReEntryProjection> {
+  const persistedFrontier = readPersistedReEntryFrontier(input.state);
+  if (persistedFrontier.length === 0 || !input.entry.isSubstep) {
+    return { status: 'none' };
+  }
+
+  let frontier: ReturnType<typeof projectDelegateFrontier>;
+  try {
+    frontier = projectDelegateFrontier(persistedFrontier, input.deriveToken);
+  } catch (error) {
+    return { status: 'projection_refused', message: getErrorMessage(error) };
+  }
+
+  const mutation = await input.actorService.prepareActorMutation(
+    input.state.id,
+    input.state,
+    input.steps,
+    { type: 'DELEGATE_FRONTIER_CONSUMED' },
+  );
+  return {
+    status: 'projected',
+    nextState: mutation.nextState,
+    entry: { ...input.entry, delegateFrontier: frontier },
+  };
+}
+
 /** Inputs for {@link projectAndConsumeReEntryFrontier}. */
 export interface ProjectAndConsumeReEntryFrontierInput {
   /** Actor service used to observe the entry and commit the consume. */

@@ -25,7 +25,9 @@ import { resolveCommandIntent } from './command-policy.js';
 import {
   createDelegationCredentialIssuer,
   createDelegationTokenDeriver,
+  delegationRuntimeCapabilities,
   type DelegationCredentialIssuer,
+  type DelegationRuntimeCapabilities,
   type DelegationTokenDeriver,
 } from './delegation-credential.js';
 import type { TokenScanResult } from './delegation-scan.js';
@@ -361,10 +363,26 @@ function replaceIssuedDelegation(
   stepIdOrSubstep: string,
   frameKey: FrameKey,
 ): RunbookState {
+  // Equivalent mutant: `parseStepIdFromString` returns null only for input it
+  // cannot parse, and no call site can reach here with such a string. Every
+  // caller derives `stepIdOrSubstep` from an id the delegation resolver already
+  // matched against an authored substep (fresh issuance and retry) or from a
+  // persisted descriptor whose substep was just located by `findSubstepState`
+  // (abort); an unparsable id is refused upstream, so the null branch of `?.` is
+  // unreachable and dropping the guard is unobservable.
+  // Stryker disable next-line OptionalChaining: unreachable — callers cannot supply an unparsable step id
   const substepId = parseStepIdFromString(stepIdOrSubstep)?.substep ?? stepIdOrSubstep;
   const issued = findSubstepState(updatedSubstepStates, substepId, frameKey);
+  // Unreachable invariant, not a branch: every caller performs this exact
+  // `findSubstepState(prepared.nextState.substepStates, substepId, frameKey)`
+  // lookup and throws on a miss BEFORE calling in, so `issued` is always
+  // present here. Emptying the guard, forcing it false, or blanking its message
+  // therefore cannot change any observable outcome — the throw exists to keep a
+  // future caller from silently persisting a state with no issued substep.
+  // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — callers already asserted the substep exists
   if (!issued) {
     throw new Error(
+      // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
       `Issued delegation substep "${substepId}" (frame ${frameKey}) missing from updated state`,
     );
   }
@@ -378,6 +396,16 @@ function replaceIssuedDelegation(
   );
   return {
     ...state,
+    // Equivalent mutant (the `[]` literal only): `state` is always the machine's
+    // freshly prepared next state, which cannot reach here without
+    // `substepStates` — the `findSubstepState` lookup above found `issued` in
+    // exactly that array. The `??` fallback is a type-level nullability
+    // formality whose right operand is never evaluated, so its contents are
+    // unobservable. The `??` operator itself is NOT disabled: replacing it with
+    // `&&` collapses the base array to `[]` and drops every sibling substep,
+    // which is killed by "keeps a sibling substep state when a second
+    // delegation is issued on the same step".
+    // Stryker disable next-line ArrayDeclaration: unreachable — substepStates is always present on a prepared state
     substepStates: replaceSubstepStateEntry(state.substepStates ?? [], issued),
     resolvedCompletions,
   };
@@ -438,6 +466,12 @@ function verifyEchoedDelegationToken(
       ),
     };
   }
+  // Equivalent mutant: the sole consumer narrows on the OTHER arm
+  // (`if (echoed.kind === 'unverifiable')`) and reads `.token` from whatever
+  // remains, so this discriminant's value is never compared against anything.
+  // The literal is retained because the union is the contract that keeps a
+  // token unreachable without passing verification.
+  // Stryker disable next-line StringLiteral: equivalent — the 'verified' discriminant is never read
   return { kind: 'verified', token };
 }
 
@@ -680,10 +714,11 @@ export type LifecycleTransitionOutcome =
         readonly frameKey: Frame['frameKey'];
         readonly entry: number;
       };
-      /** Verified runtime-only issuer for the follow-on execution loop. */
-      readonly issueDelegationCredential?: DelegationCredentialIssuer;
-      /** Same-issuer deriver used only for intentional frontier output. */
-      readonly deriveDelegationToken?: DelegationTokenDeriver;
+      /**
+       * Verified runtime-only delegation capabilities for the follow-on
+       * execution loop. One branded pair — see {@link TransitionDelegationRuntime}.
+       */
+      readonly delegationRuntime?: DelegationRuntimeCapabilities;
     };
 
 /** Canonical command-facing result of one fenced lifecycle computation. */
@@ -890,10 +925,12 @@ export type LifecycleNavigationOutcome =
       readonly steps: readonly ResolvedStep[];
       /** How a follow-on execution loop should release this run terminally. */
       readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
-      /** Verified runtime-only issuer for delegation transitions entered by navigation. */
-      readonly issueDelegationCredential?: DelegationCredentialIssuer;
-      /** Same-issuer runtime-only deriver for intentional frontier output. */
-      readonly deriveDelegationToken?: DelegationTokenDeriver;
+      /**
+       * Verified runtime-only delegation capabilities for a navigation that
+       * lands on a DELEGATE frontier. One branded pair — see
+       * {@link TransitionDelegationRuntime}.
+       */
+      readonly delegationRuntime?: DelegationRuntimeCapabilities;
     };
 
 /** Input to an already-authorized fenced GOTO mutation. */
@@ -1072,12 +1109,20 @@ function reconcileClaimTarget(
   return presented ? undefined : { kind: 'claim_bearer_mismatch' };
 }
 
-/** The runtime-only delegation capabilities one verified authority may exercise. */
+/**
+ * The runtime-only delegation capabilities a transitioning caller may exercise.
+ *
+ * ONE optional field carrying a branded pair, not two independently optional
+ * callables. Issuance and derivation are two halves of one authority — a
+ * descriptor minted by an issuer is refused RD-821 by a deriver bound to a
+ * different issuer claim — so the authorization decision below is binary and the
+ * type now says so. The old shape made a one-sided value expressible while no
+ * producer could build one, which is what let consumers branch on the deriver
+ * alone or forward the issuer alone.
+ */
 interface TransitionDelegationRuntime {
-  /** Verified runtime issuer for a transition that enters a DELEGATE frontier. */
-  readonly issueDelegationCredential?: DelegationCredentialIssuer;
-  /** Same-issuer deriver used only for intentional frontier output. */
-  readonly deriveDelegationToken?: DelegationTokenDeriver;
+  /** Both capabilities, present iff the claim authorizes delegation from this run. */
+  readonly delegationRuntime?: DelegationRuntimeCapabilities;
 }
 
 /**
@@ -1103,8 +1148,8 @@ interface TransitionDelegationRuntime {
  * @param actorContext - Caller context after core verified bearer proof.
  * @param runId - The run this transition mutates, and the only run the returned
  *   capabilities may be exercised for.
- * @returns The issuer/deriver pair when the claim authorizes delegation from
- *   this run; an empty pair otherwise.
+ * @returns The branded capability pair when the claim authorizes delegation from
+ *   this run; an empty object otherwise.
  */
 function transitionDelegationRuntime(
   actorContext: ActorContext,
@@ -1113,10 +1158,7 @@ function transitionDelegationRuntime(
   if (actorContext.kind !== 'verified_claim') return {};
   const decision = authorizeClaim(actorContext.claim, { action: 'delegate-from-run', runId });
   if (decision.kind !== 'allowed') return {};
-  return {
-    issueDelegationCredential: createDelegationCredentialIssuer(actorContext.authority),
-    deriveDelegationToken: createDelegationTokenDeriver(actorContext.authority),
-  };
+  return { delegationRuntime: delegationRuntimeCapabilities(actorContext.authority) };
 }
 
 /**
@@ -1257,7 +1299,16 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+    // Unreachable invariant: `#resolveMutationActorContext` returns
+    // `kind: 'verified'` only alongside an actor context built by
+    // `verifiedClaimContext`, whose `kind` is `verified_claim` by
+    // construction — the refusal arm above is the only other outcome. The
+    // guard exists to narrow the type for the issuer built below, so neither
+    // forcing it false, emptying its body, nor blanking its message is
+    // observable.
+    // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — a verified authority always carries a verified_claim context
     if (authority.actorContext.kind !== 'verified_claim') {
+      // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
       throw new Error('Delegation issuance requires verified claim authority');
     }
     const issueCredential = createDelegationCredentialIssuer(authority.actorContext.authority);
@@ -1278,6 +1329,15 @@ export class RunbookLifecycleCommandService {
       targets: [{ runId: activeId, claimKey: authority.actorContext.authority.claimKey }],
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
+        // Unreachable invariant: recovery only runs for a member whose attempt
+        // crossed the effect boundary, which happens strictly after
+        // `beforeEffect` recorded that run's steps in `stepsByRun`. The guard
+        // keeps a future member added to `targets` without a steps entry from
+        // rehydrating the wrong runbook graph, so forcing it false (or blanking
+        // its message) is unobservable. Forcing it TRUE or inverting it skips
+        // the factory entirely and is killed by "rehydrates the interrupted
+        // issuance member from its own captured steps".
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — beforeEffect always records the member's steps first
         if (!recoverySteps) throw new Error(`Missing recovery steps for delegation run ${runId}.`);
         return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
@@ -1287,6 +1347,12 @@ export class RunbookLifecycleCommandService {
         const policy = resolveCommandIntent({
           actorContext: authority.actorContext,
           intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
+          // Equivalent mutants: `resolveCommandIntent` reads `targetSelector`
+          // at exactly one place — `input.targetSelector.kind === 'run'`, one
+          // disjunct of the `requiresBearer` OR whose EARLIER disjunct
+          // (`intent.kind === 'delegation-issuance'`) is already true here — so
+          // neither this literal's shape nor its `kind` value can be observed.
+          // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — targetSelector is unread on the delegation-issuance path
           targetSelector: { kind: 'default' },
           targetState: captured.state,
         });
@@ -1360,6 +1426,15 @@ export class RunbookLifecycleCommandService {
             frameKey,
             childRunbookPath: childResolved.path,
             childRunbookRef: childResolved.ref,
+            // Equivalent mutant (`=== undefined` → `!== undefined` inverted to
+            // always-spread only): spreading `{ extraVars: undefined }` is
+            // indistinguishable from omitting the key — `createDelegation`
+            // stores it as `...(extraVars ? { extraVars } : {})` and the machine
+            // re-tests `event.extraVars === undefined`. The conditional is kept
+            // for exact-optional-property typing. Dropping the value when it IS
+            // present is observable and killed by "forwards resolved extraVars
+            // into the persisted delegation and its context snapshot".
+            // Stryker disable next-line ConditionalExpression: equivalent — an explicit undefined extraVars is treated as absent downstream
             ...(resolvedExtraVars === undefined ? {} : { extraVars: resolvedExtraVars }),
           },
           issueCredential,
@@ -1371,14 +1446,24 @@ export class RunbookLifecycleCommandService {
           throw new Error(`Issue preparation returned ${prepared.status}`);
         }
         const issued = findSubstepState(
+          // Stryker disable next-line ArrayDeclaration: unreachable — a prepared ISSUE always carries substepStates
           prepared.nextState.substepStates ?? [],
+          // Stryker disable next-line OptionalChaining: unreachable — `createStepId` is built from an id the resolver already matched
           parseStepIdFromString(createStepId)?.substep ?? createStepId,
           frameKey,
         );
+        // Unreachable invariant: `prepared.status === 'prepared'` means the
+        // machine committed the ISSUE, which is the only thing that writes this
+        // substep's `delegation`. Neither forcing the guard false, dropping the
+        // `?.`, nor blanking the message can change an observable outcome; the
+        // throw exists so a machine that silently stopped issuing cannot persist
+        // a delegation-less state as a successful mint.
+        // Stryker disable next-line ConditionalExpression,OptionalChaining,StringLiteral: unreachable — a prepared ISSUE always carries the delegation
         if (!issued?.delegation) throw new Error('Machine did not prepare the issued delegation.');
         preparedFresh = {
           nextState: replaceIssuedDelegation(
             prepared.nextState,
+            // Stryker disable next-line ArrayDeclaration: unreachable — see the lookup above
             prepared.nextState.substepStates ?? [],
             createStepId,
             frameKey,
@@ -1392,10 +1477,20 @@ export class RunbookLifecycleCommandService {
             parentRunId: captured.state.id,
           },
         };
+        // Equivalent mutant: the aggregate runner tests only for the OTHER arm
+        // (`beforeEffect?.kind === 'return'`) and treats every other value —
+        // including `{}` and an empty discriminant — as "continue". The literal
+        // is the readable half of a union whose refusing arm carries a value.
+        // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — only the 'return' discriminant is ever compared
         return { kind: 'continue' };
       },
       compute: ([captured]) => {
         const prepared = preparedFresh;
+        // Unreachable invariant: `compute` runs only after `beforeEffect`
+        // returned `continue`, and the sole `continue` path assigns
+        // `preparedFresh` immediately above it. The throw guards a future
+        // `continue` that forgets to.
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — a continuing beforeEffect always assigned preparedFresh
         if (!prepared) throw new Error('Delegation transaction lost its prepared issuance.');
         return Promise.resolve({
           members: [{ runId: captured.state.id, nextState: prepared.nextState }],
@@ -1553,7 +1648,16 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+    // Unreachable invariant: `#resolveMutationActorContext` returns
+    // `kind: 'verified'` only alongside an actor context built by
+    // `verifiedClaimContext`, whose `kind` is `verified_claim` by
+    // construction — the refusal arm above is the only other outcome. The
+    // guard exists to narrow the type for the issuer built below, so neither
+    // forcing it false, emptying its body, nor blanking its message is
+    // observable.
+    // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — a verified authority always carries a verified_claim context
     if (authority.actorContext.kind !== 'verified_claim') {
+      // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
       throw new Error('Delegation retry requires verified claim authority');
     }
     const issueCredential = createDelegationCredentialIssuer(authority.actorContext.authority);
@@ -1592,16 +1696,40 @@ export class RunbookLifecycleCommandService {
         : {}),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
+        // Unreachable invariant: recovery only runs for a member whose attempt
+        // crossed the effect boundary, which happens strictly after
+        // `beforeEffect` recorded that run's steps in `stepsByRun`. The guard
+        // keeps a future member added to `targets` without a steps entry from
+        // rehydrating the wrong runbook graph, so forcing it false (or blanking
+        // its message) is unobservable. Forcing it TRUE or inverting it skips
+        // the factory entirely and is killed by "rehydrates the interrupted
+        // issuance member from its own captured steps".
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — beforeEffect always records the member's steps first
         if (!recoverySteps) throw new Error(`Missing recovery steps for delegation run ${runId}.`);
         return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
       beforeEffect: async (captured) => {
+        // Equivalent mutant (`=== null` → always-false only): with no linked
+        // child the `find` runs over captured states whose ids are branded run
+        // ids, so nothing can equal `null` and the result is `undefined` either
+        // way. Forcing it TRUE (never look the child up) drops the linked-child
+        // re-check and is killed by "refuses RD-823 when the linked child is no
+        // longer terminal at capture".
+        // Stryker disable next-line ConditionalExpression: equivalent — a null linked child id matches no captured run
         const child =
           linkedChildRunId === null
             ? undefined
             : captured.find(({ state }) => state.id === linkedChildRunId);
         const parent = captured.find(({ state }) => state.id === freshState.id);
+        // Unreachable invariant: the parent is a REQUIRED aggregate target, so a
+        // capture that failed to produce it returns a refusal before
+        // `beforeEffect` ever runs. Forcing the guard false, dropping the `?.`,
+        // emptying the body or blanking the message therefore cannot change an
+        // observable outcome; the throw pins the ordering contract for a future
+        // target list.
+        // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: unreachable — a required target always appears in `captured`
         if (parent?.state.id !== freshState.id) {
+          // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
           throw new Error('Delegation retry did not capture its parent in dependency order.');
         }
         const parentSteps = await this.#deps.loadSteps(parent.state);
@@ -1647,12 +1775,23 @@ export class RunbookLifecycleCommandService {
             targeted: true,
             stepId: exactCursor.substepId,
           },
+          // Equivalent mutants: `resolveCommandIntent` reads `targetSelector`
+          // at exactly one place — `input.targetSelector.kind === 'run'`, one
+          // disjunct of the `requiresBearer` OR whose EARLIER disjunct
+          // (`intent.kind === 'delegation-issuance'`) is already true here — so
+          // neither this literal's shape nor its `kind` value can be observed.
+          // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — targetSelector is unread on the delegation-issuance path
           targetSelector: { kind: 'default' },
           targetState: parent.state,
         });
         if (policy.kind !== 'allowed') {
           return { kind: 'return', value: { kind: 'refused', policy } };
         }
+        // Equivalent mutant (the `locator.kind === 'step'` operand only): the
+        // other locator variants have no `iteration` member at all, so the right
+        // operand is already false for them and the guard's left half cannot be
+        // observed. It is spelled out so the `locator.step` read below narrows.
+        // Stryker disable next-line ConditionalExpression: equivalent — only a step locator can carry an iteration
         if (locator.kind === 'step' && locator.iteration !== undefined) {
           const message = invalidDelegationIndexMessage(parentSteps, locator.step);
           if (message) return { kind: 'return', value: { kind: 'invalid_index', message } };
@@ -1697,6 +1836,12 @@ export class RunbookLifecycleCommandService {
             substepId: exactCursor.substepId,
             frameKey: exactCursor.frameKey,
             allowLinkedChildRun,
+            // Equivalent mutant (inverting to always-spread only): an explicit
+            // `overrides: undefined` is indistinguishable from omitting the key —
+            // `retryDelegation` composes with `...(overrides ?? {})`. Dropping a
+            // PRESENT value is observable and killed by "forwards resolved
+            // overrides into the re-minted delegation".
+            // Stryker disable next-line ConditionalExpression: equivalent — an explicit undefined overrides is treated as absent downstream
             ...(overrides === undefined ? {} : { overrides }),
           },
           issueCredential,
@@ -1708,14 +1853,21 @@ export class RunbookLifecycleCommandService {
           throw new Error(`Retry preparation returned ${prepared.status}`);
         }
         const issued = findSubstepState(
+          // Stryker disable next-line ArrayDeclaration: unreachable — a prepared RETRY always carries substepStates
           prepared.nextState.substepStates ?? [],
           exactCursor.substepId,
           exactCursor.frameKey,
         );
+        // Unreachable invariant: `prepared.status === 'prepared'` means the
+        // machine committed the RETRY, which is the only thing that writes this
+        // substep's `delegation`. The throw keeps a machine that silently stopped
+        // re-issuing from persisting a delegation-less state as a fresh mint.
+        // Stryker disable next-line ConditionalExpression,OptionalChaining,StringLiteral: unreachable — a prepared RETRY always carries the delegation
         if (!issued?.delegation) throw new Error('Machine did not prepare the retried delegation.');
         preparedRetry = {
           nextState: replaceIssuedDelegation(
             prepared.nextState,
+            // Stryker disable next-line ArrayDeclaration: unreachable — see the lookup above
             prepared.nextState.substepStates ?? [],
             exactCursor.substepId,
             exactCursor.frameKey,
@@ -1729,16 +1881,25 @@ export class RunbookLifecycleCommandService {
             parentRunId: parent.state.id,
           },
         };
+        // Equivalent mutant: the aggregate runner tests only for the OTHER arm
+        // (`beforeEffect?.kind === 'return'`); every other value continues.
+        // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — only the 'return' discriminant is ever compared
         return { kind: 'continue' };
       },
       compute: (captured) => {
+        // Stryker disable next-line ConditionalExpression: equivalent — a null linked child id matches no captured run (see beforeEffect)
         const child =
           linkedChildRunId === null
             ? undefined
             : captured.find(({ state }) => state.id === linkedChildRunId);
         const parent = captured.find(({ state }) => state.id === freshState.id);
+        // Unreachable invariants: `compute` runs only after `beforeEffect`
+        // returned `continue`, which requires the required parent target to have
+        // been captured and assigns `preparedRetry` on its way out.
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — a required target is always captured
         if (!parent) throw new Error('Delegation retry lost its parent capture.');
         const prepared = preparedRetry;
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — a continuing beforeEffect always assigned preparedRetry
         if (!prepared) throw new Error('Delegation retry lost its prepared replacement.');
         return Promise.resolve({
           members: [
@@ -1782,10 +1943,24 @@ export class RunbookLifecycleCommandService {
       intent: 'delegation-issuance',
     });
     if (authority.kind === 'refused') return { kind: 'refused', policy: authority.policy };
+    // Unreachable invariant: `#resolveMutationActorContext` returns
+    // `kind: 'verified'` only alongside an actor context built by
+    // `verifiedClaimContext`, whose `kind` is `verified_claim` by
+    // construction — the refusal arm above is the only other outcome. The
+    // guard exists to narrow the type for the issuer built below, so neither
+    // forcing it false, emptying its body, nor blanking its message is
+    // observable.
+    // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — a verified authority always carries a verified_claim context
     if (authority.actorContext.kind !== 'verified_claim') {
+      // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
       throw new Error('Delegation abort requires verified claim authority');
     }
     const verifiedAuthority = authority.actorContext.authority;
+    // Equivalent mutant: `resolveMutationAuthority` refuses outright when no
+    // bearer was presented, and only `claim_bearer` evidence presents one — so a
+    // verified authority here implies bearer evidence and the guard is always
+    // true. It is written out because the narrowing is what reaches `claimId`.
+    // Stryker disable next-line ConditionalExpression: equivalent — a verified authority implies claim_bearer evidence
     if (input.callerEvidence.kind === 'claim_bearer') {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
@@ -1803,6 +1978,14 @@ export class RunbookLifecycleCommandService {
     // `optional` — which would drop the child on ANY capture refusal.
     const scannedChild =
       scannedChildRunId === null ? undefined : await this.#deps.loadRun(scannedChildRunId);
+    // Equivalent mutants: `missingChildRunId` is READ at exactly one place — the
+    // `else if` arm of `if (scannedChild !== undefined)` — so every evaluation
+    // that can be observed already has `scannedChild === undefined`. Under that
+    // condition the conjunction (and each half of it, and `||` in its place)
+    // reduces to `scannedChildRunId`, which is what the arm needs. The
+    // conjunction is written out so the value cannot leak into the branch that
+    // DOES have a child state.
+    // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent — only read where `scannedChild === undefined`
     const missingChildRunId =
       scannedChildRunId !== null && scannedChild === undefined ? scannedChildRunId : null;
     const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
@@ -1823,17 +2006,38 @@ export class RunbookLifecycleCommandService {
         : { releases: [{ runId: scannedChild.id, retainClaimsAsTerminal: false }] }),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
+        // Unreachable invariant: recovery only runs for a member whose attempt
+        // crossed the effect boundary, which happens strictly after
+        // `beforeEffect` recorded that run's steps in `stepsByRun`. The guard
+        // keeps a future member added to `targets` without a steps entry from
+        // rehydrating the wrong runbook graph, so forcing it false (or blanking
+        // its message) is unobservable. Forcing it TRUE or inverting it skips
+        // the factory entirely and is killed by "rehydrates the interrupted
+        // issuance member from its own captured steps".
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — beforeEffect always records the member's steps first
         if (!recoverySteps) throw new Error(`Missing recovery steps for abort run ${runId}.`);
         return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
       beforeEffect: async (captured) => {
+        // Equivalent mutant (the `undefined` arm only): `child` is read solely
+        // inside `if (scannedChild !== undefined)`, so when no child was scanned
+        // the value is never observed — taking `captured.at(0)` there just aliases
+        // the parent into a variable nothing reads.
+        // Stryker disable next-line ConditionalExpression: equivalent — `child` is unread when no child was scanned
         const child = scannedChild === undefined ? undefined : captured.at(0);
         const parent = captured.at(scannedChild === undefined ? 0 : 1);
+        // Unreachable invariant: the parent is a REQUIRED aggregate target and is
+        // listed LAST, so a capture that did not produce it in that position
+        // refuses before `beforeEffect` runs. The throw pins the ordering
+        // contract the index above depends on.
+        // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: unreachable — the required parent is always captured last
         if (parent?.state.id !== parentRunId) {
+          // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
           throw new Error('Delegation abort did not capture its parent last.');
         }
         const parentSteps = await this.#deps.loadSteps(parent.state);
         stepsByRun.set(parent.state.id, parentSteps);
+        // Stryker disable next-line ArrayDeclaration: unreachable — an aborting parent always has substepStates
         const exact = findSubstepState(parent.state.substepStates ?? [], substepId, frameKey);
         if (exact?.delegation?.tokenHash !== tokenHash) {
           return { kind: 'return', value: { kind: 'token_not_found' } };
@@ -1872,6 +2076,11 @@ export class RunbookLifecycleCommandService {
                 childRunbookPath: exact.delegation.childRunbookPath,
               },
             };
+          // Unreachable by construction: `parentPrepared` is narrowed to `never`
+          // here, so this arm exists to turn a future preparation status into a
+          // COMPILE error rather than a silent fallthrough. It has no runtime
+          // behaviour to observe.
+          // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — exhaustive `never` arm
           default: {
             const _exhaustive: never = parentPrepared;
             return _exhaustive;
@@ -1883,7 +2092,12 @@ export class RunbookLifecycleCommandService {
         let cleanup: Extract<DelegationAbortOutcome, { readonly kind: 'cancelled' }>['cleanup'] =
           'none';
         if (scannedChild !== undefined) {
+          // Unreachable invariant: when a child was scanned it is target 0, so
+          // `captured.at(0)` is that child by construction. The throw pins the
+          // ordering the index above depends on.
+          // Stryker disable next-line ConditionalExpression,OptionalChaining,BlockStatement: unreachable — the scanned child is always captured first
           if (child?.state.id !== scannedChild.id) {
+            // Stryker disable next-line StringLiteral: unreachable — this throw cannot fire (see above)
             throw new Error('Delegation abort did not capture its linked child first.');
           }
           if (
@@ -1913,6 +2127,7 @@ export class RunbookLifecycleCommandService {
           }
           nextParent = replaceIssuedDelegation(
             nextParent,
+            // Stryker disable next-line ArrayDeclaration: unreachable — a prepared ABORT always carries substepStates
             nextParent.substepStates ?? [],
             substepId,
             frameKey,
@@ -1935,6 +2150,7 @@ export class RunbookLifecycleCommandService {
           // child completion is fabricated from a state we do not have.
           nextParent = replaceIssuedDelegation(
             nextParent,
+            // Stryker disable next-line ArrayDeclaration: unreachable — a prepared ABORT always carries substepStates
             nextParent.substepStates ?? [],
             substepId,
             frameKey,
@@ -1943,6 +2159,11 @@ export class RunbookLifecycleCommandService {
         }
         prepared = {
           parent: nextParent,
+          // Equivalent mutant (inverting to always-spread only): an explicit
+          // `child: undefined` reads identically to an absent key at the single
+          // consumer below (`exactPrepared.child === undefined`). Dropping a
+          // PRESENT child is observable and killed by the force-stop tests.
+          // Stryker disable next-line ConditionalExpression: equivalent — an explicit undefined child is treated as absent
           ...(nextChild === undefined ? {} : { child: nextChild }),
           value: {
             kind: 'cancelled',
@@ -1953,10 +2174,16 @@ export class RunbookLifecycleCommandService {
             cleanup,
           },
         };
+        // Equivalent mutant: the aggregate runner tests only for the OTHER arm
+        // (`beforeEffect?.kind === 'return'`); every other value continues.
+        // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — only the 'return' discriminant is ever compared
         return { kind: 'continue' };
       },
       compute: () => {
         const exactPrepared = prepared;
+        // Unreachable invariant: `compute` runs only after `beforeEffect`
+        // returned `continue`, and the sole `continue` path assigns `prepared`.
+        // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — a continuing beforeEffect always assigned prepared
         if (!exactPrepared) throw new Error('Delegation abort lost its prepared mutation.');
         return Promise.resolve({
           members: [
@@ -2126,26 +2353,23 @@ export class RunbookLifecycleCommandService {
     // frontend to resolve the target first (a redundant run-state read).
     const steps = await this.#deps.loadSteps(ready.state);
 
-    const { issueDelegationCredential, deriveDelegationToken } = transitionDelegationRuntime(
-      actorContext,
-      ready.state.id,
-    );
+    const { delegationRuntime } = transitionDelegationRuntime(actorContext, ready.state.id);
     const outcome = await this.#drive(
       input,
       steps,
       ready.state,
       terminalReleaseMode,
       guardOpenChildren,
-      issueDelegationCredential,
+      delegationRuntime?.issueDelegationCredential,
     );
     if (
       outcome.kind !== 'applied' ||
       outcome.loop.kind !== 'run' ||
-      issueDelegationCredential === undefined
+      delegationRuntime === undefined
     ) {
       return outcome;
     }
-    return { ...outcome, issueDelegationCredential, deriveDelegationToken };
+    return { ...outcome, delegationRuntime };
   }
 
   /**

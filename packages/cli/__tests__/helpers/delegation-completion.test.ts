@@ -7,6 +7,7 @@ import {
   brandStoredOutputsForTest,
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { delegationRuntimeDouble } from './delegation-runtime-helpers.js';
 import type {
   Frame,
   FrameKey,
@@ -884,7 +885,10 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     const issueDelegationCredential = mockFn<
       () => never
     >() as unknown as DelegationCredentialIssuer;
-    const delegationTokenDeriver = mockFn<() => string>() as unknown as DelegationTokenDeriver;
+    const deriveDelegationToken = mockFn<() => string>() as unknown as DelegationTokenDeriver;
+    // ONE branded value now, not two fields the fixture could set apart: the
+    // scoping decision below is a single decision about a single authority.
+    const runtime = delegationRuntimeDouble({ issueDelegationCredential, deriveDelegationToken });
 
     function primeContinueThenLoop(): MockManager {
       const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
@@ -904,8 +908,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       primeContinueThenLoop();
       const advance = buildAdvanceInlineParent('/test', makeOutput(), undefined, {
         runId: PARENT_RUN_ID,
-        issueDelegationCredential,
-        delegationTokenDeriver,
+        runtime,
       });
 
       await advance({
@@ -915,9 +918,13 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         result: 'pass',
       });
 
+      // The drain takes only the issuer, so that half is unpacked at the call
+      // site — pinned by identity, which is what fails if the unpack drifts to
+      // the wrong half of the pair.
       expect(drainResolvedCompletions).toHaveBeenCalledWith(
         expect.objectContaining({ issueDelegationCredential }),
       );
+      // The loop needs both, so it receives the branded pair intact.
       expect(runExecutionLoop).toHaveBeenCalledWith(
         expect.anything(),
         PARENT_RUN_ID,
@@ -925,7 +932,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         '/test',
         expect.any(Boolean),
         expect.anything(),
-        expect.objectContaining({ issueDelegationCredential, delegationTokenDeriver }),
+        expect.objectContaining({ delegationRuntime: runtime }),
       );
     });
 
@@ -938,8 +945,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       primeContinueThenLoop();
       const advance = buildAdvanceInlineParent('/test', makeOutput(), undefined, {
         runId: OTHER_RUN_ID,
-        issueDelegationCredential,
-        delegationTokenDeriver,
+        runtime,
       });
 
       await advance({
@@ -959,10 +965,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         '/test',
         expect.any(Boolean),
         expect.anything(),
-        expect.objectContaining({
-          issueDelegationCredential: undefined,
-          delegationTokenDeriver: undefined,
-        }),
+        expect.objectContaining({ delegationRuntime: undefined }),
       );
     });
   });
@@ -973,7 +976,8 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
     const issueDelegationCredential = mockFn<
       () => never
     >() as unknown as DelegationCredentialIssuer;
-    const delegationTokenDeriver = mockFn<() => string>() as unknown as DelegationTokenDeriver;
+    const deriveDelegationToken = mockFn<() => string>() as unknown as DelegationTokenDeriver;
+    const runtime = delegationRuntimeDouble({ issueDelegationCredential, deriveDelegationToken });
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: makeInlineLinkage() });
     const manager = makeManager(new Map([[CHILD_RUN_ID, childState]]));
     wireMocks(manager, makeLifecycleService());
@@ -981,8 +985,7 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
 
     await propagateChildTerminal(childState, 'pass', '/test', makeOutput(), undefined, {
       runId: PARENT_RUN_ID,
-      issueDelegationCredential,
-      delegationTokenDeriver,
+      runtime,
     });
 
     // The runtime reaches the seam through the CLI-supplied advance callable, so
@@ -1022,7 +1025,7 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
       '/test',
       expect.any(Boolean),
       expect.anything(),
-      expect.objectContaining({ issueDelegationCredential, delegationTokenDeriver }),
+      expect.objectContaining({ delegationRuntime: runtime }),
     );
   });
 });

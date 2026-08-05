@@ -51,10 +51,8 @@ import {
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
 import {
-  createDelegationCredentialIssuer,
-  createDelegationTokenDeriver,
-  type DelegationCredentialIssuer,
-  type DelegationTokenDeriver,
+  delegationRuntimeCapabilities,
+  type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
 import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
 import {
@@ -84,10 +82,16 @@ export interface PreparedRunControlClaim {
   readonly claimId: ClaimId;
   /** Proof-backed record installed in the session transaction. */
   readonly claim: ClaimRecord;
-  /** Claim-bound credential issuer retained in process memory only. */
-  readonly issueDelegationCredential: DelegationCredentialIssuer;
-  /** Claim-bound token deriver retained in process memory only. */
-  readonly deriveDelegationToken: DelegationTokenDeriver;
+  /**
+   * Claim-bound delegation capabilities retained in process memory only.
+   *
+   * One branded pair rather than two independently optional callables: the
+   * issuer and the deriver are two halves of ONE authority (a descriptor minted
+   * by an issuer is refused RD-821 by a deriver bound to a different issuer
+   * claim), so a one-sided value is not a state this producer can reach and the
+   * type says so.
+   */
+  readonly delegationRuntime: DelegationRuntimeCapabilities;
 }
 
 /**
@@ -737,8 +741,7 @@ export class SessionService {
         grants: createRunControlGrants(runId),
         now: this.now(),
       }),
-      issueDelegationCredential: createDelegationCredentialIssuer(authority),
-      deriveDelegationToken: createDelegationTokenDeriver(authority),
+      delegationRuntime: delegationRuntimeCapabilities(authority),
     };
   }
 

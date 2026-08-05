@@ -3,6 +3,8 @@ import { generateClaimBearer, parseClaimBearer } from '../../src/runbook/claim-i
 import {
   createDelegationCredentialIssuer,
   createDelegationTokenDeriver,
+  delegationRuntimeCapabilities,
+  type DelegationRuntimeCapabilities,
 } from '../../src/runbook/delegation-credential.js';
 import {
   assertDelegationIssuanceNonce,
@@ -106,5 +108,81 @@ describe('delegation credential capabilities', () => {
     expect(() => createDelegationTokenDeriver(second.authority)(issued.credential)).toThrow(
       'Delegation credential belongs to a different issuer claim',
     );
+  });
+
+  // The consolidated producer. Issuance and derivation are two halves of ONE
+  // authority — a descriptor minted by one issuer is refused RD-821 by a deriver
+  // bound to another — so the pair is now a single branded value with a single
+  // producer. These cases pin what that buys: the pairing holds by construction,
+  // a foreign descriptor is still refused, the bad-authority refusal is still
+  // eager, and the brand is what stops a caller re-assembling a mismatched pair.
+  describe('delegationRuntimeCapabilities', () => {
+    it('binds both capabilities to the same authority', () => {
+      const owner = authority();
+      const runtime = delegationRuntimeCapabilities(owner.authority);
+
+      const issued = runtime.issueDelegationCredential(location);
+
+      // The same-authority claim, stated as the only thing that can prove it:
+      // the deriver reproduces the exact bearer the issuer minted, and its hash
+      // is the persistable verifier the issuer published. Building the two
+      // halves from different authorities fails both lines.
+      expect(runtime.deriveDelegationToken(issued.credential)).toBe(issued.token);
+      expect(hashDelegationToken(runtime.deriveDelegationToken(issued.credential))).toBe(
+        issued.tokenHash,
+      );
+      expect(issued.credential.issuerClaimKey).toBe(owner.parsed.claimKey);
+    });
+
+    it("refuses a descriptor minted by a different authority's issuer", () => {
+      // RD-821, reached through the consolidated producer: the cross-issuer
+      // refusal is the reason the pair may not be split, so it is pinned on the
+      // value the split-proof type produces, not only on the raw deriver.
+      const owner = delegationRuntimeCapabilities(authority().authority);
+      const stranger = delegationRuntimeCapabilities(authority().authority);
+
+      const foreign = stranger.issueDelegationCredential(location);
+
+      expect(() => owner.deriveDelegationToken(foreign.credential)).toThrow(
+        'Delegation credential belongs to a different issuer claim',
+      );
+    });
+
+    it('refuses eagerly when the authority bearer encodes a different claim key', () => {
+      // Eager, i.e. no capability pair is handed out at all — a later refusal
+      // would leave a caller holding a value whose type promises an authority it
+      // does not have.
+      const bearerOwner = authority();
+      const claimedOwner = authority();
+
+      expect(() =>
+        delegationRuntimeCapabilities({
+          ...bearerOwner.authority,
+          claimKey: claimedOwner.parsed.claimKey,
+        }),
+      ).toThrow('Verified claim authority does not match its bearer');
+    });
+
+    it('cannot be re-assembled from two authorities by an object literal', () => {
+      const owner = delegationRuntimeCapabilities(authority().authority);
+      const stranger = delegationRuntimeCapabilities(authority().authority);
+
+      // The brand, exercised. Two real capabilities from two real authorities
+      // satisfy every visible member of the interface, so only the unexported
+      // `unique symbol` stands between a caller and a pair that cannot work.
+      // `@ts-expect-error` is the assertion: should the brand ever be dropped or
+      // exported, this line type-checks and tsc reports the unused directive.
+      // @ts-expect-error - the module-private brand cannot be satisfied here
+      const forged: DelegationRuntimeCapabilities = {
+        issueDelegationCredential: owner.issueDelegationCredential,
+        deriveDelegationToken: stranger.deriveDelegationToken,
+      };
+
+      // And this is what the brand is protecting against: the forged pair is
+      // dead on arrival, refused the moment it is used.
+      expect(() =>
+        forged.deriveDelegationToken(forged.issueDelegationCredential(location).credential),
+      ).toThrow('Delegation credential belongs to a different issuer claim');
+    });
   });
 });

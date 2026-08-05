@@ -23,8 +23,7 @@ import {
   type RunbookLifecycleCommandService,
   type CallerEvidence,
   type LifecycleTerminalReleaseMode,
-  type DelegationCredentialIssuer,
-  type DelegationTokenDeriver,
+  type DelegationRuntimeCapabilities,
   claimKeyFromBearer,
 } from '@rundown-org/core';
 import { runExecutionLoop } from '../services/execution.js';
@@ -66,10 +65,13 @@ export interface GotoContext {
   terminalReleaseMode: LifecycleTerminalReleaseMode;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
-  /** Verified issuer for a navigation transition that enters a delegation frontier. */
-  issueDelegationCredential?: DelegationCredentialIssuer;
-  /** Same-issuer deriver used only to render the public delegation frontier. */
-  delegationTokenDeriver?: DelegationTokenDeriver;
+  /**
+   * Verified delegation capabilities for a navigation that lands on a DELEGATE
+   * frontier, and for the continuation that projects the frontier it stored.
+   * One branded pair — `runNavigationMutation` takes only the issuer, so that
+   * half is unpacked at the call site rather than carried apart from its twin.
+   */
+  delegationRuntime?: DelegationRuntimeCapabilities;
 }
 
 /**
@@ -268,8 +270,7 @@ export async function buildGotoContext(
       cwd,
       terminalReleaseMode: outcome.terminalReleaseMode,
       commandStreamOptions: options.commandStreamOptions,
-      issueDelegationCredential: outcome.issueDelegationCredential,
-      delegationTokenDeriver: outcome.deriveDelegationToken,
+      delegationRuntime: outcome.delegationRuntime,
     },
   };
 }
@@ -387,7 +388,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     steps,
     target,
     terminalReleaseMode: ctx.terminalReleaseMode,
-    issueDelegationCredential: ctx.issueDelegationCredential,
+    issueDelegationCredential: ctx.delegationRuntime?.issueDelegationCredential,
   });
   if (mutation.kind !== 'applied') {
     // This site needs the code rather than the rendering — the refusal travels
@@ -423,8 +424,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
         : {}),
       output,
       commandStreamOptions: ctx.commandStreamOptions,
-      issueDelegationCredential: ctx.issueDelegationCredential,
-      delegationTokenDeriver: ctx.delegationTokenDeriver,
+      delegationRuntime: ctx.delegationRuntime,
     },
   );
 

@@ -319,8 +319,7 @@ export function registerRunCommand(program: Command): void {
                   manager,
                   gotoState.id,
                 ),
-                issueDelegationCredential: result.delegationRuntime?.issueDelegationCredential,
-                delegationTokenDeriver: result.delegationRuntime?.deriveDelegationToken,
+                delegationRuntime: result.delegationRuntime,
               };
 
               const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);

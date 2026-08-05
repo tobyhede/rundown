@@ -1,5 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
+  DelegationRuntimeCapabilities,
+  DelegationTokenDeriver,
   ExecutionEventEmitter,
   ExecutionLifecycleService,
   ReleaseRunbookResult,
@@ -11,7 +13,34 @@ import type {
 import type { ResolvedStep } from '@rundown-org/parser';
 import type { ExecutionTerminalReleaseMode } from '../../src/services/execution.js';
 import { mockFn } from '../helpers/typed-mocks.js';
+import {
+  delegationRuntimeDouble,
+  unusedDelegationCredentialIssuer,
+  unusedDelegationTokenDeriver,
+} from '../helpers/delegation-runtime-helpers.js';
 import { committed } from '../helpers/session-mutation-fixtures.js';
+
+/**
+ * The loop's delegation authority for a frontier already persisted on disk.
+ *
+ * Every frontier test below exercises the DERIVATION half only — the frontier
+ * was minted on some earlier turn, and this turn merely projects it — but
+ * `DelegationRuntimeCapabilities` is one branded pair, so the issuer travels
+ * with it whether or not the path uses it. A throwing issuer keeps that
+ * unexercised half honest: it turns "projection never re-issues" from an
+ * unstated assumption into a failure.
+ *
+ * @param deriveDelegationToken - The deriver whose behaviour the test is about.
+ * @returns A branded pair carrying that deriver and a throwing issuer.
+ */
+function frontierProjectionRuntime(
+  deriveDelegationToken: DelegationTokenDeriver,
+): DelegationRuntimeCapabilities {
+  return delegationRuntimeDouble({
+    issueDelegationCredential: unusedDelegationCredentialIssuer(),
+    deriveDelegationToken,
+  });
+}
 
 // The recovery-required refusal arm, so a fixture epoch carries core's brand
 // without core having to export it. Reaching it through the union also means a
@@ -59,6 +88,15 @@ const mockActorMutationRunner = {
     }) => Promise<Record<string, unknown>>
   >(),
 };
+
+/**
+ * Every `nextState` the loop's fenced `compute` projected, in call order.
+ *
+ * The fence commits whatever `compute` returns, so this is the only place a
+ * test can observe the loop's own active-entry projection before the committed
+ * state is folded back into the loop.
+ */
+const fencedComputeProjections: Record<string, unknown>[] = [];
 
 const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
@@ -247,19 +285,36 @@ const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
   e as unknown as ExecutionEventEmitterType;
 const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
 
-// KNOWN UNCOVERED MUTANTS in the fenced command block of execution.ts (#485).
-// Recorded rather than accepted: both are reachable, and neither is equivalent.
+// PREVIOUSLY UNCOVERED MUTANTS in the fenced command block of execution.ts
+// (#485). All three are now killed; recorded here so none regresses back into
+// an unreachable position, and so the next reader knows WHERE each is killed.
+// The common cause was that this suite replaces the mutation runner with a
+// double that only ever calls `compute`, and replaces core wholesale — so no
+// real fence, real recovery, or real claim authority is reachable from here.
 //
-//  - `makeRecoveryActor: (state) => ...` (`execution.ts:1500`), `ArrowFunction ->
+//  - `makeRecoveryActor: (state) => ...` (`execution.ts:1742`), `ArrowFunction ->
 //    () => undefined`. Only an interrupted command whose fence actually recovers
-//    distinguishes the two, which this suite's mocked runner never reaches. The
-//    factory's own outcomes are pinned in core by
-//    `effectful-actor-mutation-runner.test.ts`.
-//  - `deriveActiveEntry(..., true)` (`execution.ts:1528`), `BooleanLiteral ->
+//    distinguishes the two, and this suite's runner double calls `compute` alone
+//    — it never reaches `makeRecoveryActor`. Killed by
+//    `execution-recovery-actor.test.ts`, which drives the real
+//    `createEffectfulActorMutationRunner` against a temp project dir so the
+//    loop's own closure builds the recovery actor the fence then drives.
+//  - `deriveActiveEntry(..., true)` (`execution.ts:1776`), `BooleanLiteral ->
 //    false`. The flag only changes the projection when the command re-enters the
 //    SAME frame under a GOTO/RETRY last action; on an ordinary advance the frame
-//    key already differs, so both values bump the entry identically. Needs a
-//    retry-driven loop scenario.
+//    key already differs, so both values bump the entry identically. Killed by
+//    'same-frame re-entry projected inside the fenced command' below, which
+//    needs the `deriveActiveEntry` double to honour the flag — see its
+//    implementation in `beforeEach`.
+//  - `{ issueDelegationCredential: options.delegationRuntime?.… }`
+//    (`execution.ts:1771`), `ObjectLiteral -> {}`. That argument is the only
+//    route by which the verified issuer reaches the machine's
+//    `delegationIssueActor`, which runs inside the SAME fenced mutation when a
+//    command's transition lands on a DELEGATE frontier; with `{}` issuance
+//    refuses `actor_context_required` instead of minting. A real issuer cannot
+//    exist here — `DelegationRuntimeCapabilities` is branded by a
+//    module-private symbol whose sole producer is inside core — so it is killed
+//    by `execution-delegation-issuance.test.ts`.
 
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
@@ -434,20 +489,52 @@ describe('runExecutionLoop', () => {
       }),
     );
     mockLifecycleService.deriveActiveEntry.mockReset();
-    mockLifecycleService.deriveActiveEntry.mockImplementation((state) => {
-      const step = state.step;
-      const frameKey = actualCore.buildFrameKey(step);
-      const entry = state.activeEntry ?? 1;
-      return {
-        state: {
-          ...state,
-          activeEntry: entry,
-          activeFrameKey: frameKey,
-        },
-        frameKey,
-        entry,
-      };
-    });
+    // Mirrors core's `deriveActiveEntryProjection` (execution-lifecycle-service.ts)
+    // over the frame-key derivation this suite's fixtures use (step only, no FOR
+    // iteration). A one-parameter double that returned `state.activeEntry ?? 1`
+    // structurally ignored BOTH `previousState` and `transitioned`, which made the
+    // loop's `deriveActiveEntry(prepared.nextState, previousState, true)` call
+    // indistinguishable from the same call with `false` — an unkillable mutant no
+    // scenario could reach. The flag only changes the projection on a same-frame
+    // re-entry (GOTO/RETRY), so it has to be honoured here for that scenario to
+    // observe anything.
+    mockLifecycleService.deriveActiveEntry.mockImplementation(
+      (state, previousState, transitioned) => {
+        const frameKey = actualCore.buildFrameKey(state.step);
+        const fromFrameKey =
+          previousState === undefined ? undefined : actualCore.buildFrameKey(previousState.step);
+        const frameEntryCounts: Record<string, number> = { ...(state.frameEntryCounts ?? {}) };
+        const knownEntry = frameEntryCounts[frameKey] ?? 0;
+        let entry = state.activeEntry ?? knownEntry;
+        if (!entry || entry < 1) entry = knownEntry > 0 ? knownEntry : 1;
+
+        const lastActionType = state.lastAction?.type;
+        const reenteredSameFrame =
+          transitioned === true &&
+          fromFrameKey === frameKey &&
+          (lastActionType === 'GOTO' || lastActionType === 'RETRY');
+        const switchedFrame =
+          transitioned === true && fromFrameKey !== undefined && fromFrameKey !== frameKey;
+
+        if (!state.activeFrameKey || state.activeEntry === undefined) {
+          entry = knownEntry > 0 ? knownEntry : 1;
+        } else if (reenteredSameFrame || switchedFrame || state.activeFrameKey !== frameKey) {
+          entry = Math.max(knownEntry, entry) + 1;
+        }
+        frameEntryCounts[frameKey] = Math.max(frameEntryCounts[frameKey] ?? 0, entry);
+
+        return {
+          state: {
+            ...state,
+            activeEntry: entry,
+            activeFrameKey: frameKey,
+            frameEntryCounts,
+          },
+          frameKey,
+          entry,
+        };
+      },
+    );
     mockLifecycleService.listResolvedCompletions.mockReset();
     mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
@@ -477,12 +564,14 @@ describe('runExecutionLoop', () => {
       },
     );
     mockActorMutationRunner.run.mockReset();
+    fencedComputeProjections.length = 0;
     mockActorMutationRunner.run.mockImplementation(async (input) => {
       const capturedState = await mockManager.load(input.runId);
       if (!capturedState) {
         return { kind: 'missing', runId: input.runId, message: 'Runbook not found' };
       }
       const prepared = await input.compute(capturedState);
+      fencedComputeProjections.push(prepared.nextState);
       return {
         kind: 'committed',
         value: {
@@ -1317,6 +1406,98 @@ describe('runExecutionLoop', () => {
     );
     expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+  });
+
+  describe('same-frame re-entry projected inside the fenced command', () => {
+    /**
+     * The loop projects active-entry with
+     * `deriveActiveEntry(prepared.nextState, previousState, true)` so the
+     * committed state already carries the entry the command's transition landed
+     * on. The `true` is only observable when the command re-enters the SAME
+     * frame under a GOTO/RETRY last action: on a cross-frame advance the frame
+     * keys already differ, so `switchedFrame` bumps the entry for either value
+     * of the flag and the two projections are identical.
+     *
+     * @param lastActionType - The same-frame re-entry action the machine reports.
+     * @returns The fixtures for one such re-entry, at step '1', entry 1.
+     */
+    const sameFrameReentry = (lastActionType: 'GOTO' | 'RETRY') => {
+      const entered = makeLoopState('1', {
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        frameEntryCounts: { '1|': 1 },
+      });
+      const reentered = makeLoopState('1', {
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        frameEntryCounts: { '1|': 1 },
+        lastAction: { type: lastActionType, origin: 'direct' },
+      });
+      return { entered, reentered };
+    };
+
+    it.each(['RETRY', 'GOTO'] as const)(
+      'bumps the committed active entry when %s re-enters the same frame',
+      async (lastActionType) => {
+        const { entered, reentered } = sameFrameReentry(lastActionType);
+        mockManager.load.mockResolvedValue(entered);
+
+        // First attempt re-enters step 1; the second reaches COMPLETE so the
+        // loop terminates instead of re-executing step 1 forever.
+        mockActorService.sendAndSync
+          .mockResolvedValueOnce({
+            state: reentered,
+            snapshot: {
+              status: 'active',
+              value: '1',
+              context: { lastAction: { type: lastActionType, origin: 'direct' } },
+            },
+            effects: [commandCompletedEffect('fail')],
+          })
+          .mockResolvedValue({
+            state: makeLoopState('1', {
+              activeFrameKey: '1|',
+              activeEntry: 2,
+              frameEntryCounts: { '1|': 2 },
+            }),
+            snapshot: {
+              status: 'done',
+              value: 'COMPLETE',
+              context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Done' },
+            },
+            effects: [commandCompletedEffect('pass')],
+          });
+
+        const result = await runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps([steps[0]]),
+          '/tmp',
+          false,
+          asEmitter(mockEmitter),
+        );
+
+        expect(result).toBe('done');
+        // The captured state entered the frame at entry 1 and the re-entry is
+        // committed at entry 2. With `false` in the loop's projection the
+        // re-entered state's frame key already equals the derived one, so no
+        // branch fires and the committed entry stays 1.
+        expect(fencedComputeProjections[0]).toEqual(
+          expect.objectContaining({ activeFrameKey: '1|', activeEntry: 2 }),
+        );
+        expect(mockLifecycleService.deriveActiveEntry).toHaveBeenCalledWith(
+          // Asymmetric on both states: the loop's fixtures are permissive
+          // `Record<string, unknown>` shapes, and the real parameter is a
+          // fully-branded RunbookState.
+          expect.objectContaining({
+            step: '1',
+            lastAction: { type: lastActionType, origin: 'direct' },
+          }),
+          expect.objectContaining({ activeFrameKey: '1|', activeEntry: 1 }),
+          true,
+        );
+      },
+    );
   });
 
   describe('terminal release refused for execution ownership (#608)', () => {
@@ -2610,8 +2791,9 @@ describe('runExecutionLoop', () => {
       false,
       asEmitter(mockEmitter),
       {
-        delegationTokenDeriver: (credential) =>
+        delegationRuntime: frontierProjectionRuntime((credential) =>
           credential.parentStepId === '1.1' ? 'rdtk_aaaa1111' : 'rdtk_bbbb2222',
+        ),
       },
     );
 
@@ -2695,8 +2877,9 @@ describe('runExecutionLoop', () => {
       false,
       asEmitter(mockEmitter),
       {
-        delegationTokenDeriver: (credential) =>
+        delegationRuntime: frontierProjectionRuntime((credential) =>
           credential.parentStepId === '1.1' ? 'rdtk_retry_a' : 'rdtk_retry_b',
+        ),
       },
     );
 
@@ -2861,7 +3044,7 @@ describe('runExecutionLoop', () => {
       false,
       asEmitter(mockEmitter),
       // Derives a well-formed bearer that is not the one the frontier recorded.
-      { delegationTokenDeriver: () => 'rdtk_other' },
+      { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
 
     expect(result).toBe('stopped');
@@ -2902,7 +3085,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
-      { delegationTokenDeriver: rotatedIssuerDeriver },
+      { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
 
     expect(result).toBe('stopped');
@@ -2937,7 +3120,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
-      { delegationTokenDeriver: () => 'rdtk_other' },
+      { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
 
     // The stranding assertion: the default 'stack-pop' release must have run,
@@ -2960,7 +3143,10 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
-      { terminalReleaseMode: 'release-runbook', delegationTokenDeriver: rotatedIssuerDeriver },
+      {
+        terminalReleaseMode: 'release-runbook',
+        delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver),
+      },
     );
 
     expect(result).toBe('stopped');
@@ -2998,7 +3184,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
-      { delegationTokenDeriver: () => 'rdtk_retry_a' },
+      { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
 
     expect(result).toBe('stopped');
@@ -3043,7 +3229,7 @@ describe('runExecutionLoop', () => {
         '/tmp',
         false,
         asEmitter(mockEmitter),
-        { delegationTokenDeriver: () => 'rdtk_retry_a' },
+        { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
       ),
     ).rejects.toBeInstanceOf(actualCore.InvalidRunbookStateError);
   });
@@ -3393,8 +3579,13 @@ describe('runExecutionLoop', () => {
       runtime: {
         claimId: 'rdclm_adopted',
         claim: { claimKey: 'ck_adopted' },
-        issueDelegationCredential: jest.fn(),
-        deriveDelegationToken: jest.fn(),
+        // `PreparedRunControlClaim` carries ONE branded pair; the `as never`
+        // below would happily keep accepting the old two-field spelling, so the
+        // shape is kept honest by hand.
+        delegationRuntime: delegationRuntimeDouble({
+          issueDelegationCredential: unusedDelegationCredentialIssuer(),
+          deriveDelegationToken: unusedDelegationTokenDeriver(),
+        }),
       },
     } as never);
     mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
@@ -3793,7 +3984,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       true,
       asEmitter(mockEmitter),
-      { delegationTokenDeriver: () => 'rdtk_retry_a' },
+      { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
 
     const stepEnteredCall = mockEmitter.emit.mock.calls.find(

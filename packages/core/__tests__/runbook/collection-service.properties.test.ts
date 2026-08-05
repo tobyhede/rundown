@@ -14,6 +14,7 @@ import {
   activeFrame,
   assertRunId,
   buildFrameKey,
+  createEffectfulActorMutationRunner,
   type AdvanceInlineParent,
   type ClaimId,
   type RunbookState,
@@ -108,6 +109,10 @@ describe('RunbookCollectionService properties', () => {
       actorService,
       lifecycleService,
       completionService,
+      // The properties assert the missing-outcome gate, which refuses before the
+      // fence is ever entered — but the dependency is required, so wire the real
+      // project-bound runner rather than a double that would misrepresent it.
+      actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       // Properties here never drive a target terminal (they assert missing/gate
       // behaviour before the drain), so a never-called fake satisfies the type.
       advanceInlineParent: jest

@@ -25,8 +25,7 @@ import {
   type ParentLinkage,
   type ClaimId,
   type SessionMutationRefusalOutcome,
-  type DelegationCredentialIssuer,
-  type DelegationTokenDeriver,
+  type DelegationRuntimeCapabilities,
   RUNS_DIR,
   classifyDelegationLiveness,
   DelegationScanService,
@@ -202,10 +201,7 @@ export type RunbookStartResult =
       stateId: RunId;
       claimId?: ClaimId;
       /** Process-only capabilities bound to the exact run-control claim. */
-      delegationRuntime?: {
-        readonly issueDelegationCredential: DelegationCredentialIssuer;
-        readonly deriveDelegationToken: DelegationTokenDeriver;
-      };
+      delegationRuntime?: DelegationRuntimeCapabilities;
     }
   | RunbookStartFailure
   | SessionRefusedFailure;
@@ -1067,7 +1063,10 @@ async function launchRunbook(
       runbook.steps,
       preparedRunControlClaim === undefined
         ? undefined
-        : { issueDelegationCredential: preparedRunControlClaim.issueDelegationCredential },
+        : {
+            issueDelegationCredential:
+              preparedRunControlClaim.delegationRuntime.issueDelegationCredential,
+          },
     );
     if (!initializedState) {
       throw new Error('Failed to initialize runbook engine');
@@ -1165,8 +1164,7 @@ async function launchRunbook(
       ...(preparedRunControlClaim === undefined
         ? {}
         : {
-            issueDelegationCredential: preparedRunControlClaim.issueDelegationCredential,
-            delegationTokenDeriver: preparedRunControlClaim.deriveDelegationToken,
+            delegationRuntime: preparedRunControlClaim.delegationRuntime,
           }),
     },
   );
@@ -1178,12 +1176,7 @@ async function launchRunbook(
     ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
     ...(preparedRunControlClaim === undefined
       ? {}
-      : {
-          delegationRuntime: {
-            issueDelegationCredential: preparedRunControlClaim.issueDelegationCredential,
-            deriveDelegationToken: preparedRunControlClaim.deriveDelegationToken,
-          },
-        }),
+      : { delegationRuntime: preparedRunControlClaim.delegationRuntime }),
   };
 }
 

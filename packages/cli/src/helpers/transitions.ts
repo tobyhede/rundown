@@ -573,8 +573,7 @@ async function renderApplied(
           ...(claimKey === undefined ? {} : { claimKey }),
           output,
           commandStreamOptions,
-          issueDelegationCredential: outcome.issueDelegationCredential,
-          delegationTokenDeriver: outcome.deriveDelegationToken,
+          delegationRuntime: outcome.delegationRuntime,
         },
       );
       if (loopResult === 'stopped') status = 'stopped';
