@@ -287,6 +287,10 @@ async function run(): Promise<unknown> {
         completionService,
         actorMutationRunner,
         advanceInlineParent,
+        // Derives each aggregate member's graph from its OWN `runbookPath`, so
+        // a delegating parent captured alongside the target rehydrates from its
+        // own document rather than the target's.
+        loadSteps,
       });
       return await collectionService.collectDelegationOutcomes({
         targetState,

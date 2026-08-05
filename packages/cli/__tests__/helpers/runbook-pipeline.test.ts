@@ -2258,11 +2258,11 @@ describe('startRunbook', () => {
       issueDelegationCredential,
     });
     // Hand-off 2 — the execution loop, which needs BOTH the issuer and the
-    // token deriver, so it receives the branded pair whole. Asserting the exact
-    // value identity (not merely that some property exists) is what fails when
-    // the forwarding is dropped or rebuilt from somewhere else.
-    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]).toEqual(
-      expect.objectContaining({ delegationRuntime }),
+    // token deriver, so it receives the branded pair whole. Pinned by REFERENCE:
+    // a structural matcher also passes against a pair rebuilt from the same two
+    // halves further down, which is precisely the forwarding defect this guards.
+    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]?.delegationRuntime).toBe(
+      delegationRuntime,
     );
     // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`
     // off this result to build its goto context, so an omitted or substituted

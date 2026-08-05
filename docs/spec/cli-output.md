@@ -1554,8 +1554,28 @@ compare-and-swap that collect's own seam never performs. When it does, the
 refusal is observed as an `error_occurred` line carrying the same code
 vocabulary — `STALE_CLAIM`, `CONCURRENT_MODIFICATION`, `EXECUTION_IN_PROGRESS`,
 `RECOVERY_REQUIRED`, or `RUN_TARGET_UNAVAILABLE` — followed by
-`runbook_stopped`. Nothing was committed, and the invocation performs no
-terminal cleanup.
+`runbook_stopped`.
+
+**The collection is already committed when this is observed.** Collect's own
+aggregate transaction — the drain's applies, any delegation re-entry frontier
+consumption, the terminal session release, and a delegating grandparent's
+outcome row — lands in full _before_ any execution-loop work begins; the loop is
+post-commit follow-on work driven from the state that commit produced. Only the
+**refused follow-on transition** committed nothing, and precisely because that
+invocation committed nothing it owns no terminal cleanup either — releasing
+there would let a losing claimant tear down the winner's run. The delegating run
+is therefore left exactly where the aggregation put it: applied, non-terminal,
+and still session-targeted.
+
+**Do not re-run the collect to recover.** The aggregation is durable and is
+never applied twice — a repeated bare `rundown collect` on the post-aggregation
+cursor is the idempotent `already-aggregated` no-op (`COLLECT_ALREADY_APPLIED`),
+and it cannot retry the transition that was refused. Recover the streamed `code`
+on its own terms (its row in
+[docs/reference/cli.md](../reference/cli.md#common-errors-and-resolutions)
+carries the remedy: wait out the owning process, run recovery, or re-resolve a
+bearer that is no longer authority), then drive the delegating run forward from
+where it now stands.
 
 ```jsonl
 {"type":"error_occurred","message":"Run rd_0123456789abcdef0123456789abcdef claim generation advanced since it was captured.","code":"STALE_CLAIM","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":3}

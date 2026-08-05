@@ -20,6 +20,7 @@ import {
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { getCwd } from '../helpers/context.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
@@ -503,6 +504,12 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     // driving a sequence of separately committed writes.
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
+    // Category A. An aggregate member other than the collect target is a
+    // DIFFERENT runbook, so its recovery actor cannot be built from the steps
+    // resolved for the target above; without this the delegating parent is the
+    // one member a collect can never recover, and `runAll` downgrades that
+    // failure to a warn.
+    loadSteps: (memberState) => getRunbookFromState(memberState, cwd),
   });
 
   const outcome = await collectionService.collectDelegationOutcomes({
@@ -577,7 +584,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   let loopStopped = false;
   if (advancesIntoLoop) {
     const { runExecutionLoop } = await import('../services/execution.js');
-    const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
     // `advancesIntoLoop` already narrowed `outcome` to `collection_applied`.
     const advanced = await manager.load(state.id);
     if (advanced) {

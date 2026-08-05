@@ -1,4 +1,5 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { Errors } from '../errors/factory.js';
 import { CompletionLock } from './completion-lock.js';
 import { DelegationLock } from './delegation-lock.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -440,6 +441,143 @@ function terminalLifecycleStatus(state: RunbookState): 'done' | 'stopped' | unde
 
 function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined {
   return terminalLifecycleStatus(result.state);
+}
+
+/**
+ * Verdict on whether one applied completion advanced a drain pass.
+ *
+ * Both drain loops are unbounded `for (;;)`, and both terminate only because
+ * every apply changes what the NEXT iteration selects. Nothing in this module
+ * observed that: an apply that changed neither left the drain re-selecting the
+ * same row from the same cursor forever, growing `applied` without bound — a
+ * hang, not a failure. These classifications make the missing post-condition
+ * explicit so a violation fails fast on the FIRST non-advancing apply.
+ */
+type ResolvedCompletionDrainProgress =
+  | { readonly kind: 'progressed' }
+  | { readonly kind: 'stalled'; readonly reason: string };
+
+/**
+ * The coordinates a drain iteration's selection is computed from.
+ *
+ * Selection is `listResolvedCompletions*(state, activeFrame(activeFrameKey,
+ * entry))` narrowed to `state.substep` on `state.step`. Holding all four fixed
+ * fixes the candidate row, which is why an apply that moves ANY of them has
+ * made progress even if it consumed nothing.
+ */
+interface DrainSelectionCursor {
+  /** Step the drain is positioned on. */
+  readonly step: string;
+  /** Substep the candidate row must target. */
+  readonly substep: string | undefined;
+  /** Frame key the candidate row's key must be prefixed with. */
+  readonly frameKey: FrameKey | undefined;
+  /** Frame entry the candidate row's key must be prefixed with. */
+  readonly entry: number | undefined;
+}
+
+/**
+ * Read the selection coordinates out of a drain state.
+ *
+ * @param state - State whose cursor is read.
+ * @returns The four coordinates the next selection depends on.
+ */
+function drainSelectionCursor(state: RunbookState): DrainSelectionCursor {
+  return {
+    step: state.step,
+    substep: state.substep,
+    frameKey: state.activeFrameKey,
+    entry: state.activeEntry,
+  };
+}
+
+/**
+ * Classify whether one apply moved the drain forward.
+ *
+ * The post-condition BOTH drains share, and deliberately a DISJUNCTION rather
+ * than the actor's consume patch: consuming the applied row removes it from the
+ * candidate set, and moving the cursor changes which rows are candidates at all.
+ * Either alone is progress. Only when NEITHER holds is the next iteration
+ * guaranteed to re-select the same row from the same position — the spin.
+ *
+ * Asserting the consume alone would be asserting a neighbouring module's
+ * implementation detail instead of this loop's termination requirement, and
+ * would refuse honest transitions that advance the cursor by other means.
+ *
+ * @param runbookId - Run whose drain is being classified (named in the reason).
+ * @param key - Completion key handed to the apply.
+ * @param before - State the apply was derived from.
+ * @param after - State produced by the apply.
+ * @returns `progressed` when the row was consumed or the cursor moved,
+ *   otherwise a `stalled` reason.
+ */
+function classifyDrainApplyProgress(
+  runbookId: RunId,
+  key: string,
+  before: RunbookState,
+  after: RunbookState,
+): ResolvedCompletionDrainProgress {
+  if (!Object.hasOwn(after.resolvedCompletions ?? {}, key)) return { kind: 'progressed' };
+  const from = drainSelectionCursor(before);
+  const to = drainSelectionCursor(after);
+  const moved =
+    from.step !== to.step ||
+    from.substep !== to.substep ||
+    from.frameKey !== to.frameKey ||
+    from.entry !== to.entry;
+  if (moved) return { kind: 'progressed' };
+  return {
+    kind: 'stalled',
+    reason:
+      `Resolved-completion drain for runbook "${runbookId}" applied completion "${key}" without ` +
+      `consuming it or moving the cursor off ${from.step}.${from.substep ?? '(none)'} ` +
+      `(frame ${from.frameKey ?? '(none)'} entry ${String(from.entry ?? '(none)')}). The next ` +
+      `iteration would re-select the same row from the same position, so the drain is refused ` +
+      `rather than looped.`,
+  };
+}
+
+/**
+ * Classify progress for a CHAINED (prepared) drain iteration.
+ *
+ * The prepared drain selects only from the state it chains forward, so it can
+ * additionally require that an apply never INTRODUCES a row. Without that, a
+ * transition that consumed its key and added another would satisfy
+ * {@link classifyDrainApplyProgress} on every pass while the candidate set never
+ * shrank, and the loop would still not terminate.
+ *
+ * The persisted twin cannot carry this half: it re-selects from the store, where
+ * a concurrent writer may legitimately add a row mid-drain, so it checks
+ * {@link classifyDrainApplyProgress} alone.
+ *
+ * @param runbookId - Run whose drain is being classified (named in the reason).
+ * @param key - Completion key handed to the apply.
+ * @param before - State the apply was derived from.
+ * @param after - State produced by the apply.
+ * @returns `progressed` when the chained candidate set did not grow and the
+ *   apply advanced, otherwise a `stalled` reason.
+ */
+function classifyChainedDrainProgress(
+  runbookId: RunId,
+  key: string,
+  before: RunbookState,
+  after: RunbookState,
+): ResolvedCompletionDrainProgress {
+  const previousKeys = new Set(Object.keys(before.resolvedCompletions ?? {}));
+  const introduced = Object.keys(after.resolvedCompletions ?? {}).filter(
+    (candidate) => !previousKeys.has(candidate),
+  );
+  if (introduced.length > 0) {
+    return {
+      kind: 'stalled',
+      reason:
+        `Resolved-completion drain for runbook "${runbookId}" applied completion "${key}" and ` +
+        `introduced ${String(introduced.length)} new row(s) (${introduced.join(', ')}). A prepared ` +
+        `apply may only consume rows from the state it chains forward; a candidate set that never ` +
+        `shrinks leaves the pass unable to terminate, so the drain is refused rather than looped.`,
+    };
+  }
+  return classifyDrainApplyProgress(runbookId, key, before, after);
 }
 
 function assertCompleteParentLinkage(
@@ -1182,6 +1320,11 @@ export class RunbookCompletionService {
    * @throws {Error} If a step named by the cursor is missing from `steps`, or if
    *   {@link RunbookActorService.prepareActorMutation} rejects the derived
    *   snapshot (invalid shape, actor error state).
+   * @throws {RundownError} RD-821 if an apply neither advances the cursor nor
+   *   shrinks the chained candidate set (see
+   *   {@link classifyChainedDrainProgress}). The pass has written nothing, so
+   *   refusing costs no committed prefix — and looping instead would hang while
+   *   `applied` grew without bound.
    */
   async prepareResolvedCompletionDrain(
     args: PrepareResolvedCompletionDrainArgs,
@@ -1263,6 +1406,18 @@ export class RunbookCompletionService {
           ? undefined
           : { issueDelegationCredential: args.issueDelegationCredential },
       );
+      // Nothing above this line observes that the apply changed what the next
+      // iteration selects. In production that comes from `prepareActorMutation`'s
+      // consumed-completion patch, in another module; assert the post-condition
+      // here so a violation fails on the FIRST apply instead of spinning the loop
+      // and growing `applied` without bound.
+      const progress = classifyChainedDrainProgress(
+        args.runbookId,
+        current.key,
+        state,
+        mutation.nextState,
+      );
+      if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
       applied.push({
         key: current.key,
         completion: validated,
@@ -1285,6 +1440,9 @@ export class RunbookCompletionService {
    *
    * @param args - Drain target and current state
    * @returns Drain outcome
+   * @throws {RundownError} RD-821 if an apply commits without consuming the row
+   *   it was handed or moving the cursor (see
+   *   {@link drainResolvedCompletionsUnlocked}).
    */
   async drainResolvedCompletions(
     args: DrainResolvedCompletionsArgs,
@@ -1305,6 +1463,12 @@ export class RunbookCompletionService {
    *
    * @param args - Drain target and current state
    * @returns Drain outcome
+   * @throws {RundownError} RD-821 if an apply commits without consuming the row
+   *   it was handed or moving the cursor (see
+   *   {@link classifyDrainApplyProgress}). Unlike the prepared twin this pass
+   *   may already have committed applies, so the refusal reports a bug rather
+   *   than protecting an all-or-nothing commit — but a spin here would hang the
+   *   CLI outright.
    */
   async drainResolvedCompletionsUnlocked(
     args: DrainResolvedCompletionsArgs,
@@ -1412,6 +1576,12 @@ export class RunbookCompletionService {
       if (!result) {
         return { status: 'continue', state, unresolved, applied };
       }
+      // Same missing post-condition as the prepared twin, checked against what
+      // the write actually committed. Only the shared half applies: this loop
+      // re-selects from the STORE, so a concurrent writer may legitimately add a
+      // row mid-drain and a no-growth assertion would refuse honest work.
+      const progress = classifyDrainApplyProgress(args.runbookId, current.key, state, result.state);
+      if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
       applied.push({
         key: current.key,
         completion: validated,

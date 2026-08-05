@@ -113,6 +113,11 @@ describe('RunbookCollectionService properties', () => {
       // fence is ever entered — but the dependency is required, so wire the real
       // project-bound runner rather than a double that would misrepresent it.
       actorMutationRunner: createEffectfulActorMutationRunner(tmp),
+      // These properties refuse before the fence captures a second member, so
+      // the loader is never reached; a throwing fake keeps that provable.
+      loadSteps: () => {
+        throw new Error('loadSteps must not be called: properties refuse before the fence');
+      },
       // Properties here never drive a target terminal (they assert missing/gate
       // behaviour before the drain), so a never-called fake satisfies the type.
       advanceInlineParent: jest

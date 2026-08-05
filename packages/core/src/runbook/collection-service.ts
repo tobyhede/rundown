@@ -43,6 +43,8 @@ import {
   type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
 import { ErrorCodes } from '../errors/codes.js';
+import { getErrorMessage } from '../errors.js';
+import { logger } from '../logger.js';
 import type { StepEntryMetadata } from '../events/execution-observation.js';
 import {
   deriveTransitionObservation,
@@ -104,6 +106,36 @@ export interface RunbookCollectionServiceDependencies {
    * targets never invoke it (report-only).
    */
   readonly advanceInlineParent: AdvanceInlineParent;
+  /**
+   * Derive the parsed steps of an OWNED aggregate member other than the collect
+   * target, from that run's own in-memory state.
+   *
+   * Required whenever a collect can name a delegating parent — that is, whenever
+   * the target may carry `parentLinkage.kind === 'delegation'`. The aggregate
+   * runner opens an execution attempt for EVERY member of the set, and an
+   * ambiguous post-boundary failure moves all of them to `recovery_pending` and
+   * then asks this seam's `makeRecoveryActor` to rehydrate each one. A member
+   * with no steps cannot be rehydrated: the factory throws, and `runAll`
+   * downgrades that throw to `logger.warn('aggregate member recovery failed;
+   * attempt left pending')` and continues — so without this loader the
+   * delegating parent is the one member a collect can never recover, silently.
+   *
+   * The collect target's steps are NOT taken from here: the caller already
+   * resolved them into {@link CollectDelegationOutcomesInput.steps}, and the
+   * parent is a different runbook whose graph must not be rebuilt from them.
+   *
+   * Category A, and the same DI shape as
+   * `LifecycleCommandServiceDependencies.loadSteps`: deriving steps is parsing
+   * plus an environment-bound helper registry and render context, which core
+   * does not own. REQUIRED, not optional: a collect target's delegating parent
+   * is discovered from persisted linkage at fire time, so no construction site
+   * can prove up front that it will never need one. Optionality here would move
+   * that proof obligation onto every frontend and reintroduce the silent
+   * unrecoverable-parent gap the moment one of them got it wrong.
+   */
+  readonly loadSteps: (
+    state: RunbookState,
+  ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
 }
 
 /** Explicit collection target resolved by a frontend adapter or another core service. */
@@ -608,10 +640,34 @@ async function applyCollection(
     ],
     makeRecoveryActor: (runId, recoveryState) => {
       const recoverySteps = stepsByRun.get(runId);
-      if (!recoverySteps) throw new Error(`Missing recovery steps for collect run ${runId}.`);
+      // Unreachable: recovery only runs for an attempt that crossed the effect
+      // boundary, which is strictly after `beforeEffect` populated this map for
+      // the whole captured set, and `loadSteps` is a required dependency so no
+      // member can be missed. It stays a throw rather than a guess because
+      // rehydrating a run from ANOTHER runbook's graph is worse than not
+      // rehydrating it — and because `runAll` DOWNGRADES this throw to a warn
+      // and leaves the attempt pending, the message has to be actionable on its
+      // own in a log with no stack.
+      if (!recoverySteps) {
+        throw new Error(
+          `Missing recovery steps for collect run ${runId}; it was captured as an ` +
+            'aggregate member but `beforeEffect` derived no steps for it, so it cannot ' +
+            'be rehydrated.',
+        );
+      }
       return input.actorService.createRecoveryActor(recoveryState, recoverySteps);
     },
     beforeEffect: async (captured) => {
+      // Cache one step set per OWNED member, BEFORE the effect boundary and
+      // therefore before any attempt can need recovery. The collect target's
+      // steps came from the caller; every other member is a different runbook,
+      // so its graph is derived from its own state through the injected loader.
+      // Mirrors `LifecycleCommandService`'s per-run steps memo, which pre-loads
+      // for exactly the same reason.
+      for (const member of captured) {
+        if (stepsByRun.has(member.state.id)) continue;
+        stepsByRun.set(member.state.id, await input.loadSteps(member.state));
+      }
       const target = captured.find(({ state }) => state.id === targetRunId);
       if (!target) throw new Error('Collection did not capture its target run.');
       const parent = captured.find(({ state }) => state.id === delegationParentRunId);
@@ -917,9 +973,32 @@ function prepareTerminalCollection(
  * - The INLINE upward advance spawns the composing parent's execution loop
  *   (Category A). A fenced transaction cannot own a subprocess.
  *
+ * A FAILED post-commit disclosure REJECTS, deliberately. Being post-commit, the
+ * failure arrives after the aggregate landed and after the frontier entry was
+ * consumed, so neither disposition can recover the bearers — the consume is
+ * durable and the next collect re-projects nothing. What the two dispositions
+ * differ on is whether anyone is told:
+ *
+ * - Swallowing would return `collection_applied` with `reEntryObservations: []`.
+ *   That array is not "no news": the frontend reads its PRESENCE as "the
+ *   frontier was consumed, do not re-enter this DELEGATE step", so an empty one
+ *   reports a successful collection with nothing left to delegate. The
+ *   delegations are stranded and no surface says so — a warning-only adapter of
+ *   exactly the kind this project rules out.
+ * - Rejecting misreports a committed collect as failed, which would be the worse
+ *   trade if it invited an unsafe repeat. It does not: a retried collect finds
+ *   the outcomes drained and the frontier gone, and answers the idempotent
+ *   `already_collected` no-op. Both halves are pinned by the
+ *   "post-commit re-entry disclosure" tests.
+ *
+ * So the rejection costs an inaccurate command status and buys an operator-
+ * visible fact; the silence costs a stranded delegation and buys nothing.
+ *
  * @param input - Collection operation input (services + target + steps).
  * @param prepared - The prepared collection whose commit has landed.
  * @returns The final collection outcome with post-commit data folded in.
+ * @throws {unknown} The observation failure, unchanged, when a committed
+ *   collection cannot render its re-entry disclosure (see above).
  */
 async function finishCollection(
   input: CollectDelegationOutcomesOperationInput,
@@ -929,12 +1008,26 @@ async function finishCollection(
   if (value.kind !== 'collection_applied') return value;
 
   if (prepared.frontierEntry !== undefined && prepared.target !== undefined) {
-    const observations = await input.actorService.observeExecutionUnitEntry(
-      prepared.target.id,
-      [...input.steps],
-      prepared.frontierEntry,
-    );
-    return { ...value, reEntryObservations: observations };
+    try {
+      const observations = await input.actorService.observeExecutionUnitEntry(
+        prepared.target.id,
+        [...input.steps],
+        prepared.frontierEntry,
+      );
+      return { ...value, reEntryObservations: observations };
+    } catch (observationError) {
+      // Attribute, then RE-THROW unchanged. The rejection is the outcome; this
+      // log exists because the rejection alone cannot say that the collection
+      // COMMITTED — which is the fact an operator needs and the only fact the
+      // error's own message will not carry. Re-throwing the original preserves
+      // its class, so the CLI's `InvalidRunbookStateError` → finish/stop/prune
+      // mapping still fires for a corrupt persisted snapshot.
+      void logger.error('collection committed but its re-entry disclosure could not be observed', {
+        runId: prepared.target.id,
+        error: getErrorMessage(observationError),
+      });
+      throw observationError;
+    }
   }
 
   if (prepared.terminal === undefined || prepared.target === undefined) return value;
@@ -951,17 +1044,87 @@ async function finishCollection(
 }
 
 /**
+ * Narrow the shared upward-propagation union to its INLINE subset.
+ *
+ * WHY THIS IS NOT A REMAP. `reported` and `duplicate` are DELEGATION
+ * dispositions whose distinction {@link TerminalUpwardPropagationResult}
+ * documents as load-bearing. Collapsing either onto `not-applicable` — "there
+ * was no parent to propagate to" — would state something the walk never
+ * observed, which is the silent mapping CLAUDE.md forbids. So this narrowing
+ * refuses them instead, and the refusal costs nothing because they are
+ * UNREACHABLE from here. Two independent facts make that so:
+ *
+ * 1. {@link finishCollection} only reaches this walk for a target whose
+ *    `parentLinkage.kind === 'inline'`, and the seam's TOP level dispatches on
+ *    that same linkage — so the delegation arm that mints `reported` /
+ *    `duplicate` cannot run at level 1.
+ * 2. The walk RECURSES upward, and an ancestor above an inline parent may well
+ *    carry delegation linkage, so `reported` genuinely is produced one level
+ *    up. It never escapes: `propagateTerminalChildUpwardInner`'s severity
+ *    collapse returns only `linkage-cycle` and `blocked` unchanged, maps a
+ *    `stopped` advance to `stopped`, and folds everything else — `reported`
+ *    included — into `handled`. Pinned by "collapses a delegation-linked
+ *    grandparent report INSIDE the seam, not at this boundary".
+ *
+ * Spelled as an exhaustive switch rather than a conditional so the compiler,
+ * not a reviewer, is what forces this boundary to be revisited when a member is
+ * added to either union: a new arm reaches the `never` assignment and fails to
+ * build, where the old `?:` would have widened the declared return type in
+ * silence. Enumerating the two refused members (rather than a bare
+ * `default: throw`) is what preserves that exhaustiveness — the same shape
+ * `lifecycle-command-service`'s terminal policy switch uses for its own
+ * invariant-violation arms.
+ *
+ * Exported for the unit tests that pin the refusal, and deliberately NOT
+ * re-exported from the package index: it is not a public contract.
+ *
+ * @param outcome - The disposition the shared seam returned.
+ * @returns The same value, narrowed to the inline subset.
+ * @throws {Error} When the seam yields a delegation-only disposition, which the
+ *   inline-linkage precondition makes impossible; a real occurrence means the
+ *   seam's contract changed and must not be reported as `not-applicable`.
+ * @internal
+ */
+export function narrowInlineUpwardPropagation(
+  outcome: TerminalUpwardPropagationResult,
+): InlineUpwardPropagationResult {
+  switch (outcome.kind) {
+    case 'handled':
+    case 'stopped':
+    case 'blocked':
+    case 'not-applicable':
+    case 'linkage-cycle':
+      // Returned AS IT CAME BACK, never rebuilt: the `linkage-cycle` arm carries
+      // the trip naming the run to prune (#603).
+      return outcome;
+    case 'reported':
+    case 'duplicate':
+      throw new Error(
+        `Inline upward propagation yielded the delegation-only disposition "${outcome.kind}"; ` +
+          'an inline-linked child cannot produce one, so this is a seam-contract violation.',
+      );
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
  * Drive the INLINE upward walk for a collect target that committed terminal.
  *
  * Delegates to the shared {@link propagateTerminalChildUpward} seam so the
  * cycle/depth guards, release disposition, and one-level recursion stay in one
- * owner. Narrows the seam's union to the inline subset without a cast, keeping
- * the `linkage-cycle` arm INTACT (#603): core holds no emitter, so the trip has
- * to reach the frontend as data and the CLI performs the fail-closed collapse.
+ * owner. Narrows the seam's union to the inline subset without a cast (see
+ * {@link narrowInlineUpwardPropagation}), keeping the `linkage-cycle` arm INTACT
+ * (#603): core holds no emitter, so the trip has to reach the frontend as data
+ * and the CLI performs the fail-closed collapse.
  *
  * @param input - Collection operation input (services).
  * @param terminalState - The committed terminal collect target.
  * @returns The narrowed inline advance outcome.
+ * @throws {Error} When the seam yields a delegation-only disposition — see
+ *   {@link narrowInlineUpwardPropagation} for why that cannot happen here.
  */
 async function advanceInlineParentAfterCommit(
   input: CollectDelegationOutcomesOperationInput,
@@ -977,7 +1140,5 @@ async function advanceInlineParentAfterCommit(
     terminalState,
     undefined,
   );
-  return outcome.kind === 'reported' || outcome.kind === 'duplicate'
-    ? { kind: 'not-applicable' }
-    : outcome;
+  return narrowInlineUpwardPropagation(outcome);
 }

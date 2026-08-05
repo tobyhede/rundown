@@ -2308,6 +2308,196 @@ describe('RunbookCompletionService', () => {
       );
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.not.toBeNull();
     });
+
+    describe('progress invariant', () => {
+      /** Distinguishes "the loop kept going" from "the guard refused". */
+      class DrainSpinError extends Error {}
+
+      /**
+       * Replace `prepareActorMutation` with a transition that makes NO progress.
+       *
+       * The returned `nextState` is the input state verbatim: the selected row is
+       * still in `resolvedCompletions` and the cursor has not moved — exactly the
+       * shape that would let the drain re-select the same row forever. The stub
+       * self-terminates after `budget` calls so an unguarded loop fails the test
+       * instead of hanging the suite.
+       *
+       * @param budget - Calls allowed before the stub aborts the run.
+       * @returns The installed spy, for call-count assertions.
+       */
+      function stubNonAdvancingMutation(budget: number) {
+        let calls = 0;
+        return jest
+          .spyOn(actorService, 'prepareActorMutation')
+          .mockImplementation(async (_id, previousState) => {
+            calls += 1;
+            if (calls > budget) {
+              throw new DrainSpinError(`drain did not stop after ${String(budget)} applies`);
+            }
+            return await Promise.resolve({
+              previousState,
+              nextState: previousState,
+              snapshot: { status: 'active', value: 'step::1::1' },
+              effects: [],
+            });
+          });
+      }
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      it('refuses a transition that neither consumes nor advances, instead of draining forever', async () => {
+        // Termination of the `for (;;)` rests on each apply changing what the NEXT
+        // iteration selects — and the only mechanism that delivers it in
+        // production, `prepareActorMutation`'s consumed-completion patch, lives in
+        // another module. Nothing in the drain asserted it, so a regression there
+        // turned a clean failure into an unbounded spin with `applied` growing
+        // without bound. Pin the refusal, and pin that it costs exactly one apply.
+        const current = await seedReported([
+          ['1', 'pass'],
+          ['2', 'pass'],
+        ]);
+        const spy = stubNonAdvancingMutation(5);
+
+        await expect(
+          service.prepareResolvedCompletionDrain({ runbookId, steps, capturedState: current }),
+        ).rejects.toMatchObject({ code: 'RD-821' });
+        expect(spy).toHaveBeenCalledTimes(1);
+      });
+
+      it('names the run and the unconsumed key in the refusal reason', async () => {
+        // The reason rides `RundownError.context`, which the CLI serialises into
+        // its error envelope — an operator gets the exact row that stalled.
+        const current = await seedReported([['1', 'pass']]);
+        const key1 = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+        stubNonAdvancingMutation(5);
+
+        await expect(
+          service.prepareResolvedCompletionDrain({ runbookId, steps, capturedState: current }),
+        ).rejects.toMatchObject({
+          code: 'RD-821',
+          context: { reason: expect.stringContaining(key1) as unknown as string },
+        });
+        await expect(
+          service.prepareResolvedCompletionDrain({ runbookId, steps, capturedState: current }),
+        ).rejects.toMatchObject({
+          context: { reason: expect.stringContaining(runbookId) as unknown as string },
+        });
+      });
+
+      it('accepts a transition that keeps its row but moves the cursor', async () => {
+        // Progress is a DISJUNCTION, not the actor's consume patch: moving the
+        // cursor changes which rows are candidates at all, so the next iteration
+        // cannot re-select this one. Guarding on the consume alone would refuse
+        // this — and it is exactly the shape a machine-level test double produces.
+        const current = await seedReported([
+          ['1', 'pass'],
+          ['2', 'pass'],
+        ]);
+        jest
+          .spyOn(actorService, 'prepareActorMutation')
+          .mockResolvedValueOnce({
+            previousState: current,
+            nextState: { ...current, substep: '2' },
+            snapshot: {},
+            effects: [],
+          })
+          .mockResolvedValueOnce({
+            previousState: current,
+            nextState: { ...current, substep: undefined },
+            snapshot: {},
+            effects: [],
+          });
+
+        const prepared = await service.prepareResolvedCompletionDrain({
+          runbookId,
+          steps,
+          capturedState: current,
+        });
+
+        expect(prepared.status).toBe('continue');
+        expect(prepared.applied.map((entry) => entry.completion.targetSubstep)).toEqual(['1', '2']);
+      });
+
+      it('refuses a transition that consumes its key but introduces another', async () => {
+        // The chained pass adds a second requirement the persisted twin cannot
+        // carry: an apply may only REMOVE rows. Deleting the applied key while
+        // adding a fresh one leaves the candidate set the same size, so the pass
+        // never runs out of work even though every apply "advanced".
+        const current = await seedReported([['1', 'pass']]);
+        let calls = 0;
+        const spy = jest
+          .spyOn(actorService, 'prepareActorMutation')
+          .mockImplementation(async (_id, previousState, _steps, event) => {
+            calls += 1;
+            if (calls > 5) throw new DrainSpinError('drain did not stop after 5 applies');
+            if (event.type !== 'APPLY_CURRENT_RESOLVED_COMPLETION') {
+              throw new Error('fixture only models the apply event');
+            }
+            const rest = { ...(previousState.resolvedCompletions ?? {}) };
+            if (!Object.hasOwn(rest, event.completionKey)) {
+              throw new Error('fixture must carry the applied row');
+            }
+            const applied = rest[event.completionKey];
+            delete rest[event.completionKey];
+            return await Promise.resolve({
+              previousState,
+              nextState: {
+                ...previousState,
+                resolvedCompletions: {
+                  ...rest,
+                  [`${event.completionKey}::${String(calls)}`]: applied,
+                },
+              },
+              snapshot: { status: 'active', value: 'step::1::1' },
+              effects: [],
+            });
+          });
+
+        await expect(
+          service.prepareResolvedCompletionDrain({ runbookId, steps, capturedState: current }),
+        ).rejects.toMatchObject({ code: 'RD-821' });
+        expect(spy).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses the PERSISTED twin when a committed apply neither consumes nor advances', async () => {
+        // The persisted loop re-selects from the store, so it carries the shared
+        // half only, checked against what the write committed. The no-growth half
+        // does not transfer — a concurrent writer may legitimately add a row
+        // mid-drain — but re-offering the key from the same cursor is still a spin.
+        const current = await seedReported([['1', 'pass']]);
+        let calls = 0;
+        const spy = jest.spyOn(actorService, 'sendAndSync').mockImplementation(async () => {
+          calls += 1;
+          if (calls > 5) throw new DrainSpinError('drain did not stop after 5 applies');
+          return await Promise.resolve({ state: current, snapshot: {}, effects: [] });
+        });
+
+        await expect(
+          service.drainResolvedCompletions({ runbookId, steps, currentState: current }),
+        ).rejects.toMatchObject({ code: 'RD-821' });
+        expect(spy).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves a genuinely advancing drain untouched', async () => {
+        // The guard must be invisible to the real transition: same arm, same
+        // applied sequence, same terminal status as the unguarded pass produced.
+        const current = await seedReported([
+          ['1', 'pass'],
+          ['2', 'pass'],
+        ]);
+
+        const prepared = await service.prepareResolvedCompletionDrain({
+          runbookId,
+          steps,
+          capturedState: current,
+        });
+
+        expect(prepared.status).toBe('done');
+        expect(prepared.applied.map((entry) => entry.completion.targetSubstep)).toEqual(['1', '2']);
+      });
+    });
   });
 
   describe('unlocked twins (#500)', () => {

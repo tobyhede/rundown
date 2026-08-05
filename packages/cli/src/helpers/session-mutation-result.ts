@@ -96,10 +96,12 @@ export type TransactionalMutationRefusal =
  * literals at the call site and letting them drift from
  * {@link transactionalRefusalCode}'s switch.
  *
- * Derived from the union rather than spelled as a literal list, so a member
- * added to {@link TransactionalMutationRefusal} is recognized here without a
- * second edit. The runtime check stays a `Set` membership test on the
- * discriminant; only its contents are type-derived.
+ * The recognized discriminants are the keys of
+ * {@link TRANSACTIONAL_REFUSAL_KIND_MAP}, which the compiler holds exhaustive
+ * against the union: an arm added to {@link TransactionalMutationRefusal} breaks
+ * the build there until it is listed, rather than silently falling out of this
+ * guard. The runtime check stays a `Set` membership test on the discriminant;
+ * only its contents are type-derived.
  *
  * @param outcome - Any outcome discriminated by a `kind` string.
  * @param outcome.kind - The outcome's discriminant.
@@ -108,27 +110,49 @@ export type TransactionalMutationRefusal =
 export function isTransactionalMutationRefusal(outcome: {
   readonly kind: string;
 }): outcome is TransactionalMutationRefusal {
-  return (TRANSACTIONAL_REFUSAL_KINDS as ReadonlySet<string>).has(outcome.kind);
+  return TRANSACTIONAL_REFUSAL_KINDS.has(outcome.kind);
 }
 
 /**
- * The discriminants of {@link TransactionalMutationRefusal}.
+ * The discriminants of {@link TransactionalMutationRefusal}, as a key set the
+ * compiler checks exhaustively.
  *
- * Typed as `ReadonlySet<TransactionalMutationRefusal['kind']>` and initialized
- * from an array annotated with the same element type, so dropping a member is a
- * type error rather than a silently narrower guard. `Set` cannot enforce
- * exhaustiveness on its own — the annotation is what ties this to the union.
+ * `satisfies Record<TransactionalMutationRefusal['kind'], true>` is what carries
+ * the obligation, and it binds in both directions: an object literal checked
+ * against a `Record` must supply EVERY key of the union (a missing arm is a
+ * "property is missing in type" error) and may supply no others (excess-property
+ * checking rejects a kind the union does not have). A `ReadonlySet<…['kind']>`
+ * annotation cannot do either — a set that omits members still satisfies its own
+ * element type, so before this map an arm added to the union would have been
+ * dropped from {@link isTransactionalMutationRefusal} with no compile error and
+ * misclassified at the CLI boundary.
+ *
+ * The values are inert; only the keys matter. `true` is the cheapest inhabited
+ * type that makes the `Record` an exhaustiveness assertion rather than a lookup
+ * table anyone is tempted to read a value out of.
  */
-const TRANSACTIONAL_REFUSAL_KINDS: ReadonlySet<TransactionalMutationRefusal['kind']> = new Set<
-  TransactionalMutationRefusal['kind']
->([
-  'claim_superseded',
-  'concurrent_modification',
-  'execution_in_progress',
-  'recovery_required',
-  'missing',
-  'aggregate_recovery_required',
-]);
+const TRANSACTIONAL_REFUSAL_KIND_MAP = {
+  claim_superseded: true,
+  concurrent_modification: true,
+  execution_in_progress: true,
+  recovery_required: true,
+  missing: true,
+  aggregate_recovery_required: true,
+} satisfies Record<TransactionalMutationRefusal['kind'], true>;
+
+/**
+ * The runtime membership test behind {@link isTransactionalMutationRefusal}.
+ *
+ * Derived from {@link TRANSACTIONAL_REFUSAL_KIND_MAP}'s keys, never spelled a
+ * second time, so the exhaustiveness the map enforces is the exhaustiveness the
+ * guard applies. Typed `ReadonlySet<string>` because the guard tests an
+ * arbitrary discriminant against it — narrowing to the union is the type
+ * predicate's job, and a narrower element type here would only need casting back
+ * at the call.
+ */
+const TRANSACTIONAL_REFUSAL_KINDS: ReadonlySet<string> = new Set(
+  Object.keys(TRANSACTIONAL_REFUSAL_KIND_MAP),
+);
 
 /**
  * The registered symbolic codes a transactional delegation refusal is emitted under.

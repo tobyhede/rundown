@@ -924,7 +924,11 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       expect(drainResolvedCompletions).toHaveBeenCalledWith(
         expect.objectContaining({ issueDelegationCredential }),
       );
-      // The loop needs both, so it receives the branded pair intact.
+      // The loop needs both, so it receives the branded pair intact — the SAME
+      // object, not an equal one. `objectContaining` compares structurally, so
+      // it also passes against a pair reassembled from the same two halves
+      // somewhere downstream; reference identity is what fails there, and a
+      // reassembled pair is exactly the forwarding defect this pins.
       expect(runExecutionLoop).toHaveBeenCalledWith(
         expect.anything(),
         PARENT_RUN_ID,
@@ -932,8 +936,9 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         '/test',
         expect.any(Boolean),
         expect.anything(),
-        expect.objectContaining({ delegationRuntime: runtime }),
+        expect.anything(),
       );
+      expect(jest.mocked(runExecutionLoop).mock.calls[0][6]?.delegationRuntime).toBe(runtime);
     });
 
     // The core seam recurses up an inline chain, invoking this same callable for
@@ -1018,6 +1023,9 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({ issueDelegationCredential }),
     );
+    // Same identity contract as the bound-run case above: the caller-supplied
+    // pair is forwarded, not reassembled, so it is pinned by reference rather
+    // than by a structural matcher a clone would satisfy.
     expect(runExecutionLoop).toHaveBeenCalledWith(
       expect.anything(),
       PARENT_RUN_ID,
@@ -1025,8 +1033,9 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
       '/test',
       expect.any(Boolean),
       expect.anything(),
-      expect.objectContaining({ delegationRuntime: runtime }),
+      expect.anything(),
     );
+    expect(jest.mocked(runExecutionLoop).mock.calls[0][6]?.delegationRuntime).toBe(runtime);
   });
 });
 
