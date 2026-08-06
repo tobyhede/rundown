@@ -468,31 +468,35 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   NoCoverage = 86.11% — both real survivors erased. Reduce mutant count (ranges)
   or tests per mutant (`testFiles`) instead.
 
-  **Bound concurrency — mutation runs are memory-bound, not CPU-bound.** Every
-  package config reads `STRYKER_CONCURRENCY` (default **2**). That number is not
-  the process count: Stryker spawns a test-runner worker _and_ a TypeScript
-  checker worker per unit, so `concurrency=2` is **four** Node processes, each
-  holding the whole instrumented module graph. Memory scales with the size of
-  the mutated file, not with the number of mutants, so a big module is where
-  this bites: measured on `lifecycle-command-service.ts` (3596 lines),
-  `concurrency=2` ran 4 workers at 3–4 GB each — **~14 GB**, enough to make the
-  machine unusable for everything else.
+  **Concurrency is bounded for you — mutation runs are memory-bound, not
+  CPU-bound.** Every package config reads `STRYKER_CONCURRENCY` (default **2**).
+  That number is not the process count: Stryker spawns a test-runner worker
+  _and_ a TypeScript checker worker per unit, so `concurrency=2` is **four**
+  Node processes, each holding the whole instrumented module graph. Memory
+  scales with the size of the mutated file, not with the number of mutants, so a
+  big module is where this bites: measured on a ~3600-line revision of
+  `lifecycle-command-service.ts`, `concurrency=2` ran 4 workers at 3–4 GB each —
+  **~14 GB**, enough to make the machine unusable for everything else.
 
-  Set it explicitly rather than inheriting the default:
+  `test:mutate:changed` therefore sets `STRYKER_CONCURRENCY=1` itself on a
+  source-change scope whose mutated file exceeds `LARGE_SOURCE_FILE_LINES`
+  (1000, in `scripts/mutate-changed.mjs`). **Do not set it by hand for that
+  path** — an explicit `STRYKER_CONCURRENCY` in the environment always wins, so
+  doing so only overrides a size-aware default with a flat one. Two paths the
+  automatic bound does **not** cover:
+  - **The test-only tier.** It passes no `--mutate` scope, so it mutates the
+    whole package glob — the largest instrumented graph there is, and the worst
+    case for the blow-up this bound exists to prevent — at the default 2. There
+    is no file size to key on, so bound it yourself if that tier starts
+    swapping.
+  - **The manual `exec stryker run` form below**, which never goes through the
+    script. Set the variable yourself, as its large-file example does.
 
-  ```bash
-  STRYKER_CONCURRENCY=1 pnpm --filter @rundown-org/core exec stryker run \
-    --mutate 'src/runbook/lifecycle-command-service.ts:1200-1450' \
-    --testFiles __tests__/runbook/lifecycle-command-service.test.ts \
-    --force
-  ```
-
-  Rules of thumb: **`STRYKER_CONCURRENCY=1`** for any source file over ~1000
-  lines, and whenever anything else is running concurrently (another agent, a
-  `pnpm run verify`, a dev server) — a mutation run must never be the reason a
-  developer's machine starts swapping. The default 2 is for a small, isolated
-  scope. Raising it above 2 needs a specific reason and a machine with the RAM
-  to match.
+  Bound it by hand whenever anything else is running concurrently (another
+  agent, a `pnpm run verify`, a dev server) — a mutation run must never be the
+  reason a developer's machine starts swapping. The default 2 is for a small,
+  isolated scope. Raising it above 2 needs a specific reason and a machine with
+  the RAM to match.
 
   Concurrency trades wall-clock for memory and nothing else — it does not change
   which mutants are tested or whether they are killed — so lowering it is always
@@ -532,10 +536,12 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   Stryker accepts as `file:start-end` and comma-separates:
 
   ```bash
-  # ranges from: git diff -U0 <file> | grep -E '^@@'
-  pnpm --filter @rundown-org/core exec stryker run \
+  # ranges from: git diff -U0 [<merge-base>] -- <file> | grep -E '^@@'
+  # this form is unscripted, so bound concurrency yourself on a >1000-line file
+  STRYKER_CONCURRENCY=1 pnpm --filter @rundown-org/core exec stryker run \
     --mutate 'src/runbook/storage/runbook-store.ts:693-820,src/runbook/storage/runbook-store.ts:1219-1240' \
-    --testFiles __tests__/runbook/storage/runbook-store.test.ts
+    --testFiles __tests__/runbook/storage/runbook-store.test.ts \
+    --force
   ```
 
   **Derive the ranges from the diff; never guess them.** A hand-picked range
@@ -568,11 +574,9 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   ```
 
   Confirm `Instrumented N source file(s) with M mutant(s)` matches the scope you
-  asked for; that count, not the survivor list, tells you what this run tested.
-
-  Check the `Instrumented N source file(s) with M mutant(s)` line before
-  trusting any score — `N > 0` is what proves the scope actually resolved. Two
-  ways a scoped run can lie about success:
+  asked for before trusting any score: that count, not the survivor list, tells
+  you what this run tested, and `N > 0` is what proves the scope resolved at
+  all. Two ways a scoped run can lie about success:
   - Do **not** insert the `--` separator:
     `pnpm --filter … exec stryker run -- --mutate <file>` (or
     `pnpm run test:mutate:<pkg> -- --mutate <file>`) dies on
