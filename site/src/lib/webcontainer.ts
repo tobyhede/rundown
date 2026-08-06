@@ -120,9 +120,14 @@ export async function cleanRundownState(container: WebContainer): Promise<void> 
   // `allSettled` (not `all`) keeps the property that one failing path does not
   // skip the others; genuine failures are aggregated and thrown afterwards
   // instead of being swallowed.
+  //
+  // `recursive` is spread in only when it is true, never passed as `undefined`.
+  // WebContainer type-checks the option strictly — an explicit `undefined`
+  // rejects with `The "options.recursive" property must be of type boolean`,
+  // which Node tolerates but this fs does not.
   const results = await Promise.allSettled(
     RUNDOWN_STATE_PATHS.map(({ path, recursive }) =>
-      container.fs.rm(path, { force: true, recursive })
+      container.fs.rm(path, { force: true, ...(recursive === true && { recursive: true }) })
     )
   );
 
