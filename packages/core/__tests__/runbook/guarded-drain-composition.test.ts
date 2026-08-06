@@ -3,7 +3,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  DelegationLock,
   RunbookActorService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
@@ -104,14 +103,9 @@ describe('guarded drain composition (real store, real predicate)', () => {
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
-      deleteRun: async (id) => {
-        await manager.delete(id);
-      },
       loadSteps: () => steps,
       resolveChildRunbook: async () => undefined,
-      persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
-      delegationLock: new DelegationLock(tmp),
     });
   });
 

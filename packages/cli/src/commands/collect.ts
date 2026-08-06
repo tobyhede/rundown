@@ -426,7 +426,9 @@ function renderCollectOutcome(
       // Flat passthrough: core attached the user-facing `code` on the outcome
       // (no CLI reason→code ternary — keeps "no CLI lifecycle decisions" and
       // type-driven dispatch intact). `outcome.code` is already one of
-      // `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED`.
+      // `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED`, or
+      // — for the two re-entry frontier arms of the shared seam — `RD-821` /
+      // `RD-829`, which name the condition rather than this command.
       output.error(outcome.message, outcome.code, { parentRunId: outcome.targetRunId });
       output.flush();
       return true;
@@ -572,6 +574,15 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
           terminalReleaseMode: 'release-runbook',
           output,
           commandStreamOptions,
+          // Core verified the collector's bearer behind the collection seam and
+          // returned the delegation capabilities bound to it. The CLI never mints
+          // authority — it only carries what core handed back, and only for the
+          // run core bound it to (`outcome.targetRunId === advanced.id`, the
+          // collect target this loop drives). Without them a collect that
+          // advances into a DELEGATE step is refused `actor_context_required` on
+          // issuance, and the following turn on frontier projection.
+          issueDelegationCredential: outcome.issueDelegationCredential,
+          delegationTokenDeriver: outcome.deriveDelegationToken,
         },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a

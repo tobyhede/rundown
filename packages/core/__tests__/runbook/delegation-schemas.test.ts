@@ -6,6 +6,7 @@ import {
   RunbookStateSchema,
   makeRunbookStateSchema,
   DelegationTokenHashSchema,
+  PersistedDelegateFrontierEntrySchema,
   ClaimRecordSchema,
   SessionDataSchema,
 } from '../../src/schemas.js';
@@ -21,6 +22,15 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 const PARENT_RUN_ID = `rd_${'1'.repeat(32)}`;
 const CHILD_RUN_ID = `rd_${'2'.repeat(32)}`;
 const OTHER_CHILD_RUN_ID = `rd_${'3'.repeat(32)}`;
+const VALID_CREDENTIAL = {
+  version: 1 as const,
+  issuerClaimKey: `rdclk_${'4'.repeat(32)}`,
+  issuanceNonce: 'A'.repeat(43),
+  parentRunId: PARENT_RUN_ID,
+  parentStepId: '1.1',
+  parentFrameKey: '1|',
+  parentEntry: 1,
+};
 
 describe('AncestorSnapshotSchema', () => {
   it('accepts valid ancestor snapshot', () => {
@@ -239,6 +249,7 @@ describe('ContextSnapshotSchema iterationBinding', () => {
 
 describe('StepDelegationSchema', () => {
   const validDelegation = {
+    credential: VALID_CREDENTIAL,
     tokenHash: `sha256:${'a'.repeat(64)}`,
     childRunbookPath: 'child-runbook.md',
     childRunbookRef: { source: 'project', path: 'child-runbook.md' },
@@ -280,11 +291,10 @@ describe('StepDelegationSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects a token on a claimed delegation', () => {
+  it('rejects the legacy raw-token shape even while pending', () => {
     const result = StepDelegationSchema.safeParse({
       ...validDelegation,
       token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
-      childRunId: CHILD_RUN_ID,
     });
     expect(result.success).toBe(false);
   });
@@ -297,13 +307,30 @@ describe('StepDelegationSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects a token on a cancelled delegation', () => {
+  it('requires a credential descriptor', () => {
+    const { credential: _credential, ...withoutCredential } = validDelegation;
+    const result = StepDelegationSchema.safeParse(withoutCredential);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a malformed credential descriptor', () => {
     const result = StepDelegationSchema.safeParse({
       ...validDelegation,
-      token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
-      cancelledAt: '2026-02-27T11:00:00.000Z',
+      credential: { ...VALID_CREDENTIAL, version: 2 },
     });
     expect(result.success).toBe(false);
+  });
+
+  it('preserves a retry predecessor hash in the credential descriptor', () => {
+    const supersedesTokenHash = `sha256:${'b'.repeat(64)}`;
+    const result = StepDelegationSchema.safeParse({
+      ...validDelegation,
+      credential: { ...VALID_CREDENTIAL, supersedesTokenHash },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.credential.supersedesTokenHash).toBe(supersedesTokenHash);
+    }
   });
 
   it('preserves extraVars through parse (round-trip)', () => {
@@ -336,6 +363,33 @@ describe('DelegationTokenHashSchema', () => {
     expect(DelegationTokenHashSchema.safeParse(`sha256:${'C'.repeat(64)}`).success).toBe(false);
     expect(DelegationTokenHashSchema.safeParse('sha256:bad').success).toBe(false);
     expect(DelegationTokenHashSchema.safeParse('not-a-hash').success).toBe(false);
+  });
+});
+
+describe('PersistedDelegateFrontierEntrySchema', () => {
+  const validIntent = {
+    id: '1.1',
+    runbook: 'child-runbook.md',
+    credential: VALID_CREDENTIAL,
+    tokenHash: `sha256:${'d'.repeat(64)}`,
+  };
+
+  it('accepts a descriptor-bearing frontier intent without persisting a bearer', () => {
+    const result = PersistedDelegateFrontierEntrySchema.safeParse(validIntent);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(JSON.stringify(result.data)).not.toContain('rdtk_');
+    }
+  });
+
+  it('rejects the legacy public token-bearing frontier shape', () => {
+    const result = PersistedDelegateFrontierEntrySchema.safeParse({
+      ...validIntent,
+      token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 
@@ -638,6 +692,7 @@ describe('SubstepStateSchema backward compatibility', () => {
       frameKey: buildFrameKey('1'),
       status: 'pending' as const,
       delegation: {
+        credential: VALID_CREDENTIAL,
         tokenHash: `sha256:${'b'.repeat(64)}`,
         childRunbookPath: 'child.md',
         childRunbookRef: { source: 'project', path: 'child.md' },
@@ -658,6 +713,7 @@ describe('SubstepStateSchema backward compatibility', () => {
 describe('RunbookStateSchema round-trip with delegation', () => {
   it('preserves delegation data through parse', () => {
     const delegation = {
+      credential: VALID_CREDENTIAL,
       tokenHash: `sha256:${'c'.repeat(64)}`,
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
@@ -783,17 +839,25 @@ describe('RunbookStateSchema round-trip with inline child metadata', () => {
 
 describe('DelegationStatusEntrySchema', () => {
   const TOKEN_HASH = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
-  const TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
-  it('validates a pending entry with a recovery token', () => {
+  it('validates a pending entry without a raw token', () => {
     const entry = {
       substep: '1.1',
       runbook: 'child.md',
       state: 'pending',
       tokenHash: TOKEN_HASH,
-      token: TOKEN,
     };
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+  });
+
+  it('rejects raw delegation tokens on pending entries', () => {
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'pending',
+      tokenHash: TOKEN_HASH,
+      token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+    };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });
 
   const CLAIM_KEY = 'rdclk_11111111111111111111111111111111';
@@ -850,25 +914,14 @@ describe('DelegationStatusEntrySchema', () => {
     expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });
 
-  it('rejects malformed recovery tokens', () => {
-    const entry = {
-      substep: '1.1',
-      runbook: 'child.md',
-      state: 'pending',
-      tokenHash: TOKEN_HASH,
-      token: 'bad-token',
-    };
-    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
-  });
-
-  it('rejects recovery tokens on claimed entries', () => {
+  it('rejects raw delegation tokens on claimed entries', () => {
     const entry = {
       substep: '1.1',
       runbook: 'child.md',
       state: 'claimed',
       childRunId: 'run_abc123',
       tokenHash: TOKEN_HASH,
-      token: TOKEN,
+      token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
     };
     expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });

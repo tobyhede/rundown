@@ -1,7 +1,7 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { verifiedClaimContext, type CallerEvidence } from './actor-context.js';
 import { claimCanReportDelegationResult } from './claim-id.js';
-import type { ClaimId, ClaimRecord, VerifiedClaim } from './claim-id.js';
+import type { ClaimId, ClaimRecord, VerifiedClaim, VerifiedClaimAuthority } from './claim-id.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -17,7 +17,7 @@ import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
-import { InvalidRunbookStateError } from './state.js';
+import { projectAndConsumeReEntryFrontier, type ReEntryProjection } from './re-entry-frontier.js';
 import type { Frame, FrameKey } from './targeting.js';
 import {
   activeFrame,
@@ -31,8 +31,11 @@ import { countNumberedSteps } from './step-utils.js';
 import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
-import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ExecutionObservationEffect } from '../events/execution-observation.js';
+import {
+  createDelegationCredentialIssuer,
+  createDelegationTokenDeriver,
+} from './delegation-credential.js';
+import { ErrorCodes } from '../errors/codes.js';
 import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
@@ -354,7 +357,13 @@ export async function collectDelegationOutcomes(
     };
   }
 
-  return applyCollection(input, { stepName, frame, frameKey, claim: authority.claim });
+  return applyCollection(input, {
+    stepName,
+    frame,
+    frameKey,
+    claim: authority.claim,
+    authority: authority.authority,
+  });
 }
 
 function deriveCollectionTransitionObservations(
@@ -374,84 +383,74 @@ function deriveCollectionTransitionObservations(
   });
 }
 
-type ReEntryProjection =
-  | { readonly status: 'none' }
-  | { readonly status: 'projected'; readonly observations: readonly ExecutionObservationEffect[] }
-  | { readonly status: 'consume_failed' };
-
 /**
- * Runtime guard for a single persisted delegate-frontier entry.
+ * Drive the shared re-entry frontier seam for a collect target.
  *
- * `RunbookState.snapshot` is typed `unknown`, so a frontier read out of it cannot
- * be trusted to match {@link DelegateFrontierEntry} on type alone — the persisted
- * blob may be malformed. Validate each entry's shape before use.
+ * The seam itself lives in `re-entry-frontier.ts` and is shared verbatim with
+ * the CLI execution loop (F6): both entry points reach the same persisted data
+ * under the same conditions, so both classify it with the same arms and report
+ * each arm under the same code. All this wrapper contributes is the rendered
+ * entry metadata for the collect cursor and the verified deriver.
  *
- * @param value - Candidate frontier entry read from the persisted snapshot.
- * @returns A type predicate narrowing `value` to {@link DelegateFrontierEntry}.
+ * @param input - Collection operation input (services + target + steps).
+ * @param advanced - Reloaded post-drain state whose snapshot carries the frontier.
+ * @param authority - Verified authority the deriver is bound to.
+ * @returns The classified re-entry outcome.
+ * @throws {InvalidRunbookStateError} When the persisted `delegateFrontier` is malformed.
  */
-function isDelegateFrontierEntry(value: unknown): value is DelegateFrontierEntry {
-  if (typeof value !== 'object' || value === null) return false;
-  const entry = value as Record<string, unknown>;
-  return (
-    typeof entry.id === 'string' &&
-    typeof entry.runbook === 'string' &&
-    typeof entry.token === 'string'
-  );
-}
-
-async function projectAndConsumeReEntryFrontier(
+async function projectAndConsumeCollectReEntryFrontier(
   input: CollectDelegationOutcomesOperationInput,
   advanced: RunbookState,
+  authority: VerifiedClaimAuthority,
 ): Promise<ReEntryProjection> {
-  const context = (advanced.snapshot as { readonly context?: Record<string, unknown> } | undefined)
-    ?.context;
-  const rawFrontier = context?.delegateFrontier;
-  // No frontier persisted: nothing to re-enter.
-  if (rawFrontier === undefined) {
-    return { status: 'none' };
-  }
-  // `snapshot` is `unknown`: a non-array or structurally invalid frontier is a
-  // corrupt/incompatible persisted snapshot. Per the no-migration rule, reject it
-  // (the CLI maps InvalidRunbookStateError to finish/stop/prune/restart) rather
-  // than trusting malformed data or crashing mid-collection.
-  if (!Array.isArray(rawFrontier) || !rawFrontier.every(isDelegateFrontierEntry)) {
-    throw new InvalidRunbookStateError(
-      `Run ${advanced.id} carries a malformed delegateFrontier in its persisted snapshot`,
-    );
-  }
-  const frontier: readonly DelegateFrontierEntry[] = rawFrontier;
-  if (frontier.length === 0 || advanced.substep === undefined) {
-    return { status: 'none' };
-  }
-
   const position = buildStepPosition(
     advanced.step,
     countNumberedSteps(input.steps),
     advanced.substep,
     advanced.forStack,
   );
-  const observations = await input.actorService.observeExecutionUnitEntry(
-    input.targetState.id,
-    [...input.steps],
-    {
-      stepId: advanced.step,
-      substepId: advanced.substep,
-      position,
-      stepName: advanced.substep,
-      isSubstep: true,
-      prompted: !!advanced.prompted,
-      delegateFrontier: frontier,
-    },
-  );
+  const substep = advanced.substep;
+  // A cursor that has advanced off the substeps cannot carry a frontier, and the
+  // seam short-circuits on `isSubstep: false` without observing. Spelled as two
+  // complete literals rather than one with `??` fallbacks so neither variant
+  // carries a field it could never have.
+  // Equivalent mutants on the non-substep arm below: the seam short-circuits to
+  // `status: 'none'` on `isSubstep: false` and never observes that entry, so
+  // every field of it EXCEPT `isSubstep` is unobservable — and collapsing the
+  // whole literal to `{}` leaves `isSubstep` undefined, which is falsy, so it
+  // reaches the same arm. `isSubstep: false` itself stays mutated: flipping it to
+  // `true` IS killed, by the "treats a present frontier with an undefined cursor
+  // substep as no re-entry" test. The arm is spelled out rather than
+  // short-circuited here so the malformed-snapshot guard inside the seam still
+  // runs for an off-substep cursor.
+  const entry =
+    substep === undefined
+      ? // Stryker disable ObjectLiteral,StringLiteral: equivalent — this entry is never observed
+        {
+          stepId: advanced.step,
+          position,
+          stepName: advanced.step,
+          isSubstep: false,
+          // Stryker disable next-line BooleanLiteral: equivalent — never observed (see above)
+          prompted: !!advanced.prompted,
+        }
+      : // Stryker restore ObjectLiteral,StringLiteral
+        {
+          stepId: advanced.step,
+          substepId: substep,
+          position,
+          stepName: substep,
+          isSubstep: true,
+          prompted: !!advanced.prompted,
+        };
 
-  const consumed = await input.actorService.sendAndSync(input.targetState.id, [...input.steps], {
-    type: 'DELEGATE_FRONTIER_CONSUMED',
+  return await projectAndConsumeReEntryFrontier({
+    actorService: input.actorService,
+    steps: input.steps,
+    state: advanced,
+    deriveToken: createDelegationTokenDeriver(authority),
+    entry,
   });
-  if (!consumed) {
-    return { status: 'consume_failed' };
-  }
-
-  return { status: 'projected', observations };
 }
 
 /**
@@ -478,13 +477,22 @@ async function applyCollection(
     readonly frame: Frame;
     readonly frameKey?: FrameKey;
     readonly claim: VerifiedClaim;
+    readonly authority: VerifiedClaimAuthority;
   },
 ): Promise<DelegationPolicyOutcome> {
+  // Bound ONCE, from the authority `collectDelegationOutcomes` verified for
+  // `collect-for-run` on this exact target. Only `createRunControlGrants` mints
+  // `collect-for-run`, and it mints `delegate-from-run` for the same run in the
+  // same set — so the bearer that may collect this run is by construction the
+  // bearer that may delegate from it. The drain issues under it, and the
+  // `continue` return below hands the same capability to the continuation.
+  const issueDelegationCredential = createDelegationCredentialIssuer(scope.authority);
   const drained = await input.completionService.drainResolvedCompletions({
     runbookId: input.targetState.id,
     steps: [...input.steps],
     currentState: input.targetState,
     frameOverride: scope.frame,
+    issueDelegationCredential,
   });
 
   if (drained.status === 'failed') {
@@ -603,17 +611,35 @@ async function applyCollection(
     drained.applied.at(-1)?.stateAfter ??
     input.targetState;
   // Stryker restore OptionalChaining,UnaryOperator
-  const reentry = await projectAndConsumeReEntryFrontier(input, advanced);
+  const reentry = await projectAndConsumeCollectReEntryFrontier(input, advanced, scope.authority);
+  if (reentry.status === 'projection_refused') {
+    // A credential DISCLOSURE-boundary refusal — the condition RD-821 names and
+    // the CLI execution loop already reports under it. The code follows the
+    // condition, never the command that happened to drive the seam, so an agent
+    // branching on `code` reads one fact whichever entry point produced it.
+    // Deliberately NOT `COLLECT_OPERATION_FAILED`: that code's contract is
+    // "collection failed while applying delegation outcomes", and nothing was
+    // applied here.
+    return {
+      kind: 'collection_failed',
+      targetRunId: input.targetState.id,
+      reason: 'frontier_projection_refused',
+      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+      message: reentry.message,
+    };
+  }
   if (reentry.status === 'consume_failed') {
     // Transient: the frontier is still persisted and no observations were
     // surfaced (their fresh tokens would be orphaned by a retry). Surface a
     // retryable error; the next `rd collect` re-projects + consumes the frontier
-    // via this same path (it reaches here even with `applied === 0`).
+    // via this same path (it reaches here even with `applied === 0`). A distinct
+    // code from the refusal above because the remediation inverts: this one is
+    // fixed by repeating the operation, that one never is.
     return {
       kind: 'collection_failed',
       targetRunId: input.targetState.id,
       reason: 'frontier_consume_failed',
-      code: 'COLLECT_OPERATION_FAILED',
+      code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
       message: 'Failed to consume delegation frontier after collect re-entry; retry collect',
     };
   }
@@ -646,6 +672,14 @@ async function applyCollection(
     reportedTerminalOutcome: false,
     transitionObservations,
     ...(reentry.status === 'projected' ? { reEntryObservations: reentry.observations } : {}),
+    // The target is still running, so the frontend drives a continuation for it.
+    // That continuation can step INTO a DELEGATE frontier, where machine-owned
+    // issuance needs a verified issuer and the following turn needs the
+    // same-issuer deriver. Both are this collector's verified authority over
+    // THIS run — runtime-only closures, never persisted, and carried only on the
+    // non-terminal arm (a terminal target drives no continuation).
+    issueDelegationCredential,
+    deriveDelegationToken: createDelegationTokenDeriver(scope.authority),
   };
 }
 

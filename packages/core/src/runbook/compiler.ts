@@ -75,7 +75,6 @@ import {
   type FlattenedTemplateVars,
   type OutputVars,
 } from './output-evaluator.js';
-import type { DelegateFrontierEntry } from '../events/types.js';
 import type { MachineExecutionObserver } from '../events/execution-observation.js';
 import { buildFrameKey, deriveExecutionAt, findSubstepState, type FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
@@ -83,10 +82,12 @@ import { asTemplateVars } from './template-vars.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
+import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
 import { generateRunId } from './state.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
-import type { ParentLinkage } from './types.js';
+import type { ParentLinkage, PersistedDelegateFrontierEntry } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { CurrentCursorResolvedCompletion } from './completion-service.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
@@ -162,7 +163,6 @@ interface SetInlineLaunchFailedParams {
 type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
 type DelegationChildLinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_LINKED' }>;
 type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_UNLINKED' }>;
-
 /** Typed refusal raised while deriving an exact delegated-child link transition. */
 export class DelegationChildLinkPreparationError extends Error {
   /**
@@ -213,13 +213,13 @@ export function deriveDelegationChildLinkedSubsteps(
       `Delegation ${event.parentStepId} is already linked to another child`,
     );
   }
+  const delegation = target.delegation;
 
-  const { token: _plaintextToken, ...persistedDelegation } = target.delegation;
   return substepStates.map((substepState) =>
     substepState === target
       ? {
           ...substepState,
-          delegation: { ...persistedDelegation, childRunId: event.childRunId },
+          delegation: { ...delegation, childRunId: event.childRunId },
         }
       : substepState,
   );
@@ -258,12 +258,11 @@ export function deriveDelegationChildUnlinkedSubsteps(
       `Delegation ${event.parentStepId} is linked to a newer child`,
     );
   }
-  const { token: _plaintextToken, ...persistedDelegation } = delegation;
   return substepStates.map((substepState) =>
     substepState === target
       ? {
           ...substepState,
-          delegation: { ...persistedDelegation, childRunId: null },
+          delegation: { ...delegation, childRunId: null },
         }
       : substepState,
   );
@@ -843,8 +842,26 @@ export interface RunbookContext {
    * Populated at actor bootstrap (Task 4) and updated by the retry hook.
    */
   readonly substepStates?: readonly SubstepState[];
-  /** Frontier of newly-minted delegation tokens owned by the machine. */
-  readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /**
+   * Mirror of the persisted frame-entry coordinates, in the exact shape
+   * {@link inferFrameEntryFromState} consumes. Populated at actor bootstrap
+   * alongside `substepStates`; plain data, never written by a transition.
+   *
+   * Machine-owned delegation issuance stamps `parentEntry` into a credential
+   * coordinate that is HMAC derivation input, so it must resolve the entry
+   * through the same shared helper the manual path uses — which needs the
+   * frame history this mirror carries.
+   *
+   * The `activeFrameKey` inside it is the frame the *persisted* state named at
+   * bootstrap. It is **not** the machine's live cursor frame: derive that from
+   * `step` + `forStack` (see `runRetryHook`). Reading it as the live frame is
+   * the stale-bootstrap bug that comment warns about; its only legitimate use
+   * is telling {@link inferFrameEntryFromState} which frame `activeEntry`
+   * belongs to.
+   */
+  readonly frameEntry?: FrameEntryCoordinates;
+  /** Non-secret frontier intents awaiting authorized credential delivery. */
+  readonly delegateFrontier?: ReadonlyArray<PersistedDelegateFrontierEntry>;
   /** One-shot machine-owned intent for launching a non-DELEGATE child runbook inline. */
   readonly inlineLaunchIntent?: InlineLaunchIntentWithoutParentEntry;
   /** Parent linkage data used by machine-owned delegation issuance. */
@@ -918,6 +935,10 @@ export type RunbookEvent =
       parentFrameKey: FrameKey;
       tokenHash: DelegationTokenHash;
       childRunId: RunId;
+    }
+  | {
+      type: 'MANUAL_DELEGATION_ABORT_PREPARED';
+      substepStates: readonly SubstepState[];
     }
   | {
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
@@ -1754,12 +1775,14 @@ function buildParentExitAssign(
  * @param config - The parent state config (discriminated by isParentState=true)
  * @param steps - The full steps array
  * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
+ * @param issueDelegationCredential - Verified runtime issuer for delegation retry transitions
  * @returns XState state config with `always` transitions
  */
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: readonly ResolvedStep[],
   evaluationOptions: EvaluateOutputOptions | undefined,
+  issueDelegationCredential: DelegationCredentialIssuer | undefined,
 ): RunbookStateConfig {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
@@ -1830,7 +1853,7 @@ function buildParentStateConfig(
           // Run the retry hook: iterate every delegated substep in the active
           // frame, re-issue their delegations, collect new tokens into a
           // frontier. Uniform re-delegation (docs/spec/language.md §4.2, §5). Never throws.
-          const hook = runRetryHook(context, parentStep, steps);
+          const hook = runRetryHook(context, parentStep, steps, issueDelegationCredential);
           if (hook.status === 'error') {
             // RETRY_ERROR variant: structurally distinct LastAction type. The
             // priority-0 always entry routes to STOPPED on this discriminant
@@ -1954,7 +1977,7 @@ function buildParentStateConfig(
             // tokens into a frontier. Uniform re-delegation within the frame
             // (docs/spec/language.md §4.2, §5). activeFrameKey scopes the hook to this
             // iteration — other iterations' substep states remain untouched.
-            const hook = runRetryHook(context, parentStep, steps);
+            const hook = runRetryHook(context, parentStep, steps, issueDelegationCredential);
             if (hook.status === 'error') {
               // RETRY_ERROR variant: structurally distinct LastAction type.
               // The sibling priority-0 always entry on the parent state
@@ -3698,8 +3721,12 @@ function checkedStateInsert(
  * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
  *   by the actor service to hydrate substep delegation state from persisted state in a single
  *   `createActor` call.
+ * @param options.frameEntry - Seeds `RunbookContext.frameEntry` at machine bootstrap so
+ *   machine-owned delegation issuance can resolve a credential's parent entry through the shared
+ *   frame-entry inference helper instead of assuming the first entry.
  * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
  * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
+ * @param options.issueDelegationCredential - Verified runtime capability for machine-owned credential issuance.
  * @param options.resolveInlineRunbook - Runtime resolver for machine-owned inline launch intent preparation.
  * @param options.generateChildRunId - Runtime ID generator for machine-owned child run launches.
  * @param options.now - Runtime clock for machine-owned timestamps.
@@ -3721,8 +3748,10 @@ export function compileRunbookToMachine(
     evaluationOptions?: EvaluateOutputOptions;
     helpers?: TemplateHelperRegistry;
     substepStates?: readonly SubstepState[];
+    frameEntry?: FrameEntryCoordinates;
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
+    issueDelegationCredential?: DelegationCredentialIssuer;
     resolveInlineRunbook?: ResolveInlineRunbook;
     generateChildRunId?: () => RunId;
     now?: () => string;
@@ -3858,6 +3887,14 @@ export function compileRunbookToMachine(
           ...(substepId ? { substep: substepId } : {}),
           substepStates: context.substepStates,
           activeFrameKey: frameKey,
+          // Resolve the issuing frame's entry through the shared helper against
+          // the persisted coordinates, then hand `createDelegation` a state
+          // whose active frame *is* the issuing frame, so its own call to the
+          // same helper reproduces this answer. Passing the mirror's raw
+          // `activeEntry` alongside `activeFrameKey: frameKey` would attribute
+          // another frame's entry to this one.
+          activeEntry: inferFrameEntryFromState(context.frameEntry ?? {}, frameKey),
+          frameEntryCounts: context.frameEntry?.frameEntryCounts,
           parentLinkage: context.parentLinkage,
           templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
           variables: context.variables,
@@ -3866,6 +3903,7 @@ export function compileRunbookToMachine(
         steps,
         frameKey,
         resolveRunbook: options?.resolveDelegationRunbook ?? (() => Promise.resolve(null)),
+        issueCredential: options?.issueDelegationCredential,
       };
     },
     onDone: [
@@ -4537,7 +4575,14 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, evaluationOptions)),
+        runbookSetup.createStateConfig(
+          buildParentStateConfig(
+            config,
+            steps,
+            evaluationOptions,
+            options?.issueDelegationCredential,
+          ),
+        ),
       );
       return;
     }
@@ -4662,6 +4707,14 @@ export function compileRunbookToMachine(
           params: ({ event }) => event,
         },
       },
+      MANUAL_DELEGATION_ABORT_PREPARED: {
+        actions: runbookSetup.assign({
+          substepStates: ({ event }) => {
+            assertEvent(event, 'MANUAL_DELEGATION_ABORT_PREPARED');
+            return event.substepStates;
+          },
+        }),
+      },
     },
     context: {
       retryCount: 0,
@@ -4686,6 +4739,7 @@ export function compileRunbookToMachine(
       finalVars: {},
       lifecycle: 'running',
       substepStates: options?.substepStates,
+      frameEntry: options?.frameEntry,
       delegateFrontier: undefined,
       inlineLaunchIntent: undefined,
       parentLinkage: options?.parentLinkage,

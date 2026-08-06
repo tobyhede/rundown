@@ -1,15 +1,22 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, it, expect } from '@jest/globals';
 import { seedRawRunState, writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
 import {
   createRunbook,
   createTestWorkspace,
+  findActionOutput,
+  findFrontierInEvents,
+  findLatestFrontierInEvents,
   parseCliJsonObject,
   parseConcatenatedJson,
   parseFinalCliJsonObject,
   readRunbookState,
+  requireFrontierToken,
+  requireLatestFrontierToken,
   runCliInProcess,
   stripExitArtefact,
+  withRunTarget,
 } from './test-utils.js';
 
 describe('createRunbook', () => {
@@ -588,6 +595,178 @@ describe('runCliInProcess', () => {
       await workspace.cleanup();
     }
   });
+});
+
+describe('delegation frontier helpers', () => {
+  const entry = (id: string, token: string) => ({ id, runbook: 'child.runbook.md', token });
+  const stepEntered = (...entries: ReturnType<typeof entry>[]) => ({
+    type: 'step_entered',
+    delegateFrontier: entries,
+  });
+
+  // A `collect` that closes one FOR iteration and opens the next, an inline
+  // handoff, or a retry that re-issues in place all emit more than one frontier
+  // from a single command. First-vs-last is therefore load-bearing, not
+  // hypothetical: reading the first hands back a superseded bearer.
+  const REISSUING_EVENTS = [
+    stepEntered(entry('1.1', 'rdtk_stale'), entry('1.2', 'rdtk_sibling')),
+    stepEntered(entry('1.1', 'rdtk_reissued')),
+  ];
+
+  it('findFrontierInEvents returns the FIRST emitted frontier', () => {
+    expect(findFrontierInEvents(REISSUING_EVENTS)).toEqual([
+      entry('1.1', 'rdtk_stale'),
+      entry('1.2', 'rdtk_sibling'),
+    ]);
+  });
+
+  it('findLatestFrontierInEvents returns the LAST emitted frontier', () => {
+    expect(findLatestFrontierInEvents(REISSUING_EVENTS)).toEqual([entry('1.1', 'rdtk_reissued')]);
+  });
+
+  it('walks frontiers nested inside array-shaped stdout chunks', () => {
+    const nested = [[REISSUING_EVENTS[0]], [REISSUING_EVENTS[1]]];
+    expect(findFrontierInEvents(nested)).toEqual([
+      entry('1.1', 'rdtk_stale'),
+      entry('1.2', 'rdtk_sibling'),
+    ]);
+    expect(findLatestFrontierInEvents(nested)).toEqual([entry('1.1', 'rdtk_reissued')]);
+  });
+
+  it('returns undefined when no step_entered event carries a frontier', () => {
+    const events = [{ type: 'runbook_started' }, { type: 'step_entered' }];
+    expect(findFrontierInEvents(events)).toBeUndefined();
+    expect(findLatestFrontierInEvents(events)).toBeUndefined();
+  });
+
+  it('requireFrontierToken selects the LAST matching entry for an id', () => {
+    const stdout = REISSUING_EVENTS.map((event) => JSON.stringify(event)).join('\n');
+    expect(requireFrontierToken(stdout, '1.1')).toBe('rdtk_reissued');
+  });
+
+  it('requireFrontierToken still resolves an id present only in an earlier frontier', () => {
+    const stdout = REISSUING_EVENTS.map((event) => JSON.stringify(event)).join('\n');
+    expect(requireFrontierToken(stdout, '1.2')).toBe('rdtk_sibling');
+  });
+
+  it('requireFrontierToken throws when no frontier entry or text token matches', () => {
+    expect(() => requireFrontierToken('{"type":"runbook_started"}', '1.1')).toThrow(
+      /delegation token for 1\.1/,
+    );
+  });
+
+  it('requireFrontierToken throws when stdout carries a bearer but no frontier advertises it', () => {
+    // A bearer printed on some other surface (a text-mode RD_CLAIM_TOKEN line,
+    // a delegate JSON envelope) is NOT evidence that the frontier emission this
+    // assertion is about still works. Scraping it would keep every caller green
+    // after the disclosure boundary regressed away.
+    const stdout = `{"type":"runbook_started"}\nRD_CLAIM_TOKEN=rdtk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n`;
+    expect(() => requireFrontierToken(stdout, '1.1')).toThrow(/delegation token for 1\.1/);
+  });
+
+  it('requireFrontierToken throws rather than guessing a token by substep position', () => {
+    // The removed fallback mapped '1.2' to the second bearer in stdout order.
+    // That resolves to a DIFFERENT substep's credential, so an id-attribution
+    // regression would return a plausible wrong token instead of failing.
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      delegateFrontier: [
+        entry('1.1', `rdtk_${'A'.repeat(32)}`),
+        entry('9.9', `rdtk_${'B'.repeat(32)}`),
+      ],
+    });
+    expect(() => requireFrontierToken(stdout, '1.2')).toThrow(/delegation token for 1\.2/);
+  });
+});
+
+describe('requireLatestFrontierToken cache', () => {
+  /** Child runbook a delegated substep targets. */
+  const CHILD = createRunbook({
+    title: 'Child',
+    steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Do the work.' }],
+  });
+
+  /** Parent whose step 1 delegates two substeps; step 2 offers no frontier. */
+  const PARENT = createRunbook({
+    title: 'Parent',
+    steps: [
+      {
+        title: 'Fan-out',
+        pass: 'CONTINUE',
+        fail: 'STOP',
+        substeps: [
+          { title: 'Task A', delegate: true, runbooks: ['child.runbook.md'] },
+          { title: 'Task B', delegate: true, runbooks: ['child.runbook.md'] },
+        ],
+      },
+      { title: 'Done', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result pass' },
+    ],
+  });
+
+  async function startParent(workspace: Awaited<ReturnType<typeof createTestWorkspace>>) {
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD);
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), PARENT);
+    const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    return start;
+  }
+
+  it('serves the bearer the preceding transition actually emitted', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const start = await startParent(workspace);
+      // Tests may never recover a bearer from persisted state, which holds only
+      // the non-secret descriptor — the cached value must be the emitted one.
+      const token = requireLatestFrontierToken(workspace, '1.1');
+      expect(token).toMatch(/^rdtk_/);
+      expect(token).toBe(requireFrontierToken(start.stdout, '1.1'));
+    } finally {
+      await workspace.cleanup();
+    }
+  }, 30_000);
+
+  it('RETRACTS a run frontier once that run enters a step offering none', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      await startParent(workspace);
+      expect(requireLatestFrontierToken(workspace, '1.1')).toMatch(/^rdtk_/);
+
+      // `goto 2` moves the parent off its DELEGATE step, so step 2's
+      // step_entered carries no delegateFrontier. Serving the step-1 bearer
+      // afterwards would let a test stay green after the emission it asserts
+      // on regressed away.
+      const moved = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+      expect(moved.exitCode).toBe(0);
+      expect(() => requireLatestFrontierToken(workspace, '1.1')).toThrow(
+        /preceding CLI transition to emit token for 1\.1/,
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  }, 30_000);
+
+  it('keeps a parent frontier alive while a claimed child transitions past its own steps', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      await startParent(workspace);
+      const token1 = requireLatestFrontierToken(workspace, '1.1');
+      const token2 = requireLatestFrontierToken(workspace, '1.2');
+      expect(token2).not.toBe(token1);
+
+      // Claiming 1.1 launches the child; driving it emits frontier-less
+      // step_entered events for the CHILD run. Those say nothing about the
+      // parent, so substep 1.2's still-pending bearer must survive them.
+      const claim = await runCliInProcess(`claim ${token1}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+      const passed = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      expect(passed.exitCode).toBe(0);
+
+      expect(requireLatestFrontierToken(workspace, '1.2')).toBe(token2);
+    } finally {
+      await workspace.cleanup();
+    }
+  }, 30_000);
 });
 
 describe('stripExitArtefact', () => {

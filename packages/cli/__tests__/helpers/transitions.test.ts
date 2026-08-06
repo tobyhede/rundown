@@ -53,6 +53,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn().mockImplementation(() => ({ load: mockManagerLoad })),
   RunbookActorService: jest.fn(),
   RunbookCompletionService: jest.fn(),
+  DelegationScanService: jest.fn(),
   RunbookLifecycleCommandService: jest
     .fn()
     .mockImplementation(() => ({ runTransition: mockRunTransition })),

@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   findActionOutput,
-  getActiveState,
   readRunbookState,
   runCliInProcess,
+  requireLatestFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -131,11 +131,9 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    const parentState = await getActiveState(workspace);
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const token = requireLatestFrontierToken(workspace);
 
-    result = await runCliInProcess(['claim', token!], workspace);
+    result = await runCliInProcess(['claim', token], workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain('--input');
     expect(result.stdout).not.toContain('--input-json');
@@ -201,11 +199,9 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    const parentState = await getActiveState(workspace);
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const token = requireLatestFrontierToken(workspace);
 
-    result = await runCliInProcess(['claim', token!], workspace);
+    result = await runCliInProcess(['claim', token], workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain('--input');
     expect(result.stdout).not.toContain('--input-json');
@@ -231,10 +227,7 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    const parentState = await getActiveState(workspace);
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const token = requireLatestFrontierToken(workspace);
 
     result = await runCliInProcess(['claim', token], workspace);
     expect(result.exitCode).toBe(0);
@@ -260,10 +253,7 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    const parentState = await getActiveState(workspace);
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const token = requireLatestFrontierToken(workspace);
 
     result = await runCliInProcess(['claim', token, '--input', 'Plan=literal'], workspace);
     expect(result.exitCode).toBe(0);
@@ -299,13 +289,9 @@ describe('delegation claim inheritance integration', () => {
       '',
     ].join('\n');
 
-  // Token extraction mirrors the sibling tests: the per-iteration delegation
-  // lands on the first persisted substep state.
+  // Tokens are captured from the public frontier emitted by the transition.
   const tokenFor = async (): Promise<string> => {
-    const parentState = await getActiveState(workspace);
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    return requireLatestFrontierToken(workspace, '1.1');
   };
 
   it('surfaces the FOR item to a declaring child (#435)', async () => {

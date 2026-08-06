@@ -410,9 +410,15 @@ describe('claimKey join (#531)', () => {
     });
 
     const entry = result.delegations?.[0];
-    // Pending entries surface the raw token (claim recovery) but never a
-    // childRunId or claimKey key.
-    expect(entry).toMatchObject({ state: 'pending', token: `rdtk_${'A'.repeat(32)}` });
+    // Status is a read model, not a credential-delivery surface. Even a
+    // legacy-shaped state carrying a raw token must not expose it.
+    expect(entry).toMatchObject({
+      state: 'pending',
+      tokenHash: `sha256:${'a'.repeat(64)}`,
+      substep: '1',
+      runbook: 'child.md',
+    });
+    expect(entry).not.toHaveProperty('token');
     expect(entry).not.toHaveProperty('childRunId');
     expect(entry).not.toHaveProperty('claimKey');
   });
@@ -455,7 +461,7 @@ describe('claimKey join (#531)', () => {
     expect(entry).not.toHaveProperty('token');
   });
 
-  it('omits the token key on a pending delegation whose token is gone', () => {
+  it('keeps pending delegation status token-free when persisted state has no token', () => {
     const state = makeStateWithClaimedDelegation({ childRunId: null, token: null });
 
     const result = buildActiveStatus(state, '/test');

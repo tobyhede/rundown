@@ -16,7 +16,10 @@ export {
   ActionSchema,
   TransitionsSchema,
   // Delegation schemas
+  DelegationCredentialDescriptorSchema,
+  DelegationIssuanceNonceSchema,
   DelegationTokenHashSchema,
+  PersistedDelegateFrontierEntrySchema,
   ClaimIdSchema,
   ClaimRecordSchema,
   SessionDataSchema,

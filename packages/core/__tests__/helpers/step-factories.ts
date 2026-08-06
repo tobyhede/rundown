@@ -189,6 +189,7 @@ export function makeResolvedStepWithPromptedFor(
 // tests keep importing them from here.
 export {
   makeContextSnapshot,
+  makeDelegationCredentialDescriptor,
   makeDelegatedSubstepState,
   makeStepDelegation,
 } from '../../src/testing/delegation-fixtures.js';

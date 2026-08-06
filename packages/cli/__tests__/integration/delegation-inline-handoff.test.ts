@@ -11,6 +11,7 @@ import {
   runCliInProcess,
   type TestWorkspace,
   withRunTarget,
+  requireFrontierToken,
 } from '../helpers/test-utils.js';
 import type { RunbookState } from '@rundown-org/core';
 
@@ -130,7 +131,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const parent = await getActiveState(workspace);
     expect(parent).not.toBeNull();
     const parentRunId = parent!.id;
-    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     // Claim + explicitly close the delegated worker -> REPORTS the outcome (report-only).
     const claim = await runCliInProcess(`claim ${token}`, workspace);
@@ -172,7 +173,7 @@ describe('delegation -> collect -> inline handoff', () => {
     expect(start.exitCode).toBe(0);
 
     const parent = await getActiveState(workspace);
-    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     const claim = await runCliInProcess(`claim ${token}`, workspace);
     expect(claim.exitCode).toBe(0);
@@ -253,7 +254,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const parent = await getActiveState(workspace);
     expect(parent).not.toBeNull();
     const parentRunId = parent!.id;
-    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     const claim = await runCliInProcess(`claim ${token}`, workspace);
     expect(claim.exitCode).toBe(0);
@@ -268,8 +269,7 @@ describe('delegation -> collect -> inline handoff', () => {
     expect(inlineChild).toBeDefined();
     expect((await getActiveState(workspace))!.id).toBe(inlineChild!.id);
 
-    const childToken = inlineChild!.substepStates!.find((s) => s.delegation?.token)!.delegation!
-      .token!;
+    const childToken = requireFrontierToken(collected.stdout, '1.1');
     const childClaim = await runCliInProcess(`claim ${childToken}`, workspace);
     expect(childClaim.exitCode).toBe(0);
     const childClaimId = String(findActionOutput(childClaim.stdout)!.claim_id);
@@ -306,7 +306,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const parent = await getActiveState(workspace);
     expect(parent).not.toBeNull();
     const parentRunId = parent!.id;
-    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     // Drive the delegated worker, collect to advance the pipeline into the
     // inline gate stage, and activate the gate child.
@@ -326,8 +326,7 @@ describe('delegation -> collect -> inline handoff', () => {
     // step 1 is `PASS ALL COMPLETE`, so this aggregation drives the gate terminal
     // and propagates inline to the pipeline (advancing it to step 3) — streaming
     // the pipeline's transition/runbook events from inside collect.
-    const childToken = inlineChild!.substepStates!.find((s) => s.delegation?.token)!.delegation!
-      .token!;
+    const childToken = requireFrontierToken(advanced.stdout, '1.1');
     const childClaim = await runCliInProcess(`claim ${childToken}`, workspace);
     expect(childClaim.exitCode).toBe(0);
     const childClaimId = String(findActionOutput(childClaim.stdout)!.claim_id);
@@ -389,7 +388,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const parent = await getActiveState(workspace);
     expect(parent).not.toBeNull();
     const parentRunId = parent!.id;
-    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     const claim = await runCliInProcess(`claim ${token}`, workspace);
     expect(claim.exitCode).toBe(0);

@@ -28,6 +28,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from './brand-helpers.js';
+import { makeDelegationCredentialDescriptor } from '@rundown-org/core/testing/delegation-fixtures';
 
 /** Canonical transitions pair used across fixtures to avoid `as any` casts. */
 const DEFAULT_TRANSITIONS: Transitions = {
@@ -77,6 +78,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
 /** Build a delegation that is active (not cancelled). */
 function makeActiveDelegation(): StepDelegation {
   return {
+    credential: makeDelegationCredentialDescriptor(),
     tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.runbook.md',
     childRunbookRef: { source: 'project', path: 'child.runbook.md' },

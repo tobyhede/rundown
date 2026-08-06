@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { buildFrameKey, DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
+import {
+  buildFrameKey,
+  DelegateResponseSchema,
+  ErrorResponseSchema,
+  type RunbookState,
+} from '@rundown-org/core';
 import { rm, writeFile } from 'node:fs/promises';
 import {
   patchPersistedRunState,
@@ -19,7 +24,12 @@ import {
   createRunbook,
   parseCliJsonObject,
   parseConcatenatedJson,
+  findFrontierInEvents,
+  requireLatestFrontierToken,
+  requireEmittedRunClaim,
+  seedExecutionOwnership,
   withRunTarget,
+  readRunbookState,
 } from '../helpers/test-utils.js';
 
 /**
@@ -31,6 +41,23 @@ function findErrorEnvelope(stdout: string): Record<string, unknown> | undefined 
   return parseConcatenatedJson(stdout).find(
     (o): o is Record<string, unknown> =>
       typeof o === 'object' && o !== null && (o as { kind?: string }).kind === 'error',
+  );
+}
+
+/**
+ * Locate the `{ kind: 'delegate' }` envelope among the (possibly concatenated)
+ * JSON documents a command emits.
+ *
+ * A single `JSON.parse` is not safe once the command also emits a warning:
+ * `JSONRenderer.render` marks `hasOutput` for every event including a
+ * stderr-only warning, so `flush()` appends a trailing `{}` document to stdout.
+ * That is pre-existing renderer behaviour, unrelated to which branch emits the
+ * warning.
+ */
+function findDelegateEnvelope(stdout: string): Record<string, unknown> | undefined {
+  return parseConcatenatedJson(stdout).find(
+    (o): o is Record<string, unknown> =>
+      typeof o === 'object' && o !== null && (o as { kind?: string }).kind === 'delegate',
   );
 }
 // Static import of the command module under test. The behavioural tests below
@@ -175,19 +202,16 @@ describe('delegate command', () => {
 
     // Start the substeps runbook in prompted mode
     const startResult = await runCliInProcess(
-      'run --prompted runbooks/delegate-parent.runbook.md --text',
+      'run --prompted runbooks/delegate-parent.runbook.md',
       workspace,
     );
     if (startResult.exitCode !== 0) {
       throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
     }
     const state = await getActiveState(workspace);
-    const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
-      ?.token;
-    if (!autoToken) {
-      throw new Error('setup run did not persist an auto-issued delegation token');
-    }
-    const parentClaimId = await issueRunControlClaim(workspace, state.id);
+    if (!state) throw new Error('Expected active run after delegation setup');
+    const autoToken = requireLatestFrontierToken(workspace, '1.1');
+    const parentClaimId = requireEmittedRunClaim(workspace, state.id);
     const abortResult = await runCliInProcess(
       ['abort', autoToken, '--claim-id', parentClaimId],
       workspace,
@@ -226,19 +250,13 @@ describe('delegate command', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'delegate-parent.runbook.md'), parentContent);
 
     const startResult = await runCliInProcess(
-      'run --prompted runbooks/delegate-parent.runbook.md --text',
+      'run --prompted runbooks/delegate-parent.runbook.md',
       workspace,
     );
     if (startResult.exitCode !== 0) {
       throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
     }
-    const state = await getActiveState(workspace);
-    const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
-      ?.token;
-    if (!autoToken) {
-      throw new Error('setup run did not persist an auto-issued delegation token');
-    }
-    return autoToken;
+    return requireLatestFrontierToken(workspace, '1.1');
   }
 
   it('rejects malformed --claim-id before delegation logic runs', async () => {
@@ -654,21 +672,20 @@ describe('delegate command', () => {
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/for-parent.runbook.md --text',
+        'run --prompted runbooks/for-parent.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
       // Clear the live iteration's auto-issued delegation so the explicit
       // --index issuance below is the only delegation in play.
-      const stateAfterStart = await getActiveState(workspace);
       const autoTokens =
-        stateAfterStart?.substepStates
-          ?.map((substep) => substep.delegation?.token)
-          .filter((token): token is string => typeof token === 'string') ?? [];
+        findFrontierInEvents(parseConcatenatedJson(startResult.stdout))?.map(
+          (entry) => entry.token,
+        ) ?? [];
       for (const token of autoTokens) {
         const state = await getActiveState(workspace);
         if (!state) throw new Error('Expected active run for abort setup');
-        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const parentClaimId = requireEmittedRunClaim(workspace, state.id);
         const abort = await runCliInProcess(
           ['abort', token, '--claim-id', parentClaimId],
           workspace,
@@ -886,7 +903,6 @@ describe('delegate command', () => {
         workspace,
       );
       expect(result.exitCode).toBe(0);
-      const output = parseCliJsonObject(result.stdout);
 
       const state = await getActiveState(workspace);
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
@@ -898,7 +914,7 @@ describe('delegate command', () => {
       const delegation = ss1?.delegation as Record<string, unknown>;
       expect(delegation.tokenHash).toBeDefined();
       expect((delegation.tokenHash as string).startsWith('sha256:')).toBe(true);
-      expect(delegation.token).toBe(output.token);
+      expect(delegation.token).toBeUndefined();
       expect(delegation.childRunId).toBeNull();
     });
 
@@ -910,8 +926,6 @@ describe('delegate command', () => {
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
-      const token = parseCliJsonObject(delegated.stdout).token as string;
-
       const statusResult = await runCliInProcess('status', workspace);
       expect(statusResult.exitCode).toBe(0);
 
@@ -921,7 +935,7 @@ describe('delegate command', () => {
       expect(delegations).toHaveLength(1);
       expect(delegations?.[0]?.substep).toBe('1');
       expect(delegations?.[0]?.state).toBe('pending');
-      expect(delegations?.[0]?.token).toBe(token);
+      expect(delegations?.[0]).not.toHaveProperty('token');
       expect(delegations?.[0]?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
     });
 
@@ -1058,7 +1072,7 @@ describe('delegate command', () => {
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/with-delegate-ref.runbook.md --text',
+        'run --prompted runbooks/with-delegate-ref.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
@@ -1067,7 +1081,9 @@ describe('delegate command', () => {
         await withRunTarget(['goto', '2'], workspace),
         workspace,
       );
-      expect(gotoResult.exitCode).toBe(0);
+      if (gotoResult.exitCode !== 0) {
+        throw new Error(`setup goto failed:\n${gotoResult.stdout}\n${gotoResult.stderr}`);
+      }
     }
 
     /**
@@ -1097,7 +1113,7 @@ describe('delegate command', () => {
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/with-ref.runbook.md --text',
+        'run --prompted runbooks/with-ref.runbook.md',
         workspace,
       );
       if (startResult.exitCode !== 0) {
@@ -1109,9 +1125,10 @@ describe('delegate command', () => {
       await setupDelegationWithPendingDelegateRunbookRef();
 
       const before = await getActiveState(workspace);
-      const issuedToken = before?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
-      expect(issuedToken).toBeDefined();
+      const beforeDelegation = before?.substepStates?.find(
+        (substep) => substep.id === '1',
+      )?.delegation;
+      const issuedToken = requireLatestFrontierToken(workspace, '2.1');
 
       const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
@@ -1123,11 +1140,13 @@ describe('delegate command', () => {
       );
       expect(envelope.token).toBe(issuedToken);
 
-      // No duplication: the persisted delegation token is unchanged.
+      // No duplication: the persisted non-secret credential is unchanged.
       const after = await getActiveState(workspace);
-      const afterToken = after?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
-      expect(afterToken).toBe(issuedToken);
+      const afterDelegation = after?.substepStates?.find(
+        (substep) => substep.id === '1',
+      )?.delegation;
+      expect(afterDelegation?.credential).toEqual(beforeDelegation?.credential);
+      expect(afterDelegation?.tokenHash).toBe(beforeDelegation?.tokenHash);
     });
 
     it('rd delegate --step 1.1 does not infer after inline child launch takes scope', async () => {
@@ -1151,10 +1170,10 @@ describe('delegate command', () => {
       // satisfy the assertion. The setup `goto 2`s, so the cursor sits in
       // step 2's base frame (`2|`).
       const beforeFrame = before?.activeFrameKey ?? buildFrameKey('2');
-      const issuedToken = before?.substepStates?.find(
+      const beforeDelegation = before?.substepStates?.find(
         (substep) => substep.id === '1' && substep.frameKey === beforeFrame,
-      )?.delegation?.token;
-      expect(issuedToken).toBeDefined();
+      )?.delegation;
+      const issuedToken = requireLatestFrontierToken(workspace, '2.1');
 
       const result = await runCliInProcess(
         await withRunTarget(['delegate', '--step', '2.1'], workspace),
@@ -1168,13 +1187,14 @@ describe('delegate command', () => {
       );
       expect(envelope.token).toBe(issuedToken);
 
-      // No re-issue: the persisted delegation token is unchanged.
+      // No re-issue: the persisted non-secret credential is unchanged.
       const after = await getActiveState(workspace);
       const afterFrame = after?.activeFrameKey ?? buildFrameKey('2');
-      const afterToken = after?.substepStates?.find(
+      const afterDelegation = after?.substepStates?.find(
         (substep) => substep.id === '1' && substep.frameKey === afterFrame,
-      )?.delegation?.token;
-      expect(afterToken).toBe(issuedToken);
+      )?.delegation;
+      expect(afterDelegation?.credential).toEqual(beforeDelegation?.credential);
+      expect(afterDelegation?.tokenHash).toBe(beforeDelegation?.tokenHash);
     });
 
     it('backward compat: explicit rd delegate child.runbook.md --step 1.1 still works', async () => {
@@ -2036,19 +2056,18 @@ describe('delegate command', () => {
 
       // Start the parent in prompted mode
       const startResult = await runCliInProcess(
-        'run --prompted runbooks/for-parent.runbook.md --text',
+        'run --prompted runbooks/for-parent.runbook.md',
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
-      const stateAfterStart = await getActiveState(workspace);
       const autoTokens =
-        stateAfterStart?.substepStates
-          ?.map((substep) => substep.delegation?.token)
-          .filter((token): token is string => typeof token === 'string') ?? [];
+        findFrontierInEvents(parseConcatenatedJson(startResult.stdout))?.map(
+          (entry) => entry.token,
+        ) ?? [];
       for (const token of autoTokens) {
         const state = await getActiveState(workspace);
         if (!state) throw new Error('Expected active run for abort setup');
-        const parentClaimId = await issueRunControlClaim(workspace, state.id);
+        const parentClaimId = requireEmittedRunClaim(workspace, state.id);
         const abort = await runCliInProcess(
           ['abort', token, '--claim-id', parentClaimId],
           workspace,
@@ -2284,6 +2303,179 @@ describe('delegate command', () => {
     });
   });
 
+  // Deferring the thunk to `beforeEffect` defers it past the echo but NOT past
+  // the transaction: core invokes `resolveExtraVars` / `resolveOverrides` before
+  // execution-lease acquisition and before the commit, so emitting a routing
+  // warning at routing time would warn about vars a REFUSED delegation never
+  // applied. The CLI therefore buffers the warnings and drains the buffer only
+  // from the `delegated` / `retried` branches.
+  describe('input-routing warnings are deferred to the committed branches', () => {
+    // Higher than any epoch the setup commands record for themselves.
+    const SEEDED_EXEC_EPOCH = 99;
+    // `RunId` is a reserved runtime variable name, so routeExtraVars routes it
+    // successfully (no throw) while emitting exactly one warning.
+    const RESERVED_INPUT = ['--input', 'RunId=foo'];
+    const RESERVED_WARNING = /Ignoring reserved runtime variable "RunId"/;
+
+    /**
+     * Start a prompted parent whose step 2 ALSO authors a DELEGATE substep.
+     *
+     * `resolveDelegationIssuance` never checks step currency, so `--step 2.1`
+     * resolves as `issuable` and the seam runs the extra-vars thunk; only
+     * `createDelegation`'s frontier guard then refuses (RD-802). That is the
+     * deterministic `error` arm of `prepareManualDelegationMutation`, reached
+     * strictly AFTER routing succeeded.
+     */
+    async function setupOffFrontierDelegateTarget(): Promise<void> {
+      const childContent = createRunbook({
+        steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Main step',
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'Substep A', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+              { title: 'Substep B', content: 'Second substep.' },
+            ],
+          },
+          {
+            title: 'Later step',
+            pass: 'COMPLETE',
+            substeps: [
+              { title: 'Substep A', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            ],
+          },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'delegate-parent.runbook.md'), parentContent);
+
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/delegate-parent.runbook.md',
+        workspace,
+      );
+      if (startResult.exitCode !== 0) {
+        throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
+      }
+    }
+
+    it('emits the routing warning on the freshly-minted (delegated) path', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', ...RESERVED_INPUT],
+          workspace,
+        ),
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(findDelegateEnvelope(result.stdout)).toMatchObject({
+        kind: 'delegate',
+        action: 'delegated',
+      });
+      expect(result.stderr).toMatch(RESERVED_WARNING);
+    });
+
+    it('emits the routing warning on the retried path', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', autoToken, ...RESERVED_INPUT], workspace),
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(findDelegateEnvelope(result.stdout)).toMatchObject({
+        kind: 'delegate',
+        action: 'retried',
+      });
+      expect(result.stderr).toMatch(RESERVED_WARNING);
+    });
+
+    it('withholds the warning when fresh preparation refuses (off-frontier target)', async () => {
+      await setupOffFrontierDelegateTarget();
+
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '2.1', ...RESERVED_INPUT], workspace),
+        workspace,
+      );
+
+      // RD-802: the seam already routed the vars (the thunk ran), then
+      // createDelegation refused because step 2 is not the frontier.
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({ kind: 'error', code: 'RD-802' });
+      expect(result.stderr).not.toMatch(RESERVED_WARNING);
+      expect(result.stderr).not.toMatch(/Warning:/);
+    });
+
+    it('withholds the warning when --retry preparation refuses (off-frontier target)', async () => {
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '2.1', ...RESERVED_INPUT], workspace),
+        workspace,
+      );
+
+      // RD-801: `resolveOverrides` ran (routing succeeded), then retryDelegation
+      // found no delegation on the off-frontier frame.
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({ kind: 'error', code: 'RD-801' });
+      expect(result.stderr).not.toMatch(RESERVED_WARNING);
+      expect(result.stderr).not.toMatch(/Warning:/);
+    });
+
+    it('withholds the warning when a fresh issue is refused by the transaction', async () => {
+      await setupDelegation();
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active run');
+      const argv = await withRunTarget(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', ...RESERVED_INPUT],
+        workspace,
+      );
+      seedExecutionOwnership(workspace, state.id, SEEDED_EXEC_EPOCH);
+
+      const result = await runCliInProcess(argv, workspace);
+
+      // The thunk runs inside `beforeEffect`, which precedes lease acquisition —
+      // so routing succeeded and the refusal happened afterwards.
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+      });
+      expect(result.stderr).not.toMatch(RESERVED_WARNING);
+      expect(result.stderr).not.toMatch(/Warning:/);
+    });
+
+    it('withholds the warning when a --retry is refused by the transaction', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active run');
+      const argv = await withRunTarget(
+        ['delegate', '--retry', autoToken, ...RESERVED_INPUT],
+        workspace,
+      );
+      seedExecutionOwnership(workspace, state.id, SEEDED_EXEC_EPOCH);
+
+      const result = await runCliInProcess(argv, workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+      });
+      expect(result.stderr).not.toMatch(RESERVED_WARNING);
+      expect(result.stderr).not.toMatch(/Warning:/);
+    });
+  });
+
   // Closes the drift gap that let `already-delegated` / `retried` envelopes
   // diverge from the published DelegateResponseSchema: every emitted action must
   // round-trip through the schema consumers validate against.
@@ -2336,6 +2528,114 @@ describe('delegate command', () => {
 
       expect(retry.exitCode).toBe(0);
       assertConformsToSchema(parseCliJsonObject(retry.stdout));
+    });
+  });
+
+  // Both `delegate` switches route the transactional refusal arms through
+  // `renderTransactionalMutationRefusal`. `abort-refusals.test.ts` pins the
+  // abort call site over the full refusal union with a mocked seam; these two
+  // pin delegate's own call sites end-to-end, so the fresh-issue and --retry
+  // paths are provably exit-1 rather than exit-1-by-inspection.
+  describe('transactional refusals', () => {
+    // Higher than any epoch the setup commands record for themselves.
+    const SEEDED_EXEC_EPOCH = 99;
+
+    /**
+     * Project the delegation-bearing facts a committed issue/retry would
+     * necessarily change: the credential descriptor (including its
+     * `supersedesTokenHash` back-reference), the persisted verifier, the
+     * cancellation/link fields, and the substep status. Deep-equality over this
+     * projection is what turns "exit 1" into "and nothing was written".
+     */
+    function delegationFacts(state: RunbookState | null): unknown {
+      return (state?.substepStates ?? []).map((substep) => ({
+        id: substep.id,
+        frameKey: substep.frameKey,
+        status: substep.status,
+        credential: substep.delegation?.credential ?? null,
+        tokenHash: substep.delegation?.tokenHash ?? null,
+        childRunId: substep.delegation?.childRunId ?? null,
+        cancelledAt: substep.delegation?.cancelledAt ?? null,
+        createdAt: substep.delegation?.createdAt ?? null,
+        extraVars: substep.delegation?.extraVars ?? null,
+      }));
+    }
+
+    it('exits 1 when a fresh issue is refused with EXECUTION_IN_PROGRESS', async () => {
+      await setupDelegation();
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active run');
+      // Resolve the bearer BEFORE seeding ownership: issuing a run-control claim
+      // is itself a guarded session mutation and would be refused afterwards.
+      const argv = await withRunTarget(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      // Baseline read AFTER the claim is minted, so claim issuance is not
+      // mistaken for the refused command's write.
+      const before = await readRunbookState(workspace, state.id);
+      expect(before).not.toBeNull();
+      // Seed above every epoch the setup commands already recorded — the
+      // execution_attempts row is keyed by (run_id, exec_epoch).
+      seedExecutionOwnership(workspace, state.id, SEEDED_EXEC_EPOCH);
+
+      const result = await runCliInProcess(argv, workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+      });
+      // Nothing committed: no credential was minted onto 1.1 and no substep
+      // moved. setupDelegation aborted the auto-issued token, so the substep
+      // must still carry only that cancelled record.
+      const after = await readRunbookState(workspace, state.id);
+      expect(after).not.toBeNull();
+      expect(delegationFacts(after)).toEqual(delegationFacts(before));
+      // "Uncancelled" is ABSENT-OR-NULL, not null alone. `readRunbookState`
+      // reads the persisted JSON behind a loose structural guard that never
+      // inspects `delegation`, so a record written without the key round-trips
+      // as `undefined` (JSON.stringify drops it) even though `StepDelegation`
+      // types it `string | null`. Matching only `=== null` would let exactly
+      // that record — a live, uncancelled delegation — slip past the assertion
+      // that nothing was committed. The `delegation !== undefined` test keeps
+      // substeps carrying no delegation at all out of the count.
+      expect(
+        (after?.substepStates ?? []).filter(
+          (s) => s.delegation !== undefined && (s.delegation.cancelledAt ?? null) === null,
+        ),
+      ).toEqual([]);
+      expect(after?.updatedAt).toBe(before?.updatedAt);
+    });
+
+    it('exits 1 when a --retry is refused with EXECUTION_IN_PROGRESS', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active run');
+      const argv = await withRunTarget(['delegate', '--retry', autoToken], workspace);
+      const before = await readRunbookState(workspace, state.id);
+      expect(before).not.toBeNull();
+      seedExecutionOwnership(workspace, state.id, SEEDED_EXEC_EPOCH);
+
+      const result = await runCliInProcess(argv, workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(findErrorEnvelope(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+      });
+      // Nothing committed: the auto-issued delegation is untouched — not
+      // cancelled, not re-minted, and carrying no supersede back-reference.
+      const after = await readRunbookState(workspace, state.id);
+      expect(after).not.toBeNull();
+      expect(delegationFacts(after)).toEqual(delegationFacts(before));
+      const retained = (after?.substepStates ?? []).flatMap((s) =>
+        s.delegation ? [s.delegation] : [],
+      );
+      expect(retained).toHaveLength(1);
+      expect(retained[0].cancelledAt).toBeNull();
+      expect(retained[0].credential.supersedesTokenHash).toBeUndefined();
+      expect(after?.updatedAt).toBe(before?.updatedAt);
     });
   });
 });

@@ -10,6 +10,7 @@ import { isLastAction } from './last-action.js';
  * layer narrows `RunbookStoppedPayload['reason']` through this type.
  */
 type StoppedReason =
+  | 'actor_context_required'
   | 'policy_denied'
   | 'command_execution_failed'
   | 'fail_transition'

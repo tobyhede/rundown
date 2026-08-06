@@ -2,8 +2,10 @@ import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/par
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
-import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import type { DelegationTokenHash } from './delegation-token.js';
+import type { RunId } from './run-id.js';
 import { RunbookStateManager } from './state.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
 import type {
@@ -275,8 +277,14 @@ export interface AbortDelegationAlreadyCancelledResult {
 /** Delegation is claimed by a child run and requires `force` to cancel. */
 export interface AbortDelegationNeedsForceResult {
   readonly status: 'needs_force';
-  /** Child run currently holding the claimed delegation. */
-  readonly childRunId: string;
+  /**
+   * Child run currently holding the claimed delegation.
+   *
+   * Read verbatim from `StepDelegation.childRunId`, whose brand the persisted
+   * state schema validates at load, so callers inherit the brand rather than
+   * re-asserting it at their own boundary.
+   */
+  readonly childRunId: RunId;
 }
 
 /**
@@ -324,6 +332,10 @@ export interface DelegateOptions {
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */
   readonly frameKey: FrameKey;
+  /** Verified runtime capability that issues a credential after validation succeeds. */
+  readonly issueCredential: DelegationCredentialIssuer;
+  /** Prior credential replaced by this issuance, for retry replay identity. */
+  readonly supersedesTokenHash?: DelegationTokenHash;
 }
 
 /** Success variant: delegation created; caller must persist updatedSubstepStates. */
@@ -414,8 +426,14 @@ export interface CreateDelegationClaimedResult {
   readonly status: 'delegation_claimed';
   /** Caller-input `stepId` verbatim (mirrors {@link CreateDelegationExistsResult.step}). */
   readonly step: string;
-  /** Child run currently holding the claimed delegation. */
-  readonly childRunId: string;
+  /**
+   * Child run currently holding the claimed delegation.
+   *
+   * Read verbatim from `StepDelegation.childRunId`, whose brand the persisted
+   * state schema validates at load, so callers inherit the brand rather than
+   * re-asserting it at their own boundary.
+   */
+  readonly childRunId: RunId;
   /** Wrapped RundownError (RD-811) for callers that re-surface the message. */
   readonly error: RundownError;
 }
@@ -634,9 +652,17 @@ export function createDelegation(
     };
   }
 
-  // 8. Generate token and hash
-  const token = generateDelegationToken();
-  const tokenHash = hashDelegationToken(token);
+  // 8. Issue the credential only after all write-free validation succeeds.
+  const issuedCredential = options.issueCredential(
+    {
+      parentRunId: state.id,
+      parentStepId: stepId,
+      parentFrameKey: frameKey,
+      parentEntry: inferFrameEntryFromState(state, frameKey),
+    },
+    options.supersedesTokenHash,
+  );
+  const { token, tokenHash, credential } = issuedCredential;
 
   // 9. Build context snapshot
   const explicitIteration = typeof parsed.at === 'number' ? parsed.at : undefined;
@@ -647,7 +673,7 @@ export function createDelegation(
 
   // 10. Create delegation object
   const delegation: StepDelegation = {
-    token,
+    credential,
     tokenHash,
     childRunbookPath,
     childRunbookRef,
@@ -730,7 +756,6 @@ export function abortDelegation(options: AbortDelegationOptions): AbortDelegatio
   // 4. Set cancelledAt
   const updatedDelegation: StepDelegation = {
     ...delegation,
-    token: undefined,
     cancelledAt: new Date().toISOString(),
   };
 
@@ -761,6 +786,8 @@ export interface RetryDelegationOptions {
    * false so linked child runs must go through abort --force teardown first.
    */
   readonly allowLinkedChildRun?: boolean;
+  /** Verified runtime capability that issues the replacement credential. */
+  readonly issueCredential: DelegationCredentialIssuer;
 }
 
 /**
@@ -830,8 +857,14 @@ export interface RetryDelegationErrorResult {
  */
 export interface RetryDelegationInFlightResult {
   readonly status: 'in_flight';
-  /** Linked child run that must be force-aborted before retry. */
-  readonly childRunId: string;
+  /**
+   * Linked child run that must be force-aborted before retry.
+   *
+   * Read verbatim from `StepDelegation.childRunId`, whose brand the persisted
+   * state schema validates at load, so callers inherit the brand rather than
+   * re-asserting it at their own boundary.
+   */
+  readonly childRunId: RunId;
   /** Wrapped RundownError (RD-823) for callers that re-surface the message. */
   readonly error: RundownError;
 }
@@ -1051,6 +1084,8 @@ export function retryDelegation(
       ...(mergedExtraVars ? { extraVars: mergedExtraVars } : {}),
       ancestors: [],
       frameKey,
+      issueCredential: options.issueCredential,
+      supersedesTokenHash: existingDelegation.tokenHash,
     },
     steps,
   );

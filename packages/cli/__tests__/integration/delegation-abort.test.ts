@@ -9,10 +9,12 @@ import {
   readRunbookState,
   runCli,
   runCliInProcess,
+  requireFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { deletePersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 
 describe('Delegation abort integration', () => {
   let workspace: TestWorkspace;
@@ -67,14 +69,13 @@ describe('Delegation abort integration', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    const result = runCli('run --prompted parent.runbook.md --text', workspace);
+    const result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const state = await getActiveState(workspace);
-    const token = state?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const token = requireFrontierToken(result.stdout, '1.1');
     const parentClaimId = await issueRunControlClaim(workspace, state!.id);
-    return { token: token!, parentClaimId };
+    return { token, parentClaimId };
   }
 
   it('rejects invalid token format', () => {
@@ -261,9 +262,48 @@ describe('Delegation abort integration', () => {
     const rows = Object.values(parent!.resolvedCompletions ?? {}).filter(
       (row) => row.agentId === 'delegation',
     );
-    expect(rows).toHaveLength(0);
+    expect(rows).toEqual([expect.objectContaining({ result: 'fail' })]);
     const entry = parent!.substepStates?.find((state) => state.id === '1');
     expect(entry?.delegation?.cancelledAt).not.toBeNull();
+  });
+
+  it('reports the stale-reference cleanup when force-aborting a pruned linked child', async () => {
+    // End-to-end shape of the `missing_child_cleaned` cleanup: the parent still
+    // names a childRunId whose run has been pruned, so `--force` clears the
+    // stale link. The operator must be told the link was cleaned, not that the
+    // delegation was merely pending — the latter reads as "no child was ever
+    // claimed", which is the opposite of what happened.
+    // Driven in-process: the spawned `runCli` path executes the last built
+    // `dist/cli.js`, which predates the core cleanup branch this asserts on.
+    const { token, parentClaimId } = await setupDelegation();
+    const parentId = (await getActiveState(workspace))!.id;
+
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimPayload = parseConcatenatedJson(claim.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && 'run_id' in value,
+    );
+    if (claimPayload === undefined) throw new Error('expected claim payload');
+    const childRunId = String(claimPayload.run_id);
+
+    // Prune the child exactly as `rundown prune` does: the parent keeps its
+    // reference, the run itself is gone.
+    await deletePersistedRunState(workspace.cwd, childRunId);
+
+    const result = await runCliInProcess(
+      `abort ${token} --claim-id ${parentClaimId} --force --text`,
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('(linked child run missing, stale reference cleaned up)');
+    expect(result.stdout).not.toContain('pending delegation');
+
+    // The stale link is actually gone, so the rendered claim is true.
+    const parent = await readRunbookState(workspace, parentId);
+    const entry = parent!.substepStates?.find((state) => state.id === '1');
+    expect(entry?.delegation?.cancelledAt).toEqual(expect.any(String));
   });
 
   it('force abort inside a FOR iteration leaves that iteration frame collection pending', async () => {
@@ -294,7 +334,7 @@ describe('Delegation abort integration', () => {
     ].join('\n');
     await writeFile(join(workspace.cwd, 'for-abort.runbook.md'), parentContent);
 
-    const start = runCli('run --prompted for-abort.runbook.md --text', workspace);
+    const start = runCli('run --prompted for-abort.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
     // The FOR step has entered iteration 1; substep 1.1 auto-issued a token in
@@ -302,10 +342,7 @@ describe('Delegation abort integration', () => {
     const entered = await getActiveState(workspace);
     const parentId = entered!.id;
     const parentClaimId = await issueRunControlClaim(workspace, parentId);
-    const iterationSubstep = entered?.substepStates?.find((ss) => ss.delegation?.token);
-    const token = iterationSubstep?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     // Claim (in-flight), then force abort.
     let result = runCli(`claim ${token}`, workspace);

@@ -35,6 +35,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 
 const DEFAULT_TRANSITIONS: Transitions = {
@@ -67,10 +68,13 @@ function makeState(overrides: Partial<DelegationInferenceState> = {}): Delegatio
   };
 }
 
+/** Persisted verifier carried by the default pending-delegation fixture. */
+const PENDING_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+
 function makeActiveDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
-    token: 'rdtk_aaa',
-    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+    credential: makeDelegationCredentialDescriptor(),
+    tokenHash: PENDING_TOKEN_HASH,
     childRunbookPath: 'child.runbook.md',
     childRunbookRef: { source: 'project', path: 'child.runbook.md' },
     contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
@@ -391,24 +395,28 @@ describe('resolveDelegateTarget', () => {
 describe('deriveDelegateFrontier', () => {
   /**
    * Build a substep state carrying a pending (non-cancelled) delegation with a
-   * recoverable token, scoped to a specific frame.
+   * credential descriptor, scoped to a specific frame.
    *
    * @param id - Substep id.
    * @param frameKey - Frame key scoping this substep instance.
-   * @param token - Recoverable delegation token (omit to model a token-less record).
+   * @param parentEntry - Unique issuance coordinate for this delegation.
    * @returns A pending-delegation substep state.
    */
   function pendingDelegationSubstep(
     id: string,
     frameKey: string,
-    token: string | undefined,
+    parentEntry: number,
   ): SubstepState {
     return {
       id,
       frameKey: frameKey as FrameKey,
       status: 'pending',
       delegation: {
-        ...(token !== undefined ? { token } : {}),
+        credential: makeDelegationCredentialDescriptor({
+          parentStepId: `1.${id}`,
+          parentFrameKey: frameKey as FrameKey,
+          parentEntry,
+        }),
         tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
         childRunbookPath: 'child.runbook.md',
         childRunbookRef: { source: 'project', path: 'child.runbook.md' },
@@ -452,42 +460,60 @@ describe('deriveDelegateFrontier', () => {
 
   it('returns only the active frame entry when iterations share a substep id', () => {
     const state = makeRunbookState('1|2', [
-      pendingDelegationSubstep('1', '1|1', 'stale-iter1-token'),
-      pendingDelegationSubstep('1', '1|2', 'fresh-iter2-token'),
+      pendingDelegationSubstep('1', '1|1', 1),
+      pendingDelegationSubstep('1', '1|2', 2),
     ]);
 
     const frontier = deriveDelegateFrontier(state);
 
     expect(frontier).toEqual([
-      { id: '1.1', runbook: 'child.runbook.md', token: 'fresh-iter2-token' },
+      {
+        id: '1.1',
+        runbook: 'child.runbook.md',
+        credential: makeDelegationCredentialDescriptor({
+          parentStepId: '1.1',
+          parentFrameKey: buildFrameKey('1', 2),
+          parentEntry: 2,
+        }),
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      },
     ]);
-    expect(frontier.map((entry) => entry.token)).not.toContain('stale-iter1-token');
+    expect(frontier.map((entry) => entry.credential.parentEntry)).not.toContain(1);
   });
 
   it('is frame-scoped, not array-order dependent', () => {
     const substeps = [
-      pendingDelegationSubstep('1', '1|1', 'iter1-token'),
-      pendingDelegationSubstep('1', '1|2', 'iter2-token'),
+      pendingDelegationSubstep('1', '1|1', 1),
+      pendingDelegationSubstep('1', '1|2', 2),
     ];
 
-    expect(deriveDelegateFrontier(makeRunbookState('1|1', substeps))).toEqual([
-      { id: '1.1', runbook: 'child.runbook.md', token: 'iter1-token' },
-    ]);
-    expect(deriveDelegateFrontier(makeRunbookState('1|2', substeps))).toEqual([
-      { id: '1.1', runbook: 'child.runbook.md', token: 'iter2-token' },
-    ]);
+    expect(
+      deriveDelegateFrontier(makeRunbookState('1|1', substeps)).map(
+        (entry) => entry.credential.parentEntry,
+      ),
+    ).toEqual([1]);
+    expect(
+      deriveDelegateFrontier(makeRunbookState('1|2', substeps)).map(
+        (entry) => entry.credential.parentEntry,
+      ),
+    ).toEqual([2]);
   });
 
   it('surfaces a single non-FOR frame delegation', () => {
-    const state = makeRunbookState('1|', [pendingDelegationSubstep('1', '1|', 'tok')]);
+    const state = makeRunbookState('1|', [pendingDelegationSubstep('1', '1|', 1)]);
 
     expect(deriveDelegateFrontier(state)).toEqual([
-      { id: '1.1', runbook: 'child.runbook.md', token: 'tok' },
+      {
+        id: '1.1',
+        runbook: 'child.runbook.md',
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      },
     ]);
   });
 
   it('excludes cancelled delegations', () => {
-    const substep = pendingDelegationSubstep('1', '1|', 'tok');
+    const substep = pendingDelegationSubstep('1', '1|', 1);
     const cancelled: SubstepState = {
       ...substep,
       delegation: { ...substep.delegation!, cancelledAt: '2026-01-02T00:00:00.000Z' },
@@ -497,20 +523,33 @@ describe('deriveDelegateFrontier', () => {
     expect(deriveDelegateFrontier(state)).toEqual([]);
   });
 
-  it('excludes delegations with no recoverable token', () => {
-    const state = makeRunbookState('1|', [pendingDelegationSubstep('1', '1|', undefined)]);
+  it('excludes claimed delegations', () => {
+    const substep = pendingDelegationSubstep('1', '1|', 1);
+    const claimed: SubstepState = {
+      ...substep,
+      delegation: {
+        ...substep.delegation!,
+        childRunId: brandRunIdForTest(`rd_${'2'.repeat(32)}`),
+      },
+    };
+    const state = makeRunbookState('1|', [claimed]);
 
     expect(deriveDelegateFrontier(state)).toEqual([]);
   });
 
   it('falls back to the derived active frame when activeFrameKey is absent', () => {
     const state: RunbookState = {
-      ...makeRunbookState('1|', [pendingDelegationSubstep('1', '1|', 'tok')]),
+      ...makeRunbookState('1|', [pendingDelegationSubstep('1', '1|', 1)]),
       activeFrameKey: undefined,
     };
 
     expect(deriveDelegateFrontier(state)).toEqual([
-      { id: '1.1', runbook: 'child.runbook.md', token: 'tok' },
+      {
+        id: '1.1',
+        runbook: 'child.runbook.md',
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      },
     ]);
   });
 });
@@ -663,7 +702,7 @@ describe('isPostDelegateAggregationCursor', () => {
 describe('findPendingDelegation', () => {
   const frameKey = buildFrameKey('1');
 
-  // Canonical "pending, tokened, matching" fixture; each negative case below
+  // Canonical "pending, credentialed, matching" fixture; each negative case below
   // flips exactly ONE dimension so an AND->OR predicate mutant cannot survive.
   function stateWithDelegation(overrides: Partial<StepDelegation> = {}): DelegationInferenceState {
     const substepStates: SubstepState[] = [
@@ -672,9 +711,14 @@ describe('findPendingDelegation', () => {
     return makeState({ step: '1', activeFrameKey: frameKey, substepStates });
   }
 
-  it('returns the delegation for a pending, unclaimed, non-cancelled, tokened substep', () => {
+  it('returns the delegation for a pending, unclaimed, non-cancelled substep', () => {
     const result = findPendingDelegation(stateWithDelegation(), '1.1', frameKey);
-    expect(result?.token).toBe('rdtk_aaa');
+    expect(result).toEqual(
+      expect.objectContaining({
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      }),
+    );
   });
 
   it('returns undefined when the step id has no substep segment', () => {
@@ -708,12 +752,6 @@ describe('findPendingDelegation', () => {
         '1.1',
         frameKey,
       ),
-    ).toBeUndefined();
-  });
-
-  it('returns undefined when only the token is absent', () => {
-    expect(
-      findPendingDelegation(stateWithDelegation({ token: undefined }), '1.1', frameKey),
     ).toBeUndefined();
   });
 
@@ -799,7 +837,6 @@ describe('resolveDelegationIssuance', () => {
         frameKey,
         status: 'pending',
         delegation: makeActiveDelegation({
-          token: undefined,
           childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
         }),
       },
@@ -819,7 +856,7 @@ describe('resolveDelegationIssuance', () => {
       });
     });
 
-    it('echoes the pending token for a bare explicit-step request', () => {
+    it('returns the pending credential for a bare explicit-step request', () => {
       const resolution = resolveDelegationIssuance(
         stateWithPendingDelegation(),
         buildSingleDelegateSteps(),
@@ -829,19 +866,47 @@ describe('resolveDelegationIssuance', () => {
       expect(resolution).toEqual({
         kind: 'already-issued',
         stepId: '1.1',
-        token: 'rdtk_aaa',
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
 
-    it('echoes when the requested runbook matches the in-flight delegation', () => {
+    it('returns the credential when the requested runbook matches the in-flight delegation', () => {
       const resolution = resolveDelegationIssuance(
         stateWithPendingDelegation(),
         buildSingleDelegateSteps(),
         frameKey,
         { explicitStep: '1.1', requested: matchingRequested },
       );
-      expect(resolution).toMatchObject({ kind: 'already-issued', token: 'rdtk_aaa' });
+      expect(resolution).toMatchObject({
+        kind: 'already-issued',
+        credential: makeDelegationCredentialDescriptor(),
+      });
+    });
+
+    it("carries the delegation record's own verifier alongside its descriptor", () => {
+      // The verifier is what an echoing caller checks a reconstructed bearer
+      // against, so it must be read from the record rather than defaulted:
+      // a resolution pinned to some other delegation hash would authorize a
+      // token this record never issued.
+      const ownHash = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({ tokenHash: ownHash }),
+        },
+      ]);
+
+      const resolution = resolveDelegationIssuance(state, buildSingleDelegateSteps(), frameKey, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+
+      expect(resolution).toMatchObject({ kind: 'already-issued', tokenHash: ownHash });
+      expect(ownHash).not.toBe(PENDING_TOKEN_HASH);
     });
 
     it('conflicts (RD-804) when the requested runbook differs from the in-flight one', () => {
@@ -879,7 +944,6 @@ describe('resolveDelegationIssuance', () => {
           status: 'done',
           result: 'pass',
           delegation: makeActiveDelegation({
-            token: undefined,
             childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
           }),
         },
@@ -936,19 +1000,21 @@ describe('resolveDelegationIssuance', () => {
       });
     });
 
-    it('echoes the first pending token when every delegate substep is issued', () => {
+    it('returns the first pending credential when every delegate substep is issued', () => {
+      const firstCredential = makeDelegationCredentialDescriptor({ parentEntry: 1 });
+      const secondCredential = makeDelegationCredentialDescriptor({ parentEntry: 2 });
       const state = stateWith([
         {
           id: '1',
           frameKey,
           status: 'pending',
-          delegation: makeActiveDelegation({ token: 'rdtk_first' }),
+          delegation: makeActiveDelegation({ credential: firstCredential }),
         },
         {
           id: '2',
           frameKey,
           status: 'pending',
-          delegation: makeActiveDelegation({ token: 'rdtk_second' }),
+          delegation: makeActiveDelegation({ credential: secondCredential }),
         },
       ]);
       const resolution = resolveDelegationIssuance(state, buildDelegateSteps(), frameKey, {
@@ -957,7 +1023,54 @@ describe('resolveDelegationIssuance', () => {
       expect(resolution).toEqual({
         kind: 'already-issued',
         stepId: '1.1',
-        token: 'rdtk_first',
+        credential: firstCredential,
+        tokenHash: PENDING_TOKEN_HASH,
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('ignores a claimed delegation when no pending or issuable candidate remains', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithClaimedDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { requested: noneRequested },
+      );
+
+      expect(resolution.kind).toBe('none');
+      if (resolution.kind !== 'none') return;
+      expect(resolution.error.code).toBe('RD-813');
+    });
+
+    it('echoes a later pending delegation instead of an earlier claimed delegation', () => {
+      const pendingCredential = makeDelegationCredentialDescriptor({ parentEntry: 2 });
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({
+            credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
+            childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
+          }),
+        },
+        {
+          id: '2',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({ credential: pendingCredential }),
+        },
+      ]);
+
+      expect(
+        resolveDelegationIssuance(state, buildDelegateSteps(), frameKey, {
+          requested: noneRequested,
+        }),
+      ).toEqual({
+        kind: 'already-issued',
+        stepId: '1.2',
+        credential: pendingCredential,
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
@@ -990,7 +1103,7 @@ describe('resolveDelegationIssuance', () => {
   });
 
   describe('positional (requested, no step)', () => {
-    it('positional no-step over an auto-issued frontier echoes the existing token', () => {
+    it('positional no-step over an auto-issued frontier returns the existing credential', () => {
       const resolution = resolveDelegationIssuance(
         stateWithPendingDelegation(),
         buildSingleDelegateSteps(),
@@ -1000,7 +1113,8 @@ describe('resolveDelegationIssuance', () => {
       expect(resolution).toEqual({
         kind: 'already-issued',
         stepId: '1.1',
-        token: 'rdtk_aaa',
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
     });
@@ -1044,7 +1158,6 @@ describe('resolveDelegationIssuance', () => {
           frameKey,
           status: 'pending',
           delegation: makeActiveDelegation({
-            token: undefined,
             childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
           }),
         },
@@ -1061,7 +1174,7 @@ describe('resolveDelegationIssuance', () => {
   });
 
   describe('frame scoping', () => {
-    it('a pending delegation in FOR iteration frame 1|2 echoes under that frame only', () => {
+    it('a pending delegation in FOR iteration frame 1|2 resolves under that frame only', () => {
       const iterationFrame = buildFrameKey('1', 2);
       const substepStates: SubstepState[] = [
         {
@@ -1080,7 +1193,8 @@ describe('resolveDelegationIssuance', () => {
       expect(echoed).toEqual({
         kind: 'already-issued',
         stepId: '1.1',
-        token: 'rdtk_aaa',
+        credential: makeDelegationCredentialDescriptor(),
+        tokenHash: PENDING_TOKEN_HASH,
         runbookRef: 'child.runbook.md',
       });
 
@@ -1110,24 +1224,27 @@ describe('resolveTargetedDelegation', () => {
 
   const noneRequested: RequestedRunbookArg = { kind: 'none' };
 
-  it('echoes the existing token for a bare targeted request with an in-flight delegation', () => {
+  it('returns the existing credential for a bare targeted request with an in-flight delegation', () => {
     const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, noneRequested);
     expect(result).toEqual({
       kind: 'echo',
       stepId: '1.1',
-      token: 'rdtk_aaa',
+      credential: makeDelegationCredentialDescriptor(),
       runbookRef: 'child.runbook.md',
     });
   });
 
-  it('echoes when the requested runbook matches the in-flight runbook', () => {
+  it('returns the credential when the requested runbook matches the in-flight runbook', () => {
     const requested: RequestedRunbookArg = {
       kind: 'resolved',
       ref: { source: 'project', path: 'child.runbook.md' },
       raw: 'child.runbook.md',
     };
     const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
-    expect(result).toMatchObject({ kind: 'echo', token: 'rdtk_aaa' });
+    expect(result).toMatchObject({
+      kind: 'echo',
+      credential: makeDelegationCredentialDescriptor(),
+    });
   });
 
   it('conflicts (RD-804) when the requested runbook differs from the in-flight runbook', () => {

@@ -9,7 +9,12 @@ import type { RunbookActorService } from './actor-service.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
 import { authorizeClaim, claimCanReportDelegationResult, claimKeyFromBearer } from './claim-id.js';
-import type { ClaimAuthorizationRequest, ClaimId, ClaimRecord } from './claim-id.js';
+import type {
+  ClaimAuthorizationRequest,
+  ClaimId,
+  ClaimRecord,
+  VerifiedClaimAuthority,
+} from './claim-id.js';
 import { classifyDelegationExposureDetail } from './delegation-exposure.js';
 import type {
   CommandIntent,
@@ -17,11 +22,19 @@ import type {
   DelegationPolicyOutcome,
 } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
-import { createDelegation, retryDelegation } from './delegation-service.js';
-import { DelegationLockTimeoutError, type DelegationLockLike } from './delegation-lock.js';
+import {
+  createDelegationCredentialIssuer,
+  createDelegationTokenDeriver,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
+} from './delegation-credential.js';
 import type { TokenScanResult } from './delegation-scan.js';
-import { resolveDelegationIssuance, type RequestedRunbookArg } from './delegation-inference.js';
-import { heldLock, type ScopedLock } from './file-lock.js';
+import { hashDelegationToken } from './delegation-token.js';
+import {
+  resolveDelegationIssuance,
+  type DelegationIssuanceResolution,
+  type RequestedRunbookArg,
+} from './delegation-inference.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -68,6 +81,7 @@ import {
   deriveExecutionAt,
   findSubstepState,
   inactiveFrame,
+  replaceSubstepStateEntry,
 } from './targeting.js';
 import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
@@ -104,8 +118,6 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * test doubles stay trivial.
    */
   readonly loadRun: (runId: RunId) => Promise<RunbookState | undefined>;
-  /** Delete a persisted run state by id. Used only for active-child force abort cleanup. */
-  readonly deleteRun: (runId: RunId) => Promise<void>;
   /**
    * Derive the parsed steps for a resolved run from its in-memory state.
    *
@@ -130,17 +142,6 @@ export interface RunbookLifecycleCommandServiceDependencies {
    */
   readonly resolveChildRunbook: ResolveChildRunbook;
   /**
-   * Persist a single issued substep entry for a run.
-   *
-   * CLI-bound wrapper over `RunbookStateManager.updateWithState`; mirrors
-   * `loadRun` as a narrow manager capability so test doubles stay trivial. The
-   * seam hands over only the one entry it issued (keyed by `(id, frameKey)`) so
-   * the wrapper can merge it under a locked read-modify-write — a whole-array
-   * overwrite would clobber a concurrent write to a sibling substep that landed
-   * after the seam read the active state.
-   */
-  readonly persistIssuedSubstep: PersistIssuedSubstep;
-  /**
    * Locate a delegation across runs by its plain-text token.
    *
    * CLI-bound; wraps `DelegationScanService.findByToken` (which returns
@@ -149,17 +150,6 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * active run.
    */
   readonly findDelegationByToken: FindDelegationByToken;
-  /**
-   * Per-parent-run delegation lock serializing manual issuance and retry
-   * against the other DelegationLock takers (claim, abort, completion
-   * propagation).
-   *
-   * Narrow acquire/release contract (mirroring the `RunStateLockLike` DI
-   * precedent) so test fakes stay trivial; the seam wraps the held lock with
-   * `heldLock` + `await using` itself and maps
-   * {@link DelegationLockTimeoutError} to a typed RD-810 error outcome.
-   */
-  readonly delegationLock: DelegationLockLike;
 }
 
 /**
@@ -174,19 +164,6 @@ export interface RunbookLifecycleCommandServiceDependencies {
 export type ResolveChildRunbook = (
   runbookName: string,
 ) => Promise<{ readonly path: string; readonly ref: RunbookRef } | undefined>;
-
-/**
- * How the seam persists a single issued substep entry.
- *
- * CLI-bound; wraps `RunbookStateManager.updateWithState` so the entry is merged
- * (by `(id, frameKey)`) into the freshly-read array under the per-run lock,
- * rather than overwriting the whole array from a snapshot read outside the lock.
- *
- * @param runId - Run whose substep state is being updated.
- * @param entry - The single issued substep entry to merge by `(id, frameKey)`.
- * @returns A promise that resolves when the write completes.
- */
-export type PersistIssuedSubstep = (runId: RunId, entry: SubstepState) => Promise<void>;
 
 /**
  * Cross-run token lookup, CLI-bound (wraps `DelegationScanService.findByToken`).
@@ -371,16 +348,178 @@ export type DelegationIssuanceOutcome =
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError }
   /** Refusal: releasing the retried delegation's linked child hit execution ownership. */
-  | SessionMutationRefusalOutcome;
+  | SessionMutationRefusalOutcome
+  | Extract<
+      GuardedMutationResult<never>,
+      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+    >
+  | AbandonedAttemptSetOutcome;
 
-/** Result of cleaning up a force-aborted linked child delegation. */
-export type ForceAbortLinkedChildCleanupResult =
-  | { readonly kind: 'none' }
-  | { readonly kind: 'active_child_failed'; readonly childRunId: RunId }
-  | { readonly kind: 'terminal_child_cleaned'; readonly childRunId: RunId }
-  | { readonly kind: 'missing_child_cleaned'; readonly childRunId: RunId }
-  /** Refusal: releasing the linked child hit execution ownership; nothing was cleaned up. */
-  | SessionMutationRefusalOutcome;
+function replaceIssuedDelegation(
+  state: RunbookState,
+  updatedSubstepStates: readonly SubstepState[],
+  stepIdOrSubstep: string,
+  frameKey: FrameKey,
+): RunbookState {
+  const substepId = parseStepIdFromString(stepIdOrSubstep)?.substep ?? stepIdOrSubstep;
+  const issued = findSubstepState(updatedSubstepStates, substepId, frameKey);
+  if (!issued) {
+    throw new Error(
+      `Issued delegation substep "${substepId}" (frame ${frameKey}) missing from updated state`,
+    );
+  }
+  const resolvedCompletions = Object.fromEntries(
+    Object.entries(state.resolvedCompletions ?? {}).filter(
+      ([, completion]) =>
+        completion.targetFrameKey !== frameKey ||
+        completion.targetSubstep !== substepId ||
+        completion.agentId !== 'delegation',
+    ),
+  );
+  return {
+    ...state,
+    substepStates: replaceSubstepStateEntry(state.substepStates ?? [], issued),
+    resolvedCompletions,
+  };
+}
+
+/**
+ * Outcome of verifying the bearer an already-issued delegation would echo.
+ *
+ * Discriminated so the caller cannot reach a token without having passed the
+ * verification: the refusal arm carries no token at all.
+ */
+type EchoedDelegationToken =
+  | { readonly kind: 'verified'; readonly token: string }
+  | { readonly kind: 'unverifiable'; readonly error: RundownError };
+
+/**
+ * Reconstruct and verify the bearer token for an already-issued delegation
+ * before the seam echoes it.
+ *
+ * An echo is a credential disclosure, so it is gated on the same invariant
+ * `projectDelegateFrontier` enforces at the observation boundary: the token
+ * reconstructed from the persisted descriptor MUST hash to the verifier the
+ * parent recorded at issuance. Without that check the seam would hand back
+ * whatever the descriptor happens to derive to, which is a forged or corrupted
+ * record's own choosing.
+ *
+ * Derivation itself can fail — a rotated issuing claim can no longer reproduce a
+ * credential minted by its predecessor, and the deriver throws for that. That
+ * throw must not escape as an untyped error from a command seam whose contract
+ * is typed data, so it collapses into the same refusal as a mismatch. Neither
+ * arm carries the reconstructed token, so a caller cannot leak a bearer it was
+ * refused.
+ *
+ * @param echo - The `already-issued` resolution the seam matched.
+ * @param deriveToken - Verified runtime deriver bound to the presenting claim.
+ * @returns The verified bearer, or the typed refusal to return in its place.
+ */
+function verifyEchoedDelegationToken(
+  echo: Extract<DelegationIssuanceResolution, { readonly kind: 'already-issued' }>,
+  deriveToken: DelegationTokenDeriver,
+): EchoedDelegationToken {
+  let token: string;
+  try {
+    token = deriveToken(echo.credential);
+  } catch {
+    return {
+      kind: 'unverifiable',
+      error: Errors.delegationInvariantViolated(
+        `the presented claim cannot reconstruct the in-flight delegation credential for ${echo.stepId}`,
+      ),
+    };
+  }
+  if (hashDelegationToken(token) !== echo.tokenHash) {
+    return {
+      kind: 'unverifiable',
+      error: Errors.delegationInvariantViolated(
+        `reconstructed delegation credential for ${echo.stepId} does not match its persisted verifier`,
+      ),
+    };
+  }
+  return { kind: 'verified', token };
+}
+
+/**
+ * The policy refusals the mutation-authority resolution can produce.
+ *
+ * `#resolveMutationActorContext` is the sole authority gate on the abort path
+ * and yields exactly these two kinds: "no authority was named at all"
+ * (`actor_context_required`) and "the presented claim lacks this grant"
+ * (`claim_grant_required`). Publishing that narrow union — rather than the whole
+ * {@link DelegationPolicyOutcome} — is what lets a frontend switch exhaustively
+ * over it: a third kind added here becomes a compile error at every consumer
+ * instead of silently landing in a fallback that renders some other refusal's
+ * envelope (CLAUDE.md "No silent mapping").
+ *
+ * Deliberately NOT reused for {@link DelegationIssuanceOutcome}'s `refused` arm:
+ * issuance also runs `resolveCommandIntent`, which can refuse for collection
+ * state, so that seam legitimately carries the wider union.
+ */
+export type MutationAuthorityRefusalPolicy = Extract<
+  DelegationPolicyOutcome,
+  { readonly kind: 'actor_context_required' | 'claim_grant_required' }
+>;
+
+/** Input for the core-owned delegation abort workflow. */
+export interface DelegationAbortInput {
+  /** Plaintext delegation bearer used only for lookup and exact hash revalidation. */
+  readonly token: string;
+  /** Verified caller evidence authorizing mutation of the owning parent. */
+  readonly callerEvidence: CallerEvidence;
+  /** Whether a linked child should be stopped and reported as failed. */
+  readonly force: boolean;
+}
+
+/** Result of the core-owned delegation abort workflow. */
+export type DelegationAbortOutcome =
+  | { readonly kind: 'token_not_found' }
+  | {
+      readonly kind: 'already_cancelled';
+      readonly parentRunId: RunId;
+      readonly substepId: string;
+      readonly childRunbookPath: string;
+    }
+  | {
+      readonly kind: 'needs_force';
+      readonly substepId: string;
+      readonly childRunId: RunId;
+    }
+  | {
+      readonly kind: 'cancelled';
+      readonly parentRunId: RunId;
+      readonly substepId: string;
+      readonly childRunbookPath: string;
+      readonly childRunId: RunId | null;
+      /**
+       * Which linked-child cleanup branch ran.
+       *
+       * `none` means no child was ever linked — deliberately NOT reused for a
+       * linked child whose run has vanished, which is `missing_child_cleaned`:
+       * that branch superseded a stale delegated outcome, and collapsing the
+       * two would hide the cleanup behind "nothing to clean".
+       */
+      readonly cleanup:
+        | 'none'
+        | 'active_child_failed'
+        | 'terminal_child_cleaned'
+        | 'missing_child_cleaned';
+    }
+  | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
+  | { readonly kind: 'error'; readonly error: RundownError }
+  | Extract<
+      GuardedMutationResult<never>,
+      {
+        readonly kind:
+          | 'claim_superseded'
+          | 'concurrent_modification'
+          | 'execution_in_progress'
+          | 'recovery_required'
+          | 'missing';
+      }
+    >
+  | AbandonedAttemptSetOutcome;
 
 /**
  * Terminal side-effect policy applied when a transition reaches a terminal state.
@@ -541,6 +680,10 @@ export type LifecycleTransitionOutcome =
         readonly frameKey: Frame['frameKey'];
         readonly entry: number;
       };
+      /** Verified runtime-only issuer for the follow-on execution loop. */
+      readonly issueDelegationCredential?: DelegationCredentialIssuer;
+      /** Same-issuer deriver used only for intentional frontier output. */
+      readonly deriveDelegationToken?: DelegationTokenDeriver;
     };
 
 /** Canonical command-facing result of one fenced lifecycle computation. */
@@ -747,6 +890,10 @@ export type LifecycleNavigationOutcome =
       readonly steps: readonly ResolvedStep[];
       /** How a follow-on execution loop should release this run terminally. */
       readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
+      /** Verified runtime-only issuer for delegation transitions entered by navigation. */
+      readonly issueDelegationCredential?: DelegationCredentialIssuer;
+      /** Same-issuer runtime-only deriver for intentional frontier output. */
+      readonly deriveDelegationToken?: DelegationTokenDeriver;
     };
 
 /** Input to an already-authorized fenced GOTO mutation. */
@@ -756,6 +903,8 @@ export interface LifecycleNavigationMutationInput {
   readonly steps: readonly ResolvedStep[];
   readonly target: StepId;
   readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
+  /** Verified runtime-only issuer for a GOTO that enters a delegation frontier. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
 /** Result of applying an already-authorized GOTO through the execution fence. */
@@ -923,6 +1072,53 @@ function reconcileClaimTarget(
   return presented ? undefined : { kind: 'claim_bearer_mismatch' };
 }
 
+/** The runtime-only delegation capabilities one verified authority may exercise. */
+interface TransitionDelegationRuntime {
+  /** Verified runtime issuer for a transition that enters a DELEGATE frontier. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /** Same-issuer deriver used only for intentional frontier output. */
+  readonly deriveDelegationToken?: DelegationTokenDeriver;
+}
+
+/**
+ * Build the delegation runtime a transitioning caller is authorized to exercise.
+ *
+ * A lifecycle mutation that crosses into a credential-issuing state must carry
+ * VERIFIED RUN-CONTROL authority — the `delegate-from-run` grant on the run
+ * being advanced — not merely the `mutate-run` grant that authorized the
+ * transition itself. Deriving the pair from the actor context alone conflated
+ * the two: a bearer authorized to advance a run also received the capability to
+ * mint bearers from it.
+ *
+ * The check is structural on purpose. The weaker gate has never been
+ * exploitable, because the only bearer holding `mutate-run` without
+ * `delegate-from-run` is a delegated child's, and nested delegation is refused
+ * RD-819 before the issuer is exercised. That is a coincidence of two
+ * independent rules, not an authority decision, and it evaporates the day the
+ * nested prohibition moves or a narrower run-control grant set exists.
+ *
+ * Pure: reads only the verified claim's grants and the target run id. No
+ * filesystem, network, or process access.
+ *
+ * @param actorContext - Caller context after core verified bearer proof.
+ * @param runId - The run this transition mutates, and the only run the returned
+ *   capabilities may be exercised for.
+ * @returns The issuer/deriver pair when the claim authorizes delegation from
+ *   this run; an empty pair otherwise.
+ */
+function transitionDelegationRuntime(
+  actorContext: ActorContext,
+  runId: RunId,
+): TransitionDelegationRuntime {
+  if (actorContext.kind !== 'verified_claim') return {};
+  const decision = authorizeClaim(actorContext.claim, { action: 'delegate-from-run', runId });
+  if (decision.kind !== 'allowed') return {};
+  return {
+    issueDelegationCredential: createDelegationCredentialIssuer(actorContext.authority),
+    deriveDelegationToken: createDelegationTokenDeriver(actorContext.authority),
+  };
+}
+
 /**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
  * transitional delegation-issuance policy precheck.
@@ -954,8 +1150,12 @@ export class RunbookLifecycleCommandService {
     readonly request: ClaimAuthorizationRequest;
     readonly intent: CommandIntent['kind'];
   }): Promise<
-    | { readonly kind: 'verified'; readonly actorContext: ActorContext }
-    | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+    | {
+        readonly kind: 'verified';
+        readonly actorContext: ActorContext;
+        readonly authority: VerifiedClaimAuthority;
+      }
+    | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
   > {
     const presentedClaimId =
       input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
@@ -972,6 +1172,7 @@ export class RunbookLifecycleCommandService {
           authority: authority.authority,
           claim: authority.claim,
         }),
+        authority: authority.authority,
       };
     }
     return {
@@ -1006,15 +1207,15 @@ export class RunbookLifecycleCommandService {
    * @returns A typed issuance outcome for the frontend to render.
    * @throws {Error} Propagates anything thrown by the injected
    *   `resolveChildRunbook`, `resolveExtraVars` / `resolveOverrides` thunks, or
-   *   `persistIssuedSubstep`.
+   *   the aggregate actor-mutation transaction.
    */
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
 
     // Target identification only — the anchor run's id (the `--run`-named
     // session-stack member, the presented claim's controlled run, or the active
-    // default). Every state-dependent decision below runs against the locked
-    // re-read, not this snapshot.
+    // default). Every state-dependent decision below runs against the exact
+    // aggregate capture, not this advisory snapshot.
     const anchored = await this.#resolveIssuanceAnchor(input);
     if (anchored.kind !== 'ok') {
       switch (anchored.kind) {
@@ -1033,8 +1234,8 @@ export class RunbookLifecycleCommandService {
     const active = anchored.state;
     const activeId = active.id;
 
-    // Resolve the requested positional (only) pre-lock: fs-only and
-    // state-independent, keeping the critical section tight. Never the
+    // Resolve the requested positional before aggregate capture: it is fs-only
+    // and state-independent. Never resolve the
     // authored target — keeps the echo path independent of authored
     // resolvability.
     let requested: RequestedRunbookArg = { kind: 'none' };
@@ -1045,56 +1246,22 @@ export class RunbookLifecycleCommandService {
         : { kind: 'unresolvable', raw: input.requestedRunbook };
     }
 
-    // DelegationLock-scoped read-modify-write (#508): read state, decide
-    // (gate + resolution), mint, and persist in one critical section so a
-    // concurrent delegate/--retry/claim cannot interleave and a caller can
-    // never hold a token absent from persisted state.
-    const lock = await this.#acquireDelegationLock(activeId);
-    if (lock.kind === 'timeout') {
-      return { kind: 'error', error: Errors.delegationLockTimeout(activeId) };
-    }
-    await using _guard = lock.scope;
-
-    // Anchor resolution happened before the DelegationLock was acquired. A
-    // session mutation can stash or unlink the claim's controlled run in that
-    // window without taking this lock, so bearer/grant verification alone is
-    // insufficient here. Re-run the claim resolver before reading or mutating
-    // the anchored run.
-    //
-    // This NARROWS the window; it does not close it. `stashRunbook` serialises
-    // on SessionLock, not on this DelegationLock, so the two never mutually
-    // exclude — a stash can still land between this check and the write below.
-    // Closing it needs an atomic resolve-and-commit under SessionLock (#608).
-    const claimRefusal = await this.#revalidatePresentedClaim(input.callerEvidence);
-    if (claimRefusal) return claimRefusal;
-
-    // Locked re-read: the authoritative state for every decision below.
-    const state = await this.#deps.loadRun(activeId);
-    if (!state) return { kind: 'no-active-runbook' };
-
-    // Steps are loaded ABOVE the policy gate: direct_cli classification needs
-    // the parsed document (clause a/f static signals) as its input.
-    const steps = await this.#deps.loadSteps(state);
-
     const explicitTarget = input.explicitTarget;
-    // Policy gate — `targeted` means the operator named a specific step target
-    // (an explicit `--step`). Only that exempts issuance from the bare-advance
-    // collection-pending guard. A positional runbook arg is NOT a target: it
-    // confirms the already-pending delegate substep (the bare path, subject to
-    // RD-804/RD-822), so it stays `targeted: false` and remains gated. This
-    // mirrors the pre-seam precheck, which keyed solely on `--step` absence.
-    // Classification is from the locked re-read (`state`) — the same instance
-    // the issuance resolution below decides from.
     const targeted = explicitTarget !== undefined;
     const authority = await this.#resolveMutationActorContext({
       callerEvidence: input.callerEvidence,
-      targetState: state,
-      request: { action: 'delegate-from-run', runId: state.id },
+      targetState: active,
+      request: { action: 'delegate-from-run', runId: active.id },
       intent: 'delegation-issuance',
     });
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+    if (authority.actorContext.kind !== 'verified_claim') {
+      throw new Error('Delegation issuance requires verified claim authority');
+    }
+    const issueCredential = createDelegationCredentialIssuer(authority.actorContext.authority);
+    const deriveToken = createDelegationTokenDeriver(authority.actorContext.authority);
 
     // Exact bearer/grant authorization is the liveness proof. Observe it before
     // command policy can refuse for collection state and before any validation,
@@ -1103,130 +1270,140 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
-    const policy = resolveCommandIntent({
-      actorContext: authority.actorContext,
-      intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
-      targetSelector: { kind: 'default' },
-      targetState: state,
-    });
-    if (policy.kind !== 'allowed') return { kind: 'refused', policy };
-
-    // Validate authored target details only after authorization succeeds. This
-    // still uses the locked document, while avoiding disclosure of a named
-    // step's kind to callers that cannot issue from this run.
-    if (explicitTarget?.iteration !== undefined) {
-      const message = invalidDelegationIndexMessage(steps, explicitTarget.stepId);
-      if (message) return { kind: 'invalid_index', message };
-    }
-
-    // Frame key: an explicit --index scopes to a FOR iteration of the active
-    // step; otherwise reuse the active frame. The step kind was validated above
-    // against this same locked state/steps pair.
-    const frameKey =
-      explicitTarget?.iteration !== undefined
-        ? buildFrameKey(state.step, explicitTarget.iteration)
-        : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
-
-    // Unified issuance resolution: one pure resolver owns explicit-step
-    // validation, document-order frontier scanning, and the RD-804/RD-811
-    // echo-vs-conflict decisions for every invocation form (bare, --step,
-    // positional). Computed before resolving the authored child so an echo
-    // never depends on authored resolvability.
-    const resolution = resolveDelegationIssuance(state, steps, frameKey, {
-      ...(explicitTarget !== undefined ? { explicitStep: explicitTarget.stepId } : {}),
-      requested,
-    });
-    switch (resolution.kind) {
-      case 'already-issued':
-        return {
-          kind: 'already-delegated',
-          stepId: resolution.stepId,
-          runbookRef: resolution.runbookRef,
-          token: resolution.token,
-          parentRunId: state.id,
-        };
-      case 'conflict':
-      case 'none':
-        return { kind: 'error', error: resolution.error };
-      case 'issuable':
-        break; // fall through to authored-child resolution + mint
-      default: {
-        const _exhaustive: never = resolution;
-        return _exhaustive;
-      }
-    }
-    const resolvedStepId = resolution.stepId;
-    const resolvedRunbook = resolution.runbookRef;
-
-    // Issuable: resolve the authored child via the injected (CLI-side) resolver.
-    const childResolved = await this.#deps.resolveChildRunbook(resolvedRunbook);
-    if (!childResolved) {
-      return { kind: 'error', error: Errors.delegationRunbookNotFound(resolvedRunbook) };
-    }
-
-    // Requested-vs-authored mismatch (RD-822): a positional that names a
-    // different child than the authored target is a confirmation failure, not
-    // an override. Only fires on the issuable path, where the authored child is
-    // resolved anyway.
-    const childRunbookRef = childResolved.ref;
-    if (requested.kind === 'unresolvable') {
-      return {
-        kind: 'error',
-        error: Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook),
-      };
-    }
-    if (requested.kind === 'resolved' && !sameRunbookRef(requested.ref, childRunbookRef)) {
-      return {
-        kind: 'error',
-        error: Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook),
-      };
-    }
-
-    // Issuable path only: resolve extra vars now, after the echo/conflict and
-    // requested-vs-authored decisions, so an echo never parses (or warns about)
-    // vars that would never be applied.
-    const resolvedExtraVars = await input.resolveExtraVars?.();
-
-    // An explicit `--index` targets a FOR iteration that may differ from the live
-    // one. `createDelegation` derives the snapshot iteration from the step id's
-    // `.at` segment (not the frame key), so a bare `step.substep` id would record
-    // the live FOR iteration in the context snapshot even though the frame key
-    // scopes the entry to the requested iteration. Pass the iteration-qualified
-    // id so the snapshot `index`/`at` match the frame the entry is stored under.
-    const createStepId = withFrameIteration(resolvedStepId, explicitTarget?.iteration);
-
-    const result = createDelegation(
-      {
-        state,
-        stepId: createStepId,
-        childRunbookPath: childResolved.path,
-        childRunbookRef,
-        ...(resolvedExtraVars ? { extraVars: resolvedExtraVars } : {}),
-        ancestors: [],
-        frameKey,
+    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
+    let preparedFresh:
+      | { readonly nextState: RunbookState; readonly value: DelegationIssuanceOutcome }
+      | undefined;
+    const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
+      targets: [{ runId: activeId, claimKey: authority.actorContext.authority.claimKey }],
+      makeRecoveryActor: (runId, recoveryState) => {
+        const recoverySteps = stepsByRun.get(runId);
+        if (!recoverySteps) throw new Error(`Missing recovery steps for delegation run ${runId}.`);
+        return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
-      steps,
-    );
-    if (result.status !== 'created') return { kind: 'error', error: result.error };
-
-    // Re-delegate-after-cancel over an existing entry supersedes the prior
-    // attempt's reported outcome (no-op for a first-time issue, which has no
-    // prior row). Consume before persisting the reset substep.
-    const freshSubstepId = parseStepIdFromString(createStepId)?.substep ?? createStepId;
-    await this.#supersedePendingOutcome(state.id, frameKey, freshSubstepId);
-    await this.#persistIssuedSubstep(state.id, result.updatedSubstepStates, createStepId, frameKey);
-
-    return {
-      kind: 'delegated',
-      stepId: resolvedStepId,
-      // Return the canonical persisted child ref (not the authored alias in
-      // `resolvedRunbook`) so the fresh `delegated` output matches the echo
-      // path, which surfaces `childRunbookRef.path` for the same delegation.
-      runbookRef: childRunbookRef.path,
-      token: result.token,
-      tokenHash: result.tokenHash,
-      parentRunId: state.id,
-    };
+      beforeEffect: async ([captured]) => {
+        const capturedSteps = await this.#deps.loadSteps(captured.state);
+        stepsByRun.set(captured.state.id, capturedSteps);
+        const policy = resolveCommandIntent({
+          actorContext: authority.actorContext,
+          intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
+          targetSelector: { kind: 'default' },
+          targetState: captured.state,
+        });
+        if (policy.kind !== 'allowed') {
+          return { kind: 'return', value: { kind: 'refused', policy } };
+        }
+        if (explicitTarget?.iteration !== undefined) {
+          const message = invalidDelegationIndexMessage(capturedSteps, explicitTarget.stepId);
+          if (message) return { kind: 'return', value: { kind: 'invalid_index', message } };
+        }
+        const frameKey =
+          explicitTarget?.iteration !== undefined
+            ? buildFrameKey(captured.state.step, explicitTarget.iteration)
+            : (captured.state.activeFrameKey ?? deriveActiveFrame(captured.state).frameKey);
+        const exact = resolveDelegationIssuance(captured.state, capturedSteps, frameKey, {
+          ...(explicitTarget !== undefined ? { explicitStep: explicitTarget.stepId } : {}),
+          requested,
+        });
+        if (exact.kind === 'already-issued') {
+          // Never echo a bearer this claim cannot reproduce and verify against
+          // the persisted verifier — a refused echo returns data, not a token.
+          const echoed = verifyEchoedDelegationToken(exact, deriveToken);
+          if (echoed.kind === 'unverifiable') {
+            return { kind: 'return', value: { kind: 'error', error: echoed.error } };
+          }
+          return {
+            kind: 'return',
+            value: {
+              kind: 'already-delegated',
+              stepId: exact.stepId,
+              runbookRef: exact.runbookRef,
+              token: echoed.token,
+              parentRunId: captured.state.id,
+            },
+          };
+        }
+        if (exact.kind !== 'issuable') {
+          return { kind: 'return', value: { kind: 'error', error: exact.error } };
+        }
+        const childResolved = await this.#deps.resolveChildRunbook(exact.runbookRef);
+        if (!childResolved) {
+          return {
+            kind: 'return',
+            value: { kind: 'error', error: Errors.delegationRunbookNotFound(exact.runbookRef) },
+          };
+        }
+        if (
+          requested.kind === 'unresolvable' ||
+          (requested.kind === 'resolved' && !sameRunbookRef(requested.ref, childResolved.ref))
+        ) {
+          return {
+            kind: 'return',
+            value: {
+              kind: 'error',
+              error: Errors.delegationRunbookMismatch(
+                exact.stepId,
+                requested.raw,
+                exact.runbookRef,
+              ),
+            },
+          };
+        }
+        const resolvedExtraVars = await input.resolveExtraVars?.();
+        const createStepId = withFrameIteration(exact.stepId, explicitTarget?.iteration);
+        const prepared = await this.#deps.actorService.prepareManualDelegationMutation(
+          captured.state,
+          capturedSteps,
+          {
+            type: 'ISSUE',
+            stepId: createStepId,
+            frameKey,
+            childRunbookPath: childResolved.path,
+            childRunbookRef: childResolved.ref,
+            ...(resolvedExtraVars === undefined ? {} : { extraVars: resolvedExtraVars }),
+          },
+          issueCredential,
+        );
+        if (prepared.status !== 'prepared') {
+          if (prepared.status === 'error' || prepared.status === 'child_in_flight') {
+            return { kind: 'return', value: { kind: 'error', error: prepared.error } };
+          }
+          throw new Error(`Issue preparation returned ${prepared.status}`);
+        }
+        const issued = findSubstepState(
+          prepared.nextState.substepStates ?? [],
+          parseStepIdFromString(createStepId)?.substep ?? createStepId,
+          frameKey,
+        );
+        if (!issued?.delegation) throw new Error('Machine did not prepare the issued delegation.');
+        preparedFresh = {
+          nextState: replaceIssuedDelegation(
+            prepared.nextState,
+            prepared.nextState.substepStates ?? [],
+            createStepId,
+            frameKey,
+          ),
+          value: {
+            kind: 'delegated',
+            stepId: exact.stepId,
+            runbookRef: childResolved.ref.path,
+            token: deriveToken(issued.delegation.credential),
+            tokenHash: issued.delegation.tokenHash,
+            parentRunId: captured.state.id,
+          },
+        };
+        return { kind: 'continue' };
+      },
+      compute: ([captured]) => {
+        const prepared = preparedFresh;
+        if (!prepared) throw new Error('Delegation transaction lost its prepared issuance.');
+        return Promise.resolve({
+          members: [{ runId: captured.state.id, nextState: prepared.nextState }],
+          value: prepared.value,
+        });
+      },
+    });
+    return aggregate.kind === 'committed' ? aggregate.value : aggregate;
   }
 
   /**
@@ -1311,26 +1488,9 @@ export class RunbookLifecycleCommandService {
         }
       }
       // Target identification only. Every state-dependent locator decision is
-      // deferred until after this run's DelegationLock is held and its state is
-      // reloaded.
+      // deferred until the aggregate runner captures the authoritative state.
       targetRunId = anchored.state.id;
     }
-
-    // DelegationLock-scoped read-modify-write (#508): the target run id above
-    // selects the mutex; locator validation/derivation, gate, retry, and persist
-    // all use the authoritative state reread while it is held.
-    const lock = await this.#acquireDelegationLock(targetRunId);
-    if (lock.kind === 'timeout') {
-      return { kind: 'error', error: Errors.delegationLockTimeout(targetRunId) };
-    }
-    await using _guard = lock.scope;
-
-    // As on fresh issuance, the target may have become stashed or otherwise
-    // unlinked after pre-lock anchor/token resolution. Revalidate the presented
-    // claim's runnable relationship before the retry decision can mutate it.
-    // Narrows the same window the fresh path documents above; #608 closes it.
-    const claimRefusal = await this.#revalidatePresentedClaim(input.callerEvidence);
-    if (claimRefusal) return claimRefusal;
 
     const freshState = await this.#deps.loadRun(targetRunId);
     if (!freshState) {
@@ -1339,10 +1499,6 @@ export class RunbookLifecycleCommandService {
         ? { kind: 'retry_target_required' }
         : { kind: 'no-active-runbook' };
     }
-
-    // Steps are loaded before locator validation and policy: both decisions use
-    // the same locked state/document pair.
-    const steps = await this.#deps.loadSteps(freshState);
 
     if (locator.kind === 'step') {
       const parsed = parseStepIdFromString(locator.step);
@@ -1382,12 +1538,12 @@ export class RunbookLifecycleCommandService {
     }
 
     if (!cursor) throw new Error('Retry locator did not resolve a cursor');
-    const { substepId, frameKey, stepLabel } = cursor;
+    const { substepId, frameKey } = cursor;
 
     // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
-    // so a pending collection does not refuse it. Classification is from the
-    // locked re-read (`freshState`) — the same instance retryDelegation
-    // decides from.
+    // so a pending collection does not refuse it. Final classification is
+    // repeated against the aggregate capture in `beforeEffect`; this earlier
+    // state only identifies aggregate members and verifies authority.
     const authority = await this.#resolveMutationActorContext({
       callerEvidence: input.callerEvidence,
       targetState: freshState,
@@ -1397,6 +1553,11 @@ export class RunbookLifecycleCommandService {
     if (authority.kind === 'refused') {
       return { kind: 'refused', policy: authority.policy };
     }
+    if (authority.actorContext.kind !== 'verified_claim') {
+      throw new Error('Delegation retry requires verified claim authority');
+    }
+    const issueCredential = createDelegationCredentialIssuer(authority.actorContext.authority);
+    const deriveToken = createDelegationTokenDeriver(authority.actorContext.authority);
 
     // Retry bearer/grant authorization independently proves liveness before
     // command policy, validation, or persistence. The total recorder cannot
@@ -1404,32 +1565,6 @@ export class RunbookLifecycleCommandService {
     if (input.callerEvidence.kind === 'claim_bearer') {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
-
-    const policy = resolveCommandIntent({
-      actorContext: authority.actorContext,
-      intent: {
-        kind: 'delegation-issuance',
-        command: 'retry',
-        targeted: true,
-        stepId: substepId,
-      },
-      targetSelector: { kind: 'default' },
-      targetState: freshState,
-    });
-    if (policy.kind !== 'allowed') return { kind: 'refused', policy };
-
-    // As on the fresh path, authorization precedes authored-step validation so
-    // an unauthorized retry cannot probe whether a named step is iterable.
-    if (locator.kind === 'step' && locator.iteration !== undefined) {
-      const message = invalidDelegationIndexMessage(steps, locator.step);
-      if (message) return { kind: 'invalid_index', message };
-    }
-
-    // Resolve overrides only now — after the locator resolved and the gate
-    // passed — so a bad `--input-file` (or other extra-var failure) cannot mask
-    // the higher-priority retry precondition (`token-not-found` /
-    // `no-active-runbook` / refusal). Mirrors the fresh path's lazy seam.
-    const overrides = await input.resolveOverrides?.();
 
     const targetSubstep = freshState.substepStates?.find(
       (entry) => entry.id === substepId && entry.frameKey === frameKey,
@@ -1440,100 +1575,401 @@ export class RunbookLifecycleCommandService {
       linkedChild?.lifecycle === 'completed' || linkedChild?.lifecycle === 'stopped';
     const allowLinkedChildRun = linkedChildTerminal;
 
-    const result = retryDelegation(
-      {
-        state: freshState,
-        substepId,
-        frameKey,
-        allowLinkedChildRun,
-        ...(overrides ? { overrides } : {}),
+    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
+    const hasTerminalChild = linkedChildRunId !== null && allowLinkedChildRun;
+    let preparedRetry:
+      | { readonly nextState: RunbookState; readonly value: DelegationIssuanceOutcome }
+      | undefined;
+    const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
+      targets: [
+        ...(hasTerminalChild
+          ? [{ runId: linkedChildRunId, optionalWhenClaimSuperseded: true }]
+          : []),
+        { runId: freshState.id, claimKey: authority.actorContext.authority.claimKey },
+      ],
+      ...(hasTerminalChild
+        ? { releases: [{ runId: linkedChildRunId, retainClaimsAsTerminal: false }] }
+        : {}),
+      makeRecoveryActor: (runId, recoveryState) => {
+        const recoverySteps = stepsByRun.get(runId);
+        if (!recoverySteps) throw new Error(`Missing recovery steps for delegation run ${runId}.`);
+        return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
       },
-      steps,
-    );
-    // Every non-`retried` variant carries a `RundownError` (RD-801/802/823 or a
-    // propagated createDelegation error), so the dispatch collapses to one arm.
-    if (result.status !== 'retried') return { kind: 'error', error: result.error };
-
-    // Release BEFORE superseding: both are durable writes, and a refusal
-    // returns without issuing the replacement substep. Superseding first would
-    // leave the pending outcome destroyed on a retry the caller is told did not
-    // happen, so the refusal has to be a no-op rather than a partial mutation.
-    if (linkedChildRunId && allowLinkedChildRun) {
-      const release = await this.#deps.sessionService.releaseRunbook(linkedChildRunId);
-      if (release.kind !== 'committed') return release;
-    }
-    await this.#supersedePendingOutcome(freshState.id, frameKey, substepId);
-    await this.#persistIssuedSubstep(
-      freshState.id,
-      result.updatedSubstepStates,
-      substepId,
-      frameKey,
-    );
-
-    return {
-      kind: 'retried',
-      stepLabel,
-      runbookPath: result.delegation.childRunbookPath,
-      token: result.token,
-      tokenHash: result.tokenHash,
-      parentRunId: freshState.id,
-    };
+      beforeEffect: async (captured) => {
+        const child =
+          linkedChildRunId === null
+            ? undefined
+            : captured.find(({ state }) => state.id === linkedChildRunId);
+        const parent = captured.find(({ state }) => state.id === freshState.id);
+        if (parent?.state.id !== freshState.id) {
+          throw new Error('Delegation retry did not capture its parent in dependency order.');
+        }
+        const parentSteps = await this.#deps.loadSteps(parent.state);
+        stepsByRun.set(parent.state.id, parentSteps);
+        let exactCursor = cursor;
+        if (locator.kind === 'step') {
+          const parsed = parseStepIdFromString(locator.step);
+          const stepName = parsed?.step ?? locator.step;
+          const activeDerived = deriveActiveFrame(parent.state);
+          exactCursor = {
+            substepId: parsed?.substep ?? stepName,
+            frameKey:
+              locator.iteration !== undefined
+                ? buildFrameKey(stepName, locator.iteration)
+                : activeDerived.step === stepName
+                  ? (parent.state.activeFrameKey ?? activeDerived.frameKey)
+                  : buildFrameKey(stepName),
+            stepLabel:
+              locator.iteration !== undefined
+                ? deriveExecutionAt(stepName, parsed?.substep, locator.iteration)
+                : locator.step,
+          };
+        } else if (locator.kind === 'active') {
+          if (parent.state.substep === undefined) {
+            return { kind: 'return', value: { kind: 'retry_target_required' } };
+          }
+          const activeDerived = deriveActiveFrame(parent.state);
+          exactCursor = {
+            substepId: parent.state.substep,
+            frameKey: parent.state.activeFrameKey ?? activeDerived.frameKey,
+            stepLabel: deriveExecutionAt(
+              parent.state.step,
+              parent.state.substep,
+              activeDerived.iteration,
+            ),
+          };
+        }
+        const policy = resolveCommandIntent({
+          actorContext: authority.actorContext,
+          intent: {
+            kind: 'delegation-issuance',
+            command: 'retry',
+            targeted: true,
+            stepId: exactCursor.substepId,
+          },
+          targetSelector: { kind: 'default' },
+          targetState: parent.state,
+        });
+        if (policy.kind !== 'allowed') {
+          return { kind: 'return', value: { kind: 'refused', policy } };
+        }
+        if (locator.kind === 'step' && locator.iteration !== undefined) {
+          const message = invalidDelegationIndexMessage(parentSteps, locator.step);
+          if (message) return { kind: 'return', value: { kind: 'invalid_index', message } };
+        }
+        const exactSubstep = findSubstepState(
+          parent.state.substepStates ?? [],
+          exactCursor.substepId,
+          exactCursor.frameKey,
+        );
+        const exactChildRunId = exactSubstep?.delegation?.childRunId ?? null;
+        if (exactChildRunId !== linkedChildRunId) {
+          return {
+            kind: 'return',
+            value: {
+              kind: 'error',
+              error: Errors.delegationInFlight(
+                exactCursor.substepId,
+                exactChildRunId ?? linkedChildRunId ?? 'unknown',
+              ),
+            },
+          };
+        }
+        if (child !== undefined) {
+          const childSteps = await this.#deps.loadSteps(child.state);
+          stepsByRun.set(child.state.id, childSteps);
+          if (child.state.lifecycle !== 'completed' && child.state.lifecycle !== 'stopped') {
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationInFlight(exactCursor.substepId, child.state.id),
+              },
+            };
+          }
+        }
+        const overrides = await input.resolveOverrides?.();
+        const prepared = await this.#deps.actorService.prepareManualDelegationMutation(
+          parent.state,
+          parentSteps,
+          {
+            type: 'RETRY',
+            substepId: exactCursor.substepId,
+            frameKey: exactCursor.frameKey,
+            allowLinkedChildRun,
+            ...(overrides === undefined ? {} : { overrides }),
+          },
+          issueCredential,
+        );
+        if (prepared.status !== 'prepared') {
+          if (prepared.status === 'error' || prepared.status === 'child_in_flight') {
+            return { kind: 'return', value: { kind: 'error', error: prepared.error } };
+          }
+          throw new Error(`Retry preparation returned ${prepared.status}`);
+        }
+        const issued = findSubstepState(
+          prepared.nextState.substepStates ?? [],
+          exactCursor.substepId,
+          exactCursor.frameKey,
+        );
+        if (!issued?.delegation) throw new Error('Machine did not prepare the retried delegation.');
+        preparedRetry = {
+          nextState: replaceIssuedDelegation(
+            prepared.nextState,
+            prepared.nextState.substepStates ?? [],
+            exactCursor.substepId,
+            exactCursor.frameKey,
+          ),
+          value: {
+            kind: 'retried',
+            stepLabel: exactCursor.stepLabel,
+            runbookPath: issued.delegation.childRunbookPath,
+            token: deriveToken(issued.delegation.credential),
+            tokenHash: issued.delegation.tokenHash,
+            parentRunId: parent.state.id,
+          },
+        };
+        return { kind: 'continue' };
+      },
+      compute: (captured) => {
+        const child =
+          linkedChildRunId === null
+            ? undefined
+            : captured.find(({ state }) => state.id === linkedChildRunId);
+        const parent = captured.find(({ state }) => state.id === freshState.id);
+        if (!parent) throw new Error('Delegation retry lost its parent capture.');
+        const prepared = preparedRetry;
+        if (!prepared) throw new Error('Delegation retry lost its prepared replacement.');
+        return Promise.resolve({
+          members: [
+            ...(child ? [{ runId: child.state.id, nextState: child.state }] : []),
+            { runId: parent.state.id, nextState: prepared.nextState },
+          ],
+          value: prepared.value,
+        });
+      },
+    });
+    return aggregate.kind === 'committed' ? aggregate.value : aggregate;
   }
 
   /**
-   * Clean up a force-aborted linked child while the caller holds DelegationLock.
+   * Cancel a delegation and atomically stop/report/release its linked child.
    *
-   * Active children are explicitly failed and deleted. Terminal or missing
-   * linked children have any stale delegated outcome rows superseded without
-   * deleting terminal diagnostic state.
+   * The token scan only identifies the aggregate. Every behavior-bearing
+   * decision is repeated against the exact captured parent and child. A forced
+   * running child is retained as stopped terminal evidence; physical deletion
+   * is deferred to pruning so exact execution-attempt evidence survives crash
+   * reconciliation. A linked child whose run no longer exists is cleaned rather
+   * than refused, so a pruned or deleted child cannot strand the parent's
+   * delegation permanently linked.
    *
-   * @param args - Parent, child, frame, and substep cleanup target.
-   * @param args.parentState - Parent state whose linked delegation is being cleaned up.
-   * @param args.childRunId - Linked child run id, or null when no child was recorded.
-   * @param args.frameKey - Parent frame key containing the delegated substep.
-   * @param args.substepId - Parent substep id being force-aborted.
-   * @returns Cleanup branch that ran.
+   * @param input - Token, caller authority, and force policy.
+   * @returns Domain, policy, transaction, or committed abort outcome.
    */
-  async cleanupForceAbortedLinkedChild(args: {
-    readonly parentState: RunbookState;
-    readonly childRunId: RunId | null;
-    readonly frameKey: FrameKey;
-    readonly substepId: string;
-  }): Promise<ForceAbortLinkedChildCleanupResult> {
-    if (!args.childRunId) return { kind: 'none' };
+  async abortDelegation(input: DelegationAbortInput): Promise<DelegationAbortOutcome> {
+    const scan = await this.#deps.findDelegationByToken(input.token);
+    if (!scan) return { kind: 'token_not_found' };
+    const parentRunId = scan.parentState.id;
+    const substepId = scan.substepId ?? scan.stepId;
+    const frameKey = scan.frameKey;
+    const tokenHash = hashDelegationToken(input.token);
+    const scannedChildRunId = scan.delegation.childRunId;
 
-    const childState = await this.#deps.loadRun(args.childRunId);
-    const childIsActive = childState?.lifecycle === 'running';
-    const childIsTerminal =
-      childState?.lifecycle === 'completed' || childState?.lifecycle === 'stopped';
-
-    if (childIsActive) {
-      // Release BEFORE deleting: an ownership refusal must leave the child
-      // intact, and deleting first would make the refusal a partial cleanup.
-      // The committed order is unobservable — a deleted run's claims cascade
-      // away, so either sequence converges on the same session state.
-      const release = await this.#deps.sessionService.releaseRunbook(args.childRunId);
-      if (release.kind !== 'committed') return release;
-      await this.#deps.deleteRun(args.childRunId);
-      await this.#deps.completionService.recordChildCompletionUnlocked({
-        childState,
-        result: 'fail',
-        ignoreCancellation: true,
-      });
-      return { kind: 'active_child_failed', childRunId: args.childRunId };
+    const authority = await this.#resolveMutationActorContext({
+      callerEvidence: input.callerEvidence,
+      targetState: scan.parentState,
+      request: { action: 'abort-delegation', runId: parentRunId, stepId: substepId },
+      intent: 'delegation-issuance',
+    });
+    if (authority.kind === 'refused') return { kind: 'refused', policy: authority.policy };
+    if (authority.actorContext.kind !== 'verified_claim') {
+      throw new Error('Delegation abort requires verified claim authority');
+    }
+    const verifiedAuthority = authority.actorContext.authority;
+    if (input.callerEvidence.kind === 'claim_bearer') {
+      await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
-    const release = await this.#deps.sessionService.releaseRunbook(args.childRunId);
-    if (release.kind !== 'committed') return release;
-    await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
-      runbookId: args.parentState.id,
-      frameKey: args.frameKey,
-      substepId: args.substepId,
+    // A linked child whose run no longer exists is CLEANABLE, not a refusal.
+    // Its stale `childRunId` is precisely what `abort --force` exists to clear,
+    // so refusing here would leave the delegation permanently linked and the
+    // token impossible to force-abort — a stuck state with no operator
+    // recovery. Only a child that is genuinely absent is dropped: a child whose
+    // state loads stays a REQUIRED aggregate member, so every other reason it
+    // cannot be mutated (an execution in progress, a superseded claim, a
+    // concurrent modification) still refuses the whole force-abort rather than
+    // being silently discarded. That distinction is why the drop is decided
+    // here, from the absence of state, and not by marking the aggregate target
+    // `optional` — which would drop the child on ANY capture refusal.
+    const scannedChild =
+      scannedChildRunId === null ? undefined : await this.#deps.loadRun(scannedChildRunId);
+    const missingChildRunId =
+      scannedChildRunId !== null && scannedChild === undefined ? scannedChildRunId : null;
+    const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
+    let prepared:
+      | {
+          readonly parent: RunbookState;
+          readonly child?: RunbookState;
+          readonly value: Extract<DelegationAbortOutcome, { readonly kind: 'cancelled' }>;
+        }
+      | undefined;
+    const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationAbortOutcome>({
+      targets: [
+        ...(scannedChild === undefined ? [] : [{ runId: scannedChild.id }]),
+        { runId: parentRunId, claimKey: verifiedAuthority.claimKey },
+      ],
+      ...(scannedChild === undefined
+        ? {}
+        : { releases: [{ runId: scannedChild.id, retainClaimsAsTerminal: false }] }),
+      makeRecoveryActor: (runId, recoveryState) => {
+        const recoverySteps = stepsByRun.get(runId);
+        if (!recoverySteps) throw new Error(`Missing recovery steps for abort run ${runId}.`);
+        return this.#deps.actorService.createRecoveryActor(recoveryState, recoverySteps);
+      },
+      beforeEffect: async (captured) => {
+        const child = scannedChild === undefined ? undefined : captured.at(0);
+        const parent = captured.at(scannedChild === undefined ? 0 : 1);
+        if (parent?.state.id !== parentRunId) {
+          throw new Error('Delegation abort did not capture its parent last.');
+        }
+        const parentSteps = await this.#deps.loadSteps(parent.state);
+        stepsByRun.set(parent.state.id, parentSteps);
+        const exact = findSubstepState(parent.state.substepStates ?? [], substepId, frameKey);
+        if (exact?.delegation?.tokenHash !== tokenHash) {
+          return { kind: 'return', value: { kind: 'token_not_found' } };
+        }
+        if (exact.delegation.childRunId !== scannedChildRunId) {
+          return { kind: 'return', value: { kind: 'token_not_found' } };
+        }
+        const parentPrepared = await this.#deps.actorService.prepareManualDelegationMutation(
+          parent.state,
+          parentSteps,
+          { type: 'ABORT', substepId, frameKey, force: input.force },
+          createDelegationCredentialIssuer(verifiedAuthority),
+        );
+        switch (parentPrepared.status) {
+          case 'prepared':
+            break;
+          case 'error':
+          case 'child_in_flight':
+            return { kind: 'return', value: { kind: 'error', error: parentPrepared.error } };
+          case 'needs_force':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'needs_force',
+                substepId,
+                childRunId: parentPrepared.childRunId,
+              },
+            };
+          case 'already_cancelled':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'already_cancelled',
+                parentRunId,
+                substepId,
+                childRunbookPath: exact.delegation.childRunbookPath,
+              },
+            };
+          default: {
+            const _exhaustive: never = parentPrepared;
+            return _exhaustive;
+          }
+        }
+
+        let nextParent = parentPrepared.nextState;
+        let nextChild: RunbookState | undefined;
+        let cleanup: Extract<DelegationAbortOutcome, { readonly kind: 'cancelled' }>['cleanup'] =
+          'none';
+        if (scannedChild !== undefined) {
+          if (child?.state.id !== scannedChild.id) {
+            throw new Error('Delegation abort did not capture its linked child first.');
+          }
+          if (
+            child.state.parentLinkage?.kind !== 'delegation' ||
+            child.state.parentLinkage.parentRunId !== parentRunId ||
+            child.state.parentLinkage.parentStepId !== substepId ||
+            child.state.parentLinkage.parentFrameKey !== frameKey ||
+            child.state.parentLinkage.tokenHash !== tokenHash
+          ) {
+            return { kind: 'return', value: { kind: 'token_not_found' } };
+          }
+          const childSteps = await this.#deps.loadSteps(child.state);
+          stepsByRun.set(child.state.id, childSteps);
+          if (child.state.lifecycle === 'running') {
+            nextChild = (
+              await this.#deps.actorService.prepareActorMutation(
+                child.state.id,
+                child.state,
+                childSteps,
+                { type: 'FORCE_STOP', message: 'Delegation force-aborted' },
+              )
+            ).nextState;
+            cleanup = 'active_child_failed';
+          } else {
+            nextChild = child.state;
+            cleanup = 'terminal_child_cleaned';
+          }
+          nextParent = replaceIssuedDelegation(
+            nextParent,
+            nextParent.substepStates ?? [],
+            substepId,
+            frameKey,
+          );
+          const report = this.#deps.completionService.prepareChildCompletion(
+            { childState: nextChild, result: 'fail', ignoreCancellation: true },
+            nextParent,
+          );
+          if (report.kind !== 'recorded') {
+            throw new Error(`Force abort could not prepare child failure: ${report.kind}`);
+          }
+          nextParent = report.nextParentState;
+        } else if (missingChildRunId !== null) {
+          // The linked child's run is gone, so there is nothing to stop and no
+          // terminal child state to report as a failure. What survives it is
+          // the delegated outcome it left on the parent, which no collect can
+          // ever resolve against a run that no longer exists: supersede it
+          // alongside the cancellation, exactly as the pre-aggregate cleanup
+          // path did. Superseding is the whole of this branch's effect — no
+          // child completion is fabricated from a state we do not have.
+          nextParent = replaceIssuedDelegation(
+            nextParent,
+            nextParent.substepStates ?? [],
+            substepId,
+            frameKey,
+          );
+          cleanup = 'missing_child_cleaned';
+        }
+        prepared = {
+          parent: nextParent,
+          ...(nextChild === undefined ? {} : { child: nextChild }),
+          value: {
+            kind: 'cancelled',
+            parentRunId,
+            substepId,
+            childRunbookPath: exact.delegation.childRunbookPath,
+            childRunId: scannedChildRunId,
+            cleanup,
+          },
+        };
+        return { kind: 'continue' };
+      },
+      compute: () => {
+        const exactPrepared = prepared;
+        if (!exactPrepared) throw new Error('Delegation abort lost its prepared mutation.');
+        return Promise.resolve({
+          members: [
+            ...(exactPrepared.child === undefined
+              ? []
+              : [{ runId: exactPrepared.child.id, nextState: exactPrepared.child }]),
+            { runId: exactPrepared.parent.id, nextState: exactPrepared.parent },
+          ],
+          value: exactPrepared.value,
+        });
+      },
     });
-    return {
-      kind: childIsTerminal ? 'terminal_child_cleaned' : 'missing_child_cleaned',
-      childRunId: args.childRunId,
-    };
+    return aggregate.kind === 'committed' ? aggregate.value : aggregate;
   }
 
   /**
@@ -1690,7 +2126,26 @@ export class RunbookLifecycleCommandService {
     // frontend to resolve the target first (a redundant run-state read).
     const steps = await this.#deps.loadSteps(ready.state);
 
-    return this.#drive(input, steps, ready.state, terminalReleaseMode, guardOpenChildren);
+    const { issueDelegationCredential, deriveDelegationToken } = transitionDelegationRuntime(
+      actorContext,
+      ready.state.id,
+    );
+    const outcome = await this.#drive(
+      input,
+      steps,
+      ready.state,
+      terminalReleaseMode,
+      guardOpenChildren,
+      issueDelegationCredential,
+    );
+    if (
+      outcome.kind !== 'applied' ||
+      outcome.loop.kind !== 'run' ||
+      issueDelegationCredential === undefined
+    ) {
+      return outcome;
+    }
+    return { ...outcome, issueDelegationCredential, deriveDelegationToken };
   }
 
   /**
@@ -1906,6 +2361,10 @@ export class RunbookLifecycleCommandService {
       state,
       steps: await this.#deps.loadSteps(state),
       terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
+      // Navigation can land the cursor ON a DELEGATE frontier, so the same
+      // run-control gate applies: the issuer follows `delegate-from-run`, not
+      // the `mutate-run` grant that authorized the navigation.
+      ...transitionDelegationRuntime(actorContext, state.id),
     };
   }
 
@@ -1933,6 +2392,7 @@ export class RunbookLifecycleCommandService {
           previousState,
           input.steps,
           { type: 'GOTO', target: input.target },
+          { issueDelegationCredential: input.issueDelegationCredential },
         );
         // Projected WITHOUT scoring this GOTO as a transition. The execution
         // loop this hands off to derives the same metadata with no previous
@@ -2469,7 +2929,7 @@ export class RunbookLifecycleCommandService {
   // Resolve the issuance anchor run via the shared `resolveIssuanceAnchor` seam
   // (`--run` > presented claim's controlled run > active default). Frontends
   // pass only raw target syntax; this seam pins the resolved id and owns every
-  // state-dependent precondition against the locked reread.
+  // state-dependent precondition against the aggregate capture.
   // Takes the issuance `input` directly: both `DelegationIssuanceInput` variants
   // already carry the anchor fields (`callerEvidence` + optional `targetRunId`),
   // so it satisfies `ResolveIssuanceAnchorOptions` structurally and no call site
@@ -2478,41 +2938,6 @@ export class RunbookLifecycleCommandService {
     options: ResolveIssuanceAnchorOptions,
   ): Promise<IssuanceAnchorResolution> {
     return resolveIssuanceAnchor(this.#deps.sessionService, options);
-  }
-
-  // Re-run the presented bearer's claim-target resolution without an explicit
-  // run selector. This deliberately checks the claim's own controlled-run
-  // relationship even for token retry (whose target id comes from the token):
-  // `verifyClaimId` proves only bearer authenticity, while this resolver also
-  // enforces stashed/linkage/terminal eligibility.
-  //
-  // Best-effort by construction: it reads session state that SessionLock — not
-  // the caller's DelegationLock — guards, so it cannot be atomic with the write
-  // that follows. It catches the (realistic) case where the mutation already
-  // committed, not a concurrent one racing it. See #608.
-  async #revalidatePresentedClaim(
-    callerEvidence: CallerEvidence,
-  ): Promise<
-    | Extract<IssuanceAnchorResolution, { readonly kind: 'stale_claim' | 'terminal_claim' }>
-    | undefined
-  > {
-    if (callerEvidence.kind !== 'claim_bearer') return undefined;
-
-    const resolution = await this.#resolveIssuanceAnchor({ callerEvidence });
-    switch (resolution.kind) {
-      case 'ok':
-        return undefined;
-      case 'stale_claim':
-      case 'terminal_claim':
-        return resolution;
-      case 'none':
-      case 'unknown_run':
-        throw new Error(`Claim-only issuance revalidation returned ${resolution.kind}`);
-      default: {
-        const _exhaustive: never = resolution;
-        return _exhaustive;
-      }
-    }
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed
@@ -2614,6 +3039,7 @@ export class RunbookLifecycleCommandService {
     state: RunbookState,
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
+    issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
     const { actorService } = this.#deps;
     const fresh = await actorService.assertFreshState(state.id, steps);
@@ -2636,10 +3062,18 @@ export class RunbookLifecycleCommandService {
         terminalReleaseMode,
         false,
         input.explicitTarget,
+        issueDelegationCredential,
       );
     }
     if (!isSubstepCompletion) {
-      return this.#driveTopLevel(input, steps, state, terminalReleaseMode, guardOpenChildren);
+      return this.#driveTopLevel(
+        input,
+        steps,
+        state,
+        terminalReleaseMode,
+        guardOpenChildren,
+        issueDelegationCredential,
+      );
     }
     // A bare transition means "advance the thing currently in front of the
     // operator". When that thing is an already-running inline child, resume
@@ -2655,7 +3089,15 @@ export class RunbookLifecycleCommandService {
         loop: { kind: 'none' },
       };
     }
-    return this.#driveSubstepFenced(input, steps, state, terminalReleaseMode, guardOpenChildren);
+    return this.#driveSubstepFenced(
+      input,
+      steps,
+      state,
+      terminalReleaseMode,
+      guardOpenChildren,
+      undefined,
+      issueDelegationCredential,
+    );
   }
 
   async #driveSubstepFenced(
@@ -2665,6 +3107,7 @@ export class RunbookLifecycleCommandService {
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
     explicitTarget?: ExplicitTransitionTarget,
+    issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
     const { actorService, actorMutationRunner, completionService, lifecycleService } = this.#deps;
     let preparedOutcome:
@@ -2742,11 +3185,17 @@ export class RunbookLifecycleCommandService {
             if (current === undefined) break;
             const validated = completionService.validateCurrentCompletion(state, current[1], entry);
             if ('status' in validated) throw new Error(validated.message);
-            const prepared = await actorService.prepareActorMutation(state.id, state, steps, {
-              type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-              completionKey: current[0],
-              completion: validated,
-            });
+            const prepared = await actorService.prepareActorMutation(
+              state.id,
+              state,
+              steps,
+              {
+                type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+                completionKey: current[0],
+                completion: validated,
+              },
+              { issueDelegationCredential },
+            );
             const next = lifecycleService.deriveActiveEntry(prepared.nextState, state, true).state;
             const observation = deriveTransitionObservation({
               steps,
@@ -2868,6 +3317,7 @@ export class RunbookLifecycleCommandService {
     activeState: RunbookState,
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
+    issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
     const { actorService, lifecycleService, actorMutationRunner } = this.#deps;
     // Exhaustive map from command to engine event. A `never` fallthrough makes a
@@ -2912,6 +3362,7 @@ export class RunbookLifecycleCommandService {
             previousState,
             transitionSteps,
             { type: eventType },
+            { issueDelegationCredential },
           );
           const projected = lifecycleService.deriveActiveEntry(
             prepared.nextState,
@@ -3111,81 +3562,6 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.pushRunbook(childRunId);
     }
     return true;
-  }
-
-  /**
-   * Consume any pending reported delegation outcome row for a re-issued substep.
-   *
-   * Re-issuing (retry, or re-delegate after cancel) supersedes the prior attempt.
-   * If that attempt already reported an outcome (e.g. `abort --force` recorded a
-   * FAIL), its `resolvedCompletions` row is stale and MUST NOT be drained by a
-   * later `rd collect`. Consume it here so collect readiness (which reads live
-   * outcome rows) sees no outcome until the fresh attempt reports. Consuming
-   * before persisting the reset substep narrows the window a concurrent
-   * `rd collect` could drain the stale row (it does not fully close it — a retry
-   * is not atomic against a concurrent collect).
-   *
-   * @param runId - Delegating run that owns the outcome row.
-   * @param frameKey - Frame key scoping the (re)issued delegation.
-   * @param substepId - Substep whose prior outcome is superseded.
-   */
-  async #supersedePendingOutcome(
-    runId: RunId,
-    frameKey: FrameKey,
-    substepId: string,
-  ): Promise<void> {
-    await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
-      runbookId: runId,
-      frameKey,
-      substepId,
-    });
-  }
-
-  // Acquire the per-parent-run DelegationLock, wrapping the held lock as a
-  // best-effort ScopedLock for `await using` (never released from a bare
-  // `finally` — the RD-102 masking defect). A timeout is returned as data so
-  // callers map it to a typed RD-810 error outcome rather than a throw.
-  async #acquireDelegationLock(
-    parentRunId: RunId,
-  ): Promise<{ kind: 'held'; scope: ScopedLock } | { kind: 'timeout' }> {
-    try {
-      await this.#deps.delegationLock.acquire(parentRunId);
-    } catch (error) {
-      if (error instanceof DelegationLockTimeoutError) {
-        return { kind: 'timeout' };
-      }
-      throw error;
-    }
-    return {
-      kind: 'held',
-      scope: heldLock(
-        () => this.#deps.delegationLock.release(parentRunId),
-        () => ({ lock: 'delegation', parentRunId, site: 'issueDelegation' }),
-      ),
-    };
-  }
-
-  // Persist exactly the issued substep entry under a locked read-modify-write.
-  // The seam computes the full post-issuance array from a snapshot read outside
-  // the lock; handing the manager the whole array would clobber a concurrent
-  // write to a sibling substep that committed in the gap. Extract the single
-  // entry the operation touched (by `(id, frameKey)`) and let the CLI-bound
-  // wrapper merge it into the freshly-read array. `stepIdOrSubstep` is either a
-  // qualified id (`1.2.1` → substep `1`) or a bare substep id (`1`).
-  async #persistIssuedSubstep(
-    runId: RunId,
-    updatedSubstepStates: readonly SubstepState[],
-    stepIdOrSubstep: string,
-    frameKey: FrameKey,
-  ): Promise<void> {
-    const substepId = parseStepIdFromString(stepIdOrSubstep)?.substep ?? stepIdOrSubstep;
-    const issued = findSubstepState(updatedSubstepStates, substepId, frameKey);
-    if (!issued) {
-      throw new Error(
-        `Issued delegation substep "${substepId}" (frame ${frameKey}) missing from updated state`,
-      );
-    }
-    await this.#deps.persistIssuedSubstep(runId, issued);
   }
 
   // Per-run step memo shared by both aggregate terminal paths. The map is what

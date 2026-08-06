@@ -12,7 +12,15 @@ import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 import { Errors, RundownError } from '../errors/index.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ParentLinkage, RunId, RunbookState, StepDelegation, SubstepState } from './types.js';
+import type { DelegationCredentialDescriptor, DelegationTokenHash } from './delegation-token.js';
+import type {
+  ParentLinkage,
+  PersistedDelegateFrontierEntry,
+  RunId,
+  RunbookState,
+  StepDelegation,
+  SubstepState,
+} from './types.js';
 import { formatRunbookRef, sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import { buildFrameKey, deriveActiveFrame, findSubstepState, type FrameKey } from './targeting.js';
 
@@ -240,9 +248,9 @@ export function resolveDelegateTarget(
  * context, not as a typed `RunbookState` field. The same data — qualified step
  * id, child runbook ref, and the plaintext token recoverable while a delegation
  * is pending — is available on `substepStates[].delegation`, so the frontier is
- * derived from that typed source. Pending (non-cancelled) delegations carrying a
- * token become frontier entries keyed by qualified id (`<step>.<substep>`),
- * which {@link resolveDelegateTarget} matches against.
+ * derived from that typed source. Pending (unclaimed, non-cancelled)
+ * delegations become frontier entries keyed by qualified id
+ * (`<step>.<substep>`), which {@link resolveDelegateTarget} matches against.
  *
  * Scoped to the active frame: `substepStates` accumulates one entry per
  * `(substep, frameKey)`, so in a FOR loop a delegation issued in an earlier
@@ -260,18 +268,20 @@ export function resolveDelegateTarget(
  *   pending tokens from `substepStates[].delegation` directly without the
  *   frontier indirection.
  */
-export function deriveDelegateFrontier(state: RunbookState): DelegateFrontierEntry[] {
+export function deriveDelegateFrontier(state: RunbookState): PersistedDelegateFrontierEntry[] {
   const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-  const frontier: DelegateFrontierEntry[] = [];
+  const frontier: PersistedDelegateFrontierEntry[] = [];
   for (const substep of state.substepStates ?? []) {
     if (substep.frameKey !== activeFrameKey) continue;
     const delegation = substep.delegation;
     if (!delegation) continue;
-    if (delegation.cancelledAt !== null || !delegation.token) continue;
+    if (delegation.cancelledAt !== null) continue;
+    if (delegation.childRunId !== null) continue;
     frontier.push({
       id: `${state.step}.${substep.id}`,
       runbook: delegation.childRunbookRef.path,
-      token: delegation.token,
+      credential: delegation.credential,
+      tokenHash: delegation.tokenHash,
     });
   }
   return frontier;
@@ -279,20 +289,21 @@ export function deriveDelegateFrontier(state: RunbookState): DelegateFrontierEnt
 
 /**
  * Find the in-flight (pending, unclaimed, non-cancelled) delegation on a target
- * substep within a frame, with a recoverable plaintext token. Returns undefined
- * when the step id has no substep segment, when no matching substep state
- * exists, or when the delegation is cancelled/claimed/token-less. Pure; no I/O.
+ * substep within a frame. Returns undefined when the step id has no substep
+ * segment, when no matching substep state exists, or when the delegation is
+ * done/cancelled/claimed. Pure; no I/O — and no plaintext token is read: the
+ * record carries only the credential descriptor and its verifier.
  *
  * @param state - Current runbook state data (per-frame substep states).
  * @param stepId - Qualified step id, for example `1.1`.
  * @param frameKey - Frame key scoping the lookup.
- * @returns The matching delegation (narrowed to carry a `token`), or undefined.
+ * @returns The matching delegation record, or undefined.
  */
 export function findPendingDelegation(
   state: DelegationInferenceState,
   stepId: string,
   frameKey: FrameKey,
-): (StepDelegation & { token: string }) | undefined {
+): StepDelegation | undefined {
   const parsed = parseStepIdFromString(stepId);
   // Require a substep segment AND that the frame belongs to the parsed step.
   // Substep ids collide across steps, and the frame key is the authority on
@@ -301,7 +312,7 @@ export function findPendingDelegation(
   // (the CLI derives the frame from the current step, not the parsed step).
   if (!parsed?.substep || !isFrameForStep(frameKey, parsed.step)) return undefined;
   const match = (state.substepStates ?? []).find(
-    (ss): ss is SubstepState & { delegation: StepDelegation & { token: string } } =>
+    (ss): ss is SubstepState & { delegation: StepDelegation } =>
       ss.id === parsed.substep &&
       ss.frameKey === frameKey &&
       // Exclude completed substeps, mirroring resolveDelegateTarget's
@@ -309,8 +320,7 @@ export function findPendingDelegation(
       // substep's lingering delegation record as in-flight.
       ss.status !== 'done' &&
       ss.delegation?.cancelledAt === null &&
-      ss.delegation.childRunId === null &&
-      ss.delegation.token != null,
+      ss.delegation.childRunId === null,
   );
   return match?.delegation;
 }
@@ -342,7 +352,7 @@ export type TargetedDelegateResolution =
   | {
       readonly kind: 'echo';
       readonly stepId: string;
-      readonly token: string;
+      readonly credential: DelegationCredentialDescriptor;
       readonly runbookRef: string;
     }
   | { readonly kind: 'conflict'; readonly error: RundownError };
@@ -377,25 +387,30 @@ export function resolveTargetedDelegation(
   return {
     kind: 'echo',
     stepId: classified.stepId,
-    token: classified.token,
+    credential: classified.credential,
     runbookRef: classified.runbookRef,
   };
 }
 
 /**
- * Classify a pending (unclaimed, tokened) delegation against the CLI-resolved
- * requested runbook arg: a matching (or absent) request echoes the pending
- * token; a different request is the RD-804 conflict. Single source of truth for
- * the echo-vs-conflict decision shared by {@link resolveTargetedDelegation} and
+ * Classify a pending (unclaimed) delegation against the CLI-resolved requested
+ * runbook arg: a matching (or absent) request surfaces the pending credential
+ * descriptor for the caller to reconstruct from; a different request is the
+ * RD-804 conflict. Single source of truth for the echo-vs-conflict decision
+ * shared by {@link resolveTargetedDelegation} and
  * {@link resolveDelegationIssuance}.
  *
- * @param existing - The pending delegation (narrowed to carry a token).
+ * No plaintext bearer is read or returned here — only the non-secret descriptor
+ * and its persisted verifier, which the caller must check a reconstruction
+ * against before disclosing anything.
+ *
+ * @param existing - The pending delegation carrying non-secret credential coordinates.
  * @param stepId - Qualified step id the request targets, for example `1.1`.
  * @param requested - The CLI-resolved requested positional arg.
  * @returns `already-issued` (echo) or `conflict` (RD-804) resolution.
  */
 function classifyRequestedAgainstPending(
-  existing: StepDelegation & { token: string },
+  existing: StepDelegation,
   stepId: string,
   requested: RequestedRunbookArg,
 ): Extract<DelegationIssuanceResolution, { kind: 'already-issued' | 'conflict' }> {
@@ -422,7 +437,8 @@ function classifyRequestedAgainstPending(
   return {
     kind: 'already-issued',
     stepId,
-    token: existing.token,
+    credential: existing.credential,
+    tokenHash: existing.tokenHash,
     runbookRef: existing.childRunbookRef.path,
   };
 }
@@ -458,7 +474,17 @@ export type DelegationIssuanceResolution =
   | {
       readonly kind: 'already-issued';
       readonly stepId: string;
-      readonly token: string;
+      readonly credential: DelegationCredentialDescriptor;
+      /**
+       * Persisted verifier for the credential above.
+       *
+       * Travels with the descriptor because a caller that reconstructs the
+       * bearer from it MUST check the reconstruction against this hash before
+       * disclosing it — the same invariant `projectDelegateFrontier` enforces at
+       * the observation boundary. Omitting it here would make an unverifiable
+       * echo the path of least resistance.
+       */
+      readonly tokenHash: DelegationTokenHash;
       readonly runbookRef: string;
     }
   | { readonly kind: 'conflict'; readonly error: RundownError }
@@ -599,21 +625,16 @@ function resolveFrontierIssuance(
 
     const delegation = substepState?.delegation;
     if (delegation?.cancelledAt === null) {
-      // Active delegation. A pending-unclaimed one with a recoverable token is
-      // the echo candidate — the fix for the positional path, which previously
-      // skipped it and exhausted into RD-813. Claimed (or token-less) records
-      // are skipped: auto-fan-out semantics are unchanged and createDelegation's
-      // claimed guard backstops any direct re-mint attempt.
-      if (
-        echoCandidate === undefined &&
-        delegation.childRunId === null &&
-        delegation.token != null
-      ) {
-        echoCandidate = classifyRequestedAgainstPending(
-          { ...delegation, token: delegation.token },
-          stepId,
-          requested,
-        );
+      // Active delegation. Any pending-unclaimed one is the echo candidate — the
+      // fix for the positional path, which previously skipped it and exhausted
+      // into RD-813. Nothing here reads a plaintext token: every pending record
+      // carries a credential descriptor plus its verifier, and reconstructing
+      // (and checking) the bearer from that pair is the caller's job at its own
+      // disclosure boundary. Claimed records are skipped: auto-fan-out semantics
+      // are unchanged and createDelegation's claimed guard backstops any direct
+      // re-mint attempt.
+      if (echoCandidate === undefined && delegation.childRunId === null) {
+        echoCandidate = classifyRequestedAgainstPending(delegation, stepId, requested);
       }
       continue;
     }

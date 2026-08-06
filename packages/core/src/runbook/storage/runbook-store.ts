@@ -1013,6 +1013,42 @@ export class RunbookStore {
   }
 
   /**
+   * Revalidate an exact captured authority set without acquiring ownership or writing state.
+   *
+   * This is the linearization point for write-free outcomes prepared from a
+   * prior capture. It prevents a no-op response (notably deterministic bearer
+   * recovery) from escaping after claim rotation, state replacement, or a new
+   * execution owner invalidated the evidence used to prepare it.
+   *
+   * @param captured - Dependency-ordered authority captures to validate atomically.
+   * @returns Committed void when every capture is still exact, otherwise the first refusal.
+   * @throws {Error} When the caller violates the call contract — an empty capture
+   *   set, or the same run captured more than once. A run or claim that changed
+   *   after preparation is reported as a refusal, never thrown.
+   */
+  validateCapturedRunSet(
+    captured: readonly CapturedAuthority[],
+  ): Promise<GuardedMutationResult<void>> {
+    if (captured.length === 0) {
+      throw new Error('Captured authority validation requires at least one run.');
+    }
+    const runIds = new Set(captured.map(({ runId }) => runId));
+    if (runIds.size !== captured.length) {
+      throw new Error('Captured authority validation repeats a run.');
+    }
+    return this.driver.read((tx) => {
+      for (const authority of captured) {
+        const classification = classifyCommitRow(
+          selectCommitRow(tx, authority.runId, authority.claimKey),
+          authority,
+        );
+        if (classification.kind !== 'ok') return classificationToResult(classification);
+      }
+      return { kind: 'committed', value: undefined };
+    });
+  }
+
+  /**
    * Apply a guarded, state-only mutation under a previously-captured authority.
    *
    * Re-selects and classifies the commit row inside a fresh short transaction, so

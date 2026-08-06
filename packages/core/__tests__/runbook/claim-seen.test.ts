@@ -14,7 +14,6 @@ import {
   RunbookLifecycleCommandService,
   type LifecycleTerminalReleasePolicy,
 } from '../../src/runbook/lifecycle-command-service.js';
-import { DelegationLock } from '../../src/runbook/delegation-lock.js';
 import { claimActivity, DEFAULT_IDLE_AFTER_MS } from '../../src/runbook/claim-activity.js';
 import {
   CLAIM_ID_PREFIX,
@@ -309,14 +308,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
-      deleteRun: async (id) => {
-        await manager.delete(id);
-      },
       loadSteps: () => seamSteps,
       resolveChildRunbook: async () => undefined,
-      persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
-      delegationLock: new DelegationLock(testDir),
     });
     const state = await manager.create({ source: 'project', path: 'seam.md' }, mockRunbook, {
       runbookPath: 'seam.md',
@@ -427,14 +421,9 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
       actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
-      deleteRun: async (id) => {
-        await manager.delete(id);
-      },
       loadSteps: () => seamSteps,
       resolveChildRunbook: async () => undefined,
-      persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
-      delegationLock: new DelegationLock(testDir),
     });
     const { claimId, claim } = unwrapSessionMutation(
       await sessionService.issueRunControlClaim(runId),

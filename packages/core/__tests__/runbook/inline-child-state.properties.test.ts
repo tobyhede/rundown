@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createActor } from 'xstate';
 
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
@@ -73,6 +74,7 @@ describe('inline child state properties', () => {
               frameKey,
               status: statuses[index % statuses.length] ?? 'pending',
               delegation: {
+                credential: makeDelegationCredentialDescriptor(),
                 tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
                 childRunbookPath: 'runbooks/delegated.runbook.md',
                 childRunbookRef: {

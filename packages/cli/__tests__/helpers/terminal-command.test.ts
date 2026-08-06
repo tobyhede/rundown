@@ -263,7 +263,9 @@ describe('renderTerminalOutcome', () => {
     // recovery-pending at once, and the outcome already carries the exact
     // (runId, epoch) set. Rendering only the generic message tells the operator
     // that recovery is required while withholding the one fact they need to act
-    // on it — which runs.
+    // on it — which runs. It is emitted under its own code, not the single-run
+    // one: only this envelope carries `details.runs`, so an agent routing on
+    // `code` must be able to tell the two shapes apart.
     const { exitError, calls } = await render({
       kind: 'aggregate_recovery_required',
       attempts: [
@@ -274,7 +276,7 @@ describe('renderTerminalOutcome', () => {
     });
 
     expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('RECOVERY_REQUIRED');
+    expect(codeOf(calls, 'error')).toBe('AGGREGATE_RECOVERY_REQUIRED');
     const errorCall = calls.find((c) => c.method === 'error');
     expect(errorCall?.args[2]).toEqual({
       runs: [

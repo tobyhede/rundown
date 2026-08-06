@@ -11,6 +11,7 @@ import {
   findActionOutput,
   parseFinalCliJsonObject,
   readRunbookState,
+  requireLatestFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { validateStatusOutput } from '../helpers/schema-validator.js';
@@ -258,17 +259,11 @@ describe('claim-id delegated children', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-status.md'), parentRunbook);
     await writeFile(join(workspace.cwd, 'runbooks', 'child-status.runbook.md'), childRunbook);
 
-    await runCliInProcess('run --prompted runbooks/parent-status.md --text', workspace);
+    await runCliInProcess('run --prompted runbooks/parent-status.md', workspace);
     const parentId = (await getActiveState(workspace))!.id;
 
-    const parent = await getActiveState(workspace);
-    const token1 = parent?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
-    const token2 = parent?.substepStates?.find((substep) => substep.id === '2')?.delegation?.token;
-    expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
-    expect(token2).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token1 !== 'string' || typeof token2 !== 'string') {
-      throw new Error('Expected delegation tokens');
-    }
+    const token1 = requireLatestFrontierToken(workspace, '1.1');
+    const token2 = requireLatestFrontierToken(workspace, '1.2');
 
     let result = await runCliInProcess(`claim ${token1}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -332,11 +327,8 @@ describe('claim-id delegated children', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-secret.md'), parentRunbook);
     await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.runbook.md'), childRunbook);
 
-    await runCliInProcess('run --prompted runbooks/parent-secret.md --text', workspace);
-    const parent = await getActiveState(workspace);
-    const token = parent?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    await runCliInProcess('run --prompted runbooks/parent-secret.md', workspace);
+    const token = requireLatestFrontierToken(workspace, '1.1');
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);
     if (!claimOutput || typeof claimOutput.run_id !== 'string') {
@@ -609,13 +601,11 @@ Do work.
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentRunbook);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const token = requireLatestFrontierToken(workspace, '1.1');
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const claimOutput = findActionOutput(result.stdout);
@@ -668,14 +658,12 @@ Do work.
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentRunbook);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
 
-    const token = parentState?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const token = requireLatestFrontierToken(workspace, '1.1');
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -837,7 +825,7 @@ rd echo done
   });
 });
 
-describe('claim ids on claimed delegations (#531)', () => {
+describe('delegation status credentials', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -848,10 +836,7 @@ describe('claim ids on claimed delegations (#531)', () => {
     await workspace.cleanup();
   });
 
-  async function setupClaimedDelegation(): Promise<{
-    claimId: string;
-    childRunId: string;
-  }> {
+  async function setupPendingDelegation(): Promise<{ token: string; tokenHash: string }> {
     const parentRunbook = [
       '# Parent ClaimId',
       '',
@@ -883,11 +868,22 @@ describe('claim ids on claimed delegations (#531)', () => {
     await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-claim-id.md'), parentRunbook);
     await writeFile(join(workspace.cwd, 'runbooks', 'child-claim-id.runbook.md'), childRunbook);
-    await runCliInProcess('run --prompted runbooks/parent-claim-id.md --text', workspace);
+    await runCliInProcess('run --prompted runbooks/parent-claim-id.md', workspace);
 
     const parent = await getActiveState(workspace);
-    const token = parent?.substepStates?.[0]?.delegation?.token;
-    if (typeof token !== 'string') throw new Error('Expected delegation token');
+    const delegation = parent?.substepStates?.[0]?.delegation;
+    const token = requireLatestFrontierToken(workspace, '1.1');
+    if (typeof delegation?.tokenHash !== 'string') {
+      throw new Error('Expected delegation token hash');
+    }
+    return { token, tokenHash: delegation.tokenHash };
+  }
+
+  async function setupClaimedDelegation(): Promise<{
+    claimId: string;
+    childRunId: string;
+  }> {
+    const { token } = await setupPendingDelegation();
     // Real `rd claim` writes the ClaimRecord into .rundown/session.json.
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);
@@ -900,6 +896,41 @@ describe('claim ids on claimed delegations (#531)', () => {
     }
     return { claimId: claimOutput.claim_id, childRunId: claimOutput.run_id };
   }
+
+  it('keeps pending delegation tokens out of status JSON', async () => {
+    const { token, tokenHash } = await setupPendingDelegation();
+
+    const result = await runCliInProcess('status', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const output = JSON.parse(result.stdout) as {
+      delegations?: Array<Record<string, unknown>>;
+    };
+    expect(output.delegations).toHaveLength(1);
+    const delegation = output.delegations?.[0];
+    expect(delegation).toMatchObject({ substep: '1', state: 'pending', tokenHash });
+    expect(delegation?.runbook).toEqual(
+      expect.stringMatching(/runbooks\/child-claim-id\.runbook\.md$/),
+    );
+    expect(delegation).not.toHaveProperty('token');
+    expect(result.stdout).not.toContain(token);
+
+    const validation = validateStatusOutput(output);
+    expect(validation.errors).toEqual([]);
+    expect(validation.valid).toBe(true);
+  });
+
+  it('keeps pending delegation tokens out of text status', async () => {
+    const { token } = await setupPendingDelegation();
+
+    const result = await runCliInProcess('status --text', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/\n\s+1\s+/);
+    expect(result.stdout).toContain('runbooks/child-claim-id.runbook.md');
+    expect(result.stdout).toContain('(pending claim)');
+    expect(result.stdout).not.toContain(token);
+  });
 
   it('surfaces claimed child runs in status JSON (#531)', async () => {
     const { childRunId } = await setupClaimedDelegation();

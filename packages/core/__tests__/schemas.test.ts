@@ -13,6 +13,7 @@ import {
 } from '../src/schemas.js';
 import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
 import { buildFrameKey } from '../src/runbook/targeting.js';
+import { makeDelegationCredentialDescriptor } from '../src/testing/delegation-fixtures.js';
 
 const VALID_RUN_ID = `rd_${'a'.repeat(32)}`;
 
@@ -1084,6 +1085,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           status: 'done',
           result: 'pass',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
@@ -1112,6 +1114,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           status: 'done',
           result: 'pass',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
@@ -1140,6 +1143,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           status: 'done',
           result: 'pass',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },

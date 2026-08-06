@@ -13,6 +13,7 @@ import {
   parseConcatenatedJson,
   parseFinalCliJsonObject,
   issueRunControlClaim,
+  requireLatestFrontierToken,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -135,11 +136,7 @@ describe('claim command', () => {
   }
 
   async function getAutoIssuedToken(substepId = '1'): Promise<string> {
-    const state = await getActiveState(workspace);
-    const token = state?.substepStates?.find((substep) => substep.id === substepId)?.delegation
-      ?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    return requireLatestFrontierToken(workspace, `1.${substepId}`);
   }
 
   function runCliSubprocess(args: string[]): Promise<{
@@ -261,7 +258,7 @@ describe('claim command', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -299,14 +296,12 @@ describe('claim command', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      const started = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      const started = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(started.exitCode).toBe(0);
       const parent = (await getActiveState(workspace))!;
       const token = await getAutoIssuedToken();
       const delegatedParent = (await readRunbookState(workspace, parent.id))!;
-      const delegatedSubstep = delegatedParent.substepStates?.find(
-        (substep) => substep.delegation?.token === token,
-      );
+      const delegatedSubstep = delegatedParent.substepStates?.find((substep) => substep.id === '1');
       if (!delegatedSubstep?.delegation) {
         throw new Error('Expected the parent to contain the delegated token.');
       }
@@ -371,7 +366,7 @@ describe('claim command', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const parentId = (await getActiveState(workspace))!.id;
 
@@ -406,7 +401,7 @@ describe('claim command', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -449,7 +444,7 @@ describe('claim command', () => {
       });
       await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
 
-      let result = await runCliInProcess('run parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const parentId = (await getActiveState(workspace))!.id;
 
@@ -484,7 +479,7 @@ describe('claim command', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -514,7 +509,7 @@ describe('claim command', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -601,7 +596,7 @@ Execute with {{Env}} environment.
 `;
       await writeFile(join(workspace.cwd, 'var-child.runbook.md'), childContent);
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -614,7 +609,7 @@ Execute with {{Env}} environment.
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       const token = await getAutoIssuedToken();
 
       result = await runCliInProcess(
@@ -629,7 +624,7 @@ Execute with {{Env}} environment.
       await writeChildRunbook();
 
       let result = await runCliInProcess(
-        'run --prompted parent.runbook.md --input ContextId=ctx-parent --text',
+        'run --prompted parent.runbook.md --input ContextId=ctx-parent',
         workspace,
       );
       expect(result.exitCode).toBe(0);
@@ -684,7 +679,7 @@ Execute with {{Env}} environment.
         }),
       );
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -720,7 +715,7 @@ rd echo --result pass
       await writeAutoCompleteChild();
 
       // Start parent in non-prompted mode
-      let result = await runCliInProcess('run parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -755,7 +750,7 @@ rd echo --result fail
 `;
       await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChild);
 
-      await runCliInProcess('run parent.runbook.md --text', workspace);
+      await runCliInProcess('run parent.runbook.md', workspace);
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
@@ -782,7 +777,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       const token = await getAutoIssuedToken();
 
       // Delete parent runbook file (state still exists)
@@ -807,7 +802,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      await runCliInProcess('run --prompted parent.runbook.md', workspace);
       const token = await getAutoIssuedToken();
 
       // Cancel the delegation via bearer-authorized stop on the delegating parent.
@@ -827,7 +822,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      await runCliInProcess('run --prompted parent.runbook.md', workspace);
       const parent = await getActiveState(workspace);
       const token = await getAutoIssuedToken();
       const parentClaimId = await issueRunControlClaim(workspace, parent!.id);
@@ -848,7 +843,7 @@ rd echo --result fail
     it('rejects delegation to non-existent child runbook', async () => {
       await writeParentRunbook('missing-child.runbook.md');
 
-      const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/unable to resolve|not found/i);
     });
@@ -859,7 +854,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
 
@@ -904,7 +899,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const parent = await getActiveState(workspace);
       expect(parent).not.toBeNull();
@@ -913,7 +908,7 @@ rd echo --result fail
 
       const delegatedParent = await readRunbookState(workspace, parent!.id);
       const delegatedSubstep = delegatedParent?.substepStates?.find(
-        (substep) => substep.delegation?.token === token,
+        (substep) => substep.id === '1',
       );
       const delegation = delegatedSubstep?.delegation;
       expect(delegation).toEqual(
@@ -991,7 +986,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
 
@@ -1031,7 +1026,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
 
@@ -1067,7 +1062,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
 
@@ -1087,7 +1082,7 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const tokenA = await getAutoIssuedToken('1');
@@ -1164,7 +1159,7 @@ Plan: {{context.parent.vars.PlanPath}}
 `;
       await writeFile(join(workspace.cwd, 'child-ctx.runbook.md'), childWithContext);
 
-      let result = await runCliInProcess('run --prompted parent-vars.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent-vars.runbook.md', workspace);
       const token = await getAutoIssuedToken();
 
       result = await runCliInProcess(`claim ${token}`, workspace);

@@ -35,7 +35,20 @@ export type {
   SessionMutationRefusal,
   SessionMutationResult,
 } from './storage/runbook-store.js';
-export { assertExecutionEpoch, type ExecutionEpoch } from './storage/mutation-result.js';
+// `GuardedMutationResult` and `AbandonedAttemptSetOutcome` are public for the
+// same narrow reason: a CLI renderer must DERIVE the refusal union it renders
+// from these rather than re-declaring it. A hand-restatement compiles while
+// silently de-branding `RunId`/`ExecutionEpoch` and dropping fields — the
+// "no parallel result types" defect the PR 11-head planning audit names.
+export type {
+  AbandonedAttemptSetOutcome,
+  InterruptedAttemptRef,
+} from './storage/execution-lease.js';
+export {
+  assertExecutionEpoch,
+  type ExecutionEpoch,
+  type GuardedMutationResult,
+} from './storage/mutation-result.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
@@ -81,6 +94,12 @@ export * from './claim-id.js';
 export * from './duration.js';
 export * from './last-action.js';
 export * from './transition-kernel.js';
+// `manual-delegation-machine.js` is deliberately NOT barrelled. Publishing
+// `prepareManualDelegation` would invite a front end to drive delegation around
+// `RunbookActorService`, which owns the fenced commit — exactly the parallel
+// execution path CLAUDE.md forbids. The sanctioned entry point is
+// `RunbookActorService.prepareManualDelegationMutation`; its event and result
+// types return to this barrel if and when a front end legitimately needs them.
 export {
   generateRunId,
   RunbookStateManager,
@@ -107,6 +126,7 @@ export {
   type RollbackInitialLinkInput,
   type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
+  type PreparedRunControlClaim,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
   type RunningStackMemberResolution,
@@ -215,6 +235,15 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
+// Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
+// above and by the CLI execution loop, which is why it is exported.
+export {
+  projectAndConsumeReEntryFrontier,
+  readPersistedReEntryFrontier,
+  type ProjectAndConsumeReEntryFrontierInput,
+  type ReEntryFrontierActorService,
+  type ReEntryProjection,
+} from './re-entry-frontier.js';
 export {
   propagateTerminalChildUpward,
   INLINE_PARENT_CYCLE_CODE,
@@ -230,20 +259,13 @@ export {
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 export {
-  AbortCommandService,
-  type AbortCommandAuthorizationInput,
-  type AbortCommandAuthorizationResult,
-  type AbortCommandServiceDependencies,
-  type AuthorizedAbortCommand,
-} from './abort-command-service.js';
-export {
   RunbookLifecycleCommandService,
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
   type ExplicitDelegationTarget,
   type FindDelegationByToken,
-  type ForceAbortLinkedChildCleanupResult,
+  type DelegationAbortOutcome,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
   type LifecycleNavigationMutationInput,
@@ -255,7 +277,6 @@ export {
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
-  type PersistIssuedSubstep,
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
@@ -355,6 +376,13 @@ export {
   type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
+// The two runtime capability types ARE public: a front end that owns the CLI
+// execution loop threads a verified issuer and deriver through its own option
+// bags, so it must be able to name them.
+export type {
+  DelegationCredentialIssuer,
+  DelegationTokenDeriver,
+} from './delegation-credential.js';
 export { inferFrameEntryFromState } from './frame-entry.js';
 export type { RunbookEvent } from './compiler.js';
 export {
@@ -395,18 +423,25 @@ export {
   type DelegationCollectionPendingReadModel,
   type DelegationOutcomeReportedFact,
 } from './delegation-lifecycle-read-model.js';
+// Credential *derivation* is not public. `deriveDelegationToken` and the nonce
+// primitives around it are reachable only through the claim-bound
+// `DelegationCredentialIssuer` / `DelegationTokenDeriver` capabilities above, so
+// no consumer can mint or reproduce a bearer without a verified claim.
+// `DelegationCredentialDescriptor` stays public because it is the parameter type
+// of those two published callables — a caller that cannot name it cannot type
+// its own deriver.
 export {
   DELEGATION_CLAIM_MARKER,
   DELEGATION_TOKEN_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
   assertDelegationTokenHash,
   findDelegationClaimToken,
-  generateDelegationToken,
   hashDelegationToken,
   isDelegationToken,
   isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
+  type DelegationCredentialDescriptor,
   type DelegationTokenHash,
 } from './delegation-token.js';
 export {

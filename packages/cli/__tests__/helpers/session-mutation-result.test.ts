@@ -8,13 +8,41 @@
 // observable to a scoped mutation run.
 
 import { describe, it, expect, jest } from '@jest/globals';
-import type { SessionMutationRefusalOutcome } from '@rundown-org/core';
+import type { ExecutionEpoch, RunId, SessionMutationRefusalOutcome } from '@rundown-org/core';
 import {
   isSessionMutationRefusal,
   renderSessionMutationRefusal,
+  renderTransactionalMutationRefusal,
   sessionMutationRefusalCode,
+  transactionalRefusalCode,
+  type TransactionalMutationRefusal,
 } from '../../src/helpers/session-mutation-result.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+
+// ---------------------------------------------------------------------------
+// F12 — the CLI union must be DERIVED from core's, never re-declared.
+//
+// A hand-restatement compiles, but it silently de-brands `RunId` /
+// `ExecutionEpoch` down to `string` / `number` and drops fields core does carry
+// (`runId` on the CAS refusals). The result is a structurally parallel result
+// type — exactly what the PR 11-head planning audit forbids. These assertions
+// fail to compile the moment the union stops being core's.
+// ---------------------------------------------------------------------------
+
+/** The CAS refusal arms carry core's branded `runId`, not a dropped field. */
+type ClaimSupersededArm = Extract<TransactionalMutationRefusal, { kind: 'claim_superseded' }>;
+const _claimSupersededKeepsBrandedRunId = (arm: ClaimSupersededArm): RunId => arm.runId;
+void _claimSupersededKeepsBrandedRunId;
+
+/** The aggregate arm's attempts keep both brands. */
+type AggregateAttempt = Extract<
+  TransactionalMutationRefusal,
+  { kind: 'aggregate_recovery_required' }
+>['attempts'][number];
+const _aggregateAttemptKeepsBrands = (
+  attempt: AggregateAttempt,
+): { runId: RunId; epoch: ExecutionEpoch } => attempt;
+void _aggregateAttemptKeepsBrands;
 
 const RUN_ID = `rd_${'1'.repeat(32)}` as SessionMutationRefusalOutcome['runId'];
 
@@ -51,8 +79,32 @@ describe('sessionMutationRefusalCode', () => {
     // output under no code at all.
     const unknown = { kind: 'claim_superseded', runId: RUN_ID, message: 'nope' };
     expect(() => sessionMutationRefusalCode(unknown as SessionMutationRefusalOutcome)).toThrow(
-      /Unhandled session mutation refusal/,
+      /Unhandled session mutation refusal: claim_superseded/,
     );
+  });
+
+  it('names only the discriminant of an unknown refusal, never its payload', () => {
+    // An unrecognized variant is one whose fields this build does not know, so
+    // the guard must not serialize it wholesale into an error message that
+    // reaches stderr and logs.
+    const unknown = {
+      kind: 'future_refusal',
+      runId: RUN_ID,
+      message: 'nope',
+      claimId: 'rdc_secret_bearer_value',
+    };
+
+    expect(() => sessionMutationRefusalCode(unknown as SessionMutationRefusalOutcome)).toThrow(
+      'Unhandled session mutation refusal: future_refusal',
+    );
+    try {
+      sessionMutationRefusalCode(unknown as SessionMutationRefusalOutcome);
+    } catch (error) {
+      const thrown = error as Error;
+      expect(thrown.message).not.toContain('rdc_secret_bearer_value');
+      expect(thrown.message).not.toContain(RUN_ID);
+    }
+    expect.assertions(3);
   });
 });
 
@@ -92,5 +144,140 @@ describe('isSessionMutationRefusal', () => {
     // capture any of them, or `terminal-command.ts` would render a cleanup
     // success as a refusal.
     expect(isSessionMutationRefusal(outcome)).toBe(false);
+  });
+});
+
+describe('renderTransactionalMutationRefusal', () => {
+  it.each([
+    { refusal: executionInProgress, code: 'EXECUTION_IN_PROGRESS' },
+    { refusal: recoveryRequired, code: 'RECOVERY_REQUIRED' },
+  ])(
+    'renders the $refusal.kind ownership refusal through the shared mapping',
+    ({ refusal, code }) => {
+      const { emitter, error } = makeOutput();
+
+      expect(renderTransactionalMutationRefusal(emitter, refusal)).toBe(true);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(refusal.message, code);
+    },
+  );
+
+  // Each fixture carries `runId` because core's CAS refusals do — the union is
+  // derived from them, so a fixture that omits it no longer type-checks.
+  it.each([
+    {
+      kind: 'claim_superseded' as const,
+      runId: RUN_ID,
+      message: 'superseded',
+      code: 'STALE_CLAIM',
+    },
+    {
+      kind: 'concurrent_modification' as const,
+      runId: RUN_ID,
+      message: 'changed concurrently',
+      code: 'CONCURRENT_MODIFICATION',
+    },
+    {
+      kind: 'missing' as const,
+      runId: RUN_ID,
+      message: 'missing run',
+      code: 'RUN_TARGET_UNAVAILABLE',
+    },
+  ])('renders $kind with its exact message and code', (refusal) => {
+    const { emitter, error } = makeOutput();
+
+    expect(renderTransactionalMutationRefusal(emitter, refusal)).toBe(true);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(refusal.message, refusal.code);
+  });
+
+  it('renders every aggregate recovery attempt under the distinct aggregate code', () => {
+    // A multi-run refusal is NOT the single-run `recovery_required` arm: it
+    // carries a set, and `details.runs` only exists here. Collapsing the two
+    // onto one wire code makes the two shapes indistinguishable to an agent
+    // that routes on `code`.
+    const { emitter, error } = makeOutput();
+    const refusal = {
+      kind: 'aggregate_recovery_required' as const,
+      message: 'recover these runs',
+      attempts: [
+        { runId: `rd_${'2'.repeat(32)}` as RunId, epoch: 3 as ExecutionEpoch },
+        { runId: `rd_${'3'.repeat(32)}` as RunId, epoch: 4 as ExecutionEpoch },
+      ],
+    };
+
+    expect(renderTransactionalMutationRefusal(emitter, refusal)).toBe(true);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('recover these runs', 'AGGREGATE_RECOVERY_REQUIRED', {
+      runs: [
+        { runId: refusal.attempts[0].runId, epoch: 3 },
+        { runId: refusal.attempts[1].runId, epoch: 4 },
+      ],
+    });
+  });
+
+  it('throws rather than emitting no code at all for an unrecognized refusal kind', () => {
+    // The six-member union is the one place that owns the full mapping, so it
+    // is the one place a `never` guard has to exist. Without it a new core arm
+    // falls off the end of the switch and `output.error` is never called: the
+    // command exits 1 with a silent, empty envelope.
+    const { emitter, error } = makeOutput();
+    const unknown = { kind: 'future_refusal', message: 'nope' };
+
+    expect(() =>
+      renderTransactionalMutationRefusal(emitter, unknown as TransactionalMutationRefusal),
+    ).toThrow('Unhandled transactional mutation refusal: future_refusal');
+    expect(error).not.toHaveBeenCalled();
+  });
+});
+
+describe('transactionalRefusalCode', () => {
+  // The sites that need the CODE rather than the rendering (goto-workflow's
+  // structured result, execution.ts's ERROR_OCCURRED payload) call this instead
+  // of restating the map. One mapping, two consumers.
+  it.each([
+    { refusal: executionInProgress, code: 'EXECUTION_IN_PROGRESS' },
+    { refusal: recoveryRequired, code: 'RECOVERY_REQUIRED' },
+    {
+      refusal: { kind: 'claim_superseded', runId: RUN_ID, message: 'superseded' },
+      code: 'STALE_CLAIM',
+    },
+    {
+      refusal: { kind: 'concurrent_modification', runId: RUN_ID, message: 'changed' },
+      code: 'CONCURRENT_MODIFICATION',
+    },
+    {
+      refusal: { kind: 'missing', runId: RUN_ID, message: 'missing run' },
+      code: 'RUN_TARGET_UNAVAILABLE',
+    },
+    {
+      refusal: {
+        kind: 'aggregate_recovery_required',
+        message: 'recover these runs',
+        attempts: [{ runId: RUN_ID, epoch: 2 }],
+      },
+      code: 'AGGREGATE_RECOVERY_REQUIRED',
+    },
+  ])('maps $refusal.kind to $code', ({ refusal, code }) => {
+    expect(transactionalRefusalCode(refusal as TransactionalMutationRefusal)).toBe(code);
+  });
+
+  it('names only the discriminant of an unknown refusal, never its payload', () => {
+    const unknown = {
+      kind: 'future_refusal',
+      runId: RUN_ID,
+      message: 'nope',
+      claimId: 'rdc_secret_bearer_value',
+    };
+
+    try {
+      transactionalRefusalCode(unknown as TransactionalMutationRefusal);
+    } catch (error) {
+      const thrown = error as Error;
+      expect(thrown.message).toBe('Unhandled transactional mutation refusal: future_refusal');
+      expect(thrown.message).not.toContain('rdc_secret_bearer_value');
+      expect(thrown.message).not.toContain(RUN_ID);
+    }
+    expect.assertions(3);
   });
 });

@@ -37,16 +37,6 @@ At:       2.1
 ### 2.1. Child task
 
 Delegated to child runbook.
-
-=== command: rd claim <token> --text ===
-File:     .rundown/runbooks/snapshot-child.runbook.md
-State:    .rundown/runs/<runbookId>.json
-Action:   START
-
-## 1. Child step
-
-The message is: hello from snapshot parent
-Claimed <token> -> <workdir>/.rundown/runbooks/snapshot-child.runbook.md
 "
 `;
 

@@ -1,3 +1,4 @@
+import { truncateDelegationToken } from '../runbook/delegation-token.js';
 import { RundownError } from './rundown-error.js';
 
 /**
@@ -107,11 +108,20 @@ export const Errors = {
       available: available.join(', '),
     }),
 
-  invalidToken: (token: string): RundownError => new RundownError('INVALID_TOKEN', { token }),
+  // The three bearer-carrying factories truncate HERE rather than at their call
+  // sites. `RundownError.context` is serialised verbatim into the CLI's stdout
+  // error envelope (`wrapper.ts` → `details.context`), and the credentials
+  // addendum binds redaction to *every* refusal and error envelope. Redacting in
+  // the factory closes the class: no caller can reintroduce the leak by passing
+  // the raw value, which is exactly how it was introduced.
+  invalidToken: (token: string): RundownError =>
+    new RundownError('INVALID_TOKEN', { token: truncateDelegationToken(token) }),
 
-  tokenNotFound: (token: string): RundownError => new RundownError('TOKEN_NOT_FOUND', { token }),
+  tokenNotFound: (token: string): RundownError =>
+    new RundownError('TOKEN_NOT_FOUND', { token: truncateDelegationToken(token) }),
 
-  tokenCancelled: (token: string): RundownError => new RundownError('TOKEN_CANCELLED', { token }),
+  tokenCancelled: (token: string): RundownError =>
+    new RundownError('TOKEN_CANCELLED', { token: truncateDelegationToken(token) }),
 
   delegationLockTimeout: (parentRunId: string): RundownError =>
     new RundownError('DELEGATION_LOCK_TIMEOUT', { parentRunId }),
@@ -172,6 +182,9 @@ export const Errors = {
 
   retryHookStaleSubstep: (substepId: string, parentStep: string): RundownError =>
     new RundownError('RETRY_HOOK_STALE_SUBSTEP', { substepId, parentStep }),
+
+  retryHookMissingRunId: (parentStep: string): RundownError =>
+    new RundownError('RETRY_HOOK_MISSING_RUN_ID', { step: parentStep }),
 
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>

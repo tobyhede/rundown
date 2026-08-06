@@ -8,11 +8,13 @@ import {
   findActionOutput,
   parseCliJsonObject,
   parseConcatenatedJson,
+  requireFrontierToken,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import {
+  deletePersistedRunState,
   patchPersistedRunState,
   readPersistedRunState,
 } from '@rundown-org/core/testing/session-fixtures';
@@ -28,6 +30,40 @@ import { validateCommandOutput } from '../helpers/schema-validator.js';
 // import + wiring test link this file into the graph so the covering tests
 // actually run against each mutant. Mirrors collect.test.ts / delegate.test.ts.
 import { registerAbortCommand } from '../../src/commands/abort.js';
+import { truncateDelegationToken, type DelegationAbortOutcome } from '@rundown-org/core';
+
+/** True only when the two unions are mutually assignable (no widening either way). */
+type ExactUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/**
+ * The refusal kinds `abort`'s `refused` arm can carry.
+ *
+ * Pinned as a type-level assertion rather than a runtime case: the command's
+ * refusal switch ends in a `never` check, so a third kind appearing in core must
+ * fail compilation at the CLI rather than fall through to a default that renders
+ * some other refusal's envelope (CLAUDE.md "No silent mapping"). This assertion
+ * fails the same way and names the contract that broke.
+ */
+const _abortRefusalKindsAreExact: ExactUnion<
+  Extract<DelegationAbortOutcome, { kind: 'refused' }>['policy']['kind'],
+  'actor_context_required' | 'claim_grant_required'
+> = true;
+void _abortRefusalKindsAreExact;
+
+/**
+ * The linked-child cleanup branches `abort`'s `--text` renderer must distinguish.
+ *
+ * Pinned for the same reason, after the same failure: when `missing_child_cleaned`
+ * joined this union the renderer's if/else chain silently fell through to the
+ * pending-delegation arm and reported a linked-but-vanished child as one that was
+ * never claimed. The renderer is now an exhaustive switch, and this assertion
+ * names the contract if the union grows again.
+ */
+const _abortCleanupKindsAreExact: ExactUnion<
+  Extract<DelegationAbortOutcome, { kind: 'cancelled' }>['cleanup'],
+  'none' | 'active_child_failed' | 'terminal_child_cleaned' | 'missing_child_cleaned'
+> = true;
+void _abortCleanupKindsAreExact;
 
 describe('abort command wiring', () => {
   it('registers the abort command with its documented flags and descriptions', () => {
@@ -114,10 +150,7 @@ describe('abort command - unit tests', () => {
     expect(typeof started?.claim_id).toBe('string');
     orchestratorClaimId = String(started!.claim_id);
 
-    const state = await getActiveState(workspace);
-    const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    return requireFrontierToken(result.stdout, '1.1');
   }
 
   function abortCommand(token: string, suffix = ''): string {
@@ -233,6 +266,46 @@ describe('abort command - unit tests', () => {
         }),
       );
       expect(String((envelope as { error?: unknown }).error)).toContain('aborting delegated work');
+    });
+
+    it('refuses a claim that lacks the abort grant with CLAIM_GRANT_REQUIRED', async () => {
+      // The second (and only other) refusal kind the abort resolver produces.
+      // It must render its own envelope: collapsing it into
+      // ACTOR_CONTEXT_REQUIRED would tell a caller that already supplied a
+      // bearer to supply one.
+      const token = await setupDelegation();
+      const claimed = await runCliInProcess(['claim', token], workspace);
+      expect(claimed.exitCode).toBe(0);
+      const childClaimId = findActionOutput<{ claim_id: string }>(claimed.stdout)?.claim_id;
+      if (childClaimId === undefined)
+        throw new Error(`Expected child claim id:\n${claimed.stdout}`);
+
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected parent state');
+
+      const result = await runCliInProcess(
+        ['abort', token, '--claim-id', childClaimId, '--force'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIM_GRANT_REQUIRED',
+          error: expect.stringContaining('rundown abort'),
+        }),
+      );
+      // The scoping detail is the whole difference between this refusal and the
+      // deliberately run-id-free ACTOR_CONTEXT_REQUIRED one: the caller already
+      // presented a verified bearer, so naming the run whose grant was missing
+      // is safe and is the only way they can tell WHICH authority to obtain.
+      // Dropping it (or passing `undefined` through the ternary) still emits the
+      // right code, so nothing but this assertion distinguishes the two.
+      expect(envelope.details).toEqual({ targetRunId: parent.id });
+      // The delegation bearer must never round-trip into a refusal envelope.
+      expect(JSON.stringify(envelope)).not.toContain(token);
     });
 
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {
@@ -405,6 +478,43 @@ describe('abort command - unit tests', () => {
       expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-808' }));
     });
 
+    it('never serialises the raw bearer into the token-not-found JSON envelope', async () => {
+      // The credentials addendum binds redaction to EVERY refusal and error
+      // envelope, and `details.context` is part of the envelope this command
+      // writes to stdout: `wrapper.ts` copies `RundownError.context` verbatim.
+      // Scanning the whole serialised payload (not just the top-level fields)
+      // is the point — the leak was one level down.
+      // cspell:disable-next-line
+      const bearer = 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
+
+      const result = await runCliInProcess(`abort ${bearer}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-808' }));
+      expect(JSON.stringify(envelope)).not.toContain(bearer);
+      // Redacted, not dropped: the truncated hint stays so an operator can still
+      // correlate the refusal with the token they presented.
+      const details = envelope.details as { context?: Record<string, unknown> };
+      expect(details.context?.token).toBe('rdtk_AAA...HHHH');
+    });
+
+    it('never serialises the raw bearer into the invalid-token JSON envelope', async () => {
+      // Same contract on the format-rejection path. A malformed value can still
+      // be a real bearer with one character mistyped, so it is redacted too.
+      // cspell:disable-next-line
+      const nearBearer = 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHH1';
+
+      const result = await runCliInProcess(`abort ${nearBearer}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-807' }));
+      expect(JSON.stringify(envelope)).not.toContain(nearBearer);
+      const details = envelope.details as { context?: Record<string, unknown> };
+      expect(details.context?.token).toBe('rdtk_AAA...HHH1');
+    });
+
     it('handles malformed JSON in state file gracefully', async () => {
       // This is hard to test without directly corrupting files
       // but the command should handle errors gracefully
@@ -481,6 +591,29 @@ describe('abort command - unit tests', () => {
       expect(result.stdout).toContain('child.runbook.md');
     });
 
+    it('reports a repeat abort as already cancelled instead of emitting the JSON envelope', async () => {
+      // The `already_cancelled` arm is the only outcome whose --text rendering
+      // has no JSON-mode counterpart assertion: every other branch is pinned in
+      // JSON. Without this, deleting the --text guard (or the else arm behind
+      // it) makes `--text` silently print the machine envelope, and a human
+      // re-running an abort gets a JSON blob where a sentence was documented.
+      const token = await setupDelegation();
+      const first = await runCliInProcess(abortCommand(token, '--text'), workspace);
+      expect(first.exitCode).toBe(0);
+
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      // The truncated hint, never the raw bearer: `truncateDelegationToken` is a
+      // security contract, so the full token must not reach the terminal.
+      expect(result.stdout).toContain(`Already cancelled: ${truncateDelegationToken(token)}`);
+      expect(result.stdout).not.toContain(token);
+      // Proves the --text branch actually ran rather than the JSON one: the
+      // machine envelope's discriminants are absent.
+      expect(result.stdout).not.toContain('"status": "already_cancelled"');
+      expect(result.stdout).not.toContain('"kind": "abort"');
+    });
+
     it('shows force warning when aborting claimed delegation', async () => {
       const token = await setupDelegation();
 
@@ -493,6 +626,177 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toMatch(/in-flight|child run stopped/i);
+    });
+  });
+
+  describe('cleanup rendering', () => {
+    /**
+     * Claim the delegation so the parent records a linked child.
+     *
+     * @param token - The delegation bearer to claim.
+     * @returns The linked child's run id.
+     */
+    async function claimLinkedChild(token: string): Promise<string> {
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      if (typeof claimOutput?.run_id !== 'string') {
+        throw new Error(`Expected claimed child run id:\n${claim.stdout}`);
+      }
+      return claimOutput.run_id;
+    }
+
+    it('renders the pending-delegation line when no child was ever linked', async () => {
+      // cleanup: 'none'
+      const token = await setupDelegation();
+
+      const result = await runCliInProcess(abortCommand(token, '--text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(
+        /CANCELLED {2}rdtk_\S+ \(pending delegation to .*child\.runbook\.md\)/,
+      );
+    });
+
+    it('renders the in-flight stop and the propagated failure when the child was running', async () => {
+      // cleanup: 'active_child_failed'
+      const token = await setupDelegation();
+      await claimLinkedChild(token);
+
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/CANCELLED {2}rdtk_\S+ \(in-flight, child run stopped\)/);
+      expect(result.stdout).toContain('FAILED     step 1 (delegation cancelled)');
+    });
+
+    it('renders the cleanup line when the linked child had already reported', async () => {
+      // cleanup: 'terminal_child_cleaned'
+      const token = await setupDelegation();
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      expect(typeof claimOutput?.claim_id).toBe('string');
+      const failed = await runCliInProcess(
+        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        workspace,
+      );
+      expect(failed.exitCode).toBe(1);
+
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/CANCELLED {2}rdtk_\S+ \(linked child cleaned up\)/);
+    });
+
+    it('renders the stale-reference cleanup when the linked child run no longer exists', async () => {
+      // cleanup: 'missing_child_cleaned'. The parent still names a childRunId
+      // whose run has been pruned or deleted, so force-abort clears the stale
+      // link. Rendering this as a *pending* delegation would tell the operator
+      // no child was ever linked — the exact opposite of what happened, in the
+      // one situation they are debugging.
+      const token = await setupDelegation();
+      const childRunId = await claimLinkedChild(token);
+      await deletePersistedRunState(workspace.cwd, childRunId);
+
+      const result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(
+        /CANCELLED {2}rdtk_\S+ \(linked child run missing, stale reference cleaned up\)/,
+      );
+      expect(result.stdout).not.toContain('pending delegation');
+    });
+
+    it('serialises the stale-reference cleanup when the linked child run no longer exists', async () => {
+      // JSON is the agent surface, and the four-way cleanup distinction is
+      // exactly what `--force` exists to expose. Withholding it from JSON while
+      // rendering it in `--text` inverted the repo's own output priority.
+      const token = await setupDelegation();
+      const childRunId = await claimLinkedChild(token);
+      await deletePersistedRunState(workspace.cwd, childRunId);
+
+      const result = await runCliInProcess(abortCommand(token, '--force'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = findActionOutput(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({
+          kind: 'abort',
+          action: 'abort',
+          status: 'cancelled',
+          cleanup: 'missing_child_cleaned',
+          force: true,
+          childRunId,
+          runbook: expect.stringContaining('child.runbook.md'),
+        }),
+      );
+      const validation = validateCommandOutput('abort', output!);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
+    });
+
+    it('serialises the pending-delegation cleanup and reports no force when nothing was forced', async () => {
+      // `--force` was passed but core had no linked child to force: `force` must
+      // report what core DID, not what the caller asked for. Reporting the flag
+      // told an agent a child run was stopped when none existed.
+      const token = await setupDelegation();
+
+      const result = await runCliInProcess(abortCommand(token, '--force'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = findActionOutput(result.stdout);
+      expect(output).toEqual(expect.objectContaining({ status: 'cancelled', cleanup: 'none' }));
+      expect(output).not.toHaveProperty('force');
+      expect(output).not.toHaveProperty('childRunId');
+      const validation = validateCommandOutput('abort', output!);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
+    });
+
+    it('serialises the in-flight cleanup when a running child was stopped', async () => {
+      const token = await setupDelegation();
+      const childRunId = await claimLinkedChild(token);
+
+      const result = await runCliInProcess(abortCommand(token, '--force'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = findActionOutput(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({
+          status: 'cancelled',
+          cleanup: 'active_child_failed',
+          force: true,
+          childRunId,
+        }),
+      );
+      const validation = validateCommandOutput('abort', output!);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
+    });
+
+    it('serialises the terminal-child cleanup when the linked child had already reported', async () => {
+      const token = await setupDelegation();
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      expect(typeof claimOutput?.claim_id).toBe('string');
+      const failed = await runCliInProcess(
+        `fail --claim-id ${String(claimOutput!.claim_id)}`,
+        workspace,
+      );
+      expect(failed.exitCode).toBe(1);
+
+      const result = await runCliInProcess(abortCommand(token, '--force'), workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = findActionOutput(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({ status: 'cancelled', cleanup: 'terminal_child_cleaned' }),
+      );
+      const validation = validateCommandOutput('abort', output!);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
     });
   });
 
@@ -518,10 +822,11 @@ describe('abort command - unit tests', () => {
       result = await runCliInProcess(abortCommand(token, '--force --text'), workspace);
       expect(result.exitCode).toBe(0);
 
-      // The parent remains the default-stack runbook; the child state is gone.
+      // The parent remains the default-stack runbook; the stopped child is
+      // retained as terminal evidence for crash reconciliation and pruning.
       const afterAbortParent = await readRunbookState(workspace, parentState.id);
       expect(afterAbortParent?.lifecycle).toBe('running');
-      expect(await readRunbookState(workspace, childRunId)).toBeNull();
+      expect((await readRunbookState(workspace, childRunId))?.lifecycle).toBe('stopped');
 
       // FAIL propagation must reach the parent: the substepState for the
       // delegated parent substep must be marked done/fail. Without

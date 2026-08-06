@@ -134,6 +134,7 @@ materialised
 materialising
 mdast
 misattributes
+miscomputation
 microstep
 minimatch
 Misordered
@@ -326,6 +327,9 @@ shims
 hermetic
 wget
 undeletable
+undisclosable
+disclosable
+underivable
 cwds
 Hermeticity
 Trailmark
@@ -356,6 +360,8 @@ unsynchronized
 precheck
 frontends
 recognises
+recognised
+unrecognised
 reconstructable
 fanout
 unsupplied
@@ -423,6 +429,7 @@ remediations
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
 linecap
 linejoin
+linearization
 offsetless
 Vulns
 sqljs

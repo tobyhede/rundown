@@ -18,6 +18,7 @@ import {
   findActionOutput,
   getActiveState,
   issueRunControlClaim,
+  parseConcatenatedJson,
   readSession,
   runCliInProcess,
   setupParentWithChildren,
@@ -200,8 +201,18 @@ async function arrangeStashableChild(): Promise<Arrangement> {
 /** Parent with an authored DELEGATE substep, plus the parent's bearer. */
 async function arrangeDelegatableParent(): Promise<Arrangement> {
   const workspace = await createTestWorkspace();
-  const { parentRunId } = await setupParentWithChildren(workspace);
-  const claimId = await issueRunControlClaim(workspace, parentRunId);
+  const { startStdout } = await setupParentWithChildren(workspace);
+  const started = parseConcatenatedJson(startStdout).find(
+    (entry): entry is { readonly type: 'runbook_started'; readonly claim_id: string } =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      (entry as { readonly type?: unknown }).type === 'runbook_started' &&
+      typeof (entry as { readonly claim_id?: unknown }).claim_id === 'string',
+  );
+  if (started === undefined) throw new Error('expected run-control claim');
+  // Automatic frontier credentials are bound to the exact claim minted by
+  // `run`; issuing a replacement claim cannot reproduce those credentials.
+  const claimId = started.claim_id as ClaimId;
   return { workspace, claimId, claimKey: claimKeyFromBearer(claimId) };
 }
 

@@ -23,6 +23,8 @@ import {
   type RunbookLifecycleCommandService,
   type CallerEvidence,
   type LifecycleTerminalReleaseMode,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
   claimKeyFromBearer,
 } from '@rundown-org/core';
 import { runExecutionLoop } from '../services/execution.js';
@@ -35,6 +37,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
 } from './refusal-renderers.js';
+import { transactionalRefusalCode } from './session-mutation-result.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
@@ -63,6 +66,10 @@ export interface GotoContext {
   terminalReleaseMode: LifecycleTerminalReleaseMode;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
+  /** Verified issuer for a navigation transition that enters a delegation frontier. */
+  issueDelegationCredential?: DelegationCredentialIssuer;
+  /** Same-issuer deriver used only to render the public delegation frontier. */
+  delegationTokenDeriver?: DelegationTokenDeriver;
 }
 
 /**
@@ -261,6 +268,8 @@ export async function buildGotoContext(
       cwd,
       terminalReleaseMode: outcome.terminalReleaseMode,
       commandStreamOptions: options.commandStreamOptions,
+      issueDelegationCredential: outcome.issueDelegationCredential,
+      delegationTokenDeriver: outcome.deriveDelegationToken,
     },
   };
 }
@@ -378,24 +387,13 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     steps,
     target,
     terminalReleaseMode: ctx.terminalReleaseMode,
+    issueDelegationCredential: ctx.issueDelegationCredential,
   });
   if (mutation.kind !== 'applied') {
-    switch (mutation.kind) {
-      case 'claim_superseded':
-        return { ok: false, error: mutation.message, code: 'STALE_CLAIM' };
-      case 'concurrent_modification':
-        return { ok: false, error: mutation.message, code: 'CONCURRENT_MODIFICATION' };
-      case 'execution_in_progress':
-        return { ok: false, error: mutation.message, code: 'EXECUTION_IN_PROGRESS' };
-      case 'recovery_required':
-        return { ok: false, error: mutation.message, code: 'RECOVERY_REQUIRED' };
-      case 'missing':
-        return { ok: false, error: mutation.message, code: 'RUN_TARGET_UNAVAILABLE' };
-      default: {
-        const _exhaustive: never = mutation;
-        return _exhaustive;
-      }
-    }
+    // This site needs the code rather than the rendering — the refusal travels
+    // back to the caller as a structured result — so it calls the shared
+    // mapping directly instead of restating it.
+    return { ok: false, error: mutation.message, code: transactionalRefusalCode(mutation) };
   }
 
   output.action(
@@ -425,6 +423,8 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
         : {}),
       output,
       commandStreamOptions: ctx.commandStreamOptions,
+      issueDelegationCredential: ctx.issueDelegationCredential,
+      delegationTokenDeriver: ctx.delegationTokenDeriver,
     },
   );
 

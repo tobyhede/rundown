@@ -26,6 +26,7 @@ import {
 } from '../../src/runbook/storage/runbook-store.js';
 import { assertClaimGeneration } from '../../src/runbook/storage/mutation-result.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
+import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 import type { Step, Runbook, RunId, DelegationLinkage } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import {
@@ -624,6 +625,7 @@ describe('RunbookStateManager', () => {
         startedAt: null,
       };
       const delegation = {
+        credential: makeDelegationCredentialDescriptor(),
         tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
         childRunbookPath: 'runbooks/delegated.runbook.md',
         childRunbookRef: { source: 'project' as const, path: 'runbooks/delegated.runbook.md' },

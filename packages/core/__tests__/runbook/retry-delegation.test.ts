@@ -1,8 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   abortDelegation,
-  createDelegation,
-  retryDelegation,
+  createDelegation as createDelegationCore,
+  retryDelegation as retryDelegationCore,
+  type DelegateOptions,
+  type RetryDelegationOptions,
 } from '../../src/runbook/delegation-service.js';
 import { TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
@@ -14,8 +16,18 @@ import {
   makeSteps,
 } from './delegation-service-fixtures.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
+import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
+const issueCredential = makeDelegationCredentialIssuer();
+const createDelegation = (
+  options: Omit<DelegateOptions, 'issueCredential'>,
+  steps: Parameters<typeof createDelegationCore>[1],
+) => createDelegationCore({ ...options, issueCredential }, steps);
+const retryDelegation = (
+  options: Omit<RetryDelegationOptions, 'issueCredential'>,
+  steps: Parameters<typeof retryDelegationCore>[1],
+) => retryDelegationCore({ ...options, issueCredential }, steps);
 
 describe('retryDelegation', () => {
   it('returns { status: "retried" } with a fresh token on success', () => {

@@ -13,13 +13,92 @@
  * @module testing/delegation-fixtures
  */
 
+import { randomBytes } from 'node:crypto';
+
 import type { ContextSnapshot, StepDelegation, SubstepState } from '../runbook/types.js';
-import { assertDelegationTokenHash } from '../runbook/delegation-token.js';
+import {
+  assertClaimLookupKey,
+  generateClaimBearer,
+  parseClaimBearer,
+} from '../runbook/claim-id.js';
+import {
+  createDelegationCredentialIssuer,
+  type DelegationCredentialIssuer,
+} from '../runbook/delegation-credential.js';
+import {
+  assertDelegationIssuanceNonce,
+  assertDelegationTokenHash,
+  deriveDelegationToken,
+  generateDelegationIssuanceNonce,
+  type DelegationCredentialDescriptor,
+} from '../runbook/delegation-token.js';
+import { assertRunId } from '../runbook/run-id.js';
 import { buildFrameKey, type FrameKey } from '../runbook/targeting.js';
 import { brandEffectiveVarsForTest } from './effective-vars.js';
 
 /** Token hash used by every fixture that does not name its own. */
 const DEFAULT_TOKEN_HASH = `sha256:${'a'.repeat(64)}`;
+
+/**
+ * Mint a canonical, unpredictable delegation token for tests.
+ *
+ * Production has no random token minter: every real bearer is derived from a
+ * verified claim secret plus its persisted credential descriptor, so a free
+ * function that mints one out of `randomBytes` would produce a token no claim
+ * can reproduce — a hash-only credential that fails at the first echo or
+ * frontier projection. It lives here, behind the `./testing/*` subpath, because
+ * only tests need an arbitrary well-formed bearer (format predicates, redaction
+ * and truncation helpers, claim-marker scanning, stand-in issuers).
+ *
+ * Implemented over {@link deriveDelegationToken} with a throwaway secret and a
+ * fresh nonce so the output is exactly the shape production derivation emits.
+ *
+ * @returns A distinct token matching the canonical `rdtk_` + 32 base32 format.
+ */
+export function generateDelegationToken(): string {
+  return deriveDelegationToken(randomBytes(32).toString('base64url'), {
+    issuanceNonce: generateDelegationIssuanceNonce(),
+    parentRunId: assertRunId(`rd_${'c'.repeat(32)}`),
+    parentStepId: '1.1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+  });
+}
+
+/**
+ * Build a non-secret delegation credential descriptor with valid canonical coordinates.
+ *
+ * @param partial - Overrides for any credential descriptor field.
+ * @returns A valid credential descriptor.
+ */
+export function makeDelegationCredentialDescriptor(
+  partial: Partial<DelegationCredentialDescriptor> = {},
+): DelegationCredentialDescriptor {
+  return {
+    version: 1,
+    issuerClaimKey: assertClaimLookupKey(`rdclk_${'b'.repeat(32)}`),
+    issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+    parentRunId: assertRunId(`rd_${'c'.repeat(32)}`),
+    parentStepId: '1.1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+    ...partial,
+  };
+}
+
+/**
+ * Build a claim-bound credential issuer for delegation primitive tests.
+ *
+ * @returns A fresh issuer whose bearer remains local to the test process.
+ */
+export function makeDelegationCredentialIssuer(): DelegationCredentialIssuer {
+  const parsed = parseClaimBearer(generateClaimBearer());
+  return createDelegationCredentialIssuer({
+    kind: 'bearer',
+    claimId: parsed.claimId,
+    claimKey: parsed.claimKey,
+  });
+}
 
 /**
  * Build a `ContextSnapshot` with a branded empty `EffectiveVars`.
@@ -46,6 +125,7 @@ export function makeContextSnapshot(partial: Partial<ContextSnapshot> = {}): Con
  */
 export function makeStepDelegation(partial: Partial<StepDelegation> = {}): StepDelegation {
   return {
+    credential: makeDelegationCredentialDescriptor(),
     tokenHash: assertDelegationTokenHash(DEFAULT_TOKEN_HASH),
     childRunbookPath: 'child.md',
     childRunbookRef: { source: 'project', path: 'child.md' },

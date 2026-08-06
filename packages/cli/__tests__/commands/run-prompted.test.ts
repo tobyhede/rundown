@@ -7,6 +7,7 @@ import {
   getActiveState,
   findActionOutput,
   readRunbookState,
+  requireFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -161,13 +162,14 @@ Second step.
         ].join('\n'),
       );
 
-      await runCliInProcess('run --prompted runbooks/prompted-parent.runbook.md --text', workspace);
-      const parent = await getActiveState(workspace);
-      const token = parent?.substepStates?.[0]?.delegation?.token;
-      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      const started = await runCliInProcess(
+        'run --prompted runbooks/prompted-parent.runbook.md',
+        workspace,
+      );
+      const token = requireFrontierToken(started.stdout, '1.1');
 
       // Claim the delegation token — launches child runbook
-      const claimResult = await runCliInProcess(`claim ${token!}`, workspace);
+      const claimResult = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimResult.exitCode).toBe(0);
       const childRunId = findActionOutput(claimResult.stdout)?.run_id;
       expect(typeof childRunId).toBe('string');

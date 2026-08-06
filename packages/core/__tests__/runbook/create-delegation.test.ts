@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { createDelegation } from '../../src/runbook/delegation-service.js';
+import { createDelegation as createDelegationCore } from '../../src/runbook/delegation-service.js';
 import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import {
   assertDelegationTokenHash,
@@ -21,6 +21,16 @@ import {
   makeState,
   makeSteps,
 } from './delegation-service-fixtures.js';
+import {
+  makeDelegationCredentialDescriptor,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
+
+const issueCredential = makeDelegationCredentialIssuer();
+const createDelegation = (
+  options: Omit<DelegateOptions, 'issueCredential'>,
+  steps: Parameters<typeof createDelegationCore>[1],
+) => createDelegationCore({ ...options, issueCredential }, steps);
 
 const CLAIMED_RUN_ID = brandRunIdForTest(`rd_${'4'.repeat(32)}`);
 const COMPLETED_RUN_ID = brandRunIdForTest(`rd_${'5'.repeat(32)}`);
@@ -40,6 +50,7 @@ describe('createDelegation', () => {
         path: 'planning/review/review-plan-risk-safety.runbook.md',
       },
       frameKey: buildFrameKey('1'),
+      issueCredential,
     };
 
     const result = createDelegation(options, steps);
@@ -49,6 +60,8 @@ describe('createDelegation', () => {
     expect(result.token).toBeDefined();
     expect(result.tokenHash).toBeDefined();
     expect(result.delegation).toBeDefined();
+    expect(JSON.stringify(result.updatedSubstepStates)).not.toContain(result.token);
+    expect(result.delegation.credential.issuerClaimKey).toBeDefined();
     expect(result.delegation.childRunbookRef).toEqual({
       source: 'plugin',
       path: 'planning/review/review-plan-risk-safety.runbook.md',
@@ -198,6 +211,7 @@ describe('createDelegation', () => {
 
   it('returns { status: "delegation_exists" } for duplicate active delegation', () => {
     const existingDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       childRunbookRef: { source: 'project', path: 'other-child.md' },
@@ -243,6 +257,7 @@ describe('createDelegation', () => {
 
   describe('claimed-delegation guard', () => {
     const makeClaimedDelegation = (overrides: Partial<StepDelegation> = {}): StepDelegation => ({
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       childRunbookRef: { source: 'project', path: 'other-child.md' },
@@ -259,6 +274,7 @@ describe('createDelegation', () => {
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       frameKey: buildFrameKey('1'),
+      issueCredential,
     });
 
     it('returns delegation_claimed instead of re-minting over a claimed child', () => {
@@ -334,6 +350,7 @@ describe('createDelegation', () => {
 
   it('allows re-delegation when previous delegation is cancelled', () => {
     const cancelledDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       childRunbookRef: { source: 'project', path: 'other-child.md' },
@@ -820,6 +837,7 @@ describe('createDelegation', () => {
 
   it('allows re-delegation after child run completes (childRunId set)', () => {
     const completedDelegation: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'old-child.md',
       childRunbookRef: { source: 'project', path: 'old-child.md' },
@@ -1115,6 +1133,7 @@ describe('createDelegation', () => {
 
   it('allows delegation on iteration 2 when iteration 1 has active delegation', () => {
     const delegation1: StepDelegation = {
+      credential: makeDelegationCredentialDescriptor(),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },

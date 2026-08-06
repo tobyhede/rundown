@@ -376,6 +376,166 @@ describe('SessionService', () => {
       });
     });
 
+    // A run created by a process that then died is orphaned: its bearer lived in
+    // that process's memory only, so nothing can reproduce the secret its
+    // persisted claim verifies. Adoption re-establishes control, but only where
+    // the claim it replaces provably issued nothing — the credentials addendum's
+    // "minting a second run-control claim after initialization used the first"
+    // stop condition — so a delivered credential is never orphaned by it.
+    it('adopts run-control authority for a run that has issued no delegation', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const original = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+
+      const adoption = await sessionService.adoptRunControlClaim(state);
+
+      expect(adoption.kind).toBe('adopted');
+      if (adoption.kind !== 'adopted') throw new Error('expected adopted');
+      expect(adoption.runtime.claimId).not.toBe(original.claimId);
+      expect(typeof adoption.runtime.issueDelegationCredential).toBe('function');
+      expect(typeof adoption.runtime.deriveDelegationToken).toBe('function');
+      await expect(sessionService.verifyClaimId(adoption.runtime.claimId)).resolves.toMatchObject({
+        status: 'verified',
+        claim: { controlledRunId: state.id },
+      });
+      // Exactly one run-control claim persists per run; the prior bearer is gone.
+      const session = await manager.loadSession();
+      expect(Object.keys(session.claims)).toEqual([adoption.runtime.claim.claimKey]);
+      expect(JSON.stringify(session)).not.toContain(adoption.runtime.claimId);
+    });
+
+    it('adopts a run whose recorded substeps carry no delegation', async () => {
+      // Distinct from the empty case above: the substep records EXIST, so the
+      // per-substep predicate actually runs. A guard that treated any recorded
+      // substep as evidence of issuance would refuse a run that issued nothing.
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      await manager.update(state.id, {
+        substepStates: [{ id: '1.1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      const withoutDelegation = await manager.load(state.id);
+      if (!withoutDelegation) throw new Error('expected the updated parent state');
+
+      await expect(sessionService.adoptRunControlClaim(withoutDelegation)).resolves.toMatchObject({
+        kind: 'adopted',
+      });
+    });
+
+    it('refuses adoption for a run that already issued a delegation', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const original = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      await seedLiveDelegation(manager, linkageFor(state.id, 'c'));
+      const seeded = await manager.load(state.id);
+      if (!seeded) throw new Error('expected the seeded parent state');
+      // One delegated substep beside a sibling that carries none, PERSISTED:
+      // the predicate reads the run through the transaction, so the mix has to
+      // reach the store to be seen at all. ANY issued credential blocks
+      // adoption, so a guard requiring every substep to carry one would adopt
+      // here and orphan a credential that has already been minted.
+      await manager.update(state.id, {
+        substepStates: [
+          { id: '1.2', frameKey: buildFrameKey('1'), status: 'running' as const },
+          ...(seeded.substepStates ?? []),
+        ],
+      });
+      const withDelegation = await manager.load(state.id);
+      if (!withDelegation) throw new Error('expected the mixed parent state');
+      expect(
+        withDelegation.substepStates?.map((substep) => substep.delegation !== undefined),
+      ).toEqual([false, true]);
+
+      const adoption = await sessionService.adoptRunControlClaim(withDelegation);
+
+      expect(adoption).toEqual({ kind: 'refused_credential_issued', runId: state.id });
+      // The refusal is write-free: the bearer that issued the credential still
+      // controls the run, so its echo surfaces stay reachable.
+      await expect(sessionService.verifyClaimId(original.claimId)).resolves.toMatchObject({
+        status: 'verified',
+      });
+    });
+
+    it('refuses adoption on a credential issued after the caller captured its snapshot', async () => {
+      // The caller hands in a state it loaded earlier. Evaluating the
+      // issued-credential predicate against that snapshot is a check-then-act:
+      // a delegation minted between the caller's read and the mint would be
+      // orphaned by the rotation, which is the exact stop condition adoption
+      // exists to respect. The predicate must therefore read the run through
+      // the same transaction that installs the replacement claim.
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const original = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      // `state` is the pre-delegation snapshot the caller still holds; the run
+      // has since issued a credential.
+      await seedLiveDelegation(manager, linkageFor(state.id, 'c'));
+
+      const adoption = await sessionService.adoptRunControlClaim(state);
+
+      expect(adoption).toEqual({ kind: 'refused_credential_issued', runId: state.id });
+      // Write-free refusal: the issuing bearer must still control the run, or
+      // the credential it minted becomes underivable (#676).
+      await expect(sessionService.verifyClaimId(original.claimId)).resolves.toMatchObject({
+        status: 'verified',
+      });
+    });
+
+    it('adopts without throwing when the run row is gone by the time the transaction reads it', async () => {
+      // The caller holds a state it loaded earlier; the run has since been
+      // pruned. Reading through the transaction means the read can legitimately
+      // come back empty, so the predicate must tolerate an absent run rather
+      // than dereference it — an unguarded read turns a benign race into a
+      // TypeError that escapes as an opaque crash instead of a typed outcome.
+      // A run with no persisted row has no substep that could have issued a
+      // credential, so there is nothing for the rotation to orphan.
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      await manager.delete(state.id);
+      await expect(manager.load(state.id)).resolves.toBeNull();
+
+      await expect(sessionService.adoptRunControlClaim(state)).resolves.toMatchObject({
+        kind: 'adopted',
+      });
+    });
+
+    it('refuses adoption while the run is execution-owned', async () => {
+      // Adoption is a guarded session mutation over the run it adopts. An
+      // execution-owned run must not have its controlling claim replaced out
+      // from under the owner, and the refusal is reported as itself rather than
+      // collapsed into a successful adoption.
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const original = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+      holdExecutionLease(state.id);
+
+      const adoption = await sessionService.adoptRunControlClaim(state);
+
+      expect(adoption).toMatchObject({
+        kind: 'refused_session',
+        refusal: { kind: 'execution_in_progress', runId: state.id },
+      });
+      const session = await manager.loadSession();
+      expect(Object.keys(session.claims)).toEqual([original.claim.claimKey]);
+    });
+
     it('pushes and mints the run-control claim in one atomic session mutation', async () => {
       const state = await manager.create(
         { source: 'project', path: 'parent.runbook.md' },
@@ -412,6 +572,88 @@ describe('SessionService', () => {
         claim: { controlledRunId: state.id },
       });
     });
+
+    it('prepares a run-control claim without persistence and installs that exact bearer atomically', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+          runId: PARENT_RUN_ID,
+        },
+      );
+      const service = new SessionService(manager, () => '2026-08-01T00:00:00.000Z');
+
+      const prepared = service.prepareRunControlClaim(state.id);
+      const mutateSpy = jest.spyOn(manager, 'mutateSessionGuarded');
+
+      expect((await manager.loadSession()).claims).toEqual({});
+      const installed = unwrapSessionMutation(
+        await service.pushRunbookWithPreparedRunControlClaim(state.id, prepared),
+      );
+      // Atomic installation is a claim about the number of guarded writes as
+      // much as their shape: asserting only the arguments would still pass if a
+      // second guarded mutation slipped in behind the first.
+      expect(mutateSpy).toHaveBeenCalledTimes(1);
+      expect(mutateSpy).toHaveBeenCalledWith([state.id], expect.any(Function));
+      expect(installed).toEqual({ claimId: prepared.claimId, claim: prepared.claim });
+      await expect(service.verifyClaimId(prepared.claimId)).resolves.toMatchObject({
+        status: 'verified',
+        claim: {
+          claimKey: prepared.claim.claimKey,
+          controlledRunId: state.id,
+        },
+      });
+    });
+
+    it('refuses a prepared record paired with a different bearer', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+      );
+      const service = new SessionService(manager);
+      const prepared = service.prepareRunControlClaim(state.id);
+      const other = service.prepareRunControlClaim(state.id);
+
+      await expect(
+        service.pushRunbookWithPreparedRunControlClaim(state.id, {
+          ...prepared,
+          claimId: other.claimId,
+        }),
+      ).rejects.toThrow(`Prepared run-control claim does not match ${state.id}`);
+      expect((await manager.loadSession()).defaultStack).toEqual([]);
+      expect((await manager.loadSession()).claims).toEqual({});
+    });
+
+    it.each([
+      ['controlled run id', 'controlledRunId'],
+      ['claim key', 'claimKey'],
+      ['secret hash', 'secretHash'],
+    ] as const)(
+      'independently refuses a prepared claim with a mismatched %s',
+      async (_label, field) => {
+        const state = await manager.create(
+          { source: 'project', path: 'parent.runbook.md' },
+          mockRunbook,
+          { runbookPath: 'parent.runbook.md', runId: PARENT_RUN_ID },
+        );
+        const service = new SessionService(manager);
+        const prepared = service.prepareRunControlClaim(state.id);
+        const other = service.prepareRunControlClaim(CHILD_RUN_ID);
+        const tampered = {
+          ...prepared,
+          claim: { ...prepared.claim, [field]: other.claim[field] },
+        };
+
+        await expect(
+          service.pushRunbookWithPreparedRunControlClaim(state.id, tampered),
+        ).rejects.toThrow(`Prepared run-control claim does not match ${state.id}`);
+        const session = await manager.loadSession();
+        expect(session.defaultStack).toEqual([]);
+        expect(session.claims).toEqual({});
+      },
+    );
 
     it('mints a claim with child mutation and parent report grants', async () => {
       const persistedLinkage = linkageFor(PARENT_RUN_ID, 'b');

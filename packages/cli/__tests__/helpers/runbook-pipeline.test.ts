@@ -12,6 +12,7 @@ import type {
   DelegationLock,
   PrepareParsedRunbookInput,
   PrepareParsedRunbookResult,
+  PreparedRunControlClaim,
   PreparedTemplateVariables,
   RunbookState,
   RunbookRef,
@@ -96,6 +97,18 @@ function claimRecord(childRunId: RunId, overrides: ClaimRecordOverride = {}): Cl
       ...delegationOverrides,
     },
   });
+}
+
+function preparedClaimFor(runId: RunId): PreparedRunControlClaim {
+  return {
+    claimId: TEST_CLAIM_ID,
+    claim: claimRecord(runId),
+    issueDelegationCredential: () => {
+      throw new Error('Unexpected credential issuance in pipeline test');
+    },
+    // cspell:disable-next-line
+    deriveDelegationToken: () => 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+  };
 }
 
 function claimedRunbookResult(
@@ -2091,7 +2104,7 @@ describe('startRunbook', () => {
     const mockInitState =
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
     const mockPushRunbookWithRunControlClaim = mockFn<
-      SessionService['pushRunbookWithRunControlClaim']
+      SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }));
     const mockEnsureActiveEntry = mockFn<
       ExecutionLifecycleService['ensureActiveEntry']
@@ -2112,7 +2125,8 @@ describe('startRunbook', () => {
       },
       actorService: { initializeState: mockInitState },
       sessionService: {
-        pushRunbookWithRunControlClaim: mockPushRunbookWithRunControlClaim,
+        prepareRunControlClaim: () => preparedClaimFor(preparedRunId),
+        pushRunbookWithPreparedRunControlClaim: mockPushRunbookWithRunControlClaim,
       },
       lifecycleService: { ensureActiveEntry: mockEnsureActiveEntry },
     });
@@ -2156,7 +2170,10 @@ describe('startRunbook', () => {
       }),
     );
     expect(mockInitState).toHaveBeenCalled();
-    expect(mockPushRunbookWithRunControlClaim).toHaveBeenCalledWith(MOCK_RUN_ID);
+    expect(mockPushRunbookWithRunControlClaim).toHaveBeenCalledWith(
+      MOCK_RUN_ID,
+      expect.objectContaining({ claimId: TEST_CLAIM_ID }),
+    );
     expect(mockEnsureActiveEntry).not.toHaveBeenCalled();
     expect(mockInitializeSubsteps).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
@@ -2166,6 +2183,93 @@ describe('startRunbook', () => {
     expect(createBridgedEmitterMock.mock.calls).toContainEqual([initializedState, ctx.output]);
   });
 
+  it('threads the prepared run-control claim capabilities into init, the loop, and the result', async () => {
+    // The prepared run-control claim is the ONLY source of delegation-minting
+    // authority for a default-stack run, and it has to reach three separate
+    // consumers: the machine (so a DELEGATE step can mint), the execution loop
+    // (so an auto-issued delegation mid-loop can mint and derive its bearer),
+    // and the caller (so `run --prompted --step` can hand the same capabilities
+    // to the goto context). Dropping it at any one of those three sites still
+    // starts the run and still returns `ok`, so nothing but an identity check on
+    // each hand-off distinguishes the wiring from silently unauthenticated
+    // delegation.
+    const createdState = makeState(MOCK_RUN_ID) as unknown as RunbookState;
+    const initializedState = { ...createdState };
+    const preparedRunId = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
+    const issueDelegationCredential =
+      jest.fn() as unknown as PreparedRunControlClaim['issueDelegationCredential'];
+    const deriveDelegationToken =
+      jest.fn() as unknown as PreparedRunControlClaim['deriveDelegationToken'];
+    const preparedClaim: PreparedRunControlClaim = {
+      ...preparedClaimFor(preparedRunId),
+      issueDelegationCredential,
+      deriveDelegationToken,
+    };
+    const mockInitState =
+      mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
+
+    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+
+    const ctx = makeRunPipelineContext({
+      manager: {
+        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(createdState),
+      },
+      actorService: { initializeState: mockInitState },
+      sessionService: {
+        prepareRunControlClaim: () => preparedClaim,
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }),
+        ),
+      },
+    });
+
+    const prepared: RunnableRunbook = {
+      filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'runbook.runbook.md' },
+      runId: preparedRunId,
+      rawContent: '# Test',
+      runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
+      // Matches the file's established idiom at the `runnable` identity branch:
+      // the fixture supplies only the variables this assertion reads, and the
+      // cast names the contract it is standing in for.
+      mergedVariables: { RunId: preparedRunId } as RunnableTemplateVariables,
+      runtimeVars: {},
+      stats: { steps: 1, substeps: 0 },
+      frontmatter: null,
+    };
+
+    const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
+
+    // Hand-off 1 — the machine. `initializeState`'s runtime capabilities are how
+    // a DELEGATE step reaches an issuer at all; an absent or empty third
+    // argument leaves the run able to start but unable to mint.
+    expect(mockInitState).toHaveBeenCalledWith(MOCK_RUN_ID, expect.anything(), {
+      issueDelegationCredential,
+    });
+    // Hand-off 2 — the execution loop, which needs BOTH the issuer and the
+    // token deriver. Asserting the exact function identities (not merely that
+    // some property exists) is what fails when the object literal is emptied.
+    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]).toEqual(
+      expect.objectContaining({
+        issueDelegationCredential,
+        delegationTokenDeriver: deriveDelegationToken,
+      }),
+    );
+    // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`
+    // off this result to build its goto context, so an omitted or emptied
+    // `delegationRuntime` silently strips the jump's delegation authority.
+    assertVariant(result, 'ok', true);
+    expect(result.delegationRuntime).toEqual({
+      issueDelegationCredential,
+      deriveDelegationToken,
+    });
+  });
+
   it('returns a launch-failed result when actor initialization yields no state', async () => {
     // initializeState resolving to a falsy state must abort the launch with a
     // structured launch-failed envelope — pins the `if (!initializedState) throw`
@@ -2173,7 +2277,7 @@ describe('startRunbook', () => {
     const runId = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
     const createdState = makeState(runId) as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
-      SessionService['pushRunbookWithRunControlClaim']
+      SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
@@ -2185,7 +2289,10 @@ describe('startRunbook', () => {
       actorService: {
         initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue(null),
       },
-      sessionService: { pushRunbookWithRunControlClaim: mockPushWithClaim },
+      sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(runId),
+        pushRunbookWithPreparedRunControlClaim: mockPushWithClaim,
+      },
     });
 
     const prepared: RunnableRunbook = {
@@ -2230,7 +2337,7 @@ describe('startRunbook', () => {
       frameEntryCounts: { '1|': 1 },
     } as unknown as RunbookState;
     const mockPushWithClaim = mockFn<
-      SessionService['pushRunbookWithRunControlClaim']
+      SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
     const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
       committed({
@@ -2243,7 +2350,8 @@ describe('startRunbook', () => {
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       sessionService: {
-        pushRunbookWithRunControlClaim: mockPushWithClaim,
+        prepareRunControlClaim: () => preparedClaimFor(runId),
+        pushRunbookWithPreparedRunControlClaim: mockPushWithClaim,
         releaseRunbook: mockReleaseRunbook,
       },
       manager: {
@@ -2296,7 +2404,10 @@ describe('startRunbook', () => {
         code: core.ErrorCodes.LAUNCH_FAILED.code,
       }),
     );
-    expect(mockPushWithClaim).toHaveBeenCalledWith(prepared.runId);
+    expect(mockPushWithClaim).toHaveBeenCalledWith(
+      prepared.runId,
+      expect.objectContaining({ claimId: TEST_CLAIM_ID }),
+    );
     expect(mockReleaseRunbook).toHaveBeenCalledWith(prepared.runId);
     expect(mockDelete).toHaveBeenCalledWith(prepared.runId);
   });
@@ -2327,6 +2438,15 @@ describe('startRunbook', () => {
         } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
         >().mockResolvedValue(
@@ -2391,6 +2511,15 @@ describe('startRunbook', () => {
         } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
         >().mockResolvedValue(
@@ -2470,6 +2599,15 @@ describe('startRunbook', () => {
         } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
+        prepareRunControlClaim: () => preparedClaimFor(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+        pushRunbookWithPreparedRunControlClaim: mockFn<
+          SessionService['pushRunbookWithPreparedRunControlClaim']
+        >().mockResolvedValue(
+          committed({
+            claimId: TEST_CLAIM_ID,
+            claim: claimRecord(brandRunIdForTest(`rd_${'d'.repeat(32)}`)),
+          }),
+        ),
         pushRunbookWithRunControlClaim: mockFn<
           SessionService['pushRunbookWithRunControlClaim']
         >().mockResolvedValue(

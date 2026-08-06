@@ -9,16 +9,18 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  readSession,
   parseCliJsonObject,
   parseConcatenatedJson,
   findActionOutput,
   type TestWorkspace,
-  issueRunControlClaim,
   withRunTarget,
   findFrontierInEvents,
   setupParentWithChildren,
   type FrontierEntry,
   type StepEnteredEvent,
+  requireFrontierToken,
+  requireEmittedRunClaim,
 } from '../helpers/test-utils.js';
 
 /**
@@ -158,7 +160,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     expect(active!.id).not.toBe(parentRunId); // A is no longer the active default
 
     // Mint a run-control claim for A and delegate against 1.1 with it (no --run).
-    const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+    const parentClaimId = requireEmittedRunClaim(workspace, parentRunId);
     const delegated = await runCliInProcess(
       ['delegate', '--step', '1.1', '--claim-id', parentClaimId],
       workspace,
@@ -370,7 +372,7 @@ describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
     const active = await getActiveState(workspace);
     expect(active!.id).not.toBe(parentRunId);
 
-    const claimId = await issueRunControlClaim(workspace, parentRunId);
+    const claimId = requireEmittedRunClaim(workspace, parentRunId);
     return { parentRunId, claimId };
   }
 
@@ -630,10 +632,7 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
 
     // Substep 1.1 already carries an auto-issued delegation for the same
     // authored runbook; the targeted manual delegate echoes it idempotently.
-    const before = await getActiveState(workspace);
-    const issuedToken = before?.substepStates?.find((substep) => substep.id === '1')?.delegation
-      ?.token;
-    expect(issuedToken).toBeDefined();
+    const issuedToken = requireFrontierToken(start.stdout, '1.1');
 
     const manual = await runCliInProcess(
       await withRunTarget(['delegate', 'child.runbook.md', '--step', '1.1'], workspace),
@@ -950,13 +949,15 @@ describe('DELEGATE re-entry and retry', () => {
       workspace,
     );
     expect(collectResult.exitCode).toBe(0);
-    const reentered = await readRunbookState(workspace, parentRunId);
-    const entry1Token = reentered?.substepStates?.find((x) => x.id === '1')?.delegation?.token;
-    const entry2Token = reentered?.substepStates?.find((x) => x.id === '2')?.delegation?.token;
-    expect(entry1Token).toEqual(expect.stringMatching(/^rdtk_/));
-    expect(entry2Token).toEqual(expect.stringMatching(/^rdtk_/));
+    const entry1Token = requireFrontierToken(collectResult.stdout, '1.1');
+    const entry2Token = requireFrontierToken(collectResult.stdout, '1.2');
     expect(entry1Token).not.toBe(token1!);
     expect(entry2Token).not.toBe(token2!);
+    const reentered = await readRunbookState(workspace, parentRunId);
+    for (const substep of reentered?.substepStates ?? []) {
+      expect(substep.delegation?.credential.supersedesTokenHash).toBeDefined();
+      expect(substep.delegation).not.toHaveProperty('token');
+    }
   }, 30_000);
 
   // ---------------------------------------------------------------------------
@@ -1373,12 +1374,15 @@ describe('DELEGATE re-entry and retry', () => {
     expect(retryTransition?.aggregated).toBe(true);
 
     // Re-entry re-delegates only 1.1 (the hook is provenance-agnostic over
-    // delegations, not over substep kinds). The fresh token lives in state.
+    // delegations, not over substep kinds). The bearer is emitted publicly;
+    // persisted state retains only its descriptor and hash.
     const reentered = await readRunbookState(workspace, parentRunId);
     expect(reentered?.retryCount).toBe(1);
     const ss1 = reentered?.substepStates?.find((s) => s.id === '1');
-    expect(ss1?.delegation?.token).toEqual(expect.stringMatching(/^rdtk_/));
-    expect(ss1?.delegation?.token).not.toBe(tokenA);
+    const tokenB = requireFrontierToken(fail12.stdout, '1.1');
+    expect(tokenB).not.toBe(tokenA);
+    expect(ss1?.delegation?.credential.supersedesTokenHash).toBeDefined();
+    expect(ss1?.delegation).not.toHaveProperty('token');
     // 1.2 carries no delegation to re-issue.
     const ss2 = reentered?.substepStates?.find((s) => s.id === '2');
     expect(ss2?.delegation).toBeUndefined();
@@ -1484,8 +1488,7 @@ describe('DELEGATE re-entry and retry', () => {
     expect(collect!.status).toBe('applied');
     expect(collect!.lifecycle).toBe('running');
 
-    // The re-entry lives in state (collect emits a summary, not step_entered
-    // events). Tighten to exactly one delegation-bearing substep: a regression
+    // Tighten to exactly one delegation-bearing substep: a regression
     // that re-issued sibling iterations would add entries. Per-iteration scoping
     // is the invariant under test.
     const reentered = await readRunbookState(workspace, parentRunId);
@@ -1497,9 +1500,14 @@ describe('DELEGATE re-entry and retry', () => {
     // Core invariant: retry within an iteration produces a fresh token. Same
     // iteration frame, but distinct token — the iteration-retry hook does not
     // reuse the original delegation token.
-    const iter1TokenB = iterSubstep.delegation?.token;
-    expect(iter1TokenB).toEqual(expect.stringMatching(/^rdtk_/));
+    // Inside a FOR frame the frontier advertises the canonical three-level
+    // `${step}.${iteration}.${substep}` id — the same value asserted on
+    // `contextSnapshot.at` below. Asking for the two-level `1.1` matches no
+    // entry.
+    const iter1TokenB = requireFrontierToken(collectResult.stdout, '1.1.1');
     expect(iter1TokenB).not.toBe(iter1TokenA);
+    expect(iterSubstep.delegation?.credential.supersedesTokenHash).toBeDefined();
+    expect(iterSubstep.delegation).not.toHaveProperty('token');
 
     // The re-issued delegation must scope to substep 1.1 in iteration 1 (the
     // only DELEGATE substep in this iteration). `contextSnapshot.at` carries the
@@ -1662,12 +1670,15 @@ describe('DELEGATE re-entry and retry', () => {
 
     // Force-abort ss2's delegation. Sets cancelledAt on the delegation
     // record; records a fail resolved completion; propagates via drain.
-    const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+    const parentClaimId = requireEmittedRunClaim(workspace, parentRunId);
     const abortResult = await runCliInProcess(
       ['abort', tokenA2, '--claim-id', parentClaimId, '--force'],
       workspace,
     );
     expect(abortResult.exitCode).toBe(0);
+    expect(Object.values((await readSession(workspace)).claims)).toContainEqual(
+      expect.objectContaining({ controlledRunId: parentRunId }),
+    );
 
     // Capture T1 (cancelledAt of the aborted delegation) and the prior
     // tokenHash. The retry about to run will REPLACE this delegation
@@ -1688,7 +1699,7 @@ describe('DELEGATE re-entry and retry', () => {
     // `createDelegation` replaces the record. The command exits 0 and
     // emits a fresh token.
     const retry = await runCliInProcess(
-      await withRunTarget(['delegate', '--retry', tokenA2], workspace),
+      ['delegate', '--retry', tokenA2, '--claim-id', parentClaimId],
       workspace,
     );
     expect(retry.exitCode).toBe(0);
@@ -1722,7 +1733,7 @@ describe('DELEGATE re-entry and retry', () => {
     // Claim + force-abort 1.2 → records a FAIL delegation outcome, collection pending.
     r = await runCliInProcess(`claim ${token2}`, workspace);
     expect(r.exitCode).toBe(0);
-    const parentClaimId = await issueRunControlClaim(workspace, parentRunId);
+    const parentClaimId = requireEmittedRunClaim(workspace, parentRunId);
     const abortResult = await runCliInProcess(
       ['abort', token2, '--claim-id', parentClaimId, '--force'],
       workspace,
@@ -1732,7 +1743,7 @@ describe('DELEGATE re-entry and retry', () => {
     // Retry mints a fresh token for 1.2 and supersedes the aborted attempt: its
     // stale FAIL resolvedCompletion row is consumed and the substep reset.
     const retry = await runCliInProcess(
-      await withRunTarget(['delegate', '--retry', token2], workspace),
+      ['delegate', '--retry', token2, '--claim-id', parentClaimId],
       workspace,
     );
     expect(retry.exitCode).toBe(0);

@@ -71,6 +71,18 @@ const mockSessionService = {
         options?: { readonly retainClaimsAsTerminal?: boolean },
       ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
     >(),
+  // A resumed inline child re-establishes its own run-control authority through
+  // core. These loop tests are about the launch/repair sequence, not the
+  // credential seam, so the double refuses adoption — the arm that leaves the
+  // continuation exactly as it was before authority was threaded here.
+  // The parameter is the loop's own `Record<string, unknown>` state fixture
+  // shape, as every other state-taking double in this file declares it. Naming
+  // a narrower `{ id: string }` here would type-check the declaration and then
+  // reject the fixture at the `toHaveBeenCalledWith` site, whose whole point is
+  // that the resumed CHILD state is what reaches core.
+  adoptRunControlClaim: mockFn<
+    (state: Record<string, unknown>) => Promise<{ readonly kind: 'refused_credential_issued' }>
+  >().mockResolvedValue({ kind: 'refused_credential_issued' }),
 };
 
 const ensureActiveEntryFn =
@@ -161,6 +173,9 @@ jest.unstable_mockModule('@rundown-org/core', () => {
 
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   resolveRunbookFile: (jest.fn() as any).mockResolvedValue(null),
+  // Reached transitively: the resumed-child branch lazily imports the launch
+  // pipeline to announce an adopted bearer, and the pipeline imports this.
+  resolveRunbookRef: (jest.fn() as any).mockResolvedValue({ ok: false, reason: 'not-found' }),
   buildRunbookRef: jest.fn((resolved: { source: string; path: string; sourceRoot?: string }) => ({
     source: resolved.source,
     path:
@@ -250,6 +265,20 @@ describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
   const runbookId = actualCore.assertRunId(`rd_${'1'.repeat(32)}`);
+  const persistedFrontierEntry = (id: string, runbook: string, token: string) => ({
+    id,
+    runbook,
+    credential: {
+      version: 1 as const,
+      issuerClaimKey: `rdclk_${'a'.repeat(32)}`,
+      issuanceNonce: id.replace('.', '').padEnd(43, '0'),
+      parentRunId: runbookId,
+      parentStepId: id,
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    },
+    tokenHash: actualCore.hashDelegationToken(token),
+  });
   const steps: LooseStep[] = [
     {
       kind: 'command',
@@ -300,6 +329,20 @@ describe('runExecutionLoop', () => {
       },
     };
   };
+  /**
+   * Loop state whose persisted snapshot carries a delegate frontier.
+   *
+   * The shared core seam reads the frontier out of committed state — the same
+   * read `rundown collect` performs — so the fixture lives on the state rather
+   * than on a separate `getContextSnapshot` read.
+   */
+  const frontierLoopState = (frontier: unknown, overrides: Record<string, unknown> = {}) =>
+    makeLoopState('1', {
+      substep: '1',
+      substepStates: [],
+      snapshot: { context: { delegateFrontier: frontier } },
+      ...overrides,
+    });
   const commandCompletedEffect = (result: 'pass' | 'fail' = 'pass') => ({
     kind: 'execution_observation',
     event: {
@@ -1867,6 +1910,7 @@ describe('runExecutionLoop', () => {
         expect.anything(),
         expect.anything(),
         expect.objectContaining({ type: 'EXECUTE_COMMAND', command: code, displayCommand }),
+        { issueDelegationCredential: undefined },
       );
     });
   });
@@ -2547,14 +2591,12 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
-
-    mockActorService.getContextSnapshot.mockResolvedValue({
-      delegateFrontier: [
-        { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_aaaa1111' },
-        { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_bbbb2222' },
-      ],
-    });
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([
+        persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_aaaa1111'),
+        persistedFrontierEntry('1.2', 'child-b.runbook.md', 'rdtk_bbbb2222'),
+      ]),
+    );
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '1', substep: '1', status: 'running' },
       snapshot: {},
@@ -2567,6 +2609,10 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
+      {
+        delegationTokenDeriver: (credential) =>
+          credential.parentStepId === '1.1' ? 'rdtk_aaaa1111' : 'rdtk_bbbb2222',
+      },
     );
 
     // STEP_ENTERED should have been emitted with delegateFrontier
@@ -2624,16 +2670,18 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([
+        persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a'),
+        persistedFrontierEntry('1.2', 'child-b.runbook.md', 'rdtk_retry_b'),
+      ]),
+    );
 
     const preIssued = [
       { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' },
       { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_retry_b' },
     ];
 
-    mockActorService.getContextSnapshot.mockResolvedValue({
-      delegateFrontier: preIssued,
-    });
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '1', substep: '1', status: 'running' },
       snapshot: {},
@@ -2646,6 +2694,10 @@ describe('runExecutionLoop', () => {
       '/tmp',
       false,
       asEmitter(mockEmitter),
+      {
+        delegationTokenDeriver: (credential) =>
+          credential.parentStepId === '1.1' ? 'rdtk_retry_a' : 'rdtk_retry_b',
+      },
     );
 
     // STEP_ENTERED payload should carry the pre-issued frontier
@@ -2661,6 +2713,339 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
+  });
+
+  // The missing-authority refusal must behave exactly like its neighbour, the
+  // frontier-consume failure: a coded ERROR_OCCURRED, a positioned
+  // RUNBOOK_STOPPED, and a terminal release — never an untyped throw. A throw
+  // unwinds past `applyExecutionTerminalRelease`, so the refused run stays on
+  // the session stack (`popRunbook` never runs) and every later bare command
+  // still resolves it as the active runbook. That stranding, not the message,
+  // is what these tests pin.
+  const singleDelegateFrontierSteps = (): LooseStep[] => [
+    {
+      kind: 'substeps',
+      name: '1',
+      description: 'Parallel work',
+      substeps: [
+        {
+          id: '1',
+          description: 'First task',
+          delegate: true,
+          runbooks: ['child-a.runbook.md'],
+          transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+        },
+      ],
+      transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+    },
+  ];
+
+  it('refuses a persisted delegation frontier without a token deriver as a coded stop', async () => {
+    const delegateSteps = singleDelegateFrontierSteps();
+
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: 'Delegation frontier cannot be projected without verified claim authority',
+        code: 'ACTOR_CONTEXT_REQUIRED',
+      },
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '1', total: 1, substep: '1' },
+        message: 'Delegation frontier cannot be projected without verified claim authority',
+        // The machine-owned issuance refusal for the very same condition
+        // (`delegationIssueActor`, missing verified claim authority) stops with
+        // `reason: 'actor_context_required'`. This is the DISCLOSURE half of that
+        // condition, so the two stop events must be shaped identically.
+        reason: 'actor_context_required',
+      },
+    });
+
+    // None of the frontier-dependent work may run on the refusal path.
+    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'STEP_ENTERED' }),
+    );
+  });
+
+  it('releases the run from the session stack when the frontier refusal fires', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    // The stranding assertion: the default 'stack-pop' release must have run,
+    // so the refused run no longer sits at the top of the session stack.
+    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  it('releases a claimed child through releaseRunbook when the frontier refusal fires', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { terminalReleaseMode: 'release-runbook' },
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+  });
+
+  // The projection refusal is the sibling failure of the missing-deriver one
+  // above: the authority IS present, but it cannot reproduce the persisted
+  // frontier. `projectDelegateFrontier` throws for that, and the throw must be
+  // caught here for the same reason — an escaping error unwinds past the
+  // emitter and `applyExecutionTerminalRelease`, leaving the refused run on the
+  // session stack as the active runbook for every later bare command.
+  //
+  // Two distinct entry paths reach the throw and both are pinned below:
+  //   1. the derived bearer does not hash to the persisted verifier;
+  //   2. the deriver itself throws — what a rotated run-control claim does,
+  //      since the descriptor then names a superseded issuer claim.
+  const FRONTIER_PROJECTION_PREFIX =
+    'Delegation frontier cannot be projected by the presented claim authority';
+  const rotatedIssuerDeriver = () => {
+    throw new Error('Delegation credential belongs to a different issuer claim');
+  };
+
+  it('refuses a frontier whose derived credential fails hash verification as a coded stop', async () => {
+    const delegateSteps = singleDelegateFrontierSteps();
+
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      // Derives a well-formed bearer that is not the one the frontier recorded.
+      { delegationTokenDeriver: () => 'rdtk_other' },
+    );
+
+    expect(result).toBe('stopped');
+    // RD-821 (DELEGATION_INVARIANT_VIOLATED) — the same code core already
+    // attaches to this exact pair of conditions on the delegation echo seam.
+    // The detail names the frontier id and never the bearer.
+    const message = `${FRONTIER_PROJECTION_PREFIX}: Derived delegation credential does not match frontier 1.1`;
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: { message, code: 'RD-821' },
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: { position: { current: '1', total: 1, substep: '1' }, message },
+    });
+
+    // None of the frontier-dependent work may run on the refusal path.
+    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'STEP_ENTERED' }),
+    );
+  });
+
+  it('refuses a frontier a rotated issuing claim can no longer derive as a coded stop', async () => {
+    const delegateSteps = singleDelegateFrontierSteps();
+
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { delegationTokenDeriver: rotatedIssuerDeriver },
+    );
+
+    expect(result).toBe('stopped');
+    const message = `${FRONTIER_PROJECTION_PREFIX}: Delegation credential belongs to a different issuer claim`;
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: { message, code: 'RD-821' },
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: { position: { current: '1', total: 1, substep: '1' }, message },
+    });
+
+    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'STEP_ENTERED' }),
+    );
+  });
+
+  it('releases the run from the session stack when the frontier projection is refused', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { delegationTokenDeriver: () => 'rdtk_other' },
+    );
+
+    // The stranding assertion: the default 'stack-pop' release must have run,
+    // so the refused run no longer sits at the top of the session stack.
+    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  it('releases a claimed child through releaseRunbook when the frontier projection is refused', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    // The rotated-issuer path releases exactly like the hash-mismatch one: both
+    // enter the catch, so neither may strand the claimed child.
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { terminalReleaseMode: 'release-runbook', delegationTokenDeriver: rotatedIssuerDeriver },
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // F6 — one condition, one code, across both entry points.
+  //
+  // `rundown run` and `rundown collect` drive the SAME core re-entry frontier
+  // seam. Before the consolidation the loop reported a consume failure with no
+  // code at all while `collect` reported `COLLECT_OPERATION_FAILED`, and the
+  // loop's missing-authority stop carried no `reason` while the machine-owned
+  // issuance refusal for the same condition carries
+  // `reason: 'actor_context_required'`. The collect side of each pairing is
+  // pinned in `packages/core/__tests__/runbook/collection-service.test.ts`.
+  // ---------------------------------------------------------------------------
+
+  it('refuses a frontier consume failure with a coded, positioned stop', async () => {
+    const delegateSteps = singleDelegateFrontierSteps();
+
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+    );
+    // Projection succeeds; the DELEGATE_FRONTIER_CONSUMED sync does not.
+    mockActorService.sendAndSync.mockResolvedValue(null);
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+      { delegationTokenDeriver: () => 'rdtk_retry_a' },
+    );
+
+    expect(result).toBe('stopped');
+    const consumeFailedMessage =
+      'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run';
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: consumeFailedMessage,
+        code: actualCore.ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+      },
+    });
+    // The corrective stop, positioned like every other refusal in this loop.
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '1', total: 1, substep: '1' },
+        message: consumeFailedMessage,
+      },
+    });
+    // The freshly derived bearers must NOT reach the stream: the frontier is
+    // still persisted, so a later attempt re-projects and re-consumes it, and
+    // tokens surfaced now would be orphaned by that retry.
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'STEP_ENTERED' }),
+    );
+    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a structurally malformed persisted frontier rather than projecting it', async () => {
+    // `RunbookState.snapshot` is typed `unknown`, so a frontier read out of it
+    // cannot be trusted on type alone. Core's collect path validates every entry
+    // and throws `InvalidRunbookStateError` on a malformed blob (no-migration
+    // rule); the loop reaches the same persisted data and must not trust it.
+    mockManager.load.mockResolvedValue(frontierLoopState(['not-an-entry']));
+
+    await expect(
+      runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(singleDelegateFrontierSteps()),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+        { delegationTokenDeriver: () => 'rdtk_retry_a' },
+      ),
+    ).rejects.toBeInstanceOf(actualCore.InvalidRunbookStateError);
   });
 
   it('rolls back existing inline child session activation when intent consumption fails', async () => {
@@ -2919,6 +3304,146 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
+    // Adoption was refused here, so no bearer is announced for the resumed child.
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'RUNBOOK_STARTED' }),
+    );
+  });
+
+  it('announces the adopted bearer when a resumed inline child re-establishes authority', async () => {
+    // The adopted bearer supersedes the one the dead process held, so the run
+    // can no longer be addressed unless it is announced. `runbook_started.claim_id`
+    // is the only sanctioned channel for a run-control bearer, so the resumed
+    // child is re-announced through it before its loop runs.
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: { RunId: runbookId, ContextId: 'ctx-unit', WorkPath: '.rundown/work' },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentLinkage = {
+      kind: 'inline',
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    const parentState = makeLoopState('1', {
+      id: runbookId,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: {
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: inlineLaunch.contextSnapshot,
+            childRunId,
+            createdAt: '2026-05-30T00:00:00.000Z',
+            startedAt: null,
+          },
+        },
+      ],
+      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+    });
+    const existingChild = {
+      ...makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage,
+        title: 'Child',
+        description: 'Resumed child',
+      }),
+      runbookSrc: '## 1. Child\nDone',
+    };
+
+    mockManager.load
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(existingChild)
+      .mockResolvedValue(existingChild);
+    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+    mockSessionService.pushRunbook.mockResolvedValueOnce(undefined);
+    mockSessionService.adoptRunControlClaim.mockResolvedValueOnce({
+      kind: 'adopted',
+      runtime: {
+        claimId: 'rdclm_adopted',
+        claim: { claimKey: 'ck_adopted' },
+        issueDelegationCredential: jest.fn(),
+        deriveDelegationToken: jest.fn(),
+      },
+    } as never);
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+    mockActorService.sendAndSync
+      .mockResolvedValueOnce({ state: parentState, snapshot: {} })
+      .mockResolvedValueOnce({ state: parentState, snapshot: {} });
+
+    // The resumed child is announced on its OWN bridged emitter, so the
+    // observation point is the shared output sink both emitters feed.
+    const executionEvent = jest.fn();
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      mockManager.cwd,
+      false,
+      asEmitter(mockEmitter),
+      { output: { executionEvent } as never },
+    );
+
+    expect(mockSessionService.adoptRunControlClaim).toHaveBeenCalledWith(existingChild);
+    expect(executionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'RUNBOOK_STARTED',
+        runbookId: childRunId,
+        payload: expect.objectContaining({
+          title: 'Child',
+          description: 'Resumed child',
+          // Carried from the child's own persisted mode, not the composing loop's.
+          prompted: false,
+          claimId: 'rdclm_adopted',
+        }),
+      }),
+    );
   });
 
   it('propagates blocked inline child terminal instead of treating child completion as success', async () => {
@@ -3224,7 +3749,12 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
   });
 
-  it('consumes delegateFrontier after emitting STEP_ENTERED so tokens are not re-emitted', async () => {
+  // The consume now commits BEFORE the STEP_ENTERED carrying the tokens is
+  // emitted (it was emit-then-consume before the seam was shared). Both orders
+  // keep the tokens from being re-emitted on a later pass — that is what this
+  // test pins — but committing first also means a failed consume discloses
+  // nothing, which is the behaviour `rundown collect` already had.
+  it('consumes delegateFrontier before emitting STEP_ENTERED so tokens are not re-emitted', async () => {
     const delegateSteps: any[] = [
       {
         kind: 'substeps',
@@ -3248,11 +3778,9 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
-
-    mockActorService.getContextSnapshot.mockResolvedValue({
-      delegateFrontier: [{ id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' }],
-    });
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+    );
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '1', substep: '1', status: 'running' },
       snapshot: {},
@@ -3265,6 +3793,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       true,
       asEmitter(mockEmitter),
+      { delegationTokenDeriver: () => 'rdtk_retry_a' },
     );
 
     const stepEnteredCall = mockEmitter.emit.mock.calls.find(

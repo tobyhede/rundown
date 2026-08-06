@@ -11,6 +11,7 @@ import {
   writeSession,
   withRunTarget,
 } from '../helpers/test-utils.js';
+import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 
 function flattenEvents(events: unknown[]): Record<string, unknown>[] {
   const flat: Record<string, unknown>[] = [];
@@ -722,4 +723,308 @@ Grandchild prompt.
       }),
     );
   });
+
+  // An inline child's terminal flows back through `propagateInlineChildTerminalResult`
+  // into the core upward-propagation seam, which drains and re-runs the COMPOSING
+  // parent. That continuation used to carry no delegation authority, so a parent
+  // whose next step is a DELEGATE step was refused
+  // `Delegation issuance requires verified claim authority` and stopped — a valid
+  // nested workflow misclassified as absent authority. The parent's own
+  // run-control claim is live in this very process (the loop that launched the
+  // inline child holds it), so the continuation must issue under it.
+  it('issues the composing parent delegation frontier when an inline child advances it into a DELEGATE step', async () => {
+    await writeFile(
+      join(workspace.runbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Compose
+
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+- inline.runbook.md
+
+## 2. Fan-out
+
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Task A
+
+- worker.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'inline.runbook.md'),
+      `# Inline
+
+## 1. Work
+
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'worker.runbook.md'),
+      `# Worker
+
+## 1. Do work
+
+- PASS COMPLETE
+- FAIL STOP
+
+Do the delegated work.
+`,
+    );
+
+    const start = await runCliInProcess('run parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+
+    const events = flattenEvents(parseConcatenatedJson(start.stdout));
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ reason: 'actor_context_required' }),
+    );
+
+    // The parent advanced into its DELEGATE step and auto-issued a bearer for the
+    // delegated substep — the frontier the refusal used to suppress entirely.
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected the parent to remain the active runbook');
+    const frontierEvent = events.find(
+      (event) =>
+        event.type === 'step_entered' &&
+        event.runbookId === parentRunId &&
+        Array.isArray(event.delegateFrontier),
+    );
+    expect(frontierEvent).toBeDefined();
+    const frontier = frontierEvent!.delegateFrontier as { id: string; token: string }[];
+    expect(frontier.map((entry) => entry.id)).toEqual(['2.1']);
+    expect(frontier[0].token).toMatch(/^rdtk_/);
+
+    const parentState = await readRunbookState(workspace, parentRunId);
+    expect(parentState?.step).toBe('2');
+    expect(parentState?.lifecycle).toBe('running');
+  }, 30_000);
+
+  // The nested-delegation prohibition (RD-819) is keyed on a DELEGATION parent
+  // linkage, never on the absence of authority. Threading verified authority into
+  // continuations must not reopen it — so pin the strongest form: a delegated
+  // child holding its OWN verified bearer claim, advancing under it, is still
+  // refused the moment it reaches a DELEGATE step, and no bearer is ever issued.
+  it('still refuses a delegated child that reaches a DELEGATE step under its own claim (RD-819)', async () => {
+    await writeFile(
+      join(workspace.runbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Fan-out
+
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Task A
+
+- nested.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'nested.runbook.md'),
+      `# Nested
+
+## 1. Prepare
+
+- PASS CONTINUE
+- FAIL STOP
+
+Prepare the nested work.
+
+## 2. Fan-out again
+
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Task B
+
+- worker.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'worker.runbook.md'),
+      `# Worker
+
+## 1. Do work
+
+- PASS COMPLETE
+- FAIL STOP
+
+Do the delegated work.
+`,
+    );
+
+    const start = await runCliInProcess('run parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const startEvents = flattenEvents(parseConcatenatedJson(start.stdout));
+    const token = findDelegateToken(start.stdout, '1.1');
+    expect(startEvents.length).toBeGreaterThan(0);
+
+    const claimed = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claimed.exitCode).toBe(0);
+    const claimedChild = findClaim(claimed.stdout);
+
+    // The child advances under its own verified bearer — authority is PRESENT —
+    // and is still refused at the DELEGATE step.
+    const advanced = await runCliInProcess(['pass', '--claim-id', claimedChild.claimId], workspace);
+    expect(advanced.exitCode).toBe(1);
+    const advancedEvents = flattenEvents(parseConcatenatedJson(advanced.stdout));
+    expect(advancedEvents).toContainEqual(
+      expect.objectContaining({
+        action: 'stop',
+        stopped: true,
+        message: 'Nested delegation forbidden',
+      }),
+    );
+    // No nested bearer was minted for the forbidden fan-out.
+    expect(advancedEvents).not.toContainEqual(
+      expect.objectContaining({ delegateFrontier: expect.anything() }),
+    );
+
+    const childState = await readRunbookState(workspace, claimedChild.runId);
+    expect(childState?.lifecycle).toBe('stopped');
+  }, 30_000);
+
+  // A freshly launched inline child receives its own run-control runtime from
+  // `prepareRunControlClaim`; a RESUMED one received nothing, so the moment its
+  // cursor advanced into an authored DELEGATE step the machine refused
+  // `actor_context_required` and stopped a run that would have proceeded had the
+  // first process not died. Forwarding the composing parent's runtime is NOT the
+  // remedy — it belongs to another run, and `delegationRuntimeFor` rightly
+  // rejects it — so the child's OWN authority is re-established on resume.
+  //
+  // The fixture parks the child in prompted mode: it exists, is initialized, and
+  // has executed nothing — the shape of a child created before the launching
+  // process died. Clearing its prompted flag lets the resumed loop advance it
+  // into the DELEGATE step the fresh launch never reached.
+  it('re-establishes run-control authority for a resumed inline child that reaches a DELEGATE step', async () => {
+    await writeFile(
+      join(workspace.runbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Compose
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+
+## 3. Review
+- PASS COMPLETE
+
+Reviewed.
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'child.runbook.md'),
+      `# Child
+
+## 1. Prepare
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+
+## 2. Fan-out
+
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Task A
+
+- worker.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'worker.runbook.md'),
+      `# Worker
+
+## 1. Do work
+- PASS COMPLETE
+- FAIL STOP
+
+Do the delegated work.
+`,
+    );
+
+    const start = await runCliInProcess('run parent.runbook.md --prompted', workspace);
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    const compose = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(compose.exitCode).toBe(0);
+
+    const parentState = await readRunbookState(workspace, parentRunId);
+    const inlineState = parentState?.substepStates?.find((entry) => entry.inline)?.inline;
+    if (!inlineState) throw new Error('expected inline metadata');
+    const childRunId = inlineState.childRunId;
+    if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
+
+    // The child was parked, not driven: nothing was issued under its original
+    // bearer, so re-establishing authority orphans no credential.
+    const parkedChild = await readRunbookState(workspace, childRunId);
+    expect(parkedChild?.step).toBe('1');
+    expect(parkedChild?.substepStates?.some((entry) => entry.delegation)).toBeFalsy();
+
+    await patchPersistedRunState(workspace.cwd, childRunId, { prompted: false });
+
+    // Rewind the session stack to the parent, as a process that died before the
+    // child's loop ran would have left it. Driving the parent back into its
+    // inline step is what re-enters the launch seam and finds the existing child.
+    const sessionBeforeRewind = await readSession(workspace);
+    await writeSession(workspace, {
+      defaultStack: [parentRunId],
+      claims: sessionBeforeRewind.claims,
+      ...(sessionBeforeRewind.stashed ? { stashed: sessionBeforeRewind.stashed } : {}),
+    });
+
+    const resume = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    // Every assertion below is about a resume that succeeded. Without this, a
+    // refusal that stopped the run would still satisfy them all provided it
+    // streamed a frontier event on its way out.
+    expect(resume.exitCode).toBe(0);
+    const resumeEvents = flattenEvents(parseConcatenatedJson(resume.stdout));
+
+    // The resumed child ran its command step and advanced into its DELEGATE step
+    // under authority it re-established for itself.
+    expect(resumeEvents).not.toContainEqual(
+      expect.objectContaining({ code: 'ACTOR_CONTEXT_REQUIRED' }),
+    );
+    expect(resumeEvents).not.toContainEqual(
+      expect.objectContaining({ reason: 'actor_context_required' }),
+    );
+    const frontierEvent = resumeEvents.find(
+      (event) =>
+        event.type === 'step_entered' &&
+        event.runbookId === childRunId &&
+        Array.isArray(event.delegateFrontier),
+    );
+    expect(frontierEvent).toBeDefined();
+    const frontier = frontierEvent?.delegateFrontier as { id: string; token: string }[];
+    expect(frontier.map((entry) => entry.id)).toEqual(['2.1']);
+    expect(frontier[0].token).toMatch(/^rdtk_/);
+
+    const resumedChild = await readRunbookState(workspace, childRunId);
+    expect(resumedChild?.step).toBe('2');
+    expect(resumedChild?.lifecycle).toBe('running');
+  }, 30_000);
 });

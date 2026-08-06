@@ -10,6 +10,7 @@ import {
   readRunbookState,
   getActiveState,
   writeSession,
+  requireFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
@@ -85,11 +86,8 @@ describe('stash command', () => {
     await workspace.cleanup();
   });
 
-  async function getAutoIssuedToken(): Promise<string> {
-    const state = await getActiveState(workspace);
-    const token = state?.substepStates?.[0]?.delegation?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+  function getAutoIssuedToken(stdout: string): string {
+    return requireFrontierToken(stdout, '1.1');
   }
 
   it('moves active runbook to stashed', async () => {
@@ -190,9 +188,9 @@ describe('stash command', () => {
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
-    const token = await getAutoIssuedToken();
+    const token = getAutoIssuedToken(result.stdout);
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -260,9 +258,9 @@ describe('stash command', () => {
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
-    const token = await getAutoIssuedToken();
+    const token = getAutoIssuedToken(result.stdout);
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -326,9 +324,9 @@ describe('stash command', () => {
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
-    const token = await getAutoIssuedToken();
+    const token = getAutoIssuedToken(result.stdout);
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -387,12 +385,12 @@ describe('stash command', () => {
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
 
-    const token = await getAutoIssuedToken();
+    const token = getAutoIssuedToken(result.stdout);
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const output = findActionOutput(result.stdout);

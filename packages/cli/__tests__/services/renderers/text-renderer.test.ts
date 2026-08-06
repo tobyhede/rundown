@@ -791,10 +791,9 @@ describe('TextRenderer', () => {
     it('renders delegations section when present', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
-      const pendingToken = 'rdtk_TEST_PENDING_TOKEN';
-      const claimedToken = 'rdtk_TEST_CLAIMED_TOKEN';
+      const rawToken = 'rdtk_TEST_TOKEN_MUST_NOT_RENDER';
 
-      const event: DetailOutput = {
+      const event = {
         type: 'detail',
         data: {
           active: true,
@@ -808,20 +807,28 @@ describe('TextRenderer', () => {
               substep: '1.1',
               runbook: 'review-code.md',
               state: 'pending',
-              token: pendingToken,
+              tokenHash: `sha256:${'a'.repeat(64)}`,
+              // A legacy or unvalidated caller may still pass a raw token.
+              // Text status must remain a token-free read surface.
+              token: rawToken,
             },
             {
               substep: '1.2',
               runbook: 'review-tests.md',
               state: 'claimed',
               childRunId: 'run_abc',
-              token: claimedToken,
+              tokenHash: `sha256:${'b'.repeat(64)}`,
             },
-            { substep: '1.3', runbook: 'review-security.md', state: 'cancelled' },
+            {
+              substep: '1.3',
+              runbook: 'review-security.md',
+              state: 'cancelled',
+              tokenHash: `sha256:${'c'.repeat(64)}`,
+            },
           ],
         },
         format: 'status',
-      };
+      } as unknown as DetailOutput;
 
       renderer.render(event);
       const output = writer.lines.join('\n');
@@ -829,11 +836,10 @@ describe('TextRenderer', () => {
       expect(output).toContain('Delegations:');
       expect(output).toContain('1.1');
       expect(output).toContain('review-code.md');
-      expect(output).toContain(`(pending claim: ${pendingToken})`);
-      expect(output).toContain(pendingToken);
+      expect(output).toContain('(pending claim)');
+      expect(output).not.toContain(rawToken);
       expect(output).toContain('1.2');
       expect(output).toContain('(claimed: run_abc)');
-      expect(output).not.toContain(claimedToken);
       expect(output).toContain('1.3');
       expect(output).toContain('(cancelled)');
     });

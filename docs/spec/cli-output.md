@@ -237,11 +237,12 @@ variables and are surfaced through `vars` rather than a separate field.
 
 Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
 (pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for
-correlation. Bearer `claim_id` values are only returned by `rundown claim` and
-the `runbook_started` event emitted by `rundown run`; they are never
-reconstructed from status output. The Zod `DelegationStatusEntrySchema` in
-`@rundown-org/core` remains the single source of truth for the exact per-entry
-shape.
+correlation. Delegation entries expose the non-secret `tokenHash` but never the
+raw delegation token. Bearer `claim_id` values are only returned by
+`rundown claim` and the `runbook_started` event emitted by `rundown run`; they
+are never reconstructed from status output. The Zod
+`DelegationStatusEntrySchema` in `@rundown-org/core` remains the single source
+of truth for the exact per-entry shape.
 
 ### `rundown status` (no active runbook)
 
@@ -412,6 +413,60 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
 Use the returned `claim_id` with `rundown status --claim-id <claim_id>`,
 `rundown pass --claim-id <claim_id>`, or `rundown fail --claim-id <claim_id>`
 for delegated child work.
+
+---
+
+### `rundown abort <token> --claim-id <claim_id>`
+
+Cancels a delegation. `status` is `cancelled` on the first abort and
+`already_cancelled` on a repeat.
+
+**JSON:**
+
+```json
+{
+  "kind": "abort",
+  "action": "abort",
+  "status": "cancelled",
+  "token": "rdtk_abcd...",
+  "substep": "1.1",
+  "runbook": "child.runbook.md",
+  "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cleanup": "terminal_child_cleaned",
+  "force": true
+}
+```
+
+`cleanup` reports which linked-child branch core actually ran, and is present on
+`status: "cancelled"` only:
+
+| `cleanup`                | Meaning                                                              |
+| ------------------------ | -------------------------------------------------------------------- |
+| `none`                   | No child was ever linked — a pending delegation was cancelled        |
+| `active_child_failed`    | A live claimed child was torn down and recorded as failed            |
+| `terminal_child_cleaned` | An already-terminal linked child was cleaned up                      |
+| `missing_child_cleaned`  | A stale delegated outcome was superseded; the child run has vanished |
+
+`force` is emitted **only when a linked-child teardown actually ran** — that is,
+for the three non-`none` branches. It is derived from `cleanup`, not echoed from
+the caller's `--force` argument, so it never claims a teardown that did not
+happen. A pending delegation therefore reports `"cleanup": "none"` with **no**
+`force` field, even when `--force` was passed:
+
+```json
+{
+  "kind": "abort",
+  "action": "abort",
+  "status": "cancelled",
+  "token": "rdtk_abcd...",
+  "substep": "1.1",
+  "runbook": "child.runbook.md",
+  "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cleanup": "none"
+}
+```
+
+`childRunId` is present when a claimed delegation was force-cancelled.
 
 ---
 
@@ -1225,6 +1280,42 @@ Code: RECOVERY_REQUIRED
   "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.",
   "code": "RECOVERY_REQUIRED",
   "command": "pass"
+}
+```
+
+### Aggregate recovery required
+
+The multi-run form of the refusal above. A command that mutates several runs
+atomically (a forced inline terminal cascade, an aggregate delegation abort)
+crossed its effect boundary without recording an outcome for every member, so
+more than one run needs recovery.
+
+It is a **distinct code**, not a plural spelling of `RECOVERY_REQUIRED`: only
+this envelope carries `details.runs`, the exact `(runId, epoch)` set that must
+be recovered before the workflow can resume. A consumer routing on `code` alone
+must be able to tell the two envelope shapes apart.
+
+**Text:**
+
+```text
+Error: The aggregate execution outcome is unknown and requires recovery.
+Code: AGGREGATE_RECOVERY_REQUIRED
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "The aggregate execution outcome is unknown and requires recovery.",
+  "code": "AGGREGATE_RECOVERY_REQUIRED",
+  "command": "stop",
+  "details": {
+    "runs": [
+      { "runId": "rd_9e725b142d81dabcefb9e04919568fcd", "epoch": 4 },
+      { "runId": "rd_3f0c1a7b28d94ef5a6b0c9d3e81f2a47", "epoch": 1 }
+    ]
+  }
 }
 ```
 

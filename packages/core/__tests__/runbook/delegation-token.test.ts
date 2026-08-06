@@ -1,17 +1,36 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   assertDelegationTokenHash,
+  assertDelegationIssuanceNonce,
   DELEGATION_CLAIM_MARKER,
+  DELEGATION_TOKEN_PATTERN,
+  deriveDelegationToken,
   findDelegationClaimToken,
-  generateDelegationToken,
+  generateDelegationIssuanceNonce,
   hashDelegationToken,
   isDelegationToken,
   isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX,
 } from '../../src/runbook/delegation-token.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
+import type { FrameKey } from '../../src/runbook/targeting.js';
+import { generateDelegationToken } from '../../src/testing/delegation-fixtures.js';
 
-describe('generateDelegationToken', () => {
+const DERIVATION_SECRET = 'claim-secret-that-is-never-persisted';
+const DERIVATION_COORDINATE = {
+  issuanceNonce: assertDelegationIssuanceNonce('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+  parentRunId: assertRunId(`rd_${'1'.repeat(32)}`),
+  parentStepId: 'delegate-step',
+  parentFrameKey: 'root/iteration:2' as FrameKey,
+  parentEntry: 7,
+};
+
+// `generateDelegationToken` is a TEST FIXTURE, not production surface: nothing
+// in `src/` mints a random bearer, because a token no claim can re-derive is
+// unusable. These cases pin that the fixture the rest of this file leans on
+// still emits the canonical shape production derivation emits.
+describe('generateDelegationToken (test fixture)', () => {
   it('starts with rdtk_ prefix', () => {
     const token = generateDelegationToken();
     expect(token.startsWith(TOKEN_PREFIX)).toBe(true);
@@ -31,6 +50,96 @@ describe('generateDelegationToken', () => {
   it('generates 100 distinct tokens', () => {
     const tokens = new Set(Array.from({ length: 100 }, () => generateDelegationToken()));
     expect(tokens.size).toBe(100);
+  });
+});
+
+describe('deriveDelegationToken', () => {
+  it('derives the stable v1 test vector in the existing token format', () => {
+    const token = deriveDelegationToken(DERIVATION_SECRET, DERIVATION_COORDINATE);
+
+    // cspell:disable-next-line
+    expect(token).toBe('rdtk_23T6FAGVJ73TB5SB3PWKDMLPBMSB5S6R');
+    expect(isDelegationToken(token)).toBe(true);
+    expect(hashDelegationToken(token)).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it.each([
+    ['secret', 'different-claim-secret', DERIVATION_COORDINATE],
+    [
+      'nonce',
+      DERIVATION_SECRET,
+      {
+        ...DERIVATION_COORDINATE,
+        // cspell:disable-next-line
+        issuanceNonce: assertDelegationIssuanceNonce('BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+      },
+    ],
+    [
+      'run',
+      DERIVATION_SECRET,
+      { ...DERIVATION_COORDINATE, parentRunId: assertRunId(`rd_${'2'.repeat(32)}`) },
+    ],
+    ['step', DERIVATION_SECRET, { ...DERIVATION_COORDINATE, parentStepId: 'another-step' }],
+    [
+      'frame',
+      DERIVATION_SECRET,
+      { ...DERIVATION_COORDINATE, parentFrameKey: 'root/iteration:3' as FrameKey },
+    ],
+    ['entry', DERIVATION_SECRET, { ...DERIVATION_COORDINATE, parentEntry: 8 }],
+  ])('changes when the %s changes', (_label, secret, coordinate) => {
+    expect(deriveDelegationToken(secret, coordinate)).not.toBe(
+      deriveDelegationToken(DERIVATION_SECRET, DERIVATION_COORDINATE),
+    );
+  });
+
+  it('length-prefixes adjacent coordinates so concatenation collisions remain distinct', () => {
+    const left = {
+      ...DERIVATION_COORDINATE,
+      parentStepId: 'a',
+      parentFrameKey: 'bc' as FrameKey,
+    };
+    const right = {
+      ...DERIVATION_COORDINATE,
+      parentStepId: 'ab',
+      parentFrameKey: 'c' as FrameKey,
+    };
+
+    expect(deriveDelegationToken(DERIVATION_SECRET, left)).not.toBe(
+      deriveDelegationToken(DERIVATION_SECRET, right),
+    );
+  });
+
+  it.each([-1, 0, 1.5, Number.NaN])('rejects invalid parent entry %p', (parentEntry) => {
+    expect(() =>
+      deriveDelegationToken(DERIVATION_SECRET, { ...DERIVATION_COORDINATE, parentEntry }),
+    ).toThrow('Invalid delegation parent entry: expected a positive safe integer');
+  });
+
+  it('accepts parent entry one as the positive lower boundary', () => {
+    expect(() =>
+      deriveDelegationToken(DERIVATION_SECRET, { ...DERIVATION_COORDINATE, parentEntry: 1 }),
+    ).not.toThrow();
+  });
+});
+
+describe('delegation issuance nonces', () => {
+  it('generates distinct canonical 32-byte base64url nonces', () => {
+    const first = generateDelegationIssuanceNonce();
+    const second = generateDelegationIssuanceNonce();
+
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).not.toBe(first);
+  });
+
+  it.each([
+    ['wrong encoded length', 'A'.repeat(44)],
+    ['non-base64url alphabet', `${'A'.repeat(42)}!`],
+    ['non-canonical trailing bits', `${'A'.repeat(42)}B`],
+  ])('rejects a nonce with %s', (_reason, value) => {
+    expect(() => assertDelegationIssuanceNonce(value)).toThrow(
+      'Invalid delegation issuance nonce: expected 43 base64url characters',
+    );
   });
 });
 
@@ -69,9 +178,34 @@ describe('raw delegation token helpers', () => {
     ['eight is not base32', `${TOKEN_PREFIX}${'A'.repeat(31)}8`],
     ['nine is not base32', `${TOKEN_PREFIX}${'A'.repeat(31)}9`],
     ['special characters', `${TOKEN_PREFIX}invalid@#$%`],
+    // `^` and `$` carry no `m` flag, and JavaScript's `$` -- unlike Python's --
+    // never matches before a trailing newline. `isDelegationToken` gates the
+    // `--token` argument of `claim` and `abort`, so a bearer that smuggled a
+    // newline past the guard would be a credential the emitter never minted.
+    ['trailing newline', `${TOKEN_PREFIX}${'A'.repeat(32)}\n`],
+    ['leading newline', `\n${TOKEN_PREFIX}${'A'.repeat(32)}`],
     ['non-string', 42],
   ])('rejects %s', (_label, value) => {
     expect(isDelegationToken(value)).toBe(false);
+  });
+
+  // `DELEGATION_TOKEN_PATTERN` and the claim scanner interpolate `TOKEN_PREFIX`
+  // and `DELEGATION_CLAIM_MARKER` through a private escape helper. Neither
+  // constant contains a character that helper rewrites, so the compiled source
+  // must stay byte-identical to the raw constant -- these pin that the escaping
+  // is literal-preserving for the values actually interpolated. The live way to
+  // break it is swapping in `RegExp.escape`, which renders `rdtk_` as
+  // `\x72dtk_` and `RD_CLAIM_TOKEN=` as `\x52D_CLAIM_TOKEN\x3d`; the pattern
+  // still behaves identically, so only an assertion on the source catches it.
+  it('interpolates the token prefix into the pattern as an unmodified literal', () => {
+    expect(DELEGATION_TOKEN_PATTERN.source).toBe(`^${TOKEN_PREFIX}[A-Z2-7]{32}$`);
+  });
+
+  it.each([
+    ['a different separator', 'RD_CLAIM_TOKEN:'],
+    ['a truncated marker', 'RD_CLAIM_TOKE='],
+  ])('requires the exact claim marker, ignoring %s', (_label, marker) => {
+    expect(findDelegationClaimToken(`${marker}${generateDelegationToken()}`)).toBeNull();
   });
 
   it('finds a canonical claim token marker in text', () => {
@@ -94,6 +228,111 @@ describe('raw delegation token helpers', () => {
 
   it('ignores overlong claim tokens instead of truncating them', () => {
     expect(findDelegationClaimToken(`${DELEGATION_CLAIM_MARKER}rdtk_${'A'.repeat(33)}`)).toBeNull();
+  });
+
+  it.each([
+    ['end of text', ''],
+    ['a newline', '\n'],
+    ['a space', ' '],
+    ['a JSON string terminator', '"'],
+    ['a sentence period', '.'],
+    ['a closing parenthesis', ')'],
+  ])('finds a claim token terminated by %s', (_label, suffix) => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`${DELEGATION_CLAIM_MARKER}${token}${suffix}`)).toBe(token);
+  });
+
+  // The trailing guard is `(?![A-Z0-9])`, deliberately WIDER than the base32
+  // alphabet `[A-Z2-7]`: it also refuses `0`, `1`, `8` and `9`. Those four
+  // digits are precisely the ones RFC 4648 base32 omits for being confusable
+  // with `O`, `I`, `B` and `g`, so a digit abutting a complete 32-character body
+  // reads as a mistranscribed longer token far more readily than as a token
+  // abutting adjacent text -- and no emitter in this repo can produce it, since
+  // `delegate` writes the marker as its own line or as a JSON string value.
+  // Refusing is the same conservative call the over-long case makes: a missed
+  // marker degrades to "no delegation detected", whereas accepting would hand a
+  // claim a bearer the issuer never emitted.
+  it.each([
+    ['a base32 body character', '2'],
+    ['an uppercase letter', 'A'],
+    ['a non-base32 digit zero', '0'],
+    ['a non-base32 digit one', '1'],
+    ['a non-base32 digit eight', '8'],
+    ['a non-base32 digit nine', '9'],
+  ])('refuses a claim token abutting %s', (_label, suffix) => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`${DELEGATION_CLAIM_MARKER}${token}${suffix}`)).toBeNull();
+  });
+
+  // The trailing guard spans `[A-Z0-9]` while the leading guard spans
+  // `[A-Za-z0-9_]`. The asymmetry is intentional rather than an oversight: a
+  // lowercase letter, `_` or `-` can never occur inside a canonical body, so a
+  // body followed by one is unambiguously a complete token followed by other
+  // text, and the token is returned.
+  it.each([
+    ['a lowercase letter', 'a'],
+    ['an underscore', '_'],
+    ['a hyphen', '-'],
+  ])('still finds a claim token abutting %s', (_label, suffix) => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`${DELEGATION_CLAIM_MARKER}${token}${suffix}`)).toBe(token);
+  });
+
+  it.each([
+    ['at the very start of the text', ''],
+    ['after a newline', '\n'],
+    ['after a space', ' '],
+    ['after a hyphen', '-'],
+  ])('finds a claim marker %s', (_label, prefix) => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`${prefix}${DELEGATION_CLAIM_MARKER}${token}`)).toBe(token);
+  });
+
+  it.each([
+    ['a lowercase letter', 'x'],
+    ['a digit', '5'],
+  ])('ignores a claim marker preceded by %s', (_label, prefix) => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`${prefix}${DELEGATION_CLAIM_MARKER}${token}`)).toBeNull();
+  });
+
+  it.each([
+    ['an overlong', `${TOKEN_PREFIX}${'A'.repeat(33)}`],
+    ['a too-short', `${TOKEN_PREFIX}${'A'.repeat(31)}`],
+    ['a lowercase-body', `${TOKEN_PREFIX}${'a'.repeat(32)}`],
+  ])('does not let %s leading marker shadow a later canonical one', (_label, malformed) => {
+    const token = generateDelegationToken();
+
+    expect(
+      findDelegationClaimToken(
+        `${DELEGATION_CLAIM_MARKER}${malformed}\n${DELEGATION_CLAIM_MARKER}${token}`,
+      ),
+    ).toBe(token);
+  });
+
+  it('returns the first canonical marker when several are present', () => {
+    const first = generateDelegationToken();
+    const second = generateDelegationToken();
+
+    expect(
+      findDelegationClaimToken(
+        `${DELEGATION_CLAIM_MARKER}${first}\n${DELEGATION_CLAIM_MARKER}${second}`,
+      ),
+    ).toBe(first);
+  });
+
+  it('scans statelessly, so repeated calls on the same text agree', () => {
+    // The module pattern carries no `g` flag; adding one would advance
+    // `lastIndex` between calls and make alternate scans return null.
+    const text = `${DELEGATION_CLAIM_MARKER}${generateDelegationToken()}`;
+
+    expect(findDelegationClaimToken(text)).toBe(findDelegationClaimToken(text));
+    expect(findDelegationClaimToken(text)).not.toBeNull();
   });
 });
 

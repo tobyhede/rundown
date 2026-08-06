@@ -10,6 +10,7 @@ import {
   readRunbookState,
   readSession,
   type TestWorkspace,
+  requireLatestFrontierToken,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -63,11 +64,7 @@ describe('Delegation claim integration', () => {
   }
 
   async function getAutoIssuedToken(substepId = '1'): Promise<string> {
-    const state = await getActiveState(workspace);
-    const token = state?.substepStates?.find((substep) => substep.id === substepId)?.delegation
-      ?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    return requireLatestFrontierToken(workspace, `1.${substepId}`);
   }
 
   it('rejects invalid token format', () => {
@@ -93,7 +90,7 @@ describe('Delegation claim integration', () => {
     await writeChildRunbook();
 
     // Start parent in prompted mode
-    let result = runCli('run --prompted parent.runbook.md --text', workspace);
+    let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const token = await getAutoIssuedToken();
@@ -145,7 +142,7 @@ describe('Delegation claim integration', () => {
       }),
     );
 
-    expect(runCli('run --prompted parent.runbook.md --text', workspace).exitCode).toBe(0);
+    expect(runCli('run --prompted parent.runbook.md', workspace).exitCode).toBe(0);
     const parentRunId = (await getActiveState(workspace))?.id;
     expect(parentRunId).toEqual(expect.any(String));
 
@@ -216,7 +213,7 @@ describe('Delegation claim integration', () => {
     await writeChildRunbook();
 
     // Start parent, delegate
-    let result = runCli('run --prompted parent.runbook.md --text', workspace);
+    let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const token = await getAutoIssuedToken();
@@ -275,7 +272,7 @@ Task uses {{ myVar }}.
     await writeFile(join(workspace.cwd, 'vars.yaml'), 'myVar: fromFile\n');
 
     // Start parent, delegate
-    let result = runCli('run --prompted parent.runbook.md --text', workspace);
+    let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const token = await getAutoIssuedToken();
@@ -360,7 +357,7 @@ rd echo --result pass
       await writeAutoCompleteChildRunbook();
 
       // Start parent in non-prompted mode (so child will auto-complete)
-      let result = runCli('run parent.runbook.md --text', workspace);
+      let result = runCli('run parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify parent is waiting at substep 1.1
@@ -405,7 +402,7 @@ rd echo --result fail
       await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChildContent);
 
       // Start parent
-      let result = runCli('run parent.runbook.md --text', workspace);
+      let result = runCli('run parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);

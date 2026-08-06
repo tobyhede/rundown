@@ -10,6 +10,7 @@ import {
   injectDelegationOutcomeForFrame,
   parseConcatenatedJson,
   runCliInProcess,
+  requireFrontierToken,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
@@ -63,8 +64,7 @@ describe('collection-pending lifecycle', () => {
 
     const parentState = await getActiveState(workspace);
     if (!parentState) throw new Error('Expected active parent state.');
-    const token = parentState.substepStates?.[0]?.delegation?.token;
-    if (!token) throw new Error('Expected delegation token for child claim.');
+    const token = requireFrontierToken(start.stdout, '1.1');
 
     // Claim and drive the child to terminal — this REPORTS the outcome upward.
     const claim = await runCliInProcess(`claim ${token}`, workspace);
@@ -83,7 +83,7 @@ describe('collection-pending lifecycle', () => {
 
     // Collect applies the reported outcome; the parent advances.
     const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
-    expect(collected.exitCode).toBe(0);
+    expect(collected).toMatchObject({ exitCode: 0 });
 
     // Release: the same run-targeted pass now proceeds — the run is not wedged.
     const advanced = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
@@ -123,8 +123,7 @@ describe('collection-pending lifecycle', () => {
     expect(start.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     if (!parentState) throw new Error('Expected active parent state.');
-    const token = parentState.substepStates?.[0]?.delegation?.token;
-    if (!token) throw new Error('Expected delegation token for child claim.');
+    const token = requireFrontierToken(start.stdout, '1.1');
     const claim = await runCliInProcess(`claim ${token}`, workspace);
     expect(claim.exitCode).toBe(0);
     const claimId = String(findActionOutput(claim.stdout)!.claim_id);

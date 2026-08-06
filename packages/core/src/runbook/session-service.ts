@@ -50,6 +50,12 @@ import {
   type VerifiedClaim,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
+import {
+  createDelegationCredentialIssuer,
+  createDelegationTokenDeriver,
+  type DelegationCredentialIssuer,
+  type DelegationTokenDeriver,
+} from './delegation-credential.js';
 import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
@@ -64,6 +70,51 @@ export type ReleaseRunbookResult =
       readonly runbookId: RunId;
       readonly removedFromDefaultStack: boolean;
       readonly nextDefaultRunbookId: RunId | null;
+    };
+
+/**
+ * In-memory run-control credential prepared before a run is activated.
+ *
+ * The bearer is intentionally absent from persisted state until the matching
+ * atomic activation installs {@link claim}. Callers must keep this value in
+ * process memory only.
+ */
+export interface PreparedRunControlClaim {
+  /** Public bearer returned to the run controller after activation commits. */
+  readonly claimId: ClaimId;
+  /** Proof-backed record installed in the session transaction. */
+  readonly claim: ClaimRecord;
+  /** Claim-bound credential issuer retained in process memory only. */
+  readonly issueDelegationCredential: DelegationCredentialIssuer;
+  /** Claim-bound token deriver retained in process memory only. */
+  readonly deriveDelegationToken: DelegationTokenDeriver;
+}
+
+/**
+ * Outcome of {@link SessionService.adoptRunControlClaim}.
+ *
+ * Refusal-biased by construction: the only `adopted` arm is one where the
+ * replaced claim provably issued nothing, so no delivered credential is
+ * orphaned by the replacement.
+ */
+export type RunControlAdoption =
+  | {
+      /** Authority was re-established; the runtime is process-memory only. */
+      readonly kind: 'adopted';
+      /** Bearer, persisted record, and claim-bound delegation capabilities. */
+      readonly runtime: PreparedRunControlClaim;
+    }
+  | {
+      /** The run already carries a credential the replacement could not reproduce. */
+      readonly kind: 'refused_credential_issued';
+      /** Run whose control could not be adopted. */
+      readonly runId: RunId;
+    }
+  | {
+      /** The guarded session mutation itself refused. */
+      readonly kind: 'refused_session';
+      /** The exact session refusal, for the caller to render. */
+      readonly refusal: SessionMutationRefusal;
     };
 
 /**
@@ -589,8 +640,52 @@ export class SessionService {
    */
   async issueRunControlClaim(
     runId: RunId,
-  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+  ): Promise<SessionMutationResult<PreparedRunControlClaim>> {
     return this.mutateGuarded([runId], (ctx) => this.mintRunControlClaim(ctx.session, runId));
+  }
+
+  /**
+   * Adopt run-control authority for a run this process must drive but whose
+   * controlling bearer it does not hold.
+   *
+   * A run's bearer lives in the launching process's memory only, so a run
+   * created by a process that died is orphaned: the persisted claim record
+   * remains, but nothing can reproduce the secret it verifies. A resumed inline
+   * child is exactly that run, and without a bearer its machine cannot issue
+   * delegation credentials — the asymmetry where a freshly launched child
+   * proceeds through an authored DELEGATE step and a resumed one stops.
+   *
+   * Adoption is refused, never forced, when the run already carries a
+   * delegation issued under the claim being replaced. The credentials addendum
+   * makes that a stop condition ("minting a second run-control claim after
+   * initialization used the first"): the replacement claim could not reproduce
+   * those credentials, and `createDelegationTokenDeriver` would — correctly —
+   * refuse every echo of them, converting fail-closed into stuck-closed. A run
+   * that has issued nothing has had its first claim installed but never used,
+   * so replacing it orphans no credential.
+   *
+   * @param state - Captured state of the run whose control is being adopted.
+   * @returns The adopted runtime, a refusal naming the issued credential that
+   *   blocks adoption, or the session refusal that prevented the mint.
+   */
+  async adoptRunControlClaim(state: RunbookState): Promise<RunControlAdoption> {
+    // The predicate reads the run through `ctx.readState`, not through the
+    // caller's `state`. Evaluating it against a snapshot captured before the
+    // transaction opened would be a check-then-act: a credential minted in
+    // between is one the replacement claim cannot reproduce, so the rotation
+    // would orphan it — the stop condition this refusal exists to enforce.
+    // `state` supplies the run id only.
+    const result = await this.mutateGuarded([state.id], (ctx) => {
+      const current = ctx.readState(state.id);
+      if (current?.substepStates?.some((substep) => substep.delegation !== undefined)) {
+        return { kind: 'refused_credential_issued' as const };
+      }
+      return { kind: 'minted' as const, claim: this.mintRunControlClaim(ctx.session, state.id) };
+    });
+    if (result.kind !== 'committed') return { kind: 'refused_session', refusal: result };
+    return result.value.kind === 'refused_credential_issued'
+      ? { kind: 'refused_credential_issued', runId: state.id }
+      : { kind: 'adopted', runtime: result.value.claim };
   }
 
   /**
@@ -617,6 +712,64 @@ export class SessionService {
   }
 
   /**
+   * Prepare a run-control bearer without writing session state.
+   *
+   * This seam lets run initialization bind credential derivation to the exact
+   * bearer that will later be installed by
+   * {@link pushRunbookWithPreparedRunControlClaim}.
+   *
+   * @param runId - Run id controlled by the prepared claim.
+   * @returns The caller-held bearer and its non-secret persisted record.
+   */
+  prepareRunControlClaim(runId: RunId): PreparedRunControlClaim {
+    const parsed = parseClaimBearer(generateClaimBearer());
+    const authority = {
+      kind: 'bearer' as const,
+      claimId: parsed.claimId,
+      claimKey: parsed.claimKey,
+    };
+    return {
+      claimId: parsed.claimId,
+      claim: createClaimRecord({
+        claimKey: parsed.claimKey,
+        secretHash: hashClaimSecret(parsed.secret),
+        controlledRunId: runId,
+        grants: createRunControlGrants(runId),
+        now: this.now(),
+      }),
+      issueDelegationCredential: createDelegationCredentialIssuer(authority),
+      deriveDelegationToken: createDelegationTokenDeriver(authority),
+    };
+  }
+
+  /**
+   * Push a run and install an already prepared run-control claim atomically.
+   *
+   * @param id - Runbook state ID to push and control.
+   * @param prepared - Exact in-memory claim prepared before initialization.
+   * @returns The installed claim after the guarded session transaction commits.
+   * @throws {Error} When the prepared claim controls a different run.
+   */
+  async pushRunbookWithPreparedRunControlClaim(
+    id: RunId,
+    prepared: PreparedRunControlClaim,
+  ): Promise<SessionMutationResult<{ readonly claimId: ClaimId; readonly claim: ClaimRecord }>> {
+    const parsed = parseClaimBearer(prepared.claimId);
+    if (
+      prepared.claim.controlledRunId !== id ||
+      prepared.claim.claimKey !== parsed.claimKey ||
+      prepared.claim.secretHash !== hashClaimSecret(parsed.secret)
+    ) {
+      throw new Error(`Prepared run-control claim does not match ${id}`);
+    }
+    return this.mutateGuarded([id], (ctx) => {
+      ctx.session.defaultStack.push(id);
+      this.installRunControlClaim(ctx.session, prepared.claim);
+      return { claimId: prepared.claimId, claim: prepared.claim };
+    });
+  }
+
+  /**
    * Mint a run-control bearer claim into an in-memory session (no IO, no lock).
    *
    * Shared by {@link issueRunControlClaim} and
@@ -628,30 +781,29 @@ export class SessionService {
    * @param runId - Run id the minted claim controls.
    * @returns Public bearer claim id and the persisted-shape record.
    */
-  private mintRunControlClaim(
-    session: SessionData,
-    runId: RunId,
-  ): { readonly claimId: ClaimId; readonly claim: ClaimRecord } {
-    const now = this.now();
-    const parsed = parseClaimBearer(generateClaimBearer());
-    const claim = createClaimRecord({
-      claimKey: parsed.claimKey,
-      secretHash: hashClaimSecret(parsed.secret),
-      controlledRunId: runId,
-      grants: createRunControlGrants(runId),
-      now,
-    });
+  private mintRunControlClaim(session: SessionData, runId: RunId): PreparedRunControlClaim {
+    const prepared = this.prepareRunControlClaim(runId);
+    this.installRunControlClaim(session, prepared.claim);
+    return prepared;
+  }
+
+  /**
+   * Install one prepared run-control claim into an in-memory session.
+   *
+   * @param session - Session to mutate in place.
+   * @param claim - Prepared run-control claim to install.
+   */
+  private installRunControlClaim(session: SessionData, claim: ClaimRecord): void {
     // Uphold the SessionDataSchema controlledRunId-uniqueness invariant: a run has
     // at most one run-control claim. Re-issuing supersedes (rotates) any existing
     // claim for this run rather than appending a duplicate that would render the
     // session unreadable. The prior bearer is invalidated by construction.
     for (const [existingKey, existingClaim] of Object.entries(session.claims)) {
-      if (existingClaim.controlledRunId === runId) {
+      if (existingClaim.controlledRunId === claim.controlledRunId) {
         delete session.claims[existingKey];
       }
     }
     session.claims[claim.claimKey] = claim;
-    return { claimId: parsed.claimId, claim };
   }
 
   /**

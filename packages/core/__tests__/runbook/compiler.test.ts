@@ -44,7 +44,11 @@ import type {
   RunbookState,
 } from '../../src/runbook/types.js';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  hashDelegationToken,
+} from '../../src/runbook/delegation-token.js';
+import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { activeFrame, buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -55,7 +59,11 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
-import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
+import {
+  generateDelegationToken,
+  makeDelegatedSubstepState,
+  makeDelegationCredentialDescriptor,
+} from '../../src/testing/delegation-fixtures.js';
 
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
@@ -82,6 +90,15 @@ describe('runbook compiler', () => {
     runExternalCommand: async () => ({ success: true, exitCode: 0 }),
   };
 
+  const ISSUE_DELEGATION_CREDENTIAL: DelegationCredentialIssuer = (location) => {
+    const token = generateDelegationToken();
+    return {
+      token,
+      tokenHash: hashDelegationToken(token),
+      credential: makeDelegationCredentialDescriptor(location),
+    };
+  };
+
   function compileDelegationFixtureMachine(steps: ResolvedStep[]) {
     return compileRunbookToMachine(steps, {
       templateVars: brandFlattenedTemplateVarsForTest({
@@ -92,6 +109,7 @@ describe('runbook compiler', () => {
         runbookRef,
         childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
       }),
+      issueDelegationCredential: ISSUE_DELEGATION_CREDENTIAL,
     });
   }
 
@@ -587,14 +605,11 @@ Review the plan manually.
     const targetFrame = buildFrameKey('1', 1);
     const collidingFrame = buildFrameKey('1', 2);
 
-    function delegationFixture(
-      options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
-    ) {
+    function delegationFixture(options: { readonly linkedChild?: typeof childRunId } = {}) {
       const target = makeDelegatedSubstepState({
         id: '1.1',
         frameKey: targetFrame,
         delegation: {
-          token: options.plaintextToken,
           tokenHash,
           childRunId: options.linkedChild ?? null,
         },
@@ -751,11 +766,10 @@ Review the plan manually.
         childRunId,
       };
       actor.send(event);
-      const { token: _plaintextToken, ...persistedDelegation } = linked.target.delegation!;
       expect(actor.getSnapshot().context.substepStates).toEqual([
         {
           ...linked.target,
-          delegation: { ...persistedDelegation, childRunId: null },
+          delegation: { ...linked.target.delegation, childRunId: null },
         },
         linked.sameIdOtherFrame,
         linked.sibling,
@@ -12227,6 +12241,7 @@ echo ok
             childRunbookRef,
             ancestors: [],
             frameKey,
+            issueCredential: ISSUE_DELEGATION_CREDENTIAL,
           },
           steps,
         );
@@ -12372,6 +12387,23 @@ echo ok
       expect(ctx.delegateFrontier?.length).toBe(2);
       const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
       expect(frontierIds).toEqual(['1.1', '1.2']);
+      // Assert the credential values, never the length of a mapped projection:
+      // `.map()` preserves length whatever it yields, so asserting the mapped
+      // credentials have 2 entries still passes when every credential regressed
+      // to a stale or absent descriptor. Each entry must carry the descriptor
+      // minted for its own coordinates — `toMatchObject` also fails outright on
+      // a missing credential, which the mapped-length check could not detect.
+      for (const entry of ctx.delegateFrontier ?? []) {
+        expect(entry.credential).toMatchObject({
+          version: 1,
+          parentStepId: entry.id,
+          parentFrameKey: buildFrameKey('1'),
+        });
+      }
+      expect(ctx.delegateFrontier?.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(
+        true,
+      );
+      expect(JSON.stringify(actor.getPersistedSnapshot())).not.toContain('rdtk_');
 
       // Each retried substep's state is reset: status pending, result cleared.
       const post1 = ctx.substepStates?.find((ss) => ss.id === '1');
@@ -12827,6 +12859,7 @@ echo ok
           childRunbookRef,
           ancestors: [],
           frameKey,
+          issueCredential: ISSUE_DELEGATION_CREDENTIAL,
         },
         steps,
       );
@@ -13127,6 +13160,7 @@ echo ok
           runbookRef,
           childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
         }),
+        issueDelegationCredential: ISSUE_DELEGATION_CREDENTIAL,
       });
       const actor = createActor(machine);
       actor.start();
@@ -13148,6 +13182,90 @@ echo ok
       expect(sub3?.delegation?.childRunbookPath).toBe('/resolved/child-b.runbook.md');
 
       actor.stop();
+    });
+  });
+
+  describe('delegation credential frame-entry coordinate', () => {
+    const substepDefer = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    };
+
+    /**
+     * Two steps so the machine can be started, snapshotted, and only *then*
+     * driven into the delegated frame — issuance must observe the seeded
+     * bootstrap mirror rather than whatever the fresh actor had at start.
+     */
+    function frameEntrySteps(): ResolvedStep[] {
+      return inferSteps([
+        { name: '1', description: 'Plain first step', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Parent with a delegated substep',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Delegated',
+              transitions: substepDefer,
+              runbooks: ['child.runbook.md'],
+              delegate: true,
+            },
+          ],
+        },
+      ]);
+    }
+
+    async function issuedParentEntry(
+      frameEntry: Pick<RunbookState, 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'>,
+    ): Promise<number | undefined> {
+      const machine = compileDelegationFixtureMachine(frameEntrySteps());
+      const bootstrap = createActor(machine);
+      bootstrap.start();
+      const baseSnapshot = bootstrap.getSnapshot();
+      bootstrap.stop();
+
+      // The bootstrap mirror is written by the actor service from persisted
+      // state; a compiler-level test reaches it the same way the service does,
+      // through the snapshot envelope.
+      const seeded = { ...baseSnapshot, context: { ...baseSnapshot.context, frameEntry } };
+      const actor = createActor(machine, { snapshot: seeded });
+      actor.start();
+      actor.send({ type: 'PASS' });
+      await waitFor(actor, (snapshot) =>
+        (snapshot.context.substepStates ?? []).some((ss) => ss.delegation !== undefined),
+      );
+      const delegated = actor
+        .getSnapshot()
+        .context.substepStates?.find((ss) => ss.delegation !== undefined);
+      actor.stop();
+      return delegated?.delegation?.credential.parentEntry;
+    }
+
+    it('stamps the issuing frame active entry, not a hardcoded first entry', async () => {
+      const issuingFrame = buildFrameKey('2');
+
+      await expect(
+        issuedParentEntry({
+          activeFrameKey: issuingFrame,
+          activeEntry: 2,
+          frameEntryCounts: { [issuingFrame]: 2 },
+        }),
+      ).resolves.toBe(2);
+    });
+
+    it('attributes the entry to the issuing frame, not to another active frame', async () => {
+      const issuingFrame = buildFrameKey('2');
+      const otherFrame = buildFrameKey('1');
+
+      await expect(
+        issuedParentEntry({
+          activeFrameKey: otherFrame,
+          activeEntry: 5,
+          frameEntryCounts: { [otherFrame]: 5, [issuingFrame]: 3 },
+        }),
+      ).resolves.toBe(3);
     });
   });
 

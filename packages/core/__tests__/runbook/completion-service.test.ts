@@ -29,6 +29,10 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import {
+  makeDelegationCredentialDescriptor,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 
@@ -335,6 +339,44 @@ describe('RunbookCompletionService', () => {
     );
   });
 
+  it('forwards verified claim authority through the completion transition runtime', async () => {
+    const current = state();
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    await manager.save({
+      ...current,
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+    const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: state({ substep: '2' }),
+      snapshot: {},
+      effects: [],
+    });
+    const issueDelegationCredential = makeDelegationCredentialIssuer();
+
+    await service.drainResolvedCompletions({
+      runbookId,
+      steps,
+      currentState: current,
+      issueDelegationCredential,
+    });
+
+    expect(sendAndSync).toHaveBeenCalledWith(
+      runbookId,
+      steps,
+      expect.objectContaining({ type: 'APPLY_CURRENT_RESOLVED_COMPLETION' }),
+      { runtime: { issueDelegationCredential } },
+    );
+  });
+
   it('guards only the first apply when one drain call applies several completions', async () => {
     // The guard belongs to the DECISIVE write — the first apply, the one that
     // advances the parent past the point where a live delegated child matters.
@@ -510,6 +552,7 @@ describe('RunbookCompletionService', () => {
           frameKey: buildFrameKey('1'),
           status: 'running',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
@@ -559,6 +602,7 @@ describe('RunbookCompletionService', () => {
           frameKey: buildFrameKey('1'),
           status: 'running',
           delegation: {
+            credential: makeDelegationCredentialDescriptor(),
             tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
@@ -1540,6 +1584,7 @@ describe('RunbookCompletionService', () => {
             frameKey: buildFrameKey('1'),
             status: 'running',
             delegation: {
+              credential: makeDelegationCredentialDescriptor(),
               tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
               childRunbookPath: 'child.md',
               childRunbookRef: { source: 'project', path: 'child.md' },

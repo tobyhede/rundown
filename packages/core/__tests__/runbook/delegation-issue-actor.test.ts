@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import type { ResolvedStepWithSubsteps, Substep, Transitions } from '@rundown-org/parser';
 import { createActor } from 'xstate';
 
@@ -7,7 +7,12 @@ import {
   type DelegationIssueInput,
   type DelegationIssueOutput,
 } from '../../src/runbook/actors/delegation-issue-actor.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { assertClaimLookupKey } from '../../src/runbook/claim-id.js';
+import {
+  assertDelegationIssuanceNonce,
+  assertDelegationTokenHash,
+  hashDelegationToken,
+} from '../../src/runbook/delegation-token.js';
 import type { ResolvedDelegationRunbook } from '../../src/runbook/delegation-inference.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type {
@@ -88,6 +93,15 @@ function makeResolved(runbookRef: string): ResolvedDelegationRunbook {
 
 function makeActiveDelegation(): StepDelegation {
   return {
+    credential: {
+      version: 1,
+      issuerClaimKey: assertClaimLookupKey(`rdclk_${'4'.repeat(32)}`),
+      issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+      parentRunId: brandRunIdForTest(`rd_${'1'.repeat(32)}`),
+      parentStepId: '1.1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    },
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.runbook.md',
     childRunbookRef: { source: 'project', path: 'child.runbook.md' },
@@ -105,17 +119,77 @@ function input(
     makeSubstep({ id: '2', description: 'B', runbooks: ['b.runbook.md'], delegate: true }),
   ],
 ): DelegationIssueInput {
+  const issuerClaimKey = assertClaimLookupKey(`rdclk_${'4'.repeat(32)}`);
   return {
     state: makeParentState(),
     steps: [makeStepWithSubsteps('1', substeps)],
     frameKey: buildFrameKey('1'),
     resolveRunbook: async (runbookRef) => makeResolved(runbookRef),
+    issueCredential: (location) => {
+      const token = `rdtk_${location.parentStepId.endsWith('.1') ? 'A' : 'B'}`.padEnd(
+        37,
+        location.parentStepId.endsWith('.1') ? 'A' : 'B',
+      );
+      return {
+        token,
+        tokenHash: hashDelegationToken(token),
+        credential: {
+          version: 1,
+          issuerClaimKey,
+          issuanceNonce: assertDelegationIssuanceNonce('A'.repeat(43)),
+          ...location,
+        },
+      };
+    },
     ...overrides,
   };
 }
 
 describe('delegationIssueActor', () => {
-  it('fans out two delegated substeps with tokens and updated substep states', async () => {
+  it('refuses token issuance before resolution when verified claim authority is absent', async () => {
+    const resolveRunbook = jest.fn(async (runbookRef: string) => makeResolved(runbookRef));
+
+    const result = await runActor(
+      input({
+        issueCredential: undefined,
+        resolveRunbook,
+      }),
+    );
+
+    expect(result.status).toBe('done');
+    expect(result.output).toEqual({
+      status: 'failed',
+      reason: 'actor_context_required',
+      message: 'Delegation issuance requires verified claim authority',
+    });
+    expect(resolveRunbook).not.toHaveBeenCalled();
+  });
+
+  it('forwards the verified credential issuer to every delegation target', async () => {
+    const issueCredential = jest.fn(input().issueCredential);
+
+    const result = await runActor(input({ issueCredential }));
+
+    expect(result.status).toBe('done');
+    expect(result.output).toMatchObject({ status: 'issued' });
+    expect(issueCredential).toHaveBeenCalledTimes(2);
+    expect(issueCredential).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        parentRunId: brandRunIdForTest(`rd_${'1'.repeat(32)}`),
+        parentStepId: '1.1',
+        parentFrameKey: buildFrameKey('1'),
+      }),
+      undefined,
+    );
+    expect(issueCredential).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ parentStepId: '1.2' }),
+      undefined,
+    );
+  });
+
+  it('fans out two delegated substeps with token-free intents and updated substep states', async () => {
     const result = await runActor(input());
 
     expect(result.status).toBe('done');
@@ -125,7 +199,9 @@ describe('delegationIssueActor', () => {
     expect(output.substepStates).toHaveLength(2);
     expect(output.frontier.map((entry) => entry.id)).toEqual(['1.1', '1.2']);
     expect(output.substepStates.map((state) => state.id)).toEqual(['1', '2']);
-    expect(output.substepStates.every((state) => state.delegation?.token)).toBe(true);
+    expect(output.frontier.map((entry) => entry.credential)).toHaveLength(2);
+    expect(output.frontier.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(true);
+    expect(JSON.stringify(output)).not.toContain('rdtk_');
   });
 
   it('preserves the authored runbook ref in frontier entries', async () => {

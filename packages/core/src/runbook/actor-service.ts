@@ -32,6 +32,12 @@ import type {
 } from './actors/inline-launch-intent-actor.js';
 import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
+import type { DelegationCredentialIssuer } from './delegation-credential.js';
+import {
+  prepareManualDelegation,
+  type ManualDelegationPreparationEvent,
+  type ManualDelegationPreparationResult,
+} from './manual-delegation-machine.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { PreparedActorMutation } from './effectful-mutation-executor.js';
 import {
@@ -59,7 +65,7 @@ import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
-import { inferFrameEntryFromState } from './frame-entry.js';
+import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -155,6 +161,23 @@ export type PrepareDelegationChildUnlinkResult =
   | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
   | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
 
+/**
+ * Typed outcome of preparing a manual delegation issue, retry, or abort.
+ *
+ * Shares the `status` discriminant with
+ * {@link ManualDelegationPreparationResult}: the refusal arms are propagated
+ * verbatim (so a live-child refusal keeps its branded child run id), while the
+ * `prepared` arm exchanges the machine's substep states for the not-yet-
+ * persisted parent state the caller commits.
+ */
+export type PreparedManualDelegationMutation =
+  | {
+      readonly status: 'prepared';
+      /** Captured parent state with the machine-prepared delegation applied. */
+      readonly nextState: RunbookState;
+    }
+  | Exclude<ManualDelegationPreparationResult, { readonly status: 'prepared' }>;
+
 /** Runtime dependencies for {@link RunbookActorService}. */
 export interface RunbookActorServiceOptions {
   /** Resolve authored child runbook references for machine-owned delegation issuance. */
@@ -180,6 +203,12 @@ export interface RunbookActorServiceOptions {
    * tests; production callers should rely on the default.
    */
   readonly machineEffectTimeoutMs?: number;
+}
+
+/** Per-operation runtime capabilities that must never enter persisted context. */
+export interface RunbookActorRuntimeCapabilities {
+  /** Verified claim-bound issuer for machine-owned delegation credentials. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
 /**
@@ -291,7 +320,9 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   if (type === 'DELEGATION_ISSUANCE_FAILED') {
     const reason = (value as { readonly reason?: unknown }).reason;
     return (
-      (reason === 'delegation_resolution_failed' || reason === 'nested_delegation_forbidden') &&
+      (reason === 'actor_context_required' ||
+        reason === 'delegation_resolution_failed' ||
+        reason === 'nested_delegation_forbidden') &&
       typeof (value as { readonly message?: unknown }).message === 'string'
     );
   }
@@ -369,6 +400,7 @@ function lastResultSyncForEvent(
     case 'INLINE_CHILD_STARTED':
     case 'DELEGATION_CHILD_LINKED':
     case 'DELEGATION_CHILD_UNLINKED':
+    case 'MANUAL_DELEGATION_ABORT_PREPARED':
     // Recovery jumps to recoveryRequired; the interrupted step's result is
     // unknown, so the prior lastResult is preserved rather than resolved.
     case 'EXECUTION_OUTCOME_UNKNOWN':
@@ -481,6 +513,24 @@ export function extractEnteredArtifacts(
 const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
 
 /**
+ * Project the persisted frame-entry coordinates for the machine context mirror.
+ *
+ * All three fields travel together: `activeEntry` is only interpretable against
+ * the `activeFrameKey` it was recorded for, and `frameEntryCounts` supplies the
+ * answer for every other frame.
+ *
+ * @param state - Persisted runbook state.
+ * @returns The coordinates {@link inferFrameEntryFromState} consumes.
+ */
+function frameEntryCoordinatesOf(state: RunbookState): FrameEntryCoordinates {
+  return {
+    activeFrameKey: state.activeFrameKey,
+    activeEntry: state.activeEntry,
+    frameEntryCounts: state.frameEntryCounts,
+  };
+}
+
+/**
  * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
  * so hydration reflects CLI-level writes that happen between actor transitions.
  *
@@ -499,8 +549,8 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  *
  * @param machine - Compiled runbook machine used to materialise the persisted
  *                  snapshot into a full XState envelope.
- * @param state - Persisted runbook state whose `snapshot`, `substepStates`, and
- *                `substep` fields drive the overlay.
+ * @param state - Persisted runbook state whose `snapshot`, `substepStates`,
+ *                `substep`, and frame-entry fields drive the overlay.
  * @returns A hydrated snapshot with the RunbookState view merged on top, or
  *          `undefined` when `state.snapshot` is absent (initial bootstrap).
  */
@@ -522,6 +572,10 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       substep: state.substep ?? baseSnapshot.context.substep,
+      // Frame-entry coordinates advance through RunbookState (via
+      // ExecutionLifecycleService), never through the machine, so the persisted
+      // values are authoritative over anything a stale snapshot carries.
+      frameEntry: frameEntryCoordinatesOf(state),
       // The XState snapshot envelope is opaque and does not re-mint
       // non-enumerable trust brands during RunbookState parsing. Use the
       // parsed RunbookState variables as the authoritative post-load source.
@@ -845,6 +899,7 @@ export class RunbookActorService {
    * @param state - Persisted runbook state to hydrate from
    * @param steps - Parsed runbook steps for machine compilation
    * @param executionObserver - Optional non-persisted observer for command actor output
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Compiled XState machine seeded with all hydration-time context
    * @throws {Error} If `state.frontmatterOutputs` is undefined (invalid state)
    */
@@ -853,6 +908,7 @@ export class RunbookActorService {
     state: RunbookState,
     steps: readonly ResolvedStep[],
     executionObserver?: MachineExecutionObserver,
+    runtime?: RunbookActorRuntimeCapabilities,
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
@@ -872,8 +928,10 @@ export class RunbookActorService {
       helpers: this.options.helpers,
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
+      frameEntry: frameEntryCoordinatesOf(state),
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
+      issueDelegationCredential: runtime?.issueDelegationCredential,
       resolveInlineRunbook: this.options.resolveInlineRunbook,
       generateChildRunId: this.options.generateInlineChildRunId,
       now: this.options.inlineLaunchNow,
@@ -887,11 +945,12 @@ export class RunbookActorService {
     state: RunbookState,
     steps: readonly ResolvedStep[],
     executionObserver?: MachineExecutionObserver,
+    runtime?: RunbookActorRuntimeCapabilities,
   ): AnyActorRef {
     if (state.snapshot) {
       this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
     }
-    const machine = this.compileMachineFromState(id, state, steps, executionObserver);
+    const machine = this.compileMachineFromState(id, state, steps, executionObserver, runtime);
     const snapshot = hydrateSnapshot(machine, state);
     const actor = createActor(machine, { snapshot });
     actor.start();
@@ -948,16 +1007,21 @@ export class RunbookActorService {
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps for machine compilation
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Started actor, or null if state not found
    * @throws {Error} When the loaded state is invalid — specifically when
    *   `state.frontmatterOutputs` is `undefined`. Callers should treat this
    *   as a signal to run `rundown prune` and restart execution; the invalid
    *   state cannot be migrated in place.
    */
-  async createActor(id: string, steps: readonly ResolvedStep[]): Promise<AnyActorRef | null> {
+  async createActor(
+    id: string,
+    steps: readonly ResolvedStep[],
+    runtime?: RunbookActorRuntimeCapabilities,
+  ): Promise<AnyActorRef | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
-    return this.createActorForState(id, state, steps);
+    return this.createActorForState(id, state, steps, undefined, runtime);
   }
 
   /**
@@ -1093,6 +1157,7 @@ export class RunbookActorService {
    * @param previousState - The state to hydrate the actor from (captured before the effect).
    * @param steps - Parsed runbook steps for machine compilation.
    * @param event - Runbook event to send (PASS, FAIL, GOTO, EXECUTE_COMMAND, …).
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors.
    * @returns The computed, not-yet-persisted mutation.
    * @throws {Error} If the resulting snapshot is an unsupported/invalid shape
    *   (mirrors {@link updateFromActor}).
@@ -1102,6 +1167,7 @@ export class RunbookActorService {
     previousState: RunbookState,
     steps: readonly ResolvedStep[],
     event: RunbookEvent,
+    runtime?: RunbookActorRuntimeCapabilities,
   ): Promise<PreparedActorMutation> {
     const collector = createExecutionEffectCollector();
     const effects: ExecutionObservationEffect[] = [];
@@ -1115,7 +1181,7 @@ export class RunbookActorService {
         }),
       );
     }
-    const actor = this.createActorForState(id, previousState, steps, collector);
+    const actor = this.createActorForState(id, previousState, steps, collector, runtime);
     const errorSubscription = actor.subscribe({ error: () => undefined });
     try {
       actor.send(event);
@@ -1146,6 +1212,77 @@ export class RunbookActorService {
     } finally {
       errorSubscription.unsubscribe();
       this.stopActor(actor);
+    }
+  }
+
+  /**
+   * Prepare manual issue, retry, or abort state through the dedicated
+   * delegation machine.
+   *
+   * Every arm carries the `status` discriminant of
+   * {@link ManualDelegationPreparationResult}; the `prepared` arm replaces the
+   * machine's substep states with the not-yet-persisted parent state. A
+   * prepared ABORT against a state that carries a persisted snapshot is routed
+   * through {@link prepareActorMutation} so the parent machine — not this
+   * method — owns the resulting transition; every other prepared command
+   * applies the substep states directly to the captured state.
+   *
+   * @param previousState - Exact parent state captured by the aggregate runner.
+   * @param steps - Parsed steps corresponding to the captured state.
+   * @param event - Typed manual issue, retry, or abort event.
+   * @param issueCredential - Verified claim-bound runtime issuer.
+   * @returns The captured state with machine-prepared substep state applied
+   *   (`prepared`), or the domain refusal produced by core delegation logic:
+   *   `already_cancelled`, `needs_force`, `child_in_flight`, or `error`.
+   * @throws {Error} If a live-child refusal carries a non-canonical child run
+   *   id, or if the snapshot-backed abort path fails in
+   *   {@link prepareActorMutation} (invalid state, actor error state).
+   */
+  async prepareManualDelegationMutation(
+    previousState: RunbookState,
+    steps: readonly ResolvedStep[],
+    event: ManualDelegationPreparationEvent,
+    issueCredential: DelegationCredentialIssuer,
+  ): Promise<PreparedManualDelegationMutation> {
+    const result = prepareManualDelegation({
+      state: previousState,
+      steps,
+      issueCredential,
+      event,
+    });
+    switch (result.status) {
+      case 'prepared':
+        if (event.type === 'ABORT' && previousState.snapshot !== undefined) {
+          const mutation = await this.prepareActorMutation(
+            previousState.id,
+            previousState,
+            steps,
+            {
+              type: 'MANUAL_DELEGATION_ABORT_PREPARED',
+              substepStates: result.substepStates,
+            },
+            // The round-trip hands the parent machine back the verified issuer
+            // this method already holds. Omitting it would drive a machine that
+            // cannot issue, so a transition landing on a DELEGATE frontier would
+            // refuse `actor_context_required` for an authority core just
+            // verified — a capability lost purely to argument plumbing.
+            { issueDelegationCredential: issueCredential },
+          );
+          return { status: 'prepared', nextState: mutation.nextState };
+        }
+        return {
+          status: 'prepared',
+          nextState: { ...previousState, substepStates: result.substepStates },
+        };
+      case 'already_cancelled':
+      case 'needs_force':
+      case 'child_in_flight':
+      case 'error':
+        return result;
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
     }
   }
 
@@ -1314,10 +1451,15 @@ export class RunbookActorService {
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
+   * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Updated state, or null if state not found
    */
-  async initializeState(id: string, steps: readonly ResolvedStep[]): Promise<RunbookState | null> {
-    const actor = await this.createActor(id, steps);
+  async initializeState(
+    id: string,
+    steps: readonly ResolvedStep[],
+    runtime?: RunbookActorRuntimeCapabilities,
+  ): Promise<RunbookState | null> {
+    const actor = await this.createActor(id, steps, runtime);
     if (!actor) return null;
     try {
       const { state: synced } = await this.persistAfterMachineEffects(id, actor, steps);
@@ -1518,6 +1660,7 @@ export class RunbookActorService {
    * @param options.guard - Parent-advance guard threaded into the SUCCESS-path
    *   persist only (never the effects-failure stopped-lifecycle fallback); when
    *   present the write refuses if the run has a live delegated child.
+   * @param options.runtime - Optional verified runtime capabilities for machine-owned actors.
    * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live
    *   delegated child blocks the advance. Raised by the store write beneath
    *   {@link updateFromActor}, so it is not lexically visible here — callers of the
@@ -1530,7 +1673,10 @@ export class RunbookActorService {
     id: string,
     steps: readonly ResolvedStep[],
     event: RunbookEvent,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
+    options: {
+      readonly guard?: ParentAdvanceGuard;
+      readonly runtime?: RunbookActorRuntimeCapabilities;
+    } = {},
   ): Promise<ActorSyncResult | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
@@ -1546,7 +1692,7 @@ export class RunbookActorService {
         }),
       );
     }
-    const actor = this.createActorForState(id, state, steps, collector);
+    const actor = this.createActorForState(id, state, steps, collector, options.runtime);
     try {
       if (logger.isDebugEnabled()) {
         // Pre-send diagnostics

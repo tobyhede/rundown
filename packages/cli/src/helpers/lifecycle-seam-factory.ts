@@ -3,19 +3,19 @@
 // Shared construction of a `RunbookLifecycleCommandService` for the CLI front
 // ends that drive pass/fail (`runSeamTransition`) and complete/stop
 // (`runSeamTerminal`). Both wire the identical five core services and, because
-// neither front end issues delegations, a single shared throwing guard for the
-// issuance-only dependencies. Single-sourcing that here keeps the "this front
+// neither front end issues delegations, a shared throwing guard for child
+// resolution. Single-sourcing that here keeps the "this front
 // end never issues delegations" contract in one place and off each command's
 // import graph.
 
 import {
-  DelegationLock,
   RunbookStateManager,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
   SessionService,
   ExecutionLifecycleService,
   createEffectfulActorMutationRunner,
+  DelegationScanService,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -35,11 +35,9 @@ export interface NonDelegatingLifecycleSeam {
  *
  * Constructs the manager, actor service, session service, execution-lifecycle
  * service, and completion service over one `cwd`, then wires them into a
- * `RunbookLifecycleCommandService`. The three delegation-issuance dependencies
- * (`resolveChildRunbook` / `persistIssuedSubstep` / `findDelegationByToken`) are
- * unreachable on the pass/fail and complete/stop paths, so they share a single
- * throwing guard — keeping these front ends off the runbook-resolver / scan
- * import graphs.
+ * `RunbookLifecycleCommandService`. Child resolution remains guarded because
+ * these front ends never issue. Token scanning is read-only and is shared with
+ * the abort front end, whose mutation remains core-owned.
  *
  * @param cwd - Current working directory the state manager and steps resolve against.
  * @returns The bound `manager`, `sessionService`, and `seam`.
@@ -51,7 +49,7 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
   const lifecycleService = new ExecutionLifecycleService(manager);
   const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
   // Single-source the "this front end never issues delegations" contract: one
-  // guard, referenced by all three issuance-only dependencies, so the invariant
+  // guard, referenced by both issuance-only dependencies, so the invariant
   // cannot drift between them (and every call site trips the identical error).
   const refuseIssuance = (): never => {
     throw new Error('non-delegating lifecycle seam does not issue delegations');
@@ -63,17 +61,10 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
     completionService,
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
-    deleteRun: async (id) => {
-      await manager.delete(id);
-    },
     loadSteps: (state) => getRunbookFromState(state, cwd),
     resolveChildRunbook: refuseIssuance,
-    persistIssuedSubstep: refuseIssuance,
-    findDelegationByToken: refuseIssuance,
-    // Real lock (not a throwing stub): these front ends never issue, but the
-    // lock is only touched by issueDelegation, so a real DelegationLock is
-    // harmless and avoids a stub that would lie if that ever changed.
-    delegationLock: new DelegationLock(cwd),
+    findDelegationByToken: async (token) =>
+      (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
   });
   return { manager, sessionService, seam };
 }

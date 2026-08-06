@@ -83,8 +83,6 @@ export interface StatusOutputData {
     claimKey?: string;
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash: string;
-    /** Raw claim token, present only while the delegation is pending. */
-    token?: string;
   }>;
   /**
    * Parent linkage projection when this runbook was launched as a child.
@@ -381,9 +379,6 @@ export function buildActiveStatus(
         ...(childRunId != null ? { childRunId } : {}),
         ...(claimKey != null ? { claimKey } : {}),
         tokenHash: delegation.tokenHash,
-        ...(childRunId == null && delegation.cancelledAt == null && delegation.token != null
-          ? { token: delegation.token }
-          : {}),
       };
     });
 

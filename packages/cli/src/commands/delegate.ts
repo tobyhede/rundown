@@ -6,11 +6,9 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
-  DelegationLock,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
-  replaceSubstepStateEntry,
   createEffectfulActorMutationRunner,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
@@ -33,7 +31,7 @@ import {
   collect,
 } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
-import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import { renderTransactionalMutationRefusal } from '../helpers/session-mutation-result.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import {
   withTransitionTargetOptions,
@@ -254,6 +252,13 @@ export function registerDelegateCommand(program: Command): void {
 
           const cwd = getCwd();
 
+          // Buffer for input-routing warnings. `resolveDelegateExtraVars` runs
+          // inside core's `beforeEffect`, which precedes BOTH lease acquisition
+          // and the commit, so emitting at routing time would warn about vars a
+          // refused delegation never applied. The buffer is drained only from
+          // the two committed branches (`delegated` / `retried`).
+          const inputWarnings: string[] = [];
+
           const target = parseTransitionTarget(options, output);
           if (!target) return;
           const seamFields = delegateSeamFields(target);
@@ -282,7 +287,7 @@ export function registerDelegateCommand(program: Command): void {
             }
 
             // Parse the raw retry locator first. Core resolves its state-bound
-            // preconditions under DelegationLock; lazy overrides stay deferred
+            // preconditions against the aggregate capture; lazy overrides stay deferred
             // so input errors cannot mask those higher-priority outcomes.
             const locator = resolveRetryLocator(tokenArg, options, output);
 
@@ -295,11 +300,12 @@ export function registerDelegateCommand(program: Command): void {
               // and the gate passes. This preserves precondition priority: a bad
               // --input-file can no longer mask TOKEN_NOT_FOUND / NO_ACTIVE_RUNBOOK
               // / a refusal. Mirrors the fresh path's lazy resolveExtraVars.
-              resolveOverrides: () => resolveDelegateExtraVars(options, cwd, output),
+              resolveOverrides: () => resolveDelegateExtraVars(options, cwd, inputWarnings),
             });
 
             switch (outcome.kind) {
               case 'retried':
+                emitBufferedInputWarnings(output, inputWarnings);
                 if (!options.text) {
                   output.json({
                     kind: 'delegate',
@@ -390,12 +396,23 @@ export function registerDelegateCommand(program: Command): void {
                 throw new Error(`Unexpected retry outcome: ${outcome.kind}`);
               case 'execution_in_progress':
               case 'recovery_required':
-                renderSessionMutationRefusal(output, outcome);
+              case 'claim_superseded':
+              case 'concurrent_modification':
+              case 'missing':
+              case 'aggregate_recovery_required':
+                // Every transactional refusal exits 1, like every other refusal
+                // arm here. The renderer's boolean is the shared
+                // refusal-renderer protocol (see `refusal-renderers.ts`), not a
+                // per-refusal exit disposition — a ternary on it would imply
+                // some refusal exits 0.
+                renderTransactionalMutationRefusal(output, outcome);
                 process.exitCode = 1;
                 break;
               default: {
                 const _exhaustive: never = outcome;
-                throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
+                throw new Error(
+                  `Unexpected delegate outcome: ${(_exhaustive as { kind: string }).kind}`,
+                );
               }
             }
 
@@ -406,7 +423,7 @@ export function registerDelegateCommand(program: Command): void {
           const seam = buildDelegateSeam(manager, sessionService, cwd);
 
           // Category-A syntax parsing only. Whether the target is a FOR step is
-          // state-dependent and is validated by core under DelegationLock.
+          // state-dependent and is validated by core against its aggregate capture.
           let explicitIteration: number | undefined;
           try {
             explicitIteration = resolveIndexOption(
@@ -437,10 +454,12 @@ export function registerDelegateCommand(program: Command): void {
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),
             // Lazily parse extra vars (Category-A flag handling stays in the CLI),
             // deferred to the issuable moment by the seam so the echo / conflict /
-            // no-active paths never parse — or warn about — vars that would never
-            // be applied. Reproduces pre-migration ordering: parse/warn/throw only
-            // when a delegation is actually minted.
-            resolveExtraVars: () => resolveDelegateExtraVars(options, cwd, output),
+            // no-active paths never parse vars that would never be applied. The
+            // seam can only defer as far as `beforeEffect`, which still precedes
+            // the commit — so warnings are buffered here and drained from the
+            // `delegated` branch, keeping "warn only when actually minted" true
+            // for the refusal arms too.
+            resolveExtraVars: () => resolveDelegateExtraVars(options, cwd, inputWarnings),
           });
 
           switch (outcome.kind) {
@@ -506,6 +525,7 @@ export function registerDelegateCommand(program: Command): void {
               });
               break;
             case 'delegated':
+              emitBufferedInputWarnings(output, inputWarnings);
               if (!options.text) {
                 output.json({
                   kind: 'delegate',
@@ -531,12 +551,22 @@ export function registerDelegateCommand(program: Command): void {
               throw new Error(`Unexpected fresh delegate outcome: ${outcome.kind}`);
             case 'execution_in_progress':
             case 'recovery_required':
-              renderSessionMutationRefusal(output, outcome);
+            case 'claim_superseded':
+            case 'concurrent_modification':
+            case 'missing':
+            case 'aggregate_recovery_required':
+              // Same disposition as the --retry switch above: every
+              // transactional refusal exits 1, and the renderer's boolean is the
+              // shared refusal-renderer protocol rather than a per-refusal exit
+              // disposition.
+              renderTransactionalMutationRefusal(output, outcome);
               process.exitCode = 1;
               break;
             default: {
               const _exhaustive: never = outcome;
-              throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);
+              throw new Error(
+                `Unexpected delegate outcome: ${(_exhaustive as { kind: string }).kind}`,
+              );
             }
           }
 
@@ -592,7 +622,7 @@ function emitAlreadyDelegated(
  * Construct the delegation lifecycle command seam with all CLI-bound deps.
  *
  * Shared by the fresh-issue and `--retry` flows so the injected discovery
- * (`resolveChildRunbook`), persistence (`persistIssuedSubstep`), and cross-run
+ * (`resolveChildRunbook`) and cross-run
  * token lookup (`findDelegationByToken`) callables are wired identically.
  *
  * @param manager - State manager bound to the project root.
@@ -614,27 +644,13 @@ function buildDelegateSeam(
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
-    deleteRun: async (id) => {
-      await manager.delete(id);
-    },
     loadSteps: (s) => getRunbookFromState(s, cwd),
     resolveChildRunbook: async (name) => {
       const resolved = await resolveRunbookFile(cwd, name);
       return resolved ? { path: resolved.path, ref: await buildRunbookRef(resolved) } : undefined;
     },
-    persistIssuedSubstep: async (id, entry) => {
-      // Locked read-modify-merge of the single issued entry: a whole-array
-      // overwrite would clobber a concurrent delegate/retry on a sibling substep
-      // that committed after the seam read the active state (RD last-write-wins).
-      await manager.updateWithState(id, (fresh) => ({
-        substepStates: replaceSubstepStateEntry(fresh.substepStates ?? [], entry),
-      }));
-    },
     findDelegationByToken: async (token) =>
       (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
-    // Real per-parent-run lock: fresh issuance and --retry run their
-    // read-modify-write under it, serialized against claim/abort/completion.
-    delegationLock: new DelegationLock(cwd),
   });
 }
 
@@ -645,13 +661,19 @@ function buildDelegateSeam(
  * Shared by the fresh (`resolveExtraVars`) and `--retry` (`resolveOverrides`)
  * seam thunks so var parsing is deferred identically: the seam invokes it only
  * on the issuable / retry-able branch, AFTER its echo/conflict/precondition
- * decisions. Routing warnings (e.g. reserved runtime names) surface here, so they
- * too are emitted only when a delegation is actually minted — never on an echo or
- * a precondition failure.
+ * decisions. That defers parsing past the echo, but NOT past the transaction:
+ * core calls both thunks from `beforeEffect`, which precedes execution-lease
+ * acquisition and the commit. Routing warnings are therefore *buffered* into
+ * `warnings` rather than emitted, and the caller drains the buffer only from
+ * the `delegated` / `retried` branches — the two outcomes that actually
+ * committed a delegation. A refused preparation (`error` / `child_in_flight`)
+ * or a refused transaction (`execution_in_progress`, `claim_superseded`,
+ * `concurrent_modification`, …) leaves the buffer undrained, so no warning
+ * describes vars that were never applied.
  *
  * @param options - Parsed delegate options (the three input channels).
  * @param cwd - Current working directory for `--input-file` discovery.
- * @param output - OutputEmitter used to surface routing warnings.
+ * @param warnings - Sink collecting routing warnings for deferred emission.
  * @returns The routed extra vars, or `undefined` when none were supplied.
  * @throws {RundownError} When an `--input-file` is missing/invalid (RD-101) or a
  *   value fails normalization.
@@ -659,7 +681,7 @@ function buildDelegateSeam(
 async function resolveDelegateExtraVars(
   options: DelegateActionOptions,
   cwd: string,
-  output: OutputEmitter,
+  warnings: string[],
 ): Promise<Record<string, TemplateVarValue> | undefined> {
   const rawVars = await collectCliFlags(
     { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
@@ -668,9 +690,25 @@ async function resolveDelegateExtraVars(
   if (Object.keys(rawVars).length === 0) return undefined;
   const routed = await routeExtraVars(rawVars, cwd);
   for (const w of routed.warnings) {
-    output.warning(w);
+    warnings.push(w);
   }
   return Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
+}
+
+/**
+ * Drain buffered input-routing warnings from {@link resolveDelegateExtraVars}.
+ *
+ * Called from the `delegated` and `retried` branches only — the commit already
+ * happened by the time either is rendered, so a drained warning always
+ * describes vars that were genuinely applied to the child context.
+ *
+ * @param output - OutputEmitter used to surface the warnings.
+ * @param warnings - Buffer filled by the seam thunk; emptied by this call.
+ */
+function emitBufferedInputWarnings(output: OutputEmitter, warnings: string[]): void {
+  for (const warning of warnings.splice(0)) {
+    output.warning(warning);
+  }
 }
 
 /**
@@ -678,7 +716,7 @@ async function resolveDelegateExtraVars(
  *
  * Parses only raw syntax: token/step/inferred form, step-id syntax, and numeric
  * index conflicts. Core resolves the run once and performs every
- * state-dependent check against its DelegationLock-scoped reread.
+ * state-dependent check against its aggregate capture.
  *
  * @param tokenArg - The positional token when it looks like a delegation token.
  * @param options - Parsed delegate options (`--step` / `--index`).

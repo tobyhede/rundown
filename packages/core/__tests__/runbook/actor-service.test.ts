@@ -39,7 +39,14 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
-import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
+import {
+  makeDelegatedSubstepState,
+  makeDelegationCredentialIssuer,
+} from '../../src/testing/delegation-fixtures.js';
+import {
+  makeState as makeDelegationState,
+  makeSteps as makeDelegationSteps,
+} from './delegation-service-fixtures.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The
@@ -189,6 +196,60 @@ npm test
       });
       const actor = await actorService.createActor(state.id, mockSteps);
       expect(actor).not.toBeNull();
+    });
+
+    it('mirrors persisted frame-entry coordinates into initial machine context', async () => {
+      // Machine-owned delegation issuance stamps a credential's parentEntry
+      // from this mirror, so a bootstrap that drops it silently reverts every
+      // machine-issued credential to the first entry.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const frameKey = buildFrameKey('1');
+      const otherFrameKey = buildFrameKey('2');
+      await manager.update(state.id, {
+        activeFrameKey: frameKey,
+        activeEntry: 3,
+        frameEntryCounts: replace({ [frameKey]: 3, [otherFrameKey]: 5 }),
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(actor.getSnapshot().context.frameEntry).toEqual({
+        activeFrameKey: frameKey,
+        activeEntry: 3,
+        frameEntryCounts: { [frameKey]: 3, [otherFrameKey]: 5 },
+      });
+      actor.stop();
+    });
+
+    it('overlays persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
+      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const first = await actorService.createActor(created.id, mockSteps);
+      if (!first) throw new Error('expected an actor');
+      const snapshot = first.getPersistedSnapshot();
+      first.stop();
+
+      // Frame entries advance through RunbookState, never through the machine,
+      // so the persisted values must win over anything the snapshot carries.
+      const frameKey = buildFrameKey('1');
+      await manager.update(created.id, {
+        snapshot,
+        activeFrameKey: frameKey,
+        activeEntry: 4,
+        frameEntryCounts: replace({ [frameKey]: 4 }),
+      });
+
+      const actor = await actorService.createActor(created.id, mockSteps);
+      if (!actor) throw new Error('expected an actor');
+      expect(actor.getSnapshot().context.frameEntry).toEqual({
+        activeFrameKey: frameKey,
+        activeEntry: 4,
+        frameEntryCounts: { [frameKey]: 4 },
+      });
+      actor.stop();
     });
   });
 
@@ -1780,6 +1841,220 @@ echo ok
     });
   });
 
+  describe('prepareManualDelegationMutation', () => {
+    const frameKey = buildFrameKey('1');
+
+    async function issueDelegation() {
+      const state = makeDelegationState();
+      const result = await actorService.prepareManualDelegationMutation(
+        state,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: '1.1',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+      if (result.status !== 'prepared') throw new Error('expected prepared manual delegation');
+      return result.nextState;
+    }
+
+    it('returns the machine-prepared issue state without mutating its capture', async () => {
+      const state = makeDelegationState();
+      const captured = structuredClone(state);
+
+      const result = await actorService.prepareManualDelegationMutation(
+        state,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: '1.1',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(state).toEqual(captured);
+      expect(result).toEqual({
+        status: 'prepared',
+        nextState: expect.objectContaining({
+          substepStates: expect.arrayContaining([
+            expect.objectContaining({
+              id: '1',
+              delegation: expect.objectContaining({ childRunId: null, cancelledAt: null }),
+            }),
+          ]),
+        }),
+      });
+    });
+
+    it('maps an invalid manual issue to its domain error', async () => {
+      const state = makeDelegationState();
+
+      const result = await actorService.prepareManualDelegationMutation(
+        state,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: 'missing',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(result).toEqual({
+        status: 'error',
+        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
+      });
+    });
+
+    it('propagates the branded child run id of a live-child issue refusal', async () => {
+      const issued = await issueDelegation();
+      const childRunId = assertRunId(`rd_${'e'.repeat(32)}`);
+      if (issued.substepStates === undefined) throw new Error('expected issued substep state');
+      const linked = {
+        ...issued,
+        substepStates: issued.substepStates.map((substep) =>
+          substep.delegation === undefined
+            ? substep
+            : { ...substep, delegation: { ...substep.delegation, childRunId } },
+        ),
+      };
+
+      const result = await actorService.prepareManualDelegationMutation(
+        linked,
+        makeDelegationSteps(),
+        {
+          type: 'ISSUE',
+          stepId: '1.1',
+          frameKey,
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+        },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(result).toEqual({
+        status: 'child_in_flight',
+        childRunId,
+        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
+      });
+    });
+
+    it('passes through already-cancelled and needs-force abort refusals', async () => {
+      const issued = await issueDelegation();
+      const firstAbort = await actorService.prepareManualDelegationMutation(
+        issued,
+        makeDelegationSteps(),
+        { type: 'ABORT', substepId: '1', frameKey, force: false },
+        makeDelegationCredentialIssuer(),
+      );
+      if (firstAbort.status !== 'prepared') throw new Error('expected prepared abort');
+
+      await expect(
+        actorService.prepareManualDelegationMutation(
+          firstAbort.nextState,
+          makeDelegationSteps(),
+          { type: 'ABORT', substepId: '1', frameKey, force: false },
+          makeDelegationCredentialIssuer(),
+        ),
+      ).resolves.toEqual({ status: 'already_cancelled' });
+
+      const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
+      if (issued.substepStates === undefined) throw new Error('expected issued substep state');
+      const linked = {
+        ...issued,
+        substepStates: issued.substepStates.map((substep) =>
+          substep.delegation === undefined
+            ? substep
+            : { ...substep, delegation: { ...substep.delegation, childRunId } },
+        ),
+      };
+      await expect(
+        actorService.prepareManualDelegationMutation(
+          linked,
+          makeDelegationSteps(),
+          { type: 'ABORT', substepId: '1', frameKey, force: false },
+          makeDelegationCredentialIssuer(),
+        ),
+      ).resolves.toEqual({ status: 'needs_force', childRunId });
+    });
+
+    it('routes a prepared abort through the actor when a persisted snapshot exists', async () => {
+      const issued = await issueDelegation();
+      const captured = { ...issued, snapshot: { value: 'persisted' } };
+      const actorNextState = { ...captured, stepName: 'actor-applied' };
+      const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
+        previousState: captured,
+        nextState: actorNextState,
+        snapshot: { value: 'next' },
+        effects: [],
+      });
+
+      const result = await actorService.prepareManualDelegationMutation(
+        captured,
+        makeDelegationSteps(),
+        { type: 'ABORT', substepId: '1', frameKey, force: false },
+        makeDelegationCredentialIssuer(),
+      );
+
+      expect(result).toEqual({ status: 'prepared', nextState: actorNextState });
+      expect(prepareSpy).toHaveBeenCalledTimes(1);
+      const preparedCall = prepareSpy.mock.calls[0];
+      const [preparedId, preparedState, , preparedEvent] = preparedCall;
+      expect(preparedId).toBe(captured.id);
+      expect(preparedState).toBe(captured);
+      expect(preparedEvent.type).toBe('MANUAL_DELEGATION_ABORT_PREPARED');
+      if (preparedEvent.type !== 'MANUAL_DELEGATION_ABORT_PREPARED') {
+        throw new Error('expected prepared abort event');
+      }
+      expect(preparedEvent.substepStates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: '1',
+            delegation: expect.objectContaining({ cancelledAt: expect.any(String) }),
+          }),
+        ]),
+      );
+    });
+
+    // The snapshot-backed abort re-enters the parent machine, and that machine
+    // can step into a DELEGATE frontier whose issuance actor needs the very
+    // issuer this method already holds. Dropping it on the round-trip hands the
+    // machine a bare continuation, so the frontier refuses
+    // `actor_context_required` for a caller whose authority was verified.
+    it('forwards the verified issuer as runtime capability on the prepared abort round-trip', async () => {
+      const issued = await issueDelegation();
+      const captured = { ...issued, snapshot: { value: 'persisted' } };
+      const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
+        previousState: captured,
+        nextState: captured,
+        snapshot: { value: 'next' },
+        effects: [],
+      });
+      const issueCredential = makeDelegationCredentialIssuer();
+
+      await actorService.prepareManualDelegationMutation(
+        captured,
+        makeDelegationSteps(),
+        { type: 'ABORT', substepId: '1', frameKey, force: false },
+        issueCredential,
+      );
+
+      expect(prepareSpy).toHaveBeenCalledTimes(1);
+      expect(prepareSpy.mock.calls[0][4]).toEqual({
+        issueDelegationCredential: issueCredential,
+      });
+    });
+  });
+
   describe('prepared delegated-child link mutation', () => {
     async function exercisePreparedMutation(
       scenario:
@@ -2415,6 +2690,84 @@ echo ok
         },
       });
     });
+
+    // `isPersistableLastAction` gates what reaches persisted state, and its
+    // DELEGATION_ISSUANCE_FAILED arm accepts exactly three reasons. Each is a
+    // distinct machine outcome an operator must still be able to read off a
+    // stopped run: `actor_context_required` is the one a resumed inline child
+    // produces when it holds no delegation authority. Accepting each
+    // individually — and rejecting everything else — is what stops the arm
+    // silently narrowing or widening.
+    it.each([
+      'actor_context_required',
+      'delegation_resolution_failed',
+      'nested_delegation_forbidden',
+    ])('persists a terminal DELEGATION_ISSUANCE_FAILED with reason %s', async (reason) => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          lifecycle: 'stopped',
+          retryCount: 0,
+          lastAction: {
+            type: 'DELEGATION_ISSUANCE_FAILED' as const,
+            origin: 'direct',
+            reason,
+            message: 'no authority',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+      expect(updated.lastAction).toEqual({
+        type: 'DELEGATION_ISSUANCE_FAILED',
+        origin: 'direct',
+        reason,
+        message: 'no authority',
+      });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', reason },
+      });
+    });
+
+    // The two rejection halves of the same conjunction: an unrecognised reason
+    // with a valid message, and a recognised reason with a non-string message.
+    // Both must drop the action rather than persist a malformed one.
+    it.each([
+      { label: 'an unrecognised reason', reason: 'credential_expired', message: 'no authority' },
+      { label: 'a non-string message', reason: 'actor_context_required', message: 42 },
+    ])(
+      'drops a terminal DELEGATION_ISSUANCE_FAILED carrying $label',
+      async ({ reason, message }) => {
+        const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+          runbookPath: 'test.md',
+        });
+        const actor = mockActor({
+          value: 'STOPPED',
+          context: {
+            variables: {},
+            lifecycle: 'stopped',
+            retryCount: 0,
+            lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', origin: 'direct', reason, message },
+          },
+        });
+
+        const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+        expect(updated.lastAction).toBeUndefined();
+        // The returned state and the persisted row must agree: a guard that
+        // dropped the action from the return value while still writing it
+        // through would leave malformed data on disk for the next hydration.
+        // Only the top-level field is asserted — the opaque `snapshot` blob is
+        // the machine's own serialization and legitimately still carries it.
+        const reloaded = await manager.load(state.id);
+        expect(reloaded?.lastAction).toBeUndefined();
+      },
+    );
   });
 
   describe('implicit ForContext filtering', () => {

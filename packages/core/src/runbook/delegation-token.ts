@@ -1,4 +1,7 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, createHmac } from 'node:crypto';
+import type { ClaimLookupKey } from './claim-id.js';
+import type { RunId } from './run-id.js';
+import type { FrameKey } from './targeting.js';
 
 /** Prefix for all delegation tokens. */
 export const TOKEN_PREFIX = 'rdtk_';
@@ -6,17 +9,81 @@ export const TOKEN_PREFIX = 'rdtk_';
 /** RFC 4648 base32 alphabet. */
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+/**
+ * Escape a literal string for interpolation into a `RegExp` source.
+ *
+ * The output is a literal match in every position of a pattern, so a caller
+ * cannot pick the wrong one. Two passes rather than one because `-` is the only
+ * character whose correct escape depends on position:
+ *
+ * - Unescaped inside a character class it silently forms a RANGE, so
+ *   `[${escape('a-c')}]` would match `b` and not `-`.
+ * - Escaped as `\-` it is a `SyntaxError` OUTSIDE a class under the `u`/`v`
+ *   flags, which is where both call sites below interpolate.
+ *
+ * A hex escape is literal in both positions under every flag, and is what the
+ * ECMAScript `RegExp.escape` builtin emits for exactly this reason. That builtin
+ * is not used here because core must load under WebContainer's bundled Node
+ * 22.x, which predates it. Every other escaped character is an ECMAScript
+ * `SyntaxCharacter`, for which a backslash escape is valid in both positions.
+ *
+ * The first pass only ever inserts backslashes, so it cannot introduce a `-` for
+ * the second to rewrite, and the second only ever rewrites a `-` the first left
+ * alone. Neither `TOKEN_PREFIX` nor `DELEGATION_CLAIM_MARKER` contains a
+ * character either pass touches, so both patterns below compile byte-identically
+ * to their raw literals.
+ *
+ * `v`-mode character classes reserve further punctuation (`/`, `&&`, `!!`, ...)
+ * that this helper does not escape; nothing in the codebase compiles a `v`-mode
+ * pattern, and half-covering that dialect would be the worse of the two states.
+ *
+ * @param value - Literal text the compiled pattern must match exactly.
+ * @returns The value with regex metacharacters escaped for any pattern position.
+ */
 function escapeRegExpLiteral(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&').replace(/-/g, '\\x2d');
 }
 
 export declare const delegationTokenHashBrand: unique symbol;
+export declare const delegationIssuanceNonceBrand: unique symbol;
 
 /** SHA-256 hash of a delegation token in persisted state format. */
 export type DelegationTokenHash = string & { readonly [delegationTokenHashBrand]: true };
 
+/** Public, non-secret nonce that distinguishes one delegation issuance. */
+export type DelegationIssuanceNonce = string & {
+  readonly [delegationIssuanceNonceBrand]: true;
+};
+
+/** Stable coordinates that identify one delegation credential issuance. */
+export interface DelegationCredentialCoordinate {
+  /** Fresh public nonce for this issuance. */
+  readonly issuanceNonce: DelegationIssuanceNonce;
+  /** Run that issued the delegation. */
+  readonly parentRunId: RunId;
+  /** Parent step or substep that issued the delegation. */
+  readonly parentStepId: string;
+  /** Parent execution frame containing the issuing step. */
+  readonly parentFrameKey: FrameKey;
+  /** Parent frame-entry counter at issuance time. */
+  readonly parentEntry: number;
+}
+
+/** Non-secret persisted description of one delegation credential issuance. */
+export interface DelegationCredentialDescriptor extends DelegationCredentialCoordinate {
+  /** Credential derivation contract version. */
+  readonly version: 1;
+  /** Non-secret lookup key for the exact claim bearer that can reconstruct the token. */
+  readonly issuerClaimKey: ClaimLookupKey;
+  /** Prior delegation token hash replaced by this issuance, when this is a retry. */
+  readonly supersedesTokenHash?: DelegationTokenHash;
+}
+
 /** Canonical persisted delegation token hash pattern. */
 export const DELEGATION_TOKEN_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+/** Canonical persisted delegation issuance nonce pattern. */
+export const DELEGATION_ISSUANCE_NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 /** Canonical raw delegation token pattern. */
 export const DELEGATION_TOKEN_PATTERN = new RegExp(
@@ -31,6 +98,22 @@ const DELEGATION_CLAIM_TOKEN_PATTERN = new RegExp(
     TOKEN_PREFIX,
   )}[A-Z2-7]{32})(?![A-Z0-9])`,
 );
+
+const DELEGATION_KEY_DOMAIN = 'rundown/delegation-key/v1';
+const DELEGATION_TOKEN_DOMAIN = 'rundown/delegation-token/v1';
+
+function encodeLengthPrefixedFields(fields: readonly string[]): Buffer {
+  const encoded = fields.map((field) => Buffer.from(field, 'utf8'));
+  const result = Buffer.alloc(encoded.reduce((length, field) => length + 4 + field.length, 0));
+  let offset = 0;
+  for (const field of encoded) {
+    result.writeUInt32BE(field.length, offset);
+    offset += 4;
+    field.copy(result, offset);
+    offset += field.length;
+  }
+  return result;
+}
 
 /**
  * Encode a buffer as RFC 4648 base32 (no padding).
@@ -63,16 +146,66 @@ function encodeBase32(buf: Buffer): string {
 }
 
 /**
- * Generate a cryptographically random delegation token.
+ * Generate a fresh public nonce for one delegation credential issuance.
  *
- * Format: `rdtk_` prefix + 32 base32 characters from 20 random bytes.
- * Total length: 37 characters.
- *
- * @returns Opaque delegation token string
+ * @returns A canonical 32-byte base64url nonce.
  */
-export function generateDelegationToken(): string {
-  const bytes = randomBytes(20);
-  return TOKEN_PREFIX + encodeBase32(bytes);
+export function generateDelegationIssuanceNonce(): DelegationIssuanceNonce {
+  return assertDelegationIssuanceNonce(randomBytes(32).toString('base64url'));
+}
+
+/**
+ * Assert and brand a canonical delegation issuance nonce.
+ *
+ * @param value - Persisted public nonce to validate.
+ * @returns Branded canonical 32-byte base64url nonce.
+ * @throws {Error} When the value is not a canonical nonce.
+ */
+export function assertDelegationIssuanceNonce(value: string): DelegationIssuanceNonce {
+  const bytes = Buffer.from(value, 'base64url');
+  if (
+    !DELEGATION_ISSUANCE_NONCE_PATTERN.test(value) ||
+    bytes.length !== 32 ||
+    bytes.toString('base64url') !== value
+  ) {
+    throw new Error('Invalid delegation issuance nonce: expected 43 base64url characters');
+  }
+  return value as DelegationIssuanceNonce;
+}
+
+/**
+ * Derive a delegation token from verified claim-secret material and issuance coordinates.
+ *
+ * The secret and intermediate derivation key remain process-local. Coordinates are
+ * encoded as length-prefixed UTF-8 fields to avoid ambiguous concatenations.
+ *
+ * @param claimSecret - Secret segment from the exact verified issuing claim bearer.
+ * @param coordinate - Stable public coordinates for this credential issuance.
+ * @returns A canonical delegation token in the existing `rdtk_` format.
+ * @throws {Error} When the parent entry is not a positive safe integer.
+ */
+export function deriveDelegationToken(
+  claimSecret: string,
+  coordinate: DelegationCredentialCoordinate,
+): string {
+  if (!Number.isSafeInteger(coordinate.parentEntry) || coordinate.parentEntry < 1) {
+    throw new Error('Invalid delegation parent entry: expected a positive safe integer');
+  }
+  const derivationKey = createHmac('sha256', claimSecret).update(DELEGATION_KEY_DOMAIN).digest();
+  const material = createHmac('sha256', derivationKey)
+    .update(
+      encodeLengthPrefixedFields([
+        DELEGATION_TOKEN_DOMAIN,
+        coordinate.issuanceNonce,
+        coordinate.parentRunId,
+        coordinate.parentStepId,
+        coordinate.parentFrameKey,
+        String(coordinate.parentEntry),
+      ]),
+    )
+    .digest()
+    .subarray(0, 20);
+  return TOKEN_PREFIX + encodeBase32(material);
 }
 
 /**

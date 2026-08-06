@@ -44,6 +44,7 @@ import {
 import {
   isSessionMutationRefusal,
   renderSessionMutationRefusal,
+  renderTransactionalMutationRefusal,
 } from './session-mutation-result.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { buildMetadata } from '../services/execution.js';
@@ -218,25 +219,14 @@ export async function renderTerminalOutcome(
     }
     case 'execution_in_progress':
     case 'recovery_required':
-      return renderSessionMutationRefusal(output, outcome);
     case 'aggregate_recovery_required':
-      // Name the exact set. A multi-run force-terminal is the one command that
-      // can leave several runs recovery-pending at once, and the outcome already
-      // carries every (runId, epoch); rendering the message alone tells the
-      // operator recovery is needed while withholding what to recover.
-      output.error(outcome.message, 'RECOVERY_REQUIRED', {
-        runs: outcome.attempts.map(({ runId, epoch }) => ({ runId, epoch: Number(epoch) })),
-      });
-      return true;
     case 'claim_superseded':
-      output.error(outcome.message, 'STALE_CLAIM');
-      return true;
     case 'concurrent_modification':
-      output.error(outcome.message, 'CONCURRENT_MODIFICATION');
-      return true;
     case 'missing':
-      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
-      return true;
+      // The full six-member transactional union, rendered by the one module
+      // that owns the kind → code mapping. A local restatement is how the two
+      // aggregate renderings drifted (`Number(epoch)` versus bare `epoch`).
+      return renderTransactionalMutationRefusal(output, outcome);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

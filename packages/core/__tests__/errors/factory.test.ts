@@ -332,25 +332,39 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.context.available).toBe('2.1, 2.2');
     });
 
-    it('invalidToken maps token → RD-807', () => {
-      const error = Errors.invalidToken('bad_token');
+    // The three bearer factories redact their argument: `context` is serialised
+    // into the CLI stdout error envelope, and a raw bearer may not appear on any
+    // refusal surface. See `token-redaction.test.ts` for the class guard.
+    it('invalidToken maps token → RD-807 and truncates the bearer', () => {
+      // cspell:disable-next-line
+      const error = Errors.invalidToken('rdtk_BADBADBADBADBADBADBADBADBADBAD2');
       expect(error).toBeInstanceOf(RundownError);
+      expect(error.code).toBe('RD-807');
+      expect(error.context.token).toBe('rdtk_BAD...BAD2');
+    });
+
+    it('leaves a non-bearer invalidToken argument intact', () => {
+      // Truncation is prefix- and length-sensitive: a value that is not shaped
+      // like a bearer is not one, and mangling it would hide what was rejected.
+      const error = Errors.invalidToken('bad_token');
       expect(error.code).toBe('RD-807');
       expect(error.context.token).toBe('bad_token');
     });
 
-    it('tokenNotFound maps token → RD-808', () => {
-      const error = Errors.tokenNotFound('rdtk_missing');
+    it('tokenNotFound maps token → RD-808 and truncates the bearer', () => {
+      // cspell:disable-next-line
+      const error = Errors.tokenNotFound('rdtk_MISSINGMISSINGMISSINGMISSING22');
       expect(error).toBeInstanceOf(RundownError);
       expect(error.code).toBe('RD-808');
-      expect(error.context.token).toBe('rdtk_missing');
+      expect(error.context.token).toBe('rdtk_MIS...NG22');
     });
 
-    it('tokenCancelled maps token → RD-809', () => {
-      const error = Errors.tokenCancelled('rdtk_cancelled');
+    it('tokenCancelled maps token → RD-809 and truncates the bearer', () => {
+      // cspell:disable-next-line
+      const error = Errors.tokenCancelled('rdtk_CANCELLEDCANCELLEDCANCELLED22');
       expect(error).toBeInstanceOf(RundownError);
       expect(error.code).toBe('RD-809');
-      expect(error.context.token).toBe('rdtk_cancelled');
+      expect(error.context.token).toBe('rdtk_CAN...ED22');
     });
 
     it('delegationLockTimeout maps parentRunId → RD-810', () => {
@@ -447,6 +461,14 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.code).toBe('RD-905');
       expect(error.context.substepId).toBe('2.1');
       expect(error.context.parentStep).toBe('2');
+    });
+
+    it('retryHookMissingRunId maps parentStep → RD-903', () => {
+      const error = Errors.retryHookMissingRunId('2');
+      expect(error).toBeInstanceOf(RundownError);
+      expect(error.code).toBe('RD-903');
+      expect(error.context.step).toBe('2');
+      expect(error.message).toBe('Retry hook has no current run id at step 2');
     });
   });
 

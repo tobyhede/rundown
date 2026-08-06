@@ -12,10 +12,9 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
-  DelegationLock,
-  DelegationLockTimeoutError,
   DelegationScanService,
   ExecutionLifecycleService,
+  InvalidRunbookStateError,
   RunbookActorService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
@@ -30,9 +29,10 @@ import {
   buildResolvedCompletion,
   createEffectfulActorMutationRunner,
   inactiveFrame,
-  replaceSubstepStateEntry,
   type CallerEvidence,
   type ClaimId,
+  type EffectfulActorMutationRunner,
+  type EffectfulActorMutationSetRunnerInput,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
   type ResolveChildRunbook,
@@ -42,10 +42,16 @@ import {
   type SubstepState,
 } from '../../src/runbook/index.js';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  DELEGATION_CLAIM_MARKER,
+  TOKEN_PREFIX,
+} from '../../src/runbook/delegation-token.js';
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
+import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import {
   assertClaimed,
@@ -121,7 +127,12 @@ function delegateForStep(name: string, substeps: readonly Substep[]): ResolvedSt
   };
 }
 
-/** Build a prompted-FOR step that owns authored DELEGATE substeps. */
+/**
+ * Build a prompted-FOR step that owns authored DELEGATE substeps.
+ *
+ * A FOR step whose bounds did not resolve: no `forClause`, so no iteration
+ * machinery, but `--index` still names a legitimate frame on it.
+ */
 function delegatePromptedForStep(
   name: string,
   substeps: readonly Substep[],
@@ -132,6 +143,34 @@ function delegatePromptedForStep(
     description: `Prompted FOR step ${name}`,
     transitions: SUBSTEP_TRANSITIONS,
     substeps,
+  };
+}
+
+/**
+ * Decorate a mutation runner so `onFenceEntered` fires as the aggregate fence is
+ * entered — after every pre-fence resolution the seam performs (anchor,
+ * authority, positional runbook, claim-seen recording) and before the fence's
+ * own `beforeEffect` re-read.
+ *
+ * This is the concurrent-writer seam the `DelegationLock` used to provide: a
+ * document mutation landing here is invisible to any load hoisted out of
+ * `beforeEffect`, so a decision that observes it must have been made from the
+ * in-fence re-read.
+ *
+ * @param inner - The real runner to delegate to.
+ * @param onFenceEntered - Concurrent mutation to commit at fence entry.
+ * @returns A runner that fires the hook once per aggregate invocation.
+ */
+function runnerWithFenceEntryHook(
+  inner: EffectfulActorMutationRunner,
+  onFenceEntered: () => void,
+): EffectfulActorMutationRunner {
+  return {
+    run: (input) => inner.run(input),
+    runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
+      onFenceEntered();
+      return inner.runAll(input);
+    },
   };
 }
 
@@ -172,9 +211,6 @@ describe('RunbookLifecycleCommandService', () => {
       completionService,
       actorMutationRunner,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
-      deleteRun: async (id) => {
-        await manager.delete(id);
-      },
       loadSteps: (state) => {
         loadStepsArgs.push(state);
         return loadStepsImpl(state);
@@ -182,13 +218,12 @@ describe('RunbookLifecycleCommandService', () => {
       // Stubs: the pass/fail + precheck suites never call issueDelegation. The
       // issueDelegation suites build their own seam via startSeamOnDelegateStep.
       resolveChildRunbook: async () => undefined,
-      persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
-      delegationLock: new DelegationLock(tmp),
     });
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await rm(tmp, { recursive: true, force: true });
   });
 
@@ -246,8 +281,7 @@ describe('RunbookLifecycleCommandService', () => {
     resolveChildRunbook: ResolveChildRunbook;
     loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
     loadSteps: RunbookLifecycleCommandServiceDependencies['loadSteps'];
-    persistIssuedSubstep: RunbookLifecycleCommandServiceDependencies['persistIssuedSubstep'];
-    delegationLock: RunbookLifecycleCommandServiceDependencies['delegationLock'];
+    actorMutationRunner: RunbookLifecycleCommandServiceDependencies['actorMutationRunner'];
   };
 
   /**
@@ -272,9 +306,6 @@ describe('RunbookLifecycleCommandService', () => {
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
-      deleteRun: async (id) => {
-        await manager.delete(id);
-      },
       loadSteps: () => steps,
       // Resolve by name so a positional naming a *different* runbook produces a
       // distinct ref (drives the RD-822 mismatch path).
@@ -284,14 +315,8 @@ describe('RunbookLifecycleCommandService', () => {
         path: name,
         ref: { source: 'project', path: name },
       }),
-      persistIssuedSubstep: async (id, entry) => {
-        await manager.updateWithState(id, (fresh) => ({
-          substepStates: replaceSubstepStateEntry(fresh.substepStates ?? [], entry),
-        }));
-      },
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
-      delegationLock: new DelegationLock(tmp),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -481,8 +506,61 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.parentRunId).toBe(state.id);
 
       const persisted = await mgr.load(state.id);
-      const issued = persisted?.substepStates?.find((s) => s.delegation?.token === outcome.token);
+      const issued = persisted?.substepStates?.find(
+        (s) => s.delegation?.tokenHash === outcome.tokenHash,
+      );
       expect(issued).toBeDefined();
+    });
+
+    // Fresh issuance authority is `delegate-from-run`; retry authority is
+    // `retry-delegation`. `createRunControlGrants` mints both, so every fixture
+    // built on a full run-control bearer authorizes either request and cannot
+    // tell the two apart — the in-lock policy could ask for the wrong one and
+    // still be allowed. Narrowing the bearer to fresh-issuance authority alone
+    // makes the distinction observable.
+    it('issues under a bearer holding delegate-from-run but not retry-delegation', async () => {
+      const { seam: localSeam, manager: mgr } = await startSeamOnDelegateStep();
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      await patchPersistedClaim(mgr.cwd, claimKey, {
+        grants: session.claims[claimKey].grants.filter(
+          (grant) => grant.action !== 'retry-delegation',
+        ),
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: evidence,
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') throw new Error('expected delegated');
+      expect(outcome.token).toMatch(/^rdtk_/);
+    });
+
+    // The converse: retry authority alone does not authorize a fresh mint.
+    it('refuses a bearer holding retry-delegation but not delegate-from-run', async () => {
+      const { seam: localSeam, manager: mgr } = await startSeamOnDelegateStep();
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      const claimKey = claimKeyFromBearer(evidence.claimId);
+      const session = await mgr.loadSession();
+      await patchPersistedClaim(mgr.cwd, claimKey, {
+        grants: session.claims[claimKey].grants.filter(
+          (grant) => grant.action !== 'delegate-from-run',
+        ),
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: evidence,
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('claim_grant_required');
     });
 
     it("anchors fresh issuance on the claim's controlled run, not the active default (#586)", async () => {
@@ -802,8 +880,8 @@ describe('RunbookLifecycleCommandService', () => {
       const childRunId = assertRunId('rd_22222222222222222222222222222222');
       await mgr.updateWithState(state.id, (current) => ({
         substepStates: (current.substepStates ?? []).map((entry) =>
-          entry.delegation?.token === fresh.token
-            ? { ...entry, delegation: { ...entry.delegation, token: undefined, childRunId } }
+          entry.delegation?.tokenHash === fresh.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
             : entry,
         ),
       }));
@@ -822,241 +900,6 @@ describe('RunbookLifecycleCommandService', () => {
       const entry = persisted?.substepStates?.find((s) => s.id === '1');
       expect(entry?.delegation?.tokenHash).toBe(fresh.tokenHash);
       expect(entry?.delegation?.childRunId).toBe(childRunId);
-    });
-
-    describe('DelegationLock-scoped read-modify-write (#508)', () => {
-      it('mints under the lock: acquire → locked re-read → persist → release', async () => {
-        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
-        const calls: string[] = [];
-        deps.delegationLock = {
-          acquire: async () => {
-            calls.push('acquire');
-          },
-          release: async () => {
-            calls.push('release');
-          },
-        };
-        const innerLoadRun = deps.loadRun;
-        deps.loadRun = async (id) => {
-          calls.push('loadRun');
-          return innerLoadRun(id);
-        };
-        const innerPersist = deps.persistIssuedSubstep;
-        deps.persistIssuedSubstep = async (id, entry) => {
-          calls.push('persist');
-          return innerPersist(id, entry);
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        expect(outcome.kind).toBe('delegated');
-        expect(calls).toEqual(['acquire', 'loadRun', 'persist', 'release']);
-      });
-
-      it('decides from the locked re-read, not the pre-lock snapshot', async () => {
-        // A delegation lands on disk while this call waits for the lock
-        // (simulated by writing inside the fake lock's acquire). The seam must
-        // observe it in the locked re-read and echo — minting fresh here is the
-        // pre-fix TOCTOU: a decision computed from the stale pre-lock snapshot.
-        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-        const planted: SubstepState = {
-          id: '1',
-          frameKey: buildFrameKey('1'),
-          status: 'pending',
-          delegation: {
-            token: `rdtk_${'A'.repeat(32)}`,
-            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            contextSnapshot: buildContextSnapshot(state, '1'),
-            childRunId: null,
-            createdAt: '2026-06-28T00:00:00.000Z',
-            cancelledAt: null,
-          },
-        };
-        deps.delegationLock = {
-          acquire: async () => {
-            await mgr.updateWithState(state.id, () => ({ substepStates: [planted] }));
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        expect(outcome.kind).toBe('already-delegated');
-        if (outcome.kind !== 'already-delegated') throw new Error('expected echo');
-        expect(outcome.token).toBe(`rdtk_${'A'.repeat(32)}`);
-      });
-
-      it('refuses fresh issuance when the claim target is stashed during lock acquisition', async () => {
-        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
-        const persistSpy = jest.fn(deps.persistIssuedSubstep);
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            // The claim resolved before the DelegationLock was acquired, but a
-            // concurrent session mutation parked its target in that window.
-            // The protected decision must revalidate claim eligibility rather
-            // than treating bearer verification alone as sufficient.
-            await sessionService.stashRunbook(runId);
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-
-        expect(outcome.kind).toBe('stale_claim');
-        if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
-        expect(outcome.message).toContain('stashed');
-        expect(persistSpy).not.toHaveBeenCalled();
-      });
-
-      it('validates a fresh explicit iteration against the locked runbook reread', async () => {
-        const forSteps: readonly ResolvedStep[] = [
-          delegateForStep('1', [delegateSubstep('1', 'child.md')]),
-        ];
-        const state = baseState();
-        await activate(state);
-        const { seam: localSeam, deps } = buildIssuanceSeam(state, forSteps);
-        const persistSpy = jest.fn(deps.persistIssuedSubstep);
-        const resolveExtraVars = jest.fn(async () => undefined);
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            // The parsed document changes while this invocation waits. The
-            // state-dependent FOR check must use this in-lock view, not the
-            // pre-lock FOR snapshot.
-            deps.loadSteps = async () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-          explicitTarget: { stepId: '1.1', iteration: 2 },
-          resolveExtraVars,
-        });
-
-        expect(outcome.kind).toBe('invalid_index');
-        if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
-        expect(outcome.message).toBe(
-          '--index requires step "1" to be a FOR step, but it is "substeps"',
-        );
-        expect(persistSpy).not.toHaveBeenCalled();
-        expect(resolveExtraVars).not.toHaveBeenCalled();
-      });
-
-      it('validates the named step rather than the first parsed step', async () => {
-        const steps: readonly ResolvedStep[] = [
-          delegateForStep('2', [delegateSubstep('1', 'other.md')]),
-          delegateStep('1', [delegateSubstep('1', 'child.md')]),
-        ];
-        const state = baseState();
-        await activate(state);
-        const { seam: localSeam } = buildIssuanceSeam(state, steps);
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-          explicitTarget: { stepId: '1.1', iteration: 2 },
-        });
-
-        expect(outcome.kind).toBe('invalid_index');
-      });
-
-      it('accepts explicit iterations on prompted-FOR targets', async () => {
-        const steps: readonly ResolvedStep[] = [
-          delegatePromptedForStep('1', [delegateSubstep('1', 'child.md')]),
-        ];
-        const state = baseState();
-        await activate(state);
-        const { seam: localSeam } = buildIssuanceSeam(state, steps);
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-          explicitTarget: { stepId: '1.1', iteration: 2 },
-        });
-
-        expect(outcome.kind).toBe('delegated');
-      });
-
-      it('defers an unparsable indexed target to the delegation error contract', async () => {
-        const state = baseState();
-        await activate(state);
-        const { seam: localSeam } = buildIssuanceSeam(state, [
-          delegateForStep('1', [delegateSubstep('1', 'child.md')]),
-        ]);
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-          explicitTarget: { stepId: 'not-a-step', iteration: 2 },
-        });
-
-        expect(outcome.kind).toBe('error');
-        if (outcome.kind !== 'error') throw new Error('expected error');
-        expect(outcome.error.code).toBe('RD-814');
-      });
-
-      it('maps a lock acquisition timeout to an RD-810 error outcome without persisting', async () => {
-        const { seam: localSeam, deps, state } = await startSeamOnDelegateStep();
-        const persistSpy = jest.fn(async () => {});
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            throw new DelegationLockTimeoutError(state.id, '/unused/lock/path');
-          },
-          release: async () => {
-            throw new Error('release must not be called when acquire failed');
-          },
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        expect(outcome.kind).toBe('error');
-        if (outcome.kind !== 'error') throw new Error('expected error');
-        expect(outcome.error.code).toBe('RD-810'); // DELEGATION_LOCK_TIMEOUT
-        expect(persistSpy).not.toHaveBeenCalled();
-      });
-
-      it('serializes concurrent fresh issuance: one mint, one echo of the persisted token', async () => {
-        // The #508 regression, with the REAL DelegationLock: pre-fix, both
-        // calls decide 'issuable' from their own unlocked snapshot, both mint,
-        // and the loser's token is not the persisted one.
-        const { seam: localSeam, manager: m, state } = await startSeamOnDelegateStep();
-        const issue = (): ReturnType<typeof localSeam.issueDelegation> =>
-          localSeam.issueDelegation({
-            mode: 'fresh',
-            callerEvidence: runControlEvidence(runId),
-            explicitTarget: { stepId: '1.1' },
-          });
-        const [a, b] = await Promise.all([issue(), issue()]);
-
-        const kinds = [a.kind, b.kind].sort();
-        expect(kinds).toEqual(['already-delegated', 'delegated']);
-        const minted = a.kind === 'delegated' ? a : (b as Extract<typeof b, { kind: 'delegated' }>);
-        const echoed =
-          a.kind === 'already-delegated'
-            ? a
-            : (b as Extract<typeof b, { kind: 'already-delegated' }>);
-        // The echoed token is strictly the minted (persisted) token.
-        expect(echoed.token).toBe(minted.token);
-
-        const persisted = await m.load(state.id);
-        const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
-        expect(entry?.delegation?.tokenHash).toBe(minted.tokenHash);
-      }, 20000); // Real-lock contention: the DelegationLock retry deadline is 5s, so give the test comfortable headroom.
     });
 
     it('preserves a concurrent substep write landing between the active-state read and the issuance persist', async () => {
@@ -1094,13 +937,283 @@ describe('RunbookLifecycleCommandService', () => {
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
       });
-      expect(outcome.kind).toBe('delegated');
+      expect(outcome.kind).toBe('concurrent_modification');
 
       const persisted = await mgr.load(state.id);
       // The concurrent substep survives the issuance persist...
       expect(persisted?.substepStates?.find((s) => s.id === '2')).toEqual(concurrentEntry);
-      // ...and the freshly issued delegation is present.
-      expect(persisted?.substepStates?.find((s) => s.id === '1')?.delegation).toBeDefined();
+      // The fenced issuance refuses instead of overwriting that newer state.
+      expect(persisted?.substepStates?.find((s) => s.id === '1')?.delegation).toBeUndefined();
+    });
+
+    it('persists no credential when ownership is lost before the effect boundary', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      jest.spyOn(SqliteExecutionLeaseService.prototype, 'markEffectStartedAll').mockResolvedValue({
+        kind: 'execution_in_progress',
+        runId: state.id,
+        message: 'ownership lost before the effect boundary',
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(outcome.kind).toBe('execution_in_progress');
+      const persisted = await mgr.load(state.id);
+      expect(
+        persisted?.substepStates?.find((entry) => entry.id === '1')?.delegation,
+      ).toBeUndefined();
+    });
+
+    it('recovers without exposing or persisting a credential after effect start but before commit', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      jest.spyOn(actorService, 'createRecoveryActor').mockImplementation(() => {
+        throw new InvalidRunbookStateError('simulated process death before commit');
+      });
+      jest
+        .spyOn(RunbookStore.prototype, 'commitOwnedRunSet')
+        .mockRejectedValue(new Error('crash before durable commit'));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(outcome.kind).toBe('aggregate_recovery_required');
+      expect(JSON.stringify(outcome)).not.toContain('rdtk_');
+      const persisted = await mgr.load(state.id);
+      expect(
+        persisted?.substepStates?.find((entry) => entry.id === '1')?.delegation,
+      ).toBeUndefined();
+    });
+
+    it('reconciles committed-but-unobserved issuance and reconstructs the exact token', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const commit = RunbookStore.prototype.commitOwnedRunSet;
+      let first = true;
+      jest.spyOn(RunbookStore.prototype, 'commitOwnedRunSet').mockImplementation(async function (
+        this: RunbookStore,
+        input,
+      ) {
+        const result = await commit.call(this, input);
+        if (first) {
+          first = false;
+          throw new Error('crash after durable commit');
+        }
+        return result;
+      });
+
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      expect(issued.kind).toBe('delegated');
+      if (issued.kind !== 'delegated') throw new Error('expected reconciled delegation');
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      expect(echo.kind).toBe('already-delegated');
+      if (echo.kind !== 'already-delegated') throw new Error('expected delegation echo');
+      expect(echo.token).toBe(issued.token);
+    });
+
+    // An echo is a credential disclosure, so it is gated on the same invariant
+    // `projectDelegateFrontier` enforces at the observation boundary: the token
+    // reconstructed from the persisted descriptor must hash to the verifier the
+    // parent recorded. Both failure modes must refuse as typed data and must
+    // never put a bearer on the wire.
+    it('refuses to echo a delegation whose persisted verifier does not match the derived token', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Tamper only the verifier: the descriptor still derives under the issuing
+      // claim, but the reconstructed token no longer matches what was recorded.
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === first.tokenHash
+            ? {
+                ...entry,
+                delegation: {
+                  ...entry.delegation,
+                  tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+                },
+              }
+            : entry,
+        ),
+      }));
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(echo.kind).toBe('error');
+      if (echo.kind !== 'error') throw new Error('expected a typed refusal');
+      expect(echo.error.code).toBe('RD-821');
+      expect(echo).not.toHaveProperty('token');
+      const serialized = JSON.stringify(echo);
+      expect(serialized).not.toContain(first.token);
+      expect(serialized).not.toContain(TOKEN_PREFIX);
+      expect(serialized).not.toContain(DELEGATION_CLAIM_MARKER);
+    });
+
+    it('refuses to echo a delegation the presenting claim cannot re-derive after issuer rotation', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Rotate the run-control claim. The new bearer is authorized for the run
+      // but did not issue the in-flight credential, so derivation cannot
+      // succeed — and must surface as data, not as an escaping throw.
+      await issueRunControlClaimFor(runId);
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+
+      expect(echo.kind).toBe('error');
+      if (echo.kind !== 'error') throw new Error('expected a typed refusal');
+      expect(echo.error.code).toBe('RD-821');
+      expect(echo).not.toHaveProperty('token');
+      const serialized = JSON.stringify(echo);
+      expect(serialized).not.toContain(first.token);
+      expect(serialized).not.toContain(TOKEN_PREFIX);
+      expect(serialized).not.toContain(DELEGATION_CLAIM_MARKER);
+    });
+
+    it('validates a fresh explicit iteration against the in-fence step reread', async () => {
+      // The `--index` legality check is state-dependent, so it must read the
+      // document the fence protects, not a snapshot taken before it. The parsed
+      // document flips from FOR to substeps exactly as the fence is entered:
+      // only a decision made from `beforeEffect`'s own reread can observe it.
+      // And the refusal must precede every effect — no extraVars resolution, no
+      // machine preparation, nothing persisted.
+      const forSteps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam, deps, manager: mgr } = buildIssuanceSeam(state, forSteps);
+      const prepareSpy = jest.spyOn(
+        RunbookActorService.prototype,
+        'prepareManualDelegationMutation',
+      );
+      const resolveExtraVars = jest.fn(async () => undefined);
+      deps.actorMutationRunner = runnerWithFenceEntryHook(deps.actorMutationRunner, () => {
+        deps.loadSteps = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+        resolveExtraVars,
+      });
+
+      expect(outcome.kind).toBe('invalid_index');
+      if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+      expect(outcome.message).toBe(
+        '--index requires step "1" to be a FOR step, but it is "substeps"',
+      );
+      expect(resolveExtraVars).not.toHaveBeenCalled();
+      expect(prepareSpy).not.toHaveBeenCalled();
+      expect((await mgr.load(state.id))?.substepStates ?? []).toHaveLength(0);
+    });
+
+    it('validates the named step rather than the first parsed step', async () => {
+      // Deliberately mis-ordered: the FOR step is FIRST and the named target is
+      // SECOND, so a positional lookup (`steps[0]`) reads a FOR step and lets
+      // the illegal `--index` through. Only a name-keyed lookup refuses. Do not
+      // reorder these — the ordering IS the assertion.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('2', [delegateSubstep('1', 'other.md')]),
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('invalid_index');
+      if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+      expect(outcome.message).toBe(
+        '--index requires step "1" to be a FOR step, but it is "substeps"',
+      );
+    });
+
+    it('accepts explicit iterations on prompted-FOR targets', async () => {
+      // A prompted-FOR step is a FOR step whose bounds did not resolve. It has
+      // no `forClause` and no iteration machinery, but `--index` still names a
+      // legitimate frame on it, so the legality check must admit it alongside
+      // `for` rather than refusing it as a non-FOR kind.
+      const steps: readonly ResolvedStep[] = [
+        delegatePromptedForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      // Admitting the target is only half the contract — the issuance must also
+      // LAND on the frame `--index` named. Asserting the outcome kind alone
+      // would pass just as well if the iteration were dropped and the
+      // delegation written to the un-indexed frame `1|`.
+      const persisted = await manager.load(runId);
+      const iterationFrameKey = buildFrameKey('1', 2);
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', iterationFrameKey)?.delegation,
+      ).toBeDefined();
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'))?.delegation,
+      ).toBeUndefined();
+    });
+
+    it('defers an unparsable indexed target to the delegation error contract', async () => {
+      // `--index` legality is only decidable for a target that parses. An
+      // unparsable one must fall THROUGH the check untouched so the delegation
+      // resolver keeps ownership of "step not found" — the guard exists to
+      // return early, not to let the lookup dereference a null parse. Without
+      // it the seam raises a TypeError that escapes as an unhandled rejection
+      // instead of a typed outcome.
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ]);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: 'not-a-step', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-814');
     });
   });
 
@@ -1237,12 +1350,12 @@ describe('RunbookLifecycleCommandService', () => {
       const childRunId = assertRunId('rd_33333333333333333333333333333333');
       await mgr.updateWithState(state.id, (current) => ({
         substepStates: (current.substepStates ?? []).map((entry) =>
-          entry.delegation?.token === first.token
+          entry.delegation?.tokenHash === first.tokenHash
             ? {
                 ...entry,
                 status: 'done',
                 result: 'fail',
-                delegation: { ...entry.delegation, token: undefined, childRunId },
+                delegation: { ...entry.delegation, childRunId },
               }
             : entry,
         ),
@@ -1262,6 +1375,7 @@ describe('RunbookLifecycleCommandService', () => {
           },
         }),
       );
+      await issueRunControlClaimFor(childRunId);
       const parentWithLinkedChild = await mgr.load(state.id);
       if (!parentWithLinkedChild) throw new Error('expected persisted parent');
       await mgr.save({
@@ -1294,7 +1408,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(retried.kind).toBe('retried');
-      expect(releaseSpy).toHaveBeenCalledWith(childRunId);
+      expect(releaseSpy).not.toHaveBeenCalled();
       const persisted = await mgr.load(state.id);
       const entry = persisted?.substepStates?.find((s) => s.id === '1');
       expect(entry?.delegation?.childRunId).toBeNull();
@@ -1314,6 +1428,100 @@ describe('RunbookLifecycleCommandService', () => {
       await expect(
         deps.lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
       ).resolves.toBeNull();
+    });
+
+    it('rolls back parent retry, child release, and completion supersession when session projection fails', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const childRunId = assertRunId('rd_33333333333333333333333333333333');
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === first.tokenHash
+            ? {
+                ...entry,
+                status: 'done',
+                result: 'fail',
+                delegation: { ...entry.delegation, childRunId },
+              }
+            : entry,
+        ),
+      }));
+      const linkedParent = await mgr.load(state.id);
+      if (linkedParent === null) throw new Error('expected linked parent');
+      await mgr.save({
+        ...linkedParent,
+        resolvedCompletions: {
+          [completionKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
+          }),
+        },
+      });
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'completed',
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: state.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(first.tokenHash),
+          },
+        }),
+      );
+      await issueRunControlClaimFor(childRunId);
+      const childClaimId = issuedRunControlClaims.get(childRunId);
+      if (childClaimId === undefined) throw new Error('expected child claim');
+      const childClaimKey = claimKeyFromBearer(childClaimId);
+
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const commit = RunbookStore.prototype.commitOwnedRunSet;
+      jest.spyOn(RunbookStore.prototype, 'commitOwnedRunSet').mockImplementation(function (
+        this: RunbookStore,
+        input,
+      ) {
+        return commit.call(this, {
+          ...input,
+          updateSession: (session) => {
+            input.updateSession?.(session);
+            throw new Error('session projection fault');
+          },
+        });
+      });
+      jest.spyOn(actorService, 'createRecoveryActor').mockImplementation(() => {
+        throw new InvalidRunbookStateError('simulated process death during retry commit');
+      });
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('aggregate_recovery_required');
+      const parent = await mgr.load(state.id);
+      expect(parent?.substepStates?.find((entry) => entry.id === '1')?.delegation?.tokenHash).toBe(
+        first.tokenHash,
+      );
+      await expect(
+        lifecycleService.getResolvedCompletion(state.id, completionKey),
+      ).resolves.not.toBeNull();
+      expect((await mgr.loadSession()).claims[childClaimKey]).toBeDefined();
+      expect((await mgr.load(childRunId))?.lifecycle).toBe('completed');
     });
 
     it('releases nothing when the retried substep has no linked child', async () => {
@@ -1358,12 +1566,12 @@ describe('RunbookLifecycleCommandService', () => {
       const childRunId = assertRunId('rd_33333333333333333333333333333333');
       await mgr.updateWithState(state.id, (current) => ({
         substepStates: (current.substepStates ?? []).map((entry) =>
-          entry.delegation?.token === first.token
+          entry.delegation?.tokenHash === first.tokenHash
             ? {
                 ...entry,
                 status: 'done',
                 result: 'fail',
-                delegation: { ...entry.delegation, token: undefined, childRunId },
+                delegation: { ...entry.delegation, childRunId },
               }
             : entry,
         ),
@@ -1383,6 +1591,7 @@ describe('RunbookLifecycleCommandService', () => {
           },
         }),
       );
+      await issueRunControlClaimFor(childRunId);
       const parentWithLinkedChild = await mgr.load(state.id);
       if (!parentWithLinkedChild) throw new Error('expected persisted parent');
       await mgr.save({
@@ -1398,11 +1607,7 @@ describe('RunbookLifecycleCommandService', () => {
           }),
         },
       });
-      jest.spyOn(deps.sessionService, 'releaseRunbook').mockResolvedValue({
-        kind: 'execution_in_progress',
-        runId: childRunId,
-        message: `Run ${childRunId} has an execution in progress.`,
-      });
+      await ownRunForTest(tmp, childRunId);
 
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
@@ -1422,7 +1627,7 @@ describe('RunbookLifecycleCommandService', () => {
     });
 
     it('continues to refuse retry over a running linked child', async () => {
-      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
         mode: 'fresh',
         callerEvidence: runControlEvidence(runId),
@@ -1430,22 +1635,14 @@ describe('RunbookLifecycleCommandService', () => {
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
       const childRunId = assertRunId('rd_44444444444444444444444444444444');
-      deps.delegationLock = {
-        acquire: async () => {
-          await mgr.updateWithState(state.id, (current) => ({
-            substepStates: (current.substepStates ?? []).map((entry) =>
-              entry.delegation?.token === first.token
-                ? {
-                    ...entry,
-                    delegation: { ...entry.delegation, token: undefined, childRunId },
-                  }
-                : entry,
-            ),
-          }));
-          await mgr.save(baseState({ id: childRunId, lifecycle: 'running' }));
-        },
-        release: async () => {},
-      };
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === first.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
+            : entry,
+        ),
+      }));
+      await mgr.save(baseState({ id: childRunId, lifecycle: 'running' }));
 
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
@@ -1468,21 +1665,13 @@ describe('RunbookLifecycleCommandService', () => {
 
       const childRunId = assertRunId('rd_55555555555555555555555555555555');
       const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
-      deps.delegationLock = {
-        acquire: async () => {
-          await mgr.updateWithState(state.id, (current) => ({
-            substepStates: (current.substepStates ?? []).map((entry) =>
-              entry.delegation?.token === first.token
-                ? {
-                    ...entry,
-                    delegation: { ...entry.delegation, token: undefined, childRunId },
-                  }
-                : entry,
-            ),
-          }));
-        },
-        release: async () => {},
-      };
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === first.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
+            : entry,
+        ),
+      }));
 
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
@@ -1559,316 +1748,6 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
       if (retried.kind !== 'retried') throw new Error('expected retried');
       expect(retried.stepLabel).toBe('1.2.1');
-    });
-
-    describe('DelegationLock-scoped retry (#508)', () => {
-      it('retries under the lock: acquire → locked re-read → persist → release', async () => {
-        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        const calls: string[] = [];
-        deps.delegationLock = {
-          acquire: async () => {
-            calls.push('acquire');
-          },
-          release: async () => {
-            calls.push('release');
-          },
-        };
-        const innerLoadRun = deps.loadRun;
-        deps.loadRun = async (id) => {
-          calls.push('loadRun');
-          return innerLoadRun(id);
-        };
-        const innerPersist = deps.persistIssuedSubstep;
-        deps.persistIssuedSubstep = async (id, entry) => {
-          calls.push('persist');
-          return innerPersist(id, entry);
-        };
-
-        const retried = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'step', step: first.stepId },
-        });
-        expect(retried.kind).toBe('retried');
-        expect(calls).toEqual(['acquire', 'loadRun', 'persist', 'release']);
-      });
-
-      it('retry decides from the locked re-read: a claim landing during acquire refuses RD-823', async () => {
-        // The delegation is claimed while this retry waits for the lock
-        // (simulated inside the fake lock's acquire). retryDelegation must see
-        // the claim in the locked re-read and refuse in_flight — re-minting from
-        // the stale pre-lock snapshot would orphan the claiming child.
-        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        const childRunId = assertRunId('rd_33333333333333333333333333333333');
-        deps.delegationLock = {
-          acquire: async () => {
-            await mgr.updateWithState(state.id, (current) => ({
-              substepStates: (current.substepStates ?? []).map((entry) =>
-                entry.delegation?.token === first.token
-                  ? {
-                      ...entry,
-                      delegation: { ...entry.delegation, token: undefined, childRunId },
-                    }
-                  : entry,
-              ),
-            }));
-          },
-          release: async () => {},
-        };
-        const persistSpy = jest.fn(deps.persistIssuedSubstep);
-        deps.persistIssuedSubstep = persistSpy;
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'step', step: first.stepId },
-        });
-        expect(outcome.kind).toBe('error');
-        if (outcome.kind !== 'error') throw new Error('expected error');
-        expect(outcome.error.code).toBe('RD-823'); // DELEGATION_IN_FLIGHT
-        expect(persistSpy).not.toHaveBeenCalled();
-
-        // The claimed delegation is untouched.
-        const persisted = await mgr.load(state.id);
-        const entry = persisted?.substepStates?.find((s) => s.id === '1');
-        expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
-        expect(entry?.delegation?.childRunId).toBe(childRunId);
-      });
-
-      it('refuses retry when the claim target is stashed during lock acquisition', async () => {
-        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        const persistSpy = jest.fn(deps.persistIssuedSubstep);
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            // Simulate stashRunbook committing after anchor resolution but
-            // before retry enters its protected decision path.
-            await sessionService.stashRunbook(runId);
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'step', step: first.stepId },
-        });
-
-        expect(outcome.kind).toBe('stale_claim');
-        if (outcome.kind !== 'stale_claim') throw new Error('expected stale_claim');
-        expect(outcome.message).toContain('stashed');
-        expect(persistSpy).not.toHaveBeenCalled();
-      });
-
-      it('validates a retry iteration against the locked runbook reread', async () => {
-        const forSteps: readonly ResolvedStep[] = [
-          delegateForStep('1', [delegateSubstep('1', 'child.md')]),
-        ];
-        const state = baseState();
-        await activate(state);
-        const { seam: localSeam, deps } = buildIssuanceSeam(state, forSteps);
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-          explicitTarget: { stepId: '1.1', iteration: 2 },
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        const persistSpy = jest.fn(deps.persistIssuedSubstep);
-        const resolveOverrides = jest.fn(async () => undefined);
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            deps.loadSteps = async () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'step', step: '1.1', iteration: 2 },
-          resolveOverrides,
-        });
-
-        expect(outcome.kind).toBe('invalid_index');
-        if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
-        expect(outcome.message).toBe(
-          '--index requires step "1" to be a FOR step, but it is "substeps"',
-        );
-        expect(persistSpy).not.toHaveBeenCalled();
-        expect(resolveOverrides).not.toHaveBeenCalled();
-      });
-
-      it('defers an unparsable indexed retry target to the delegation error contract', async () => {
-        const { seam: localSeam } = await startSeamOnDelegateStep();
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'step', step: 'not-a-step', iteration: 2 },
-        });
-
-        expect(outcome.kind).toBe('error');
-        // Without the code, any error — including an unrelated throw — satisfies
-        // this test; the point is that the delegation resolver retains ownership
-        // of RD-801 (step not found) for the unparsable `--step` target.
-        if (outcome.kind !== 'error') throw new Error('expected error');
-        expect(outcome.error.code).toBe('RD-801');
-      });
-
-      it('refuses inferred retry when the active cursor disappears during lock acquisition', async () => {
-        const {
-          seam: localSeam,
-          deps,
-          manager: mgr,
-          state,
-        } = await startSeamOnActiveDelegateSubstep();
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        const persistSpy = jest.fn(deps.persistIssuedSubstep);
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            await mgr.updateWithState(state.id, () => ({ substep: undefined }));
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'active' },
-        });
-
-        expect(outcome.kind).toBe('retry_target_required');
-        expect(persistSpy).not.toHaveBeenCalled();
-      });
-
-      it('retries the inferred cursor that appears during lock acquisition', async () => {
-        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        deps.delegationLock = {
-          acquire: async () => {
-            await mgr.updateWithState(state.id, () => ({ substep: '1' }));
-          },
-          release: async () => {},
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'active' },
-        });
-
-        expect(outcome.kind).toBe('retried');
-        if (outcome.kind !== 'retried') throw new Error('expected retried');
-        expect(outcome.stepLabel).toBe('1.1');
-      });
-
-      it('maps a retry lock acquisition timeout to RD-810 without touching the delegation', async () => {
-        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-        const first = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (first.kind !== 'delegated') throw new Error('expected delegated');
-
-        const persistSpy = jest.fn(async () => {});
-        deps.persistIssuedSubstep = persistSpy;
-        deps.delegationLock = {
-          acquire: async () => {
-            throw new DelegationLockTimeoutError(state.id, '/unused/lock/path');
-          },
-          release: async () => {
-            throw new Error('release must not be called when acquire failed');
-          },
-        };
-
-        const outcome = await localSeam.issueDelegation({
-          mode: 'retry',
-          callerEvidence: runControlEvidence(runId),
-          locator: { kind: 'step', step: first.stepId },
-        });
-        expect(outcome.kind).toBe('error');
-        if (outcome.kind !== 'error') throw new Error('expected error');
-        expect(outcome.error.code).toBe('RD-810'); // DELEGATION_LOCK_TIMEOUT
-        expect(persistSpy).not.toHaveBeenCalled();
-
-        const persisted = await mgr.load(state.id);
-        const entry = persisted?.substepStates?.find((s) => s.id === '1');
-        expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
-      });
-
-      it('serializes a concurrent fresh issuance and retry on the same substep', async () => {
-        // With the REAL DelegationLock: a fresh echo and a --retry racing on
-        // the same substep serialize. The retry always re-mints; the fresh
-        // call echoes whichever token was persisted when it ran. Post-race,
-        // the persisted tokenHash is the retry's mint, and every token a
-        // caller holds was the persisted token at the time it was answered.
-        const { seam: localSeam, manager: m, state } = await startSeamOnDelegateStep();
-        const setup = await localSeam.issueDelegation({
-          mode: 'fresh',
-          callerEvidence: runControlEvidence(runId),
-        });
-        if (setup.kind !== 'delegated') throw new Error('expected delegated');
-
-        const [freshOutcome, retryOutcome] = await Promise.all([
-          localSeam.issueDelegation({
-            mode: 'fresh',
-            callerEvidence: runControlEvidence(runId),
-            explicitTarget: { stepId: '1.1' },
-          }),
-          localSeam.issueDelegation({
-            mode: 'retry',
-            callerEvidence: runControlEvidence(runId),
-            locator: { kind: 'step', step: '1.1' },
-          }),
-        ]);
-
-        expect(retryOutcome.kind).toBe('retried');
-        if (retryOutcome.kind !== 'retried') throw new Error('expected retried');
-        expect(freshOutcome.kind).toBe('already-delegated');
-        if (freshOutcome.kind !== 'already-delegated') throw new Error('expected echo');
-
-        // The echoed token was a persisted token: the setup mint (fresh ran
-        // first) or the retry re-mint (retry ran first) — never a third mint.
-        expect([setup.token, retryOutcome.token]).toContain(freshOutcome.token);
-
-        // The surviving persisted delegation is the retry's mint: the retry
-        // re-mints whichever pending token it observes under the lock, and
-        // the fresh echo never writes.
-        const persisted = await m.load(state.id);
-        const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
-        expect(entry?.delegation?.tokenHash).toBe(retryOutcome.tokenHash);
-      }, 20000);
     });
 
     it('retries by token across runs', async () => {
@@ -2109,133 +1988,542 @@ describe('RunbookLifecycleCommandService', () => {
       expect(after?.resolvedCompletions?.[key]).toBeUndefined();
       expect(Object.keys(after?.resolvedCompletions ?? {})).toHaveLength(0);
     });
-  });
 
-  describe('cleanupForceAbortedLinkedChild', () => {
-    it('force-abort cleanup records explicit fail for running linked child', async () => {
-      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-      const childRunId = assertRunId('rd_ab0a0000000000000000000000000000');
-      await mgr.save(
-        baseState({
-          id: childRunId,
-          lifecycle: 'running',
-          parentLinkage: linkageFor(state.id, '1'),
-        }),
+    it('validates a retry iteration against the in-fence step reread', async () => {
+      // Retry's own `--index` legality check carries the same obligation as the
+      // fresh path: the parsed document flips from FOR to substeps as the fence
+      // is entered, so only a decision made from `beforeEffect`'s reread of the
+      // captured parent can observe it — and the refusal must land before any
+      // overrides resolution, machine preparation, or re-mint.
+      const forSteps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam, deps, manager: mgr } = buildIssuanceSeam(state, forSteps);
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const prepareSpy = jest.spyOn(
+        RunbookActorService.prototype,
+        'prepareManualDelegationMutation',
       );
-      const deleteSpy = jest.spyOn(deps, 'deleteRun');
-
-      const result = await localSeam.cleanupForceAbortedLinkedChild({
-        parentState: state,
-        childRunId,
-        frameKey: buildFrameKey('1'),
-        substepId: '1',
+      const resolveOverrides = jest.fn(async () => undefined);
+      deps.actorMutationRunner = runnerWithFenceEntryHook(deps.actorMutationRunner, () => {
+        deps.loadSteps = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
       });
 
-      expect(result).toEqual({ kind: 'active_child_failed', childRunId });
-      expect(deleteSpy).toHaveBeenCalledWith(childRunId);
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: '1.1', iteration: 2 },
+        resolveOverrides,
+      });
+
+      expect(outcome.kind).toBe('invalid_index');
+      if (outcome.kind !== 'invalid_index') throw new Error('expected invalid_index');
+      expect(outcome.message).toBe(
+        '--index requires step "1" to be a FOR step, but it is "substeps"',
+      );
+      expect(resolveOverrides).not.toHaveBeenCalled();
+      expect(prepareSpy).not.toHaveBeenCalled();
+      // No re-mint: the delegation still carries the token issued above.
+      const persisted = await mgr.load(state.id);
+      const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1', 2));
+      expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
     });
 
-    it('force-abort cleanup supersedes terminal linked child outcome without deleting diagnostics', async () => {
+    it('defers an unparsable indexed retry target to the delegation error contract', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: 'not-a-step', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      // Without the code, any error — including an unrelated throw — satisfies
+      // this test; the point is that the delegation resolver retains ownership
+      // of RD-801 (step not found) for the unparsable `--step` target, rather
+      // than the index guard dereferencing a null parse.
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-801');
+    });
+  });
+
+  describe('abortDelegation', () => {
+    it('commits cancellation through the aggregate workflow and replays as already cancelled', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+
+      const cancelled = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: false,
+      });
+      expect(cancelled.kind).toBe('cancelled');
+      expect(
+        (await mgr.load(state.id))?.substepStates?.find((entry) => entry.id === '1')?.delegation
+          ?.cancelledAt,
+      ).toEqual(expect.any(String));
+
+      await expect(
+        localSeam.abortDelegation({
+          token: issued.token,
+          callerEvidence: runControlEvidence(runId),
+          force: false,
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'already_cancelled' }));
+    });
+
+    it('persists no cancellation when ownership is lost before the abort effect boundary', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      jest.spyOn(SqliteExecutionLeaseService.prototype, 'markEffectStartedAll').mockResolvedValue({
+        kind: 'execution_in_progress',
+        runId: state.id,
+        message: 'ownership lost before abort effect boundary',
+      });
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: false,
+      });
+
+      expect(outcome.kind).toBe('execution_in_progress');
+      expect(
+        (await mgr.load(state.id))?.substepStates?.find((entry) => entry.id === '1')?.delegation
+          ?.cancelledAt,
+      ).toBeNull();
+    });
+
+    it('reconciles committed-but-unobserved abort and replays without another mutation', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const commit = RunbookStore.prototype.commitOwnedRunSet;
+      let first = true;
+      jest.spyOn(RunbookStore.prototype, 'commitOwnedRunSet').mockImplementation(async function (
+        this: RunbookStore,
+        input,
+      ) {
+        const result = await commit.call(this, input);
+        if (first) {
+          first = false;
+          throw new Error('crash after durable abort commit');
+        }
+        return result;
+      });
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: false,
+      });
+      expect(outcome.kind).toBe('cancelled');
+
+      await expect(
+        localSeam.abortDelegation({
+          token: issued.token,
+          callerEvidence: runControlEvidence(runId),
+          force: false,
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'already_cancelled' }));
+    });
+
+    it('leaves a replacement delegation untouched when the token changes after scan', async () => {
       const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const replacementHash = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+      const scan = deps.findDelegationByToken;
+      const abortingSeam = new RunbookLifecycleCommandService({
+        ...deps,
+        findDelegationByToken: async (token) => {
+          const found = await scan(token);
+          if (found) {
+            await mgr.updateWithState(state.id, (current) => ({
+              substepStates: (current.substepStates ?? []).map((entry) =>
+                entry.delegation?.tokenHash === issued.tokenHash
+                  ? {
+                      ...entry,
+                      delegation: { ...entry.delegation, tokenHash: replacementHash },
+                    }
+                  : entry,
+              ),
+            }));
+          }
+          return found;
+        },
+      });
+
+      const outcome = await abortingSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: false,
+      });
+
+      expect(outcome.kind).toBe('token_not_found');
+      const delegation = (await mgr.load(state.id))?.substepStates?.find(
+        (entry) => entry.id === '1',
+      )?.delegation;
+      expect(delegation?.tokenHash).toBe(replacementHash);
+      expect(delegation?.cancelledAt).toBeNull();
+    });
+
+    it('writes no cancellation when the parent bearer is removed after authorization', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const recordSeen = sessionService.recordClaimSeen.bind(sessionService);
+      jest.spyOn(sessionService, 'recordClaimSeen').mockImplementation(async (claimId) => {
+        const result = await recordSeen(claimId);
+        unwrapSessionMutation(await sessionService.releaseRunbook(state.id));
+        return result;
+      });
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: false,
+      });
+
+      expect(outcome.kind).toBe('claim_superseded');
+      expect(
+        (await mgr.load(state.id))?.substepStates?.find((entry) => entry.id === '1')?.delegation
+          ?.cancelledAt,
+      ).toBeNull();
+    });
+
+    it('retains a terminal child, records fail, and releases its claim in the same commit', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
       const childRunId = assertRunId('rd_ab0b0000000000000000000000000000');
-      const frameKey = buildFrameKey('1');
-      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === issued.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
+            : entry,
+        ),
+      }));
       await mgr.save(
         baseState({
           id: childRunId,
           lifecycle: 'stopped',
-          parentLinkage: linkageFor(state.id, '1'),
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: state.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(issued.tokenHash),
+          },
         }),
       );
-      const persisted = await mgr.load(state.id);
-      if (!persisted) throw new Error('expected persisted state');
-      await mgr.save({
-        ...persisted,
+      await issueRunControlClaimFor(childRunId);
+      const childClaim = issuedRunControlClaims.get(childRunId);
+      if (childClaim === undefined) throw new Error('expected child claim');
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
+      });
+
+      expect(outcome).toEqual(
+        expect.objectContaining({ kind: 'cancelled', cleanup: 'terminal_child_cleaned' }),
+      );
+      expect((await mgr.load(childRunId))?.lifecycle).toBe('stopped');
+      expect((await mgr.loadSession()).claims[claimKeyFromBearer(childClaim)]).toBeUndefined();
+      const parent = await mgr.load(state.id);
+      expect(parent?.substepStates?.find((entry) => entry.id === '1')).toEqual(
+        expect.objectContaining({ status: 'done', result: 'fail' }),
+      );
+      expect(Object.values(parent?.resolvedCompletions ?? {})).toEqual([
+        expect.objectContaining({ agentId: 'delegation', result: 'fail' }),
+      ]);
+    });
+
+    it('rolls back child evidence, parent cancellation, completion, and release on projection fault', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0c0000000000000000000000000000');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === issued.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
+            : entry,
+        ),
+      }));
+      await mgr.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'stopped',
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: state.id,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(issued.tokenHash),
+          },
+        }),
+      );
+      await issueRunControlClaimFor(childRunId);
+      const childClaim = issuedRunControlClaims.get(childRunId);
+      if (childClaim === undefined) throw new Error('expected child claim');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const commit = RunbookStore.prototype.commitOwnedRunSet;
+      jest.spyOn(RunbookStore.prototype, 'commitOwnedRunSet').mockImplementation(function (
+        this: RunbookStore,
+        input,
+      ) {
+        return commit.call(this, {
+          ...input,
+          updateSession: (session) => {
+            input.updateSession?.(session);
+            throw new Error('abort session projection fault');
+          },
+        });
+      });
+      jest.spyOn(actorService, 'createRecoveryActor').mockImplementation(() => {
+        throw new InvalidRunbookStateError('simulated abort commit crash');
+      });
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
+      });
+
+      expect(outcome.kind).toBe('aggregate_recovery_required');
+      const parent = await mgr.load(state.id);
+      expect(
+        parent?.substepStates?.find((entry) => entry.id === '1')?.delegation?.cancelledAt,
+      ).toBeNull();
+      expect(Object.keys(parent?.resolvedCompletions ?? {})).toHaveLength(0);
+      expect((await mgr.load(childRunId))?.lifecycle).toBe('stopped');
+      expect((await mgr.loadSession()).claims[claimKeyFromBearer(childClaim)]).toBeDefined();
+    });
+
+    /**
+     * Link a live child run to the delegation `issued` on `parentRunId`, seed
+     * the delegated outcome it reported, and issue its run-control claim.
+     *
+     * @param parentRunId - Parent run owning the delegation.
+     * @param issued - The delegation issuance whose substep gains the child link.
+     * @param childRunId - Child run to create and link.
+     * @returns The completion key of the seeded delegated outcome.
+     */
+    async function linkLiveChild(
+      parentRunId: RunId,
+      issued: { readonly tokenHash: string },
+      childRunId: RunId,
+    ): Promise<string> {
+      await manager.updateWithState(parentRunId, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.tokenHash === issued.tokenHash
+            ? { ...entry, delegation: { ...entry.delegation, childRunId } }
+            : entry,
+        ),
+      }));
+      await manager.save(
+        baseState({
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash: assertDelegationTokenHash(issued.tokenHash),
+          },
+        }),
+      );
+      await issueRunControlClaimFor(childRunId);
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const parent = await manager.load(parentRunId);
+      if (!parent) throw new Error('expected persisted parent');
+      await manager.save({
+        ...parent,
         resolvedCompletions: {
-          [key]: buildResolvedCompletion({
+          [completionKey]: buildResolvedCompletion({
             agentId: 'delegation',
             result: 'fail',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, 1),
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-07-05T00:00:00.000Z',
           }),
         },
       });
+      return completionKey;
+    }
 
-      const result = await localSeam.cleanupForceAbortedLinkedChild({
-        parentState: state,
-        childRunId,
-        frameKey,
-        substepId: '1',
+    it('cancels the parent delegation and cleans the reference when the linked child state is gone', async () => {
+      // Regression guard: a parent that still records a `childRunId` whose run
+      // has been pruned or deleted must stay force-abortable. Refusing
+      // `missing` before the aggregate left the delegation permanently linked
+      // — a stuck state with no operator recovery.
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0d0000000000000000000000000000');
+      await linkLiveChild(state.id, issued, childRunId);
+      // Prune the child exactly as `rundown prune` does: the parent keeps its
+      // reference, the run itself is gone.
+      await mgr.delete(childRunId);
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
       });
 
-      expect(result).toEqual({ kind: 'terminal_child_cleaned', childRunId });
-      await expect(mgr.load(childRunId)).resolves.not.toBeNull();
-      await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
-    });
-
-    it('refuses and leaves the linked child intact when the child is under execution (#608)', async () => {
-      // Release runs BEFORE deleteRun precisely so an ownership refusal is
-      // decisive: no run deleted, no completion recorded, nothing superseded.
-      // Under the old delete-then-release order the child would already be gone
-      // by the time the release refused.
-      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-      const childRunId = assertRunId('rd_ab0d0000000000000000000000000000');
-      await mgr.save(
-        baseState({
-          id: childRunId,
-          lifecycle: 'running',
-          parentLinkage: linkageFor(state.id, '1'),
+      expect(outcome).toEqual(
+        expect.objectContaining({
+          kind: 'cancelled',
+          cleanup: 'missing_child_cleaned',
+          childRunId,
         }),
       );
-      await ownRunForTest(tmp, childRunId);
-      const deleteSpy = jest.spyOn(deps, 'deleteRun');
+      const parent = await mgr.load(state.id);
+      expect(
+        parent?.substepStates?.find((entry) => entry.id === '1')?.delegation?.cancelledAt,
+      ).toEqual(expect.any(String));
+      // The vanished child's stale delegated outcome is superseded, so nothing
+      // is left that a later collect could resolve against a run that is gone.
+      expect(Object.keys(parent?.resolvedCompletions ?? {})).toHaveLength(0);
+    });
 
-      const result = await localSeam.cleanupForceAbortedLinkedChild({
-        parentState: state,
-        childRunId,
-        frameKey: buildFrameKey('1'),
-        substepId: '1',
+    it('leaves the delegation re-issuable after force-aborting a pruned linked child', async () => {
+      // The operator recovery the `missing` refusal removed: once the stale
+      // link is force-aborted, the same substep accepts a fresh delegation.
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0e0000000000000000000000000000');
+      await linkLiveChild(state.id, issued, childRunId);
+      await mgr.delete(childRunId);
+
+      const cancelled = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
+      });
+      expect(cancelled.kind).toBe('cancelled');
+
+      // Force-abort is terminal for the token: the replay is idempotent, not a
+      // second `missing`.
+      await expect(
+        localSeam.abortDelegation({
+          token: issued.token,
+          callerEvidence: runControlEvidence(runId),
+          force: true,
+        }),
+      ).resolves.toEqual(expect.objectContaining({ kind: 'already_cancelled' }));
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: issued.stepId },
+      });
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      expect(retried.tokenHash).not.toBe(issued.tokenHash);
+      const parent = await mgr.load(state.id);
+      const delegation = parent?.substepStates?.find((entry) => entry.id === '1')?.delegation;
+      expect(delegation?.tokenHash).toBe(retried.tokenHash);
+      expect(delegation?.childRunId).toBeNull();
+      expect(delegation?.cancelledAt).toBeNull();
+    });
+
+    it('still refuses the force-abort when the present linked child is owned by another execution', async () => {
+      // The counterweight to the missing-child drop: a child that EXISTS stays
+      // a required aggregate member, so a genuine capture refusal still vetoes
+      // the whole force-abort instead of being silently discarded.
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const issued = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+      });
+      if (issued.kind !== 'delegated') throw new Error('expected delegated');
+      const childRunId = assertRunId('rd_ab0f0000000000000000000000000000');
+      const completionKey = await linkLiveChild(state.id, issued, childRunId);
+      // The child runs its own runbook, so it resolves its own steps.
+      const parentLoadSteps = deps.loadSteps;
+      deps.loadSteps = (target) =>
+        target.id === childRunId
+          ? [
+              {
+                kind: 'base',
+                name: '1',
+                description: 'child step',
+                transitions: tx('CONTINUE', 'STOP'),
+              },
+            ]
+          : parentLoadSteps(target);
+      await ownRunForTest(tmp, childRunId);
+
+      const outcome = await localSeam.abortDelegation({
+        token: issued.token,
+        callerEvidence: runControlEvidence(runId),
+        force: true,
       });
 
-      expect(result).toEqual({
+      expect(outcome).toEqual({
         kind: 'execution_in_progress',
         runId: childRunId,
         message: `Run ${childRunId} has an execution in progress.`,
       });
-      expect(deleteSpy).not.toHaveBeenCalled();
-      await expect(mgr.load(childRunId)).resolves.not.toBeNull();
-    });
-
-    it('force-abort cleanup supersedes stale outcome for missing linked child', async () => {
-      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
-      const childRunId = assertRunId('rd_ab0c0000000000000000000000000000');
-      const frameKey = buildFrameKey('1');
-      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
-      const persisted = await mgr.load(state.id);
-      if (!persisted) throw new Error('expected persisted state');
-      await mgr.save({
-        ...persisted,
-        resolvedCompletions: {
-          [key]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'fail',
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, 1),
-          }),
-        },
-      });
-
-      const result = await localSeam.cleanupForceAbortedLinkedChild({
-        parentState: state,
-        childRunId,
-        frameKey,
-        substepId: '1',
-      });
-
-      expect(result).toEqual({ kind: 'missing_child_cleaned', childRunId });
-      await expect(deps.lifecycleService.getResolvedCompletion(state.id, key)).resolves.toBeNull();
+      const parent = await mgr.load(state.id);
+      const delegation = parent?.substepStates?.find((entry) => entry.id === '1')?.delegation;
+      expect(delegation?.cancelledAt).toBeNull();
+      expect(delegation?.childRunId).toBe(childRunId);
+      expect(Object.keys(parent?.resolvedCompletions ?? {})).toEqual([completionKey]);
+      expect((await mgr.load(childRunId))?.lifecycle).toBe('running');
     });
   });
 
@@ -3053,6 +3341,16 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.issueDelegationCredential).toBeDefined();
+      expect(outcome.deriveDelegationToken).toBeDefined();
+      const issued = outcome.issueDelegationCredential!({
+        parentRunId: runId,
+        parentStepId: '1.1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      });
+      expect(outcome.deriveDelegationToken!(issued.credential)).toBe(issued.token);
     });
 
     it('allows run-named navigation over the same delegation-exposed run', async () => {
@@ -3196,6 +3494,107 @@ describe('RunbookLifecycleCommandService', () => {
       expect(persisted?.step).toBe('2');
       expect(persisted?.lastResult).toBe('fail');
       expect(fenced).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * Automatic issuance requires VERIFIED RUN-CONTROL authority — the
+   * `delegate-from-run` grant on the run being advanced — not merely the
+   * `mutate-run` grant that authorized the transition itself. These tests are
+   * deliberately written against runs with NO delegation parent linkage, so
+   * they observe the authority gate structurally rather than through RD-819:
+   * the nested-delegation prohibition would refuse a delegated child before the
+   * issuer was ever exercised, which is why the weaker gate has never been
+   * exploitable — and exactly why the pin must not depend on it.
+   */
+  describe('delegation runtime authority', () => {
+    const twoSteps: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    /** Strip one grant action from the run's persisted run-control claim. */
+    async function revokeGrant(claimId: ClaimId, action: string): Promise<void> {
+      const claimKey = claimKeyFromBearer(claimId);
+      const session = await manager.loadSession();
+      await patchPersistedClaim(tmp, claimKey, {
+        grants: session.claims[claimKey].grants.filter((grant) => grant.action !== action),
+      });
+    }
+
+    it('carries the delegation runtime for a bearer holding delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.issueDelegationCredential).toBeDefined();
+      expect(outcome.deriveDelegationToken).toBeDefined();
+    });
+
+    it('withholds the delegation runtime from a transition bearer without delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      await revokeGrant(evidence.claimId, 'delegate-from-run');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // `mutate-run` still authorizes the advance itself, so the transition
+      // applies; only the issuance capability is withheld.
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.updatedState?.step).toBe('2');
+      expect(outcome.issueDelegationCredential).toBeUndefined();
+      expect(outcome.deriveDelegationToken).toBeUndefined();
+    });
+
+    it('carries the delegation runtime for a navigation bearer holding delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.issueDelegationCredential).toBeDefined();
+      expect(outcome.deriveDelegationToken).toBeDefined();
+    });
+
+    it('withholds the delegation runtime from a navigation bearer without delegate-from-run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+      const evidence = runControlEvidence(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      await revokeGrant(evidence.claimId, 'delegate-from-run');
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'default' },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.issueDelegationCredential).toBeUndefined();
+      expect(outcome.deriveDelegationToken).toBeUndefined();
     });
   });
 

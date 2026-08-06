@@ -1,14 +1,33 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   createTestWorkspace,
-  getActiveState,
   normalizeCliOutput,
+  requireFrontierToken,
   runCliInProcess,
 } from '../helpers/test-utils.js';
 import type { TestWorkspace } from '../helpers/test-utils.js';
 
 type Format = 'json' | 'text';
 
+/**
+ * Drive the delegation scenario and return the rendered transcript.
+ *
+ * The bearer is read from the parent's emitted `step_entered.delegateFrontier`
+ * — the product's actual disclosure boundary. It is deliberately NOT
+ * reconstructed from persisted state plus a test-only handle on the launch
+ * authority: doing so keeps the transcript green even if the CLI stops
+ * disclosing a token altogether, which is the one regression this scenario is
+ * best placed to catch.
+ *
+ * `--text` renders no bearer and no `claim_id` by design, so there is no
+ * legitimate text-mode route to a token. The text variant therefore snapshots
+ * the run rendering alone; `claim --text` output is covered directly in
+ * `__tests__/commands/claim.test.ts`.
+ *
+ * @param workspace - Test workspace to run against
+ * @param format - Output format under snapshot
+ * @returns Concatenated command transcript
+ */
 async function runDelegationSequence(workspace: TestWorkspace, format: Format): Promise<string> {
   const textFlag = format === 'text' ? ['--text'] : [];
   const blocks: string[] = [];
@@ -24,18 +43,17 @@ async function runDelegationSequence(workspace: TestWorkspace, format: Format): 
     } ===\n${parent.stdout}`,
   );
 
-  // 2. Extract the auto-issued delegation token from state.
-  const state = await getActiveState(workspace);
-  const token = state?.substepStates?.[0]?.delegation?.token ?? null;
-  if (!token) {
-    throw new Error(`Delegation token not found in active state:\n${JSON.stringify(state)}`);
+  if (format === 'text') {
+    // Pin the redaction itself: a human-facing render must never carry a bearer.
+    expect(parent.stdout).not.toMatch(/rdtk_/);
+    return blocks.join('\n');
   }
 
-  // 3. Claim the token — launches and runs the child to completion.
-  const claim = await runCliInProcess(['claim', token, ...textFlag], workspace);
-  blocks.push(
-    `=== command: rd claim <token>${format === 'text' ? ' --text' : ''} ===\n${claim.stdout}`,
-  );
+  // 2. Take the bearer from the emitted frontier, then claim it — this launches
+  // and runs the child to completion.
+  const token = requireFrontierToken(parent.stdout, '2.1');
+  const claim = await runCliInProcess(['claim', token], workspace);
+  blocks.push(`=== command: rd claim <token> ===\n${claim.stdout}`);
 
   return blocks.join('\n');
 }

@@ -5,6 +5,10 @@ import {
   type ClaimId,
   type ClaimRecord,
 } from './claim-id.js';
+import type {
+  DelegationCredentialIssuer,
+  DelegationTokenDeriver,
+} from './delegation-credential.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -13,6 +17,7 @@ import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
+import type { ErrorCodes } from '../errors/codes.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import type { TransitionObservationEvent } from '../events/transition-observation.js';
 
@@ -253,6 +258,28 @@ export type DelegationPolicyOutcome =
        * tokens. Present only after the one-shot frontier was consumed.
        */
       readonly reEntryObservations?: readonly ExecutionObservationEffect[];
+      /**
+       * Verified collector-bound issuer for the continuation the frontend drives
+       * next. Collection can leave the target run standing one transition short
+       * of a DELEGATE step, and machine-owned issuance needs a verified issuer at
+       * that moment; without one the continuation is refused
+       * `actor_context_required` rather than advanced. Bound to the SAME verified
+       * authority the drain issued under — the bearer holding `collect-for-run`
+       * over `targetRunId`, which is a run-control claim and therefore also holds
+       * `delegate-from-run` over it.
+       *
+       * Runtime-only, and set only on a non-terminal (`running`) outcome: a
+       * closure cannot be serialised, and must never reach persisted context, a
+       * snapshot, or a diagnostic (CLAUDE.md § Actor dependencies).
+       */
+      readonly issueDelegationCredential?: DelegationCredentialIssuer;
+      /**
+       * Same-issuer deriver for the turn AFTER issuance, when the continuation
+       * projects the persisted frontier it just stored. Necessarily the same
+       * authority as {@link issueDelegationCredential}: a descriptor naming a
+       * different issuer claim is refused RD-821. Runtime-only, never persisted.
+       */
+      readonly deriveDelegationToken?: DelegationTokenDeriver;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */
@@ -268,12 +295,15 @@ export type DelegationPolicyOutcome =
        * - `frontier_consume_failed` — collect projected a retry re-entry
        *   frontier but failed to sync `DELEGATE_FRONTIER_CONSUMED`, so no
        *   frontier observations were returned.
+       * - `frontier_projection_refused` — the verified collector cannot derive
+       *   the persisted frontier or the derived bearer does not match its hash.
        *   There is NO `state_error` reason; drain never produces one.
        */
       readonly reason:
         | 'target_mismatch'
         | 'not_delegate_step'
         | 'step_not_found'
+        | 'frontier_projection_refused'
         | 'frontier_consume_failed';
       /**
        * User-facing error code, attached by core so the CLI renders a flat
@@ -281,9 +311,20 @@ export type DelegationPolicyOutcome =
        * decisions" and type-driven dispatch intact):
        * - `not_delegate_step` → `NOT_DELEGATE_STEP`
        * - `step_not_found` → `STEP_NOT_FOUND`
-       * - `target_mismatch` / `frontier_consume_failed` → `COLLECT_OPERATION_FAILED`
+       * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
+       * - `frontier_projection_refused` → `RD-821`
+       * - `frontier_consume_failed` → `RD-829`
+       *
+       * The two frontier codes name the CONDITION rather than the command, so
+       * the shared re-entry seam reports each one identically whether `collect`
+       * or the execution loop drove it (F6).
        */
-      readonly code: 'NOT_DELEGATE_STEP' | 'STEP_NOT_FOUND' | 'COLLECT_OPERATION_FAILED';
+      readonly code:
+        | 'NOT_DELEGATE_STEP'
+        | 'STEP_NOT_FOUND'
+        | 'COLLECT_OPERATION_FAILED'
+        | typeof ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code
+        | typeof ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code;
       /** Operator-facing failure message. */
       readonly message: string;
     };

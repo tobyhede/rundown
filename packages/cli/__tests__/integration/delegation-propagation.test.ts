@@ -10,6 +10,7 @@ import {
   findActionOutput,
   type TestWorkspace,
   withRunTarget,
+  requireLatestFrontierToken,
 } from '../helpers/test-utils.js';
 import { readPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
 import { writeFile } from 'node:fs/promises';
@@ -65,11 +66,7 @@ describe('Delegation propagation integration', () => {
   }
 
   async function getAutoIssuedToken(substepId = '1'): Promise<string> {
-    const state = await getActiveState(workspace);
-    const token = state?.substepStates?.find((substep) => substep.id === substepId)?.delegation
-      ?.token;
-    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-    return token!;
+    return requireLatestFrontierToken(workspace, `1.${substepId}`);
   }
 
   function claimKeyFromClaimId(claimId: string): string {
@@ -96,7 +93,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Get parent run ID
@@ -160,7 +157,7 @@ describe('Delegation propagation integration', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -197,7 +194,7 @@ describe('Delegation propagation integration', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -229,7 +226,7 @@ describe('Delegation propagation integration', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -254,7 +251,7 @@ describe('Delegation propagation integration', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = await getAutoIssuedToken();
@@ -282,7 +279,7 @@ describe('Delegation propagation integration', () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
       const parentRunId = (await getActiveState(workspace))!.id;
       const token = await getAutoIssuedToken();
@@ -318,7 +315,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -366,7 +363,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -455,15 +452,13 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start grandparent
-      let result = await runCliInProcess('run --prompted grandparent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted grandparent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const grandparentState = await getActiveState(workspace);
       const grandparentRunId = grandparentState!.id;
 
-      const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
-      expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
-      if (typeof token1 !== 'string') throw new Error('Expected delegation token');
+      const token1 = requireLatestFrontierToken(workspace, '1.1');
 
       // Claim — drop --text so we can capture claim_id / run_id from JSON output
       result = await runCliInProcess(`claim ${token1}`, workspace);
@@ -536,7 +531,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -630,10 +625,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess(
-        'run --prompted triple-parent.runbook.md --text',
-        workspace,
-      );
+      let result = await runCliInProcess('run --prompted triple-parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -750,7 +742,7 @@ describe('Delegation propagation integration', () => {
 
       // Start parent in prompted mode (parent.inputs.resultKey has no value;
       // not required, so omitted at startup).
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -840,7 +832,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -875,7 +867,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const token1 = await getAutoIssuedToken('1');

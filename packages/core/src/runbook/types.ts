@@ -2,7 +2,7 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
-import type { DelegationTokenHash } from './delegation-token.js';
+import type { DelegationCredentialDescriptor, DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
   InitialTemplateVars,
@@ -548,7 +548,10 @@ export interface DelegationIssuanceFailedLastAction extends LastActionBase {
    * - `nested_delegation_forbidden` — the parent runbook is itself a claimed
    *   delegation child, so it cannot issue further delegations (RD-819).
    */
-  readonly reason: 'delegation_resolution_failed' | 'nested_delegation_forbidden';
+  readonly reason:
+    | 'actor_context_required'
+    | 'delegation_resolution_failed'
+    | 'nested_delegation_forbidden';
   /** Human-readable failure message. */
   readonly message: string;
 }
@@ -644,13 +647,8 @@ export interface ResolvedCompletion {
 
 /** Delegation metadata attached to a parent step's substep state. */
 export interface StepDelegation {
-  /**
-   * Raw delegation token while the delegation is pending.
-   *
-   * Present only until the token is claimed or cancelled, so operators can
-   * recover the `rd claim <token>` command from `rd status`.
-   */
-  readonly token?: string;
+  /** Non-secret coordinates and issuer identity needed to reconstruct the credential. */
+  readonly credential: DelegationCredentialDescriptor;
   readonly tokenHash: DelegationTokenHash;
   readonly childRunbookPath: string;
   readonly childRunbookRef: RunbookRef;
@@ -669,6 +667,25 @@ export interface StepDelegation {
    * Undefined when no overrides were passed at issuance.
    */
   readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
+}
+
+/**
+ * Non-secret delegation frontier intent persisted in XState context.
+ *
+ * The public token-bearing frontier is derived from this intent only at an
+ * authorized observation boundary. Keeping this shape in the runbook package
+ * prevents persisted machine state from depending on a credential-delivery
+ * event type.
+ */
+export interface PersistedDelegateFrontierEntry {
+  /** Qualified step or substep coordinate exposed to the child launcher. */
+  readonly id: string;
+  /** Author-facing child runbook reference. */
+  readonly runbook: string;
+  /** Non-secret coordinates identifying the credential issuance. */
+  readonly credential: DelegationCredentialDescriptor;
+  /** Persisted verifier for the derived bearer token. */
+  readonly tokenHash: DelegationTokenHash;
 }
 
 /** Durable inline child launch metadata attached to a parent substep. */
@@ -1111,6 +1128,10 @@ export interface DelegationParentState {
   readonly substepStates?: readonly SubstepState[];
   /** Active frame key for frame-scoped substep lookup. */
   readonly activeFrameKey?: FrameKey;
+  /** Active frame entry used for credential-coordinate derivation. */
+  readonly activeEntry?: number;
+  /** Last observed entry for every entered frame. */
+  readonly frameEntryCounts?: Readonly<Record<FrameKey, number>>;
   /** Parent linkage used to reject nested delegation. */
   readonly parentLinkage?: RunbookState['parentLinkage'];
   /** Seeded template variables captured into the context snapshot. */
