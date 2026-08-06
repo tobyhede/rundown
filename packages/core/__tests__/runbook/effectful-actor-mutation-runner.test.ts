@@ -193,6 +193,64 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(await store.readPendingRecovery(a.id)).toBeNull();
       expect(await store.readPendingRecovery(b.id)).toBeNull();
     });
+
+    it('recovers the remaining members when an interrupted run disappeared', async () => {
+      // A vanished member is the one recovery outcome that is not the member's
+      // own fault: `recover` answers `missing` when the run row is gone by the
+      // time it reads, which a concurrent prune produces at any point after the
+      // effect boundary. It must be treated exactly like its siblings. Returning
+      // a single-run `missing` out of the loop would skip recovery for every
+      // member behind the vanished one AND discard the
+      // `aggregate_recovery_required` outcome that names the whole set — the two
+      // failures the loop exists to prevent, traded for a run that no longer
+      // exists and that no caller can act on.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const vanished = await seedRun('vanished.runbook.md');
+      const survivor = await seedRun('survivor.runbook.md');
+      const warn = jest.spyOn(logger, 'warn').mockResolvedValue(undefined);
+      // Gated on the effect boundary so capture still sees the real row: the
+      // prune being modelled happens after the ambiguous effect, in the window
+      // the recovery loop is there to close.
+      let effectStarted = false;
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realLoadRun = RunbookStore.prototype.loadRun;
+      jest.spyOn(RunbookStore.prototype, 'loadRun').mockImplementation(function (
+        this: RunbookStore,
+        runId: RunId,
+      ) {
+        return effectStarted && runId === vanished.id
+          ? Promise.resolve(null)
+          : realLoadRun.call(this, runId);
+      });
+      const recoveryActorsFor: RunId[] = [];
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: vanished.id }, { runId: survivor.id }],
+        compute: () => {
+          effectStarted = true;
+          return Promise.reject(new Error('aggregate effect failed'));
+        },
+        makeRecoveryActor: (runId: RunId, state: RunbookState) => {
+          recoveryActorsFor.push(runId);
+          return actorService.createRecoveryActor(state, steps);
+        },
+      });
+
+      expect(result.kind).toBe('aggregate_recovery_required');
+      if (result.kind !== 'aggregate_recovery_required') return;
+      // Premise of the regression: the vanished member is recovered FIRST, so a
+      // return from its arm is what strands everything after it.
+      expect(result.attempts.map((attempt) => attempt.runId)).toEqual([vanished.id, survivor.id]);
+      // The member behind the vanished one was still recovered, and committed.
+      expect(recoveryActorsFor).toContain(survivor.id);
+      expect(await (await getRunbookStore(dir)).readPendingRecovery(survivor.id)).toBeNull();
+      // The vanished member is reported, not silently swallowed.
+      expect(warn).toHaveBeenCalledWith(
+        'aggregate member disappeared before recovery completed',
+        expect.objectContaining({ runId: vanished.id }),
+      );
+    });
   });
 
   describe('write-free aggregate outcomes', () => {

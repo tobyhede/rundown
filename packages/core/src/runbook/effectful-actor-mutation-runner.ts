@@ -536,11 +536,17 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
           });
           break;
         case 'missing':
-          return {
-            kind: 'missing',
+          // A member pruned out from under the recovery pass is best-effort like
+          // every other per-member failure. Returning a single-run `missing`
+          // here would strand every interrupted member behind it AND replace the
+          // outcome naming the whole set with one naming a run that no longer
+          // exists — the caller would be told less about more runs. There is
+          // nothing left to recover for this run either way: no row, no attempt.
+          void logger.warn('aggregate member disappeared before recovery completed', {
             runId: interrupted.runId,
-            message: `Run ${interrupted.runId} disappeared before aggregate recovery completed.`,
-          };
+            epoch: interrupted.epoch,
+          });
+          break;
         default: {
           const _exhaustive: never = outcome;
           return _exhaustive;

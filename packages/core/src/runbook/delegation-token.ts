@@ -9,8 +9,39 @@ export const TOKEN_PREFIX = 'rdtk_';
 /** RFC 4648 base32 alphabet. */
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+/**
+ * Escape a literal string for interpolation into a `RegExp` source.
+ *
+ * The output is a literal match in every position of a pattern, so a caller
+ * cannot pick the wrong one. Two passes rather than one because `-` is the only
+ * character whose correct escape depends on position:
+ *
+ * - Unescaped inside a character class it silently forms a RANGE, so
+ *   `[${escape('a-c')}]` would match `b` and not `-`.
+ * - Escaped as `\-` it is a `SyntaxError` OUTSIDE a class under the `u`/`v`
+ *   flags, which is where both call sites below interpolate.
+ *
+ * A hex escape is literal in both positions under every flag, and is what the
+ * ECMAScript `RegExp.escape` builtin emits for exactly this reason. That builtin
+ * is not used here because core must load under WebContainer's bundled Node
+ * 22.x, which predates it. Every other escaped character is an ECMAScript
+ * `SyntaxCharacter`, for which a backslash escape is valid in both positions.
+ *
+ * The first pass only ever inserts backslashes, so it cannot introduce a `-` for
+ * the second to rewrite, and the second only ever rewrites a `-` the first left
+ * alone. Neither `TOKEN_PREFIX` nor `DELEGATION_CLAIM_MARKER` contains a
+ * character either pass touches, so both patterns below compile byte-identically
+ * to their raw literals.
+ *
+ * `v`-mode character classes reserve further punctuation (`/`, `&&`, `!!`, ...)
+ * that this helper does not escape; nothing in the codebase compiles a `v`-mode
+ * pattern, and half-covering that dialect would be the worse of the two states.
+ *
+ * @param value - Literal text the compiled pattern must match exactly.
+ * @returns The value with regex metacharacters escaped for any pattern position.
+ */
 function escapeRegExpLiteral(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&').replace(/-/g, '\\x2d');
 }
 
 export declare const delegationTokenHashBrand: unique symbol;
