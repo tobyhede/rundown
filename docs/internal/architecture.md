@@ -686,16 +686,30 @@ code, `RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
 | The CLI execution loop re-entering a persisted `delegateFrontier`    | `projectDelegateFrontier` throws; the seam catches, emits `ERROR_OCCURRED` with `code: 'RD-821'`, releases the run, and returns `'stopped'` |
 | `rundown collect` re-entering a persisted frontier                   | Returns `collection_failed` with `reason: 'frontier_projection_refused'` and `code: 'RD-821'`                                               |
 
-The last two rows are the **same seam**, not two implementations of one rule:
-`projectAndConsumeReEntryFrontier`
-(`packages/core/src/runbook/re-entry-frontier.ts`) owns the persisted-blob
-validation, the projection, the entry observation, and the
-`DELEGATE_FRONTIER_CONSUMED` commit, and returns a four-arm `ReEntryProjection`.
-`collectDelegationOutcomes` and `runExecutionLoop` both switch on those arms;
-each frontend contributes only its rendered `StepEntryMetadata`, its emitter
-wiring, and its exit-code mapping. The seam commits the consume **before**
-returning observations, so a failed consume discloses no bearer on either
-surface.
+The last two rows share one **disclosure boundary** — the same reader, the same
+projector, and the same refusal arm — in two seams that differ only in when the
+consume commits. Both live in `packages/core/src/runbook/re-entry-frontier.ts`,
+and each frontend contributes only its rendered `StepEntryMetadata`, its emitter
+wiring, and its exit-code mapping.
+
+| Seam                               | Driver             | Consume                                  | Arms                                                              |
+| ---------------------------------- | ------------------ | ---------------------------------------- | ----------------------------------------------------------------- |
+| `projectAndConsumeReEntryFrontier` | `runExecutionLoop` | Committed by the seam, via `sendAndSync` | `none` / `projected` / `projection_refused` / `consume_failed`    |
+| `prepareReEntryFrontierConsume`    | `rundown collect`  | **Derived**, committed by the caller     | `none` / `projected` / `projection_refused` — no `consume_failed` |
+
+The unfenced seam commits the consume **before** returning observations, so a
+failed consume discloses no bearer. The fenced twin cannot observe until the
+caller's single transaction has landed, which strengthens the same guarantee:
+where the unfenced seam can leave a consume committed while the surrounding work
+is not, a refused transaction consumes nothing and discloses nothing.
+
+That is why `consume_failed` has no fenced counterpart. A derivation cannot
+half-commit, so the only way a collect's consume does not land is that its
+enclosing transaction refused — reported as the transactional refusal, with the
+frontier likewise untouched and the operation retryable. `RD-829`
+(`DELEGATION_FRONTIER_CONSUME_FAILED`) therefore has exactly one producer today,
+the execution loop; `DelegationPolicyOutcome` carries no
+`frontier_consume_failed` reason, because nothing could construct it.
 
 Three consequences worth stating explicitly.
 
@@ -724,13 +738,20 @@ outcomes" onto a case where nothing was applied. `COLLECT_OPERATION_FAILED` now
 covers only a drain target mismatch.
 
 The frontier's other failure is a different fact and keeps its own code:
-`frontier_consume_failed` (**RD-829**, `DELEGATION_FRONTIER_CONSUME_FAILED`)
-means projection succeeded and the `DELEGATE_FRONTIER_CONSUMED` sync did not. It
-is retryable — the frontier is still persisted and no observations were surfaced
-— whereas `frontier_projection_refused` is not fixed by repetition, since the
-same authority refuses identically. Two codes because the remediations invert;
-RD-826 through RD-828 are reserved for the retry idempotency contract, so the
-frontier code takes RD-829.
+**RD-829** (`DELEGATION_FRONTIER_CONSUME_FAILED`) means projection succeeded and
+the `DELEGATE_FRONTIER_CONSUMED` sync did not. It is retryable — the frontier is
+still persisted and no observations were surfaced — whereas
+`frontier_projection_refused` is not fixed by repetition, since the same
+authority refuses identically. Two codes because the remediations invert; RD-826
+through RD-828 are reserved for the retry idempotency contract, so the frontier
+code takes RD-829.
+
+RD-829's producer set narrowed when collect became transactional: it is now
+reachable only from the execution loop, which still commits its consume
+separately. A fenced collect derives the consume inside its one transaction, so
+the condition cannot arise there (see the seam table above), and the
+`frontier_consume_failed` reason was removed from `DelegationPolicyOutcome`
+rather than retained without a producer.
 
 The fail-closed remedy the credentials design prescribes for a rotated issuing
 claim — explicit cancel and reissue — has no path today, because

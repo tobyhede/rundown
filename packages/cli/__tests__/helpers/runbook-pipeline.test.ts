@@ -47,6 +47,7 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 import { partitionVariablesForTest } from './mock-partition-variables.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { delegationRuntimeDouble } from './delegation-runtime-helpers.js';
 import { committed } from './session-mutation-fixtures.js';
 import {
   brandDelegationTokenHashForTest,
@@ -103,11 +104,13 @@ function preparedClaimFor(runId: RunId): PreparedRunControlClaim {
   return {
     claimId: TEST_CLAIM_ID,
     claim: claimRecord(runId),
-    issueDelegationCredential: () => {
-      throw new Error('Unexpected credential issuance in pipeline test');
-    },
-    // cspell:disable-next-line
-    deriveDelegationToken: () => 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+    delegationRuntime: delegationRuntimeDouble({
+      issueDelegationCredential: () => {
+        throw new Error('Unexpected credential issuance in pipeline test');
+      },
+      // cspell:disable-next-line
+      deriveDelegationToken: () => 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+    }),
   };
 }
 
@@ -2197,13 +2200,16 @@ describe('startRunbook', () => {
     const initializedState = { ...createdState };
     const preparedRunId = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
     const issueDelegationCredential =
-      jest.fn() as unknown as PreparedRunControlClaim['issueDelegationCredential'];
+      jest.fn() as unknown as PreparedRunControlClaim['delegationRuntime']['issueDelegationCredential'];
     const deriveDelegationToken =
-      jest.fn() as unknown as PreparedRunControlClaim['deriveDelegationToken'];
-    const preparedClaim: PreparedRunControlClaim = {
-      ...preparedClaimFor(preparedRunId),
+      jest.fn() as unknown as PreparedRunControlClaim['delegationRuntime']['deriveDelegationToken'];
+    const delegationRuntime = delegationRuntimeDouble({
       issueDelegationCredential,
       deriveDelegationToken,
+    });
+    const preparedClaim: PreparedRunControlClaim = {
+      ...preparedClaimFor(preparedRunId),
+      delegationRuntime,
     };
     const mockInitState =
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
@@ -2252,22 +2258,17 @@ describe('startRunbook', () => {
       issueDelegationCredential,
     });
     // Hand-off 2 — the execution loop, which needs BOTH the issuer and the
-    // token deriver. Asserting the exact function identities (not merely that
-    // some property exists) is what fails when the object literal is emptied.
-    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]).toEqual(
-      expect.objectContaining({
-        issueDelegationCredential,
-        delegationTokenDeriver: deriveDelegationToken,
-      }),
+    // token deriver, so it receives the branded pair whole. Pinned by REFERENCE:
+    // a structural matcher also passes against a pair rebuilt from the same two
+    // halves further down, which is precisely the forwarding defect this guards.
+    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]?.delegationRuntime).toBe(
+      delegationRuntime,
     );
     // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`
-    // off this result to build its goto context, so an omitted or emptied
+    // off this result to build its goto context, so an omitted or substituted
     // `delegationRuntime` silently strips the jump's delegation authority.
     assertVariant(result, 'ok', true);
-    expect(result.delegationRuntime).toEqual({
-      issueDelegationCredential,
-      deriveDelegationToken,
-    });
+    expect(result.delegationRuntime).toBe(delegationRuntime);
   });
 
   it('returns a launch-failed result when actor initialization yields no state', async () => {

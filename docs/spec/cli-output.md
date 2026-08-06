@@ -1319,6 +1319,46 @@ Code: AGGREGATE_RECOVERY_REQUIRED
 }
 ```
 
+### Stale claim
+
+The presented bearer claim stopped being the target run's controlling authority
+between the moment the mutation captured that authority and the moment it tried
+to commit — the claim was released, rotated, or re-issued, its generation
+advanced, or the delegated parent went terminal or was relinked underneath it.
+The transaction refuses atomically: nothing was written, and the mutation is
+**not** safe to retry with the same claim.
+
+Deliberately distinct from the two resolution-time refusals that describe a
+claim that was _already_ not authority when the command resolved its target —
+`DELEGATION_SUPERSEDED` (the parent moved past the delegation) and
+`CLAIMED_RUNBOOK_UNAVAILABLE` (the claim was released or its parent row is
+gone). `STALE_CLAIM` is the compare-and-swap loss: authority held at capture,
+gone at commit. Three codes for three causes, because the remediation differs —
+a resolution-time refusal means "the claim was never going to work";
+`STALE_CLAIM` means "something raced you".
+
+The envelope names the blocked run inside the message and carries **no
+`details`**: unlike `AGGREGATE_RECOVERY_REQUIRED`, this arm has no structured
+payload. The claim itself is never echoed — it is a bearer secret.
+
+**Text:**
+
+```text
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd claim generation advanced since it was captured.
+Code: STALE_CLAIM
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd claim generation advanced since it was captured.",
+  "code": "STALE_CLAIM",
+  "command": "pass"
+}
+```
+
 ### Concurrent modification
 
 The parent run changed after Rundown derived the delegated child link but before
@@ -1454,3 +1494,96 @@ Code: CLAIM_GRANT_REQUIRED
   "command": "collect"
 }
 ```
+
+### Transactional refusals under `rundown collect`
+
+`rundown collect` shares the transactional refusal vocabulary documented above.
+The codes reach a collect's output at two different positions — the command's
+own refusal envelope, and streamed observations from follow-on execution-loop
+work — and the two mean different things.
+
+#### Collect's own refusal envelope
+
+The whole collection commits as one fenced aggregate transaction: the drain's
+applies, any delegation re-entry frontier consumption, the terminal session
+release, and a delegating grandparent's outcome row all land together or not at
+all. Because the seam captures the collector's authority and re-checks it at
+commit time, collect's own error envelope carries the transactional codes.
+
+| Code                                                                | Cause                                                                                                                                                                            | Origin                                    |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `ACTOR_CONTEXT_REQUIRED`                                            | Bare `rundown collect` on a delegation-exposed run                                                                                                                               | Command policy                            |
+| `CLAIM_GRANT_REQUIRED`                                              | Verified bearer without the `collect-for-run` grant on the target delegating run                                                                                                 | Command policy                            |
+| `DELEGATION_SUPERSEDED` / `CLAIMED_RUNBOOK_UNAVAILABLE`             | The presented `--claim-id` is no longer authority — refused while resolving the target, before any mutation is attempted                                                         | Target resolution                         |
+| `SUBSTEPS_NOT_RESOLVED`                                             | Not every DELEGATE substep in the targeted frame has resolved                                                                                                                    | Collection seam                           |
+| `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED` | The targeted step is not a DELEGATE step, does not exist, or a delegated outcome did not apply to the target cursor                                                              | Collection seam                           |
+| `RD-821`                                                            | A persisted delegation re-entry frontier refused to project — the presenting claim is not the issuing claim, or the reconstructed bearer does not hash to the persisted verifier | Delegation frontier                       |
+| `STALE_CLAIM`                                                       | The collector's claim was released or replaced between authorization and commit                                                                                                  | Aggregate transaction                     |
+| `CONCURRENT_MODIFICATION`                                           | Another writer advanced a captured run's state version first                                                                                                                     | Aggregate transaction                     |
+| `EXECUTION_IN_PROGRESS`                                             | Another process holds the execution lease on a captured run                                                                                                                      | Aggregate transaction                     |
+| `RECOVERY_REQUIRED` / `AGGREGATE_RECOVERY_REQUIRED`                 | An interrupted execution attempt must be recovered before the collection can commit; the aggregate form names every affected run in `details.runs`                               | Aggregate transaction                     |
+| `RUN_TARGET_UNAVAILABLE`                                            | The `--run` id is not a running member of this session's active stack, or a captured run disappeared before the commit                                                           | Target resolution / aggregate transaction |
+
+Two notes on reading this table:
+
+`RUN_TARGET_UNAVAILABLE` has **two distinct origins** that share a code and a
+remedy. From target resolution nothing was captured, so there was no transaction
+to lose. From the aggregate transaction a captured run vanished mid-flight. An
+agent cannot tell them apart from the envelope, and does not need to — the
+recovery is the same.
+
+`RD-829` (`frontier_consume_failed`) is **not** reachable from
+`rundown collect`. That code reports a frontier that projected but whose consume
+did not commit, leaving the frontier persisted and retryable. A collection
+derives its consume rather than committing one separately, so the only way it
+does not land is that the enclosing transaction refused — reported as the
+transactional code above, with the frontier likewise untouched. The code remains
+reachable from the execution loop, which still drives the unfenced projection
+seam.
+
+An `AGGREGATE_RECOVERY_REQUIRED` from collect names the collect target and, when
+the target is itself a delegated child whose grandparent received a terminal
+report, that grandparent too.
+
+#### Streamed `error_occurred` observations
+
+A collect whose aggregation advances the delegating run into execution-loop work
+streams that work's events through the same emitter, on the same `seq` counter.
+The loop's command fence commits under captured authority, so it can lose the
+compare-and-swap that collect's own seam never performs. When it does, the
+refusal is observed as an `error_occurred` line carrying the same code
+vocabulary — `STALE_CLAIM`, `CONCURRENT_MODIFICATION`, `EXECUTION_IN_PROGRESS`,
+`RECOVERY_REQUIRED`, or `RUN_TARGET_UNAVAILABLE` — followed by
+`runbook_stopped`.
+
+**The collection is already committed when this is observed.** Collect's own
+aggregate transaction — the drain's applies, any delegation re-entry frontier
+consumption, the terminal session release, and a delegating grandparent's
+outcome row — lands in full _before_ any execution-loop work begins; the loop is
+post-commit follow-on work driven from the state that commit produced. Only the
+**refused follow-on transition** committed nothing, and precisely because that
+invocation committed nothing it owns no terminal cleanup either — releasing
+there would let a losing claimant tear down the winner's run. The delegating run
+is therefore left exactly where the aggregation put it: applied, non-terminal,
+and still session-targeted.
+
+**Do not re-run the collect to recover.** The aggregation is durable and is
+never applied twice — a repeated bare `rundown collect` on the post-aggregation
+cursor is the idempotent `already-aggregated` no-op (`COLLECT_ALREADY_APPLIED`),
+and it cannot retry the transition that was refused. Recover the streamed `code`
+on its own terms (its row in
+[docs/reference/cli.md](../reference/cli.md#common-errors-and-resolutions)
+carries the remedy: wait out the owning process, run recovery, or re-resolve a
+bearer that is no longer authority), then drive the delegating run forward from
+where it now stands.
+
+```jsonl
+{"type":"error_occurred","message":"Run rd_0123456789abcdef0123456789abcdef claim generation advanced since it was captured.","code":"STALE_CLAIM","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":3}
+{"type":"runbook_stopped","message":"Runbook command execution was not committed","position":{"current":"2","total":3},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":4}
+```
+
+A `code` on an `error_occurred` line is drawn from the same registered
+error-code enum as the top-level `code` field, but the line is an
+**observation** of a refusal, not the command's error envelope.
+`rundown collect` still writes its `collect` action object as the last JSON
+line, and exits non-zero.

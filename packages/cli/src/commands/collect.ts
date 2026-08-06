@@ -4,12 +4,14 @@ import type { Command } from 'commander';
 import {
   activeFrame,
   buildFrameKey,
+  createEffectfulActorMutationRunner,
   deriveActiveFrame,
   ExecutionEventEmitter,
   inactiveFrame,
   RunbookCollectionService,
   RunbookCompletionService,
   type ClaimId,
+  type CollectionWorkflowResult,
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
@@ -18,6 +20,7 @@ import {
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { getCwd } from '../helpers/context.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
@@ -32,6 +35,10 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimGrantRequiredRefusal,
 } from '../helpers/refusal-renderers.js';
+import {
+  isTransactionalMutationRefusal,
+  renderTransactionalMutationRefusal,
+} from '../helpers/session-mutation-result.js';
 import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
@@ -309,7 +316,7 @@ function renderAppliedOutcome(
 }
 
 /**
- * Render a core {@link DelegationPolicyOutcome} onto the CLI's collect output
+ * Render a core {@link CollectionWorkflowResult} onto the CLI's collect output
  * contract. JSON is the agent-facing contract (CLAUDE.md § CLI Output
  * Standards); `--text` emits the equivalent human message for the non-error
  * statuses (`output.error` already honors text mode for the error arms).
@@ -337,10 +344,19 @@ function renderAppliedOutcome(
  */
 function renderCollectOutcome(
   output: OutputEmitter,
-  outcome: DelegationPolicyOutcome,
+  outcome: CollectionWorkflowResult,
   text: boolean | undefined,
   emitter: ExecutionEventEmitter,
 ): boolean {
+  // The transactional arms are rendered by the SHARED renderer, not restated
+  // here: `transitionalRefusalCode` is the one `kind` → code mapping, and
+  // `transitions.ts`, `terminal-command.ts`, `delegate.ts`, and `abort.ts`
+  // already route through it. Collect was the last holdout. Narrowing first
+  // keeps the collection-specific switch below exhaustive over the policy union
+  // alone, so its `never` guard still catches an unhandled collection variant.
+  if (isTransactionalMutationRefusal(outcome)) {
+    return renderTransactionalMutationRefusal(output, outcome);
+  }
   switch (outcome.kind) {
     case 'allowed':
       // Unreachable: collectDelegationOutcomes never returns the raw `allowed`
@@ -483,7 +499,17 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     sessionService: ctx.sessionService,
+    // The whole collection now commits through the same core-owned fence as
+    // every other delegation seam, so the CLI hands core the runner rather than
+    // driving a sequence of separately committed writes.
+    actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
+    // Category A. An aggregate member other than the collect target is a
+    // DIFFERENT runbook, so its recovery actor cannot be built from the steps
+    // resolved for the target above; without this the delegating parent is the
+    // one member a collect can never recover, and `runAll` downgrades that
+    // failure to a warn.
+    loadSteps: (memberState) => getRunbookFromState(memberState, cwd),
   });
 
   const outcome = await collectionService.collectDelegationOutcomes({
@@ -558,7 +584,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   let loopStopped = false;
   if (advancesIntoLoop) {
     const { runExecutionLoop } = await import('../services/execution.js');
-    const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
     // `advancesIntoLoop` already narrowed `outcome` to `collection_applied`.
     const advanced = await manager.load(state.id);
     if (advanced) {
@@ -581,8 +606,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
           // collect target this loop drives). Without them a collect that
           // advances into a DELEGATE step is refused `actor_context_required` on
           // issuance, and the following turn on frontier projection.
-          issueDelegationCredential: outcome.issueDelegationCredential,
-          delegationTokenDeriver: outcome.deriveDelegationToken,
+          delegationRuntime: outcome.delegationRuntime,
         },
       );
       // Do NOT early-return on a stopped loop: the run may have reached a

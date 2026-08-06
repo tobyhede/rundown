@@ -8,26 +8,44 @@ import {
   RunbookCollectionService,
   RunbookCompletionService,
   RunbookStateManager,
+  SessionService,
   InvalidRunbookStateError,
-  assertClaimId,
   assertClaimLookupKey,
   assertDelegationTokenHash,
   assertRunId,
+  createEffectfulActorMutationRunner,
   type AdvanceInlineParent,
   type CallerEvidence,
+  type ClaimLookupKey,
+  type EffectfulActorMutationRunner,
+  type EffectfulActorMutationSetRunnerInput,
+  type InlineUpwardPropagationResult,
   type RunbookState,
   type RunId,
+  type TerminalUpwardPropagationResult,
   type ClaimId,
   type ClaimSeenRecordResult,
   type ReleaseRunbookResult,
   type SessionMutationResult,
 } from '../../src/runbook/index.js';
 import { ErrorCodes } from '../../src/errors/codes.js';
-import { createDelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
+import {
+  createDelegationCredentialIssuer,
+  createDelegationTokenDeriver,
+} from '../../src/runbook/delegation-credential.js';
+import {
+  prepareReEntryFrontierConsume,
+  readPersistedReEntryFrontier,
+} from '../../src/runbook/re-entry-frontier.js';
 import { assertDelegationIssuanceNonce } from '../../src/runbook/delegation-token.js';
 import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
-import type { CollectionSessionService } from '../../src/runbook/collection-service.js';
+import { narrowInlineUpwardPropagation } from '../../src/runbook/collection-service.js';
+import type {
+  CollectionSessionService,
+  RunbookCollectionServiceDependencies,
+} from '../../src/runbook/collection-service.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
+import type { RecoveryActor } from '../../src/runbook/execution-recovery-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
 import {
@@ -54,6 +72,29 @@ function tx(pass: 'CONTINUE' | 'COMPLETE' | 'STOP', fail: 'CONTINUE' | 'COMPLETE
   } as const;
 }
 
+/** A real minted claim, as the fixtures present it. */
+interface PresentedClaimFixture {
+  /** Bearer id the caller presents as `claim_bearer` evidence. */
+  readonly claimId: ClaimId;
+  /** Lookup key the fence captures and re-checks at commit. */
+  readonly claimKey: ClaimLookupKey;
+}
+
+/**
+ * Build a faked {@link RunbookActorService.prepareActorMutation} return.
+ *
+ * The transactional drain and the fenced frontier consume both derive through
+ * `prepareActorMutation` and read only `nextState` (chained into the next
+ * iteration) and `snapshot` (projected into transition observations).
+ *
+ * @param nextState - The derived state the faked transition produces.
+ * @param snapshot - Optional raw machine snapshot for observation projection.
+ * @returns A prepared-mutation shaped double.
+ */
+function preparedMutation(nextState: RunbookState, snapshot: unknown = {}) {
+  return { previousState: nextState, nextState, snapshot, effects: [] };
+}
+
 function buildCurrentCursorResolvedCompletionForTest(
   input: Parameters<typeof buildResolvedCompletion>[0] & { readonly targetSubstep: string },
 ) {
@@ -70,6 +111,24 @@ describe('RunbookCollectionService', () => {
   let completionService: RunbookCompletionService;
   let sessionService: CollectionSessionService;
   let collectionService: RunbookCollectionService;
+  // The REAL project-bound fence. Collect now derives its whole workflow in
+  // memory and commits once through `runAll`, so a seam double would make every
+  // assertion below about persistence vacuous: capture, commit-time authority
+  // revalidation, the owned-set write and the folded session release are exactly
+  // what these tests exist to pin. The suite already builds a real store over a
+  // tmpdir, so the only thing standing between it and the real fence was a real
+  // controlling claim per fixture run — minted in `beforeEach` (see `controlRun`).
+  let actorMutationRunner: EffectfulActorMutationRunner;
+  // Real session writer used ONLY for fixture setup (mint claims, push runs) and
+  // for observing committed session state. The collection seam itself still reads
+  // through the `sessionService` fake below, so its policy inputs stay explicit.
+  let realSession: SessionService;
+  /** Claim key the fake `verifyClaimId` presents; must control the collect target. */
+  let presentedClaimKey: ClaimLookupKey;
+  /** Bearer id the caller presents; encodes `presentedClaimKey`. */
+  let bearerClaimId: ClaimId;
+  /** Real claim controlling `controlledRunId`, presented by the terminal fixtures. */
+  let controlledClaim: PresentedClaimFixture;
   // Held separately from the fake so assertions reference the spy directly —
   // `sessionService.releaseRunbook` is a declared method, and passing that
   // reference to `expect()` trips `@typescript-eslint/unbound-method`.
@@ -86,10 +145,8 @@ describe('RunbookCollectionService', () => {
   const runId = assertRunId('rd_11111111111111111111111111111111');
   const controlledRunId = assertRunId('rd_22222222222222222222222222222222');
   const ancestorRunId = assertRunId('rd_33333333333333333333333333333333');
-  const claimId = assertClaimId(
-    'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
-  );
-  const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
+  /** A fourth run, used only to give the ancestor a delegating parent of its own. */
+  const greatGrandRunId = assertRunId('rd_44444444444444444444444444444444');
   const tokenHash = assertDelegationTokenHash(
     'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
   );
@@ -100,12 +157,25 @@ describe('RunbookCollectionService', () => {
   // suites below exercise the collection operation as that verified controller;
   // the refusal twin pinning direct_cli on these fixtures lives in the
   // policy-gate describe.
-  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'claim_bearer', claimId };
+  //
+  // Rebound by `presentClaim` whenever the collect target changes: a bearer id
+  // ENCODES its own lookup key (`createDelegationTokenDeriver` refuses a pair that
+  // does not agree), so the presented id and the key the fence captures cannot be
+  // chosen independently.
+  let ORCHESTRATOR_EVIDENCE: CallerEvidence;
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
+  /** Present a minted claim as the collecting orchestrator's bearer. */
+  function presentClaim(claim: PresentedClaimFixture): void {
+    bearerClaimId = claim.claimId;
+    presentedClaimKey = claim.claimKey;
+    ORCHESTRATOR_EVIDENCE = { kind: 'claim_bearer', claimId: claim.claimId };
+  }
+
   function frontierEntry(id = '1.1', runbook = 'child-a.md', nonce = 'A') {
-    const issued = createDelegationCredentialIssuer({ kind: 'bearer', claimId, claimKey }, () =>
-      assertDelegationIssuanceNonce(`${nonce.repeat(42)}A`),
+    const issued = createDelegationCredentialIssuer(
+      { kind: 'bearer', claimId: bearerClaimId, claimKey: presentedClaimKey },
+      () => assertDelegationIssuanceNonce(`${nonce.repeat(42)}A`),
     )({
       parentRunId: runId,
       parentStepId: id,
@@ -174,12 +244,120 @@ describe('RunbookCollectionService', () => {
     };
   }
 
+  /**
+   * Give a fixture run its REAL controlling claim and put it on the default stack.
+   *
+   * The fence captures `(run, claim)` from the store, so a run with no active
+   * controlling claim is refused `claim_superseded` before any preparation runs.
+   * Pushing onto the default stack is what makes the transaction's folded session
+   * release observable (a released run leaves the stack).
+   *
+   * @param target - Fixture run to claim.
+   * @returns The persisted claim's lookup key.
+   */
+  async function controlRun(target: RunId): Promise<PresentedClaimFixture> {
+    const issued = await realSession.pushRunbookWithRunControlClaim(target);
+    if (issued.kind !== 'committed') {
+      throw new Error(`fixture could not mint a controlling claim for ${target}: ${issued.kind}`);
+    }
+    return { claimId: issued.value.claimId, claimKey: issued.value.claim.claimKey };
+  }
+
+  /** Rotate a run's controlling claim, invalidating the captured one. */
+  async function rotateControllingClaim(target: RunId): Promise<void> {
+    const rotated = await realSession.issueRunControlClaim(target);
+    if (rotated.kind !== 'committed') {
+      throw new Error(`fixture could not rotate the claim for ${target}: ${rotated.kind}`);
+    }
+  }
+
+  /** Read the committed session default stack. */
+  async function defaultStack(): Promise<readonly RunId[]> {
+    return (await manager.loadSession()).defaultStack;
+  }
+
+  /**
+   * Read a run's committed re-entry frontier through the canonical reader.
+   *
+   * `readPersistedReEntryFrontier` is the single validating reader for that blob
+   * (the same one the seam uses), so an assertion built on it cannot drift from
+   * what the seam would see.
+   *
+   * @param target - Run whose committed snapshot is read.
+   * @returns The validated frontier entries; empty when none is persisted.
+   */
+  async function persistedFrontier(target: RunId) {
+    const loaded = await manager.load(target);
+    if (!loaded) throw new Error(`run ${target} must exist`);
+    return readPersistedReEntryFrontier(loaded);
+  }
+
+  /**
+   * Wrap the real runner so `effect` lands AFTER capture and preparation but
+   * strictly BEFORE the fence acquires and commits.
+   *
+   * The same shape as `runnerWithFenceEntryHook` in
+   * `lifecycle-command-service.test.ts`, moved one stage later: hooking
+   * `beforeEffect`'s return is the only point that is provably after the
+   * collection has captured its state and derived its whole workflow, and still
+   * before a single byte is written. That window is exactly where the old
+   * per-write design was blind — it had already committed applies by then.
+   *
+   * @param effect - Concurrent mutation to commit inside the window.
+   * @returns A runner that fires `effect` once per aggregate invocation.
+   */
+  function runnerWithPreCommitEffect(effect: () => Promise<void>): EffectfulActorMutationRunner {
+    return {
+      run: (input) => actorMutationRunner.run(input),
+      async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
+        return await actorMutationRunner.runAll<TResult>({
+          ...input,
+          beforeEffect: async (captured) => {
+            const decision = (await input.beforeEffect?.(captured)) ?? {
+              kind: 'continue' as const,
+            };
+            await effect();
+            return decision;
+          },
+        });
+      },
+    };
+  }
+
+  /** Build a collection service over the standard fixture dependencies. */
+  function makeCollectionService(
+    overrides: Partial<RunbookCollectionServiceDependencies> = {},
+  ): RunbookCollectionService {
+    return new RunbookCollectionService({
+      sessionService,
+      manager,
+      actorService,
+      lifecycleService,
+      completionService,
+      actorMutationRunner,
+      // Default fake: pre-existing tests never drive a target terminal that
+      // carries INLINE linkage, so a never-resolving-terminal fake satisfies the
+      // required dep. Inline-advance tests below construct their own spy.
+      advanceInlineParent: jest
+        .fn<AdvanceInlineParent>()
+        .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
+      // Default loader for aggregate members other than the collect target.
+      // Most fixtures here seed the parent from the SAME step graph, so the
+      // shared fixture is the honest default; the recovery-wiring tests below
+      // override it with a spy that returns the parent's own steps.
+      loadSteps: () => steps,
+      ...overrides,
+    });
+  }
+
   beforeEach(async () => {
     tmp = await mkdtemp(path.join(tmpdir(), 'collection-service-'));
     manager = new RunbookStateManager(tmp);
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    realSession = new SessionService(manager);
+    actorMutationRunner = createEffectfulActorMutationRunner(tmp);
     releaseRunbookSpy = jest.fn(async (runbookId: RunId) => ({
       kind: 'committed' as const,
       value: {
@@ -191,7 +369,7 @@ describe('RunbookCollectionService', () => {
     }));
     recordClaimSeenSpy = jest.fn(async () => ({
       kind: 'recorded' as const,
-      claimKey,
+      claimKey: presentedClaimKey,
       lastSeenAt: '2026-06-28T00:00:00.000Z',
     }));
     sessionService = {
@@ -202,14 +380,17 @@ describe('RunbookCollectionService', () => {
         return { kind: 'not_on_stack' };
       },
       async getActiveForClaimId() {
-        return { status: 'missing', claimId };
+        return { status: 'missing', claimId: bearerClaimId };
       },
       async verifyClaimId(presentedClaimId) {
-        expect(presentedClaimId).toBe(claimId);
+        expect(presentedClaimId).toBe(bearerClaimId);
         return {
           status: 'verified',
           claim: {
-            claimKey,
+            // The REAL key of the claim controlling the run under collection: the
+            // fence captures and re-checks it, so a synthesized key would be
+            // refused `claim_superseded` before any preparation ran.
+            claimKey: presentedClaimKey,
             controlledRunId: runId,
             grants: [
               { action: 'collect-for-run', runId },
@@ -234,19 +415,17 @@ describe('RunbookCollectionService', () => {
       releaseRunbook: releaseRunbookSpy,
       recordClaimSeen: recordClaimSeenSpy,
     };
-    collectionService = new RunbookCollectionService({
-      sessionService,
-      manager,
-      actorService,
-      lifecycleService,
-      completionService,
-      // Default fake: pre-existing tests never drive a target terminal that
-      // carries INLINE linkage, so a never-resolving-terminal fake satisfies the
-      // required dep. Inline-advance tests below construct their own spy.
-      advanceInlineParent: jest
-        .fn<AdvanceInlineParent>()
-        .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
-    });
+    // Seed the three fixture runs and their REAL controlling claims up front:
+    // `frontierEntry()` binds credentials to the presented claim key and is called
+    // by tests before they save their own target, so the key has to exist from the
+    // first line of every test. Tests overwrite these rows with `manager.save`.
+    await manager.save(state());
+    await manager.save(state({ id: controlledRunId }));
+    await manager.save(state({ id: ancestorRunId, resolvedCompletions: {} }));
+    presentClaim(await controlRun(runId));
+    controlledClaim = await controlRun(controlledRunId);
+    await controlRun(ancestorRunId);
+    collectionService = makeCollectionService();
   });
 
   afterEach(async () => {
@@ -347,7 +526,7 @@ describe('RunbookCollectionService', () => {
     });
     // Authorization established orchestrator liveness before this idempotent
     // no-op was discovered.
-    expect(recordClaimSeenSpy).toHaveBeenCalledWith(claimId);
+    expect(recordClaimSeenSpy).toHaveBeenCalledWith(bearerClaimId);
   });
 
   it('applies reported delegation outcomes through the state machine', async () => {
@@ -355,12 +534,12 @@ describe('RunbookCollectionService', () => {
     // DELEGATE cursor (entering the substep auto-spawns a delegation issue actor
     // that needs a persisted xstate snapshot — see compiler.ts spawnChild input).
     // Genuine spawn→issue→drain→aggregate e2e is pinned at the CLI layer
-    // (collect.test.ts). Here we spy the lowest actor seam (sendAndSync — the
-    // established core idiom, completion-service.test.ts) so the REAL
-    // drainResolvedCompletions orchestration and the REAL collection mapping run;
-    // only the XState dispatch is faked. The drain itself is pinned independently
-    // in completion-service.test.ts, so this asserts the outcome mapping, not
-    // persisted-completion deletion.
+    // (collect.test.ts). Here we spy the lowest actor seam so the REAL
+    // `prepareResolvedCompletionDrain` orchestration and the REAL collection
+    // mapping run; only the XState dispatch is faked. That seam is now
+    // `prepareActorMutation`, not `sendAndSync`: the transactional drain DERIVES
+    // each transition and chains the next iteration off the derived state instead
+    // of committing one transaction per completion.
     const frameKey = buildFrameKey('1');
     const target = state({
       resolvedCompletions: {
@@ -387,17 +566,13 @@ describe('RunbookCollectionService', () => {
     // Apply substep 1 (cursor → substep 2), then substep 2 (cursor → step 2),
     // both keeping the run `running`; drain then exits at the non-substep step.
     jest
-      .spyOn(actorService, 'sendAndSync')
-      .mockResolvedValueOnce({
-        state: state({ substep: '2', resolvedCompletions: target.resolvedCompletions }),
-        snapshot: {},
-        effects: [],
-      })
-      .mockResolvedValueOnce({
-        state: state({ step: '2', substep: undefined, lifecycle: 'running' }),
-        snapshot: {},
-        effects: [],
-      });
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValueOnce(
+        preparedMutation(state({ substep: '2', resolvedCompletions: target.resolvedCompletions })),
+      )
+      .mockResolvedValueOnce(
+        preparedMutation(state({ step: '2', substep: undefined, lifecycle: 'running' })),
+      );
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
@@ -468,17 +643,13 @@ describe('RunbookCollectionService', () => {
     });
     await manager.save(target);
     jest
-      .spyOn(actorService, 'sendAndSync')
-      .mockResolvedValueOnce({
-        state: state({ substep: '2', resolvedCompletions: target.resolvedCompletions }),
-        snapshot: {},
-        effects: [],
-      })
-      .mockResolvedValueOnce({
-        state: state({ step: '2', substep: undefined, lifecycle: 'running' }),
-        snapshot: {},
-        effects: [],
-      });
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValueOnce(
+        preparedMutation(state({ substep: '2', resolvedCompletions: target.resolvedCompletions })),
+      )
+      .mockResolvedValueOnce(
+        preparedMutation(state({ step: '2', substep: undefined, lifecycle: 'running' })),
+      );
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
@@ -488,9 +659,13 @@ describe('RunbookCollectionService', () => {
     });
 
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
-    const issue = outcome.issueDelegationCredential;
-    const derive = outcome.deriveDelegationToken;
-    if (!issue || !derive) throw new Error('expected delegation capabilities on a running collect');
+    // One BRANDED pair, not two independently optional fields: issuance and
+    // derivation are two halves of one verified authority, so the outcome either
+    // carries both or neither.
+    const runtime = outcome.delegationRuntime;
+    if (!runtime) throw new Error('expected delegation capabilities on a running collect');
+    const issue = runtime.issueDelegationCredential;
+    const derive = runtime.deriveDelegationToken;
 
     const issued = issue({
       parentRunId: runId,
@@ -501,7 +676,7 @@ describe('RunbookCollectionService', () => {
     // Bound to the VERIFIED COLLECTOR: the claim key core proved holds
     // `collect-for-run` on this target — and therefore, being a run-control
     // claim, `delegate-from-run` on it too.
-    expect(issued.credential.issuerClaimKey).toBe(claimKey);
+    expect(issued.credential.issuerClaimKey).toBe(presentedClaimKey);
     // Same-issuer pair: the deriver reproduces exactly what the issuer minted,
     // which is what the continuation's next turn needs to project the frontier.
     expect(derive(issued.credential)).toBe(issued.token);
@@ -574,7 +749,7 @@ describe('RunbookCollectionService', () => {
       },
     ];
 
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: retryState,
       unresolved: 2,
@@ -611,11 +786,10 @@ describe('RunbookCollectionService', () => {
     });
     await manager.save(retryState);
 
-    const sendAndSyncSpy = jest.spyOn(actorService, 'sendAndSync').mockResolvedValueOnce({
-      state: state({ ...retryState, snapshot: { context: {} } }),
-      snapshot: { context: {} },
-      effects: [],
-    });
+    const consumedState = state({ ...retryState, snapshot: { context: {} } });
+    const consumeSpy = jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValueOnce(preparedMutation(consumedState, { context: {} }));
     const observeEntrySpy = jest
       .spyOn(actorService, 'observeExecutionUnitEntry')
       .mockResolvedValue(frontierEffects);
@@ -641,104 +815,77 @@ describe('RunbookCollectionService', () => {
     });
     expect(outcome.reEntryObservations).toEqual(frontierEffects);
     expect(observeEntrySpy).toHaveBeenCalledTimes(1);
-    expect(sendAndSyncSpy).toHaveBeenLastCalledWith(runId, steps, {
-      type: 'DELEGATE_FRONTIER_CONSUMED',
-    });
+    // Asserted on the captured call rather than through `toHaveBeenCalledWith`:
+    // jest's recursive `AsymmetricMatcher` mapped type expands over `RunbookState`
+    // in this signature and trips TS2589 ("type instantiation is excessively
+    // deep"). Reading the arguments keeps every fact the matcher pinned.
+    const consumeCall = consumeSpy.mock.calls.at(-1);
+    expect(consumeCall?.[0]).toBe(runId);
+    expect(consumeCall?.[1]).toEqual(retryState);
+    expect(consumeCall?.[2]).toEqual(steps);
+    expect(consumeCall?.[3]).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
+    // The consume is DERIVED, not committed on its own: it reaches the store only
+    // through the collection's single owned-set commit, which is what leaves the
+    // frontier consumed exactly when the applies it accompanies are.
+    expect(await persistedFrontier(runId)).toEqual([]);
   });
 
-  it('returns collection_failed without frontier observations when retry frontier consume fails', async () => {
+  it('discloses no bearers and consumes no frontier when the enclosing commit refuses', async () => {
+    // REPLACES "returns collection_failed without frontier observations when
+    // retry frontier consume fails" and its F6 twin. `consume_failed` is no longer
+    // reachable from collect: the consume is derived, not committed, so it cannot
+    // half-land — the only way it does not reach the store is that the whole
+    // transaction refused. `prepareReEntryFrontierConsume`'s union omits the arm
+    // for exactly that reason. The operator-visible condition the old test named
+    // (projection succeeded, consume did not land, nothing disclosed) survives and
+    // is pinned here against the transactional refusal that now covers it.
     const frameKey = buildFrameKey('1');
+    const retry = frontierEntry();
     const target = state({
-      resolvedCompletions: {
-        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
-          agentId: 'delegated-a',
-          result: 'fail',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(frameKey, 1),
-          completedAt: '2026-06-17T00:01:00.000Z',
-        }),
-      },
+      retryCount: 1,
+      snapshot: { context: { delegateFrontier: [retry.persisted] } },
     });
     await manager.save(target);
-    const retry = frontierEntry();
-
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
-      state: state({ retryCount: 1 }),
+      state: target,
       unresolved: 1,
-      applied: [
-        {
-          key: buildCompletionKey(activeFrame(frameKey, 1), '1'),
-          completion: buildCurrentCursorResolvedCompletionForTest({
-            agentId: 'delegated-a',
-            result: 'fail',
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, 1),
-            completedAt: '2026-06-17T00:01:00.000Z',
-          }),
-          stateBefore: target,
-          stateAfter: state({ retryCount: 1 }),
-          snapshot: { context: { lastAction: { type: 'RETRY', origin: 'aggregation' } } },
-        },
-      ],
+      applied: [],
     });
-    await manager.save(
-      state({
-        retryCount: 1,
-        snapshot: {
-          context: {
-            delegateFrontier: [retry.persisted],
-          },
-        },
+    // The consume DERIVES cleanly — the projection half succeeds, exactly as in
+    // the old `consume_failed` scenario. What differs is that the derived state
+    // reaches the store only through the collection's one commit.
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValue(preparedMutation(state({ ...target, snapshot: { context: {} } })));
+    const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
+    const svc = makeCollectionService({
+      actorMutationRunner: runnerWithPreCommitEffect(async () => {
+        await manager.save({ ...target, retryCount: 2 });
       }),
-    );
-    jest.spyOn(actorService, 'observeExecutionUnitEntry').mockResolvedValue([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1', total: 2, substep: '1' },
-            stepName: '1',
-            hasCommand: false,
-            isSubstep: true,
-            prompted: false,
-            artifacts: {},
-            delegateFrontier: [retry.public],
-          },
-        },
-      },
-    ]);
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+    });
 
-    const outcome = await collectionService.collectDelegationOutcomes({
+    const outcome = await svc.collectDelegationOutcomes({
       targetState: target,
       steps,
       callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
-    expect(outcome).toEqual({
-      kind: 'collection_failed',
-      targetRunId: runId,
-      reason: 'frontier_consume_failed',
-      // Was `COLLECT_OPERATION_FAILED`. The condition — a projected frontier
-      // whose consume did not commit — is reached identically from the CLI
-      // execution loop, so it carries a condition-named code rather than the
-      // collect command's bucket (F6).
-      code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-      message: 'Failed to consume delegation frontier after collect re-entry; retry collect',
-    });
+    expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId });
+    // No disclosure: observation is strictly post-commit, so a refused commit
+    // reconstructs no bearers at all.
+    expect(observeEntrySpy).not.toHaveBeenCalled();
+    // ...and the frontier is still persisted, so the next collect re-projects it.
+    expect(await persistedFrontier(runId)).toEqual([retry.persisted]);
   });
 
   it('re-projects and consumes a pending retry frontier on a later no-op collect', async () => {
-    // Retryable-frontier regression: a PRIOR collect applied outcomes but failed to
-    // consume the retry frontier (transient sendAndSync race), so the frontier
-    // stays persisted. A later collect drains nothing new (applied:0) but MUST
-    // still re-project + consume the pending frontier and surface its
-    // observations — not strand it behind a terminal `already_collected` no-op.
+    // Retryable-frontier regression: a PRIOR collect projected a retry frontier
+    // whose transaction refused, so the frontier stays persisted. A later collect
+    // drains nothing new (applied:0) but MUST still re-project + consume the
+    // pending frontier and surface its observations — not strand it behind a
+    // terminal `already_collected` no-op.
     const frameKey = buildFrameKey('1');
     const retry = frontierEntry();
     const target = state({
@@ -753,7 +900,7 @@ describe('RunbookCollectionService', () => {
 
     // Drain finds no unapplied outcomes for the scope (the earlier collect
     // already applied them): status 'continue' with applied: [].
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: target,
       unresolved: 1,
@@ -779,12 +926,10 @@ describe('RunbookCollectionService', () => {
     const observeEntrySpy = jest
       .spyOn(actorService, 'observeExecutionUnitEntry')
       .mockResolvedValue(reEntryEffects);
-    // Frontier consume succeeds this time, so the projection is surfaced.
-    const sendAndSyncSpy = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: target,
-      snapshot: { context: {} },
-      effects: [],
-    });
+    // Frontier consume derives cleanly this time, so the projection is surfaced.
+    const consumeSpy = jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValue(preparedMutation(target, { context: {} }));
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
@@ -800,9 +945,12 @@ describe('RunbookCollectionService', () => {
       reEntryObservations: reEntryEffects,
     });
     expect(observeEntrySpy).toHaveBeenCalledTimes(1);
-    expect(sendAndSyncSpy).toHaveBeenLastCalledWith(runId, steps, {
-      type: 'DELEGATE_FRONTIER_CONSUMED',
-    });
+    // Read the captured call rather than matching it: see the TS2589 note above.
+    const consumeCall = consumeSpy.mock.calls.at(-1);
+    expect(consumeCall?.[0]).toBe(runId);
+    expect(consumeCall?.[1]).toEqual(target);
+    expect(consumeCall?.[2]).toEqual(steps);
+    expect(consumeCall?.[3]).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
   });
 
   it('returns already_collected when the scope has no unapplied outcomes to drain', async () => {
@@ -990,13 +1138,14 @@ describe('RunbookCollectionService', () => {
       },
     });
     await manager.save(target);
-    // sendAndSync is spied so the real machine is never reconstructed; the live
-    // row is the authoritative outcome signal, so readiness must not refuse.
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: state({ id: runId, step: '1', substep: undefined, lifecycle: 'running' }),
-      snapshot: {},
-      effects: [],
-    });
+    // prepareActorMutation is spied so the real machine is never reconstructed;
+    // the live row is the authoritative outcome signal, so readiness must not
+    // refuse.
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValue(
+        preparedMutation(state({ id: runId, step: '1', substep: undefined, lifecycle: 'running' })),
+      );
     const result = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps: oneSubstepSteps,
@@ -1053,13 +1202,19 @@ describe('RunbookCollectionService', () => {
       ...overrides,
     });
     await manager.save(controlled);
-    // sendAndSync is spied so the real machine is never reconstructed; it returns
-    // the terminal state the drain observes (status derived from lifecycle).
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: state({ id: controlledRunId, step: '1', substep: undefined, lifecycle, ...overrides }),
-      snapshot: {},
-      effects: [],
-    });
+    // The collect target is the CONTROLLED run, so the presented bearer must be
+    // the claim that actually controls it — the fence captures `(run, claim)` and
+    // re-checks that pairing at commit.
+    presentClaim(controlledClaim);
+    // prepareActorMutation is spied so the real machine is never reconstructed; it
+    // derives the terminal state the drain observes (status from lifecycle).
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValue(
+        preparedMutation(
+          state({ id: controlledRunId, step: '1', substep: undefined, lifecycle, ...overrides }),
+        ),
+      );
     return { controlled };
   }
 
@@ -1094,11 +1249,18 @@ describe('RunbookCollectionService', () => {
   });
 
   it('releases the target run from session targeting when collection drives it terminal', async () => {
+    // BEHAVIOUR CHANGE: the release is no longer a post-lifecycle
+    // `sessionService.releaseRunbook` call — it is a `when: 'terminal'` release
+    // folded into the SAME owned-set commit as the terminal state (#556). So the
+    // assertion moved from "the seam called the session writer" to "the committed
+    // session no longer targets the run", and the seam's own session write must
+    // never fire.
     const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
     await manager.save(ancestor);
     const { controlled } = await seedTerminalControlled('completed', 'pass', {
       parentLinkage: delegationLinkage,
     });
+    expect(await defaultStack()).toContain(controlledRunId);
 
     await collectionService.collectDelegationOutcomes({
       targetState: controlled,
@@ -1107,22 +1269,28 @@ describe('RunbookCollectionService', () => {
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
-    expect(releaseRunbookSpy).toHaveBeenCalledWith(controlledRunId, {
-      retainClaimsAsTerminal: true,
-    });
+    expect(await defaultStack()).not.toContain(controlledRunId);
+    expect(releaseRunbookSpy).not.toHaveBeenCalled();
+    // `retainClaimsAsTerminal: true` — the claim tombstone survives so a later
+    // `--claim-id` confirm/conflict still resolves `terminal` rather than `missing`.
+    expect((await manager.loadSession()).claims).toHaveProperty(controlledClaim.claimKey);
   });
 
-  it('preserves the committed terminal result when the session release rejects (best-effort cleanup, RD-102)', async () => {
+  it('commits the terminal state, its release, and its parent report as one unit', async () => {
+    // REPLACES "preserves the committed terminal result when the session release
+    // rejects (best-effort cleanup, RD-102)". That test pinned a partial write
+    // surviving a later failure: the drain had already committed the terminal
+    // lifecycle, so a rejecting `releaseRunbook` could leave a completed run on
+    // the session stack. Under the transaction that state is unrepresentable —
+    // there is no separate release to reject — so the assertion is INVERTED into
+    // its all-or-none twin: all three effects are observable together, and the
+    // best-effort session writer is never reached.
     const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
     await manager.save(ancestor);
     const { controlled } = await seedTerminalControlled('completed', 'pass', {
       parentLinkage: delegationLinkage,
     });
-    // The drain already persisted the terminal lifecycle before this release
-    // runs; releaseRunbook is idempotent and PID-stale-reclaimable, so a failed
-    // release only leaks a self-healing session-stack entry. It must never mask
-    // the committed collection_applied outcome.
-    releaseRunbookSpy.mockRejectedValueOnce(new Error('session lock contended'));
+    releaseRunbookSpy.mockRejectedValue(new Error('the seam must not write the session directly'));
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
@@ -1131,22 +1299,29 @@ describe('RunbookCollectionService', () => {
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
-    expect(releaseRunbookSpy).toHaveBeenCalledWith(controlledRunId, {
-      retainClaimsAsTerminal: true,
-    });
     expect(outcome.kind).toBe('collection_applied');
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
     expect(outcome.lifecycle).toBe('completed');
     expect(outcome.reportedTerminalOutcome).toBe(true);
+    // 1. the child's terminal state, 2. the parent's outcome row, 3. the release.
+    expect((await manager.load(controlledRunId))?.lifecycle).toBe('completed');
+    expect(
+      Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
+    ).toHaveLength(1);
+    expect(await defaultStack()).not.toContain(controlledRunId);
+    expect(releaseRunbookSpy).not.toHaveBeenCalled();
   });
 
   it('does NOT release the target when collection leaves it running', async () => {
     // Mirror "reports the active-run lifecycle from the drained state, not the
-    // caller input" (:1504-1535): a 'continue' drain leaves the run running, so
-    // the CLI execution loop — not the collection seam — owns release.
+    // caller input": a 'continue' drain leaves the run running, so the CLI
+    // execution loop — not the collection seam — owns release. `when: 'terminal'`
+    // is what makes this conditional: the drain inside `beforeEffect` decides the
+    // lifecycle long after the release input is built, so an unconditional release
+    // would drop a live run off session targeting on every ordinary collect.
     const frameKey = buildFrameKey('1');
     const drainedState = state({ id: runId, lifecycle: 'running' });
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: drainedState,
       unresolved: 0,
@@ -1162,6 +1337,7 @@ describe('RunbookCollectionService', () => {
       frame: activeFrame(frameKey, 1),
     });
 
+    expect(await defaultStack()).toContain(runId);
     expect(releaseRunbookSpy).not.toHaveBeenCalled();
   });
 
@@ -1189,10 +1365,9 @@ describe('RunbookCollectionService', () => {
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
     });
-    // #556: a collect that drives the target STOPPED-terminal releases it too.
-    expect(releaseRunbookSpy).toHaveBeenCalledWith(controlledRunId, {
-      retainClaimsAsTerminal: true,
-    });
+    // #556: a collect that drives the target STOPPED-terminal releases it too —
+    // `when: 'terminal'` covers both terminal lifecycles, not just `completed`.
+    expect(await defaultStack()).not.toContain(controlledRunId);
   });
 
   it('does not report a terminal child upward when the verified claim lacks report grant', async () => {
@@ -1204,7 +1379,7 @@ describe('RunbookCollectionService', () => {
     sessionService.verifyClaimId = async () => ({
       status: 'verified',
       claim: {
-        claimKey,
+        claimKey: presentedClaimKey,
         controlledRunId: runId,
         grants: [
           { action: 'collect-for-run', runId },
@@ -1290,14 +1465,7 @@ describe('RunbookCollectionService', () => {
       const advanceInlineParent = jest
         .fn<AdvanceInlineParent>()
         .mockResolvedValue({ status: 'active' });
-      const svc = new RunbookCollectionService({
-        manager,
-        actorService,
-        lifecycleService,
-        completionService,
-        sessionService,
-        advanceInlineParent,
-      });
+      const svc = makeCollectionService({ advanceInlineParent });
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1327,14 +1495,7 @@ describe('RunbookCollectionService', () => {
         parentLinkage: { ...inlineLinkage, parentRunId: controlledRunId },
       });
       const advanceInlineParent = jest.fn<AdvanceInlineParent>();
-      const svc = new RunbookCollectionService({
-        manager,
-        actorService,
-        lifecycleService,
-        completionService,
-        sessionService,
-        advanceInlineParent,
-      });
+      const svc = makeCollectionService({ advanceInlineParent });
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1384,7 +1545,7 @@ describe('RunbookCollectionService', () => {
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: { ...delegationLinkage, parentRunId: controlledRunId },
       });
-      const verified = await sessionService.verifyClaimId(claimId);
+      const verified = await sessionService.verifyClaimId(bearerClaimId);
       if (verified.status !== 'verified') throw new Error('fixture claim must verify');
       expect(claimCanReportDelegationResult(verified.claim, controlled)).toBe(false);
       expect(
@@ -1394,15 +1555,11 @@ describe('RunbookCollectionService', () => {
         }),
       ).toBe(true);
 
-      const svc = new RunbookCollectionService({
-        manager,
-        actorService,
-        lifecycleService,
-        completionService,
-        sessionService,
-        advanceInlineParent: jest.fn<AdvanceInlineParent>(),
-      });
-      const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+      const svc = makeCollectionService({ advanceInlineParent: jest.fn<AdvanceInlineParent>() });
+      // The report is now PREPARED into the same commit as the terminal state, so
+      // the write the gate must skip is `prepareChildCompletion`, not the
+      // standalone `recordChildCompletion` the old sequence used.
+      const prepareSpy = jest.spyOn(completionService, 'prepareChildCompletion');
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1418,8 +1575,8 @@ describe('RunbookCollectionService', () => {
         // no channel on which a trip could have been silently dropped.
         expect(outcome.terminalInlineAdvance).toBeUndefined();
       }
-      // The gate short-circuits before the seam, so nothing was recorded upward.
-      expect(recordSpy).not.toHaveBeenCalled();
+      // The gate short-circuits before the seam, so nothing was prepared upward.
+      expect(prepareSpy).not.toHaveBeenCalled();
     });
 
     it('reports report-only for a delegation-linked terminal target (claim gate honoured)', async () => {
@@ -1429,14 +1586,7 @@ describe('RunbookCollectionService', () => {
         parentLinkage: delegationLinkage,
       });
       const advanceInlineParent = jest.fn<AdvanceInlineParent>();
-      const svc = new RunbookCollectionService({
-        manager,
-        actorService,
-        lifecycleService,
-        completionService,
-        sessionService,
-        advanceInlineParent,
-      });
+      const svc = makeCollectionService({ advanceInlineParent });
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1467,15 +1617,8 @@ describe('RunbookCollectionService', () => {
         parentLinkage: unauthorizedLinkage,
       });
       const advanceInlineParent = jest.fn<AdvanceInlineParent>();
-      const svc = new RunbookCollectionService({
-        manager,
-        actorService,
-        lifecycleService,
-        completionService,
-        sessionService,
-        advanceInlineParent,
-      });
-      const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+      const svc = makeCollectionService({ advanceInlineParent });
+      const prepareSpy = jest.spyOn(completionService, 'prepareChildCompletion');
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1488,10 +1631,13 @@ describe('RunbookCollectionService', () => {
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
-      // The authorization gate must skip the write entirely — a mere
+      // The authorization gate must skip the preparation entirely — a mere
       // `reportedTerminalOutcome: false` could also mean a duplicate/not-applicable
-      // recording, so prove the completion write never fired.
-      expect(recordSpy).not.toHaveBeenCalled();
+      // preparation, so prove no parent row was ever derived, and none committed.
+      expect(prepareSpy).not.toHaveBeenCalled();
+      expect(
+        Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
+      ).toHaveLength(0);
       expect(advanceInlineParent).not.toHaveBeenCalled();
     });
   });
@@ -1578,7 +1724,7 @@ describe('RunbookCollectionService', () => {
     });
     await manager.save(target);
 
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'failed',
       reason: 'target_mismatch',
       message: 'Resolved completion does not match the current cursor.',
@@ -1590,6 +1736,7 @@ describe('RunbookCollectionService', () => {
         targetFrame: activeFrame(frameKey, 1),
         completedAt: '2026-06-17T00:06:00.000Z',
       }),
+      state: target,
       unresolved: 1,
       applied: [],
     });
@@ -1695,13 +1842,13 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('reports upward using the reloaded terminal lifecycle, not a stale in-memory target', async () => {
-    // The in-memory `targetState` passed by the caller is stale (`running`),
-    // but the drain advanced and persisted the run to `completed`. The terminal
-    // branch reloads the committed state via `manager.load` so the upward report
-    // observes `completed` → records a pass → `reportedTerminalOutcome: true`.
-    // The `&&` mutant of the reload `??`-chain would fall back to the stale
-    // `running` target, whose non-terminal lifecycle yields no outcome → false.
+  it('reports upward from the CAPTURED run, not a stale in-memory target', async () => {
+    // The in-memory `targetState` passed by the caller is stale (`running`), and
+    // the transaction never trusts it: the drain runs against the state captured
+    // under the lease, so the upward report observes the terminal lifecycle that
+    // drain derived → records a pass → `reportedTerminalOutcome: true`. This used
+    // to be a post-write `manager.load` reload; the capture is strictly stronger,
+    // because the state it reads is the exact version the commit is guarded on.
     const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
     await manager.save(ancestor);
     const { controlled } = await seedTerminalControlled('completed', 'pass', {
@@ -1723,13 +1870,14 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('does not report upward when the reloaded state is not actually terminal', async () => {
-    // Defensive guard: the drain reports a terminal status, but the reloaded
-    // state is still `running` (e.g. a racing writer). `reportTerminalOutcome`
-    // must short-circuit on the non-terminal lifecycle (`lifecycleToDelegationOutcome`
-    // returns undefined → `if (!result) return false`) and never call
-    // `recordChildCompletion`. The `if (false)` mutant would proceed to record;
-    // the `return true` mutant would claim a report was made.
+  it('does not report upward when the prepared state is not actually terminal', async () => {
+    // Defensive guard: the drain reports a terminal status, but the state it
+    // prepared is still `running` (an inconsistent drain). The report must
+    // short-circuit on the non-terminal lifecycle — the guard now lives inside
+    // `prepareChildCompletion`, which returns `not-applicable` for a non-terminal
+    // child, so `reportedTerminalOutcome` is false AND no parent row is prepared
+    // or committed. Asserting the committed ancestor, not a call count, is what
+    // keeps this honest now that preparation is unconditional.
     const frameKey = buildFrameKey('1');
     const controlled = state({
       id: controlledRunId,
@@ -1748,12 +1896,13 @@ describe('RunbookCollectionService', () => {
       },
     });
     await manager.save(controlled);
-    // Drain reports terminal, but the persisted (reloaded) state above stays
-    // `running` — the inconsistency the guard exists to absorb.
+    await manager.save(state({ id: ancestorRunId, resolvedCompletions: {} }));
+    presentClaim(controlledClaim);
+    // Drain reports terminal, but the state it prepared stays `running` — the
+    // inconsistency the guard exists to absorb.
     jest
-      .spyOn(completionService, 'drainResolvedCompletions')
-      .mockResolvedValue({ status: 'done', unresolved: 0, applied: [] });
-    const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+      .spyOn(completionService, 'prepareResolvedCompletionDrain')
+      .mockResolvedValue({ status: 'done', state: controlled, unresolved: 0, applied: [] });
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
@@ -1767,22 +1916,27 @@ describe('RunbookCollectionService', () => {
       targetRunId: controlledRunId,
       reportedTerminalOutcome: false,
     });
-    expect(recordSpy).not.toHaveBeenCalled();
+    expect(
+      Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
+    ).toHaveLength(0);
+    // A `running` prepared state is not terminal, so the conditional release
+    // must not fire either — the run stays on session targeting.
+    expect(await defaultStack()).toContain(controlledRunId);
   });
 
   it('reports reportedTerminalOutcome:false when the ancestor already recorded the completion', async () => {
-    // The reloaded run is genuinely terminal and has a delegating ancestor, so
-    // the outcome is recorded upward — but the ancestor already holds that row,
-    // so `recordChildCompletion` returns 'duplicate'. Only a literal 'recorded'
-    // status counts as a fresh upward report, so `reportedTerminalOutcome` is
-    // false. The `return true` mutant of `recorded === 'recorded'` would
+    // The run is genuinely terminal and has a delegating ancestor, so the outcome
+    // is prepared upward — but the ancestor already holds that row, so
+    // `prepareChildCompletion` answers 'duplicate'. Only a literal 'recorded'
+    // disposition counts as a fresh upward report, so `reportedTerminalOutcome` is
+    // false. The `return true` mutant of `prepared?.kind === 'recorded'` would
     // mis-claim a duplicate as a fresh report.
     const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
     await manager.save(ancestor);
     const { controlled } = await seedTerminalControlled('completed', 'pass', {
       parentLinkage: delegationLinkage,
     });
-    jest.spyOn(completionService, 'recordChildCompletion').mockResolvedValue('duplicate');
+    jest.spyOn(completionService, 'prepareChildCompletion').mockReturnValue({ kind: 'duplicate' });
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
@@ -1862,13 +2016,13 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('reports upward from the freshly reloaded run, not the drained applied state', async () => {
-    // Terminal branch: the reloaded run is the terminal source of truth. Drain
-    // reports `done` but its last applied state is a stale, non-terminal snapshot.
-    // The reload (`manager.load`) returns the committed `completed` run with a
-    // delegating ancestor, so the outcome is recorded upward. Collapsing the
-    // FIRST `??` of the reload chain to `&&` would use the drained applied state
-    // (no parent linkage, non-terminal) instead → no upward report.
+  it('reports upward from the PREPARED terminal state, not the last applied record', async () => {
+    // Terminal branch: the drain's prepared `state` is the terminal source of
+    // truth, and the post-write `manager.load` reload it replaced is gone — a
+    // transaction cannot read back what it has not committed yet. Drain reports
+    // `done` with a prepared `completed` state carrying the delegating linkage,
+    // while its last applied record is a stale, parent-less, non-terminal
+    // snapshot. Reading the applied record instead would yield no upward report.
     const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
     await manager.save(ancestor);
     const frameKey = buildFrameKey('1');
@@ -1889,12 +2043,16 @@ describe('RunbookCollectionService', () => {
       },
     });
     await manager.save(controlled);
-    // Drained applied state is a non-terminal, parent-less snapshot — distinct
-    // from the reloaded `completed` run, so the two reload operands diverge.
+    presentClaim(controlledClaim);
+    // The last applied record is a non-terminal, parent-less snapshot — distinct
+    // from the prepared `completed` state, so the two operands diverge.
     const staleApplied = state({ id: controlledRunId, lifecycle: 'running' });
-    jest
-      .spyOn(completionService, 'drainResolvedCompletions')
-      .mockResolvedValue({ status: 'done', unresolved: 0, applied: [appliedRecord(staleApplied)] });
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
+      status: 'done',
+      state: controlled,
+      unresolved: 0,
+      applied: [appliedRecord(staleApplied)],
+    });
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
@@ -1913,13 +2071,12 @@ describe('RunbookCollectionService', () => {
 
   it('reports the active-run lifecycle from the drained state, not the caller input', async () => {
     // Non-terminal (`continue`) branch with outcomes applied: the reported
-    // `lifecycle` must come from the last drained applied state, not the caller's
-    // (possibly stale) `targetState`. Here the drained state is `running` while
-    // the caller passes a stale `completed` input; collapsing the `?? targetState`
-    // fallback to `&& targetState` would surface the stale `completed`.
+    // `lifecycle` must come from the drain's prepared state, not the caller's
+    // (possibly stale) `targetState`. Here the prepared state is `running` while
+    // the caller passes a stale `completed` input.
     const frameKey = buildFrameKey('1');
     const drainedState = state({ id: runId, lifecycle: 'running' });
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: drainedState,
       unresolved: 0,
@@ -1967,7 +2124,7 @@ describe('RunbookCollectionService', () => {
     await manager.save(target);
 
     const ghostBefore = state({ step: 'ghost', substep: undefined });
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: state({ substep: '2' }),
       unresolved: 0,
@@ -2004,12 +2161,12 @@ describe('RunbookCollectionService', () => {
   // malformed-snapshot guards (collection-service.ts L282-314).
   //
   // Each malformed shape drives the validation guard down a distinct branch.
-  // The scaffold mirrors the line-509 "later no-op collect" test: drain reports
-  // `continue` with `applied: []`, and `manager.load` reloads the persisted
-  // target whose snapshot carries the (malformed) frontier.
+  // The scaffold mirrors the "later no-op collect" test: the drain prepares
+  // `continue` with `applied: []` over the target whose snapshot carries the
+  // (malformed) frontier.
   // ---------------------------------------------------------------------------
 
-  /** Run a no-op collect whose reloaded target snapshot carries the given frontier. */
+  /** Run a no-op collect whose target snapshot carries the given frontier. */
   async function collectWithPersistedFrontier(delegateFrontier: unknown) {
     const frameKey = buildFrameKey('1');
     const target = state({
@@ -2017,7 +2174,7 @@ describe('RunbookCollectionService', () => {
       snapshot: { context: { delegateFrontier } },
     });
     await manager.save(target);
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: target,
       unresolved: 1,
@@ -2115,7 +2272,7 @@ describe('RunbookCollectionService', () => {
       },
     };
     const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
-    const consumeSpy = jest.spyOn(actorService, 'sendAndSync');
+    const consumeSpy = jest.spyOn(actorService, 'prepareActorMutation');
 
     await expect(collectWithPersistedFrontier([rotatedIssuer])).resolves.toMatchObject({
       kind: 'collection_failed',
@@ -2136,7 +2293,7 @@ describe('RunbookCollectionService', () => {
       tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`),
     };
     const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
-    const consumeSpy = jest.spyOn(actorService, 'sendAndSync');
+    const consumeSpy = jest.spyOn(actorService, 'prepareActorMutation');
 
     await expect(collectWithPersistedFrontier([wrongHash])).resolves.toMatchObject({
       kind: 'collection_failed',
@@ -2191,7 +2348,7 @@ describe('RunbookCollectionService', () => {
       },
     });
     await manager.save(target);
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: target,
       unresolved: 1,
@@ -2235,7 +2392,7 @@ describe('RunbookCollectionService', () => {
       ...overrides,
     });
     await manager.save(target);
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: target,
       unresolved: 1,
@@ -2261,11 +2418,9 @@ describe('RunbookCollectionService', () => {
     const observeEntrySpy = jest
       .spyOn(actorService, 'observeExecutionUnitEntry')
       .mockResolvedValue(reEntryEffects);
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: target,
-      snapshot: { context: {} },
-      effects: [],
-    });
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValue(preparedMutation(target, { context: {} }));
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
@@ -2335,6 +2490,283 @@ describe('RunbookCollectionService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // All-or-none: the transaction this change exists to create.
+  //
+  // Collect used to authorize, then commit one `sendAndSync` transaction per
+  // completion, then release the session, then propagate upward — four or more
+  // separately committed writes, none of which re-checked the collector's
+  // captured `claim_generation`. Every test here fails against that design, and
+  // each says how.
+  // ---------------------------------------------------------------------------
+
+  describe('all-or-none transactional collection', () => {
+    /** Target carrying two reported outcomes, ready for a two-apply drain. */
+    async function seedTwoReportedOutcomes(): Promise<RunbookState> {
+      const frameKey = buildFrameKey('1');
+      const target = state({
+        resolvedCompletions: {
+          [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+            agentId: 'delegated-a',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:01:00.000Z',
+          }),
+          [buildCompletionKey(activeFrame(frameKey, 1), '2')]: buildResolvedCompletion({
+            agentId: 'delegated-b',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:02:00.000Z',
+          }),
+        },
+      });
+      await manager.save(target);
+      return target;
+    }
+
+    /**
+     * Fake the machine for a two-completion drain.
+     *
+     * @param target - The captured target whose completions are being applied.
+     * @returns The `prepareActorMutation` spy, so a test can count the derivations.
+     */
+    function fakeTwoApplyMachine(target: RunbookState) {
+      return jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockResolvedValueOnce(
+          preparedMutation(
+            state({ substep: '2', resolvedCompletions: target.resolvedCompletions }),
+          ),
+        )
+        .mockResolvedValueOnce(
+          preparedMutation(state({ step: '2', substep: undefined, lifecycle: 'running' })),
+        );
+    }
+
+    /** Assert that a refused collection left the target exactly as captured. */
+    async function expectTargetUntouched(captured: RunbookState): Promise<void> {
+      const persisted = await manager.load(runId);
+      // No delegation outcome consumed: both reported rows are still collectable.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual(
+        Object.keys(captured.resolvedCompletions ?? {}),
+      );
+      // No substep advanced: the cursor never left the first delegate substep.
+      expect(persisted?.step).toBe('1');
+      expect(persisted?.substep).toBe('1');
+      // No session release: the run is still targetable.
+      expect(await defaultStack()).toContain(runId);
+      expect(releaseRunbookSpy).not.toHaveBeenCalled();
+    }
+
+    it('writes nothing when the collector bearer is REPLACED after authorization', async () => {
+      // THE defect. `writeStateAtVersion` guards on `state_version` only, and its
+      // own docstring warns that a `committed` result is not evidence the caller's
+      // authority was still valid — the generation check lives in
+      // `classifyCommitRow`, which the old per-write path never reached. So a
+      // bearer rotated in the window after the authorization gate still landed
+      // every apply, the release, and the upward report.
+      //
+      // The rotation is committed from inside `recordClaimSeen`, which is the
+      // FIRST thing collect does after the grant is authorized — the same hook
+      // `lifecycle-command-service.test.ts` uses to pin the identical window on
+      // abort.
+      const target = await seedTwoReportedOutcomes();
+      fakeTwoApplyMachine(target);
+      recordClaimSeenSpy.mockImplementationOnce(async () => {
+        await rotateControllingClaim(runId);
+        return {
+          kind: 'recorded',
+          claimKey: presentedClaimKey,
+          lastSeenAt: '2026-06-28T00:00:00.000Z',
+        };
+      });
+
+      const outcome = await collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome).toMatchObject({ kind: 'claim_superseded', runId });
+      await expectTargetUntouched(target);
+    });
+
+    it('writes nothing when the collector bearer is superseded after the whole workflow is PREPARED', async () => {
+      // The narrower half of the same window, and the one only a commit-time
+      // re-check can catch: the collection has already captured its state and
+      // derived every apply, the frontier decision and the terminal decision. A
+      // per-write design has committed applies by this point; here the derivation
+      // is still entirely in memory, so the aggregate refuses and no byte lands.
+      const target = await seedTwoReportedOutcomes();
+      const prepareSpy = fakeTwoApplyMachine(target);
+      const svc = makeCollectionService({
+        actorMutationRunner: runnerWithPreCommitEffect(() => rotateControllingClaim(runId)),
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome).toMatchObject({ kind: 'claim_superseded', runId });
+      // Both applies really were derived before the refusal — otherwise the test
+      // would pass for the trivial reason that nothing was ever prepared.
+      expect(prepareSpy).toHaveBeenCalledTimes(2);
+      await expectTargetUntouched(target);
+    });
+
+    it('persists NO prepared completion when the commit fails after every apply is derived', async () => {
+      // Same shape, different refusal: a concurrent writer moves the target's
+      // `state_version` between capture and commit. Under per-write commits the
+      // first apply would already be durable and the second would fail, leaving
+      // the run mid-drain with one outcome consumed and one not — the stranded
+      // prefix the aggregate exists to make unrepresentable.
+      const target = await seedTwoReportedOutcomes();
+      const prepareSpy = fakeTwoApplyMachine(target);
+      const svc = makeCollectionService({
+        actorMutationRunner: runnerWithPreCommitEffect(async () => {
+          await manager.save({ ...target, retryCount: 9 });
+        }),
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId });
+      expect(prepareSpy).toHaveBeenCalledTimes(2);
+      // The concurrent writer's own change is the only thing that landed.
+      expect((await manager.load(runId))?.retryCount).toBe(9);
+      await expectTargetUntouched(target);
+    });
+
+    /**
+     * Seed a still-RUNNING delegated child whose drain derives a terminal state.
+     *
+     * Distinct from `seedTerminalControlled`, which persists the child already
+     * terminal: here the terminal lifecycle is something the collection produces,
+     * so "the child went terminal" is observable in the store rather than assumed.
+     *
+     * @returns The captured child state and the terminal state its drain derives.
+     */
+    async function seedRunningDelegatedChild(): Promise<{
+      readonly child: RunbookState;
+      readonly terminal: RunbookState;
+    }> {
+      const frameKey = buildFrameKey('1');
+      await manager.save(state({ id: ancestorRunId, resolvedCompletions: {} }));
+      const child = state({
+        id: controlledRunId,
+        lifecycle: 'running',
+        parentLinkage: delegationLinkage,
+        substepStates: [{ id: '1', frameKey, status: 'done' }],
+        resolvedCompletions: {
+          [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+            agentId: 'delegated-grandchild',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:03:00.000Z',
+          }),
+        },
+      });
+      await manager.save(child);
+      presentClaim(controlledClaim);
+      const terminal = state({
+        id: controlledRunId,
+        step: '1',
+        substep: undefined,
+        lifecycle: 'completed',
+        parentLinkage: delegationLinkage,
+      });
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockResolvedValue(preparedMutation(terminal));
+      return { child, terminal };
+    }
+
+    it('commits the child terminal state, the parent report and the release together', async () => {
+      // The positive control for the refusal below: all three effects of a
+      // terminal collect are observable at once, from one commit.
+      const { child } = await seedRunningDelegatedChild();
+
+      const outcome = await collectionService.collectDelegationOutcomes({
+        targetState: child,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome).toMatchObject({
+        kind: 'collection_applied',
+        lifecycle: 'completed',
+        reportedTerminalOutcome: true,
+      });
+      expect((await manager.load(controlledRunId))?.lifecycle).toBe('completed');
+      expect(
+        Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
+      ).toHaveLength(1);
+      expect(await defaultStack()).not.toContain(controlledRunId);
+    });
+
+    it('writes neither the child terminal state, the parent report nor the release when the parent commit refuses', async () => {
+      // The delegating GRANDPARENT is the member that refuses: a concurrent
+      // writer moves its `state_version` between capture and commit. The child is
+      // not the refusing run, and under the old sequence its terminal lifecycle
+      // and its session release had already committed before the upward report
+      // was even attempted — the exact window where a child could be terminal,
+      // released, and yet unknown to the parent that delegated it.
+      //
+      // Note the refusal is NOT a drop: the grandparent is only
+      // `optionalWhenClaimSuperseded`, so anything other than a retired claim
+      // refuses the whole set rather than silently proceeding without it.
+      const { child } = await seedRunningDelegatedChild();
+      const ancestor = await manager.load(ancestorRunId);
+      if (!ancestor) throw new Error('fixture ancestor must exist');
+      const svc = makeCollectionService({
+        actorMutationRunner: runnerWithPreCommitEffect(async () => {
+          await manager.save({ ...ancestor, retryCount: 4 });
+        }),
+      });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: child,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome).toMatchObject({
+        kind: 'concurrent_modification',
+        runId: ancestorRunId,
+      });
+      // 1. the child never went terminal...
+      expect((await manager.load(controlledRunId))?.lifecycle).toBe('running');
+      // 2. ...its outcome row never reached the delegating grandparent...
+      expect(
+        Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
+      ).toHaveLength(0);
+      // 3. ...and the run was not released from session targeting.
+      expect(await defaultStack()).toContain(controlledRunId);
+      expect(releaseRunbookSpy).not.toHaveBeenCalled();
+      // The child's reported outcome is still there to collect on a retry.
+      expect(
+        Object.keys((await manager.load(controlledRunId))?.resolvedCompletions ?? {}),
+      ).toHaveLength(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // F6 — one condition, one code, across both entry points.
   //
   // `rundown collect` and `rundown run` reach the SAME re-entry frontier seam.
@@ -2345,6 +2777,13 @@ describe('RunbookCollectionService', () => {
   // collect side; the
   // execution-loop side is pinned in
   // `packages/cli/__tests__/services/execution-loop.test.ts`.
+  //
+  // Only the PROJECTION half of the pair survives on the collect side. Collect
+  // now drives the FENCED twin of the seam, whose union has no `consume_failed`
+  // arm at all (`prepareReEntryFrontierConsume`), so RD-829 is reachable from the
+  // unfenced execution loop alone — see
+  // "discloses no bearers and consumes no frontier when the enclosing commit
+  // refuses" above for what covers the condition here now.
   // ---------------------------------------------------------------------------
 
   it('reports a refused frontier projection under RD-821, the credential-disclosure code', async () => {
@@ -2369,38 +2808,456 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('reports a failed frontier consume under RD-829, not the collect-operation bucket', async () => {
-    // A consume failure is a DIFFERENT fact from a projection refusal —
-    // projection succeeded, the DELEGATE_FRONTIER_CONSUMED sync did not — and
-    // it is retryable. It needs its own code, carried identically by whichever
-    // entry point drove the seam.
-    const frameKey = buildFrameKey('1');
-    const retry = frontierEntry();
+  it('cannot produce a standalone frontier-consume failure from a fenced collect', async () => {
+    // REPLACES "reports a failed frontier consume under RD-829, not the
+    // collect-operation bucket". The old test forced `sendAndSync` to return null
+    // so the seam reported `consume_failed`; collect no longer calls it. The
+    // fenced twin DERIVES the consume, and a derivation cannot half-commit, so
+    // there is no state in which "projection succeeded but the consume did not
+    // land" is a collect-local fact — it is either committed with everything else
+    // or refused with everything else.
+    //
+    // Pinned structurally, on the union rather than on a scenario: the prepared
+    // outcome's arms are exactly `none | projected | projection_refused`, so a
+    // successful projection can only be `projected`, and `frontier_consume_failed`
+    // has no producer on this path.
     const target = state({
       retryCount: 1,
-      snapshot: { context: { delegateFrontier: [retry.persisted] } },
+      snapshot: { context: { delegateFrontier: [frontierEntry().persisted] } },
     });
     await manager.save(target);
-    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
-      status: 'continue',
-      state: target,
-      unresolved: 1,
-      applied: [],
-    });
-    jest.spyOn(actorService, 'observeExecutionUnitEntry').mockResolvedValue([]);
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+    const consumed = state({ ...target, snapshot: { context: {} } });
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockResolvedValue(preparedMutation(consumed, { context: {} }));
 
-    await expect(
-      collectionService.collectDelegationOutcomes({
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService,
+      steps,
+      state: target,
+      deriveToken: createDelegationTokenDeriver({
+        kind: 'bearer',
+        claimId: bearerClaimId,
+        claimKey: presentedClaimKey,
+      }),
+      entry: {
+        stepId: '1',
+        substepId: '1',
+        position: { current: '1', total: 2, substep: '1' },
+        stepName: '1',
+        isSubstep: true,
+        prompted: false,
+      },
+    });
+
+    expect(prepared.status).toBe('projected');
+    // The seam hands back a state to commit and metadata to disclose afterwards —
+    // never a "the write did not land" arm, because it performs no write.
+    expect(prepared).not.toHaveProperty('status', 'consume_failed');
+    if (prepared.status !== 'projected') throw new Error('expected projected');
+    expect(prepared.nextState).toEqual(consumed);
+    // RD-829 keeps its producer on the UNFENCED path the execution loop drives
+    // (`projectAndConsumeReEntryFrontier` → `consume_failed` →
+    // `ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED`), pinned in
+    // `packages/cli/__tests__/services/execution-loop.test.ts`.
+    expect(ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code).toBe('RD-829');
+  });
+
+  // ---------------------------------------------------------------------------
+  // The INLINE narrowing at the collect boundary.
+  //
+  // `advanceInlineParentAfterCommit` narrows the shared seam's union down to the
+  // inline subset. It used to do that with
+  // `outcome.kind === 'reported' || outcome.kind === 'duplicate' ? { kind:
+  // 'not-applicable' } : outcome`, which silently remaps two DELEGATION
+  // dispositions the seam documents as load-bearing onto a third meaning
+  // ("there was nothing to propagate to"). CLAUDE.md forbids exactly that
+  // collapse, and a `?:` cannot be made exhaustive: a new member added to
+  // `TerminalUpwardPropagationResult` would fall into the pass-through arm and
+  // silently widen the declared `InlineUpwardPropagationResult` return.
+  // ---------------------------------------------------------------------------
+
+  describe('inline upward-propagation narrowing', () => {
+    const inlineArms: readonly [string, InlineUpwardPropagationResult][] = [
+      ['handled', { kind: 'handled' }],
+      ['stopped', { kind: 'stopped' }],
+      ['blocked', { kind: 'blocked' }],
+      ['not-applicable', { kind: 'not-applicable' }],
+      [
+        'linkage-cycle',
+        {
+          kind: 'linkage-cycle',
+          trip: {
+            cause: 'repeat',
+            repeatedRunId: ancestorRunId,
+            code: 'INLINE_PARENT_CYCLE',
+            message: `Parent linkage cycle detected at ${ancestorRunId}`,
+          },
+        },
+      ],
+    ];
+
+    it.each(inlineArms)('passes the %s arm through by identity', (_name, arm) => {
+      // By IDENTITY, not by equality: the `linkage-cycle` arm carries the trip
+      // naming the run to prune, and rebuilding the arm here is precisely the
+      // loss #603 removed from the seam. Nothing on this boundary may rebuild it.
+      expect(narrowInlineUpwardPropagation(arm)).toBe(arm);
+    });
+
+    it.each<['reported' | 'duplicate']>([['reported'], ['duplicate']])(
+      'refuses the delegation-only %s disposition instead of remapping it to not-applicable',
+      (kind) => {
+        // The two arms an inline-linked child can never produce (proved by the
+        // scenario test below). Were one to arrive, it would mean the seam's
+        // contract had changed — an invariant violation, not an expected
+        // refusal, and never a `not-applicable`.
+        const outcome: TerminalUpwardPropagationResult = { kind };
+        expect(() => narrowInlineUpwardPropagation(outcome)).toThrow(
+          `Inline upward propagation yielded the delegation-only disposition "${kind}"`,
+        );
+      },
+    );
+
+    it('collapses a delegation-linked grandparent report INSIDE the seam, not at this boundary', async () => {
+      // The reachability question the narrowing turns on. `collect` only calls
+      // the seam for an INLINE-linked target, but the seam recurses upward, so a
+      // delegation boundary one level up DOES reach `recordChildCompletion` and
+      // DOES produce `{ kind: 'reported' }` — inside the recursion.
+      //
+      // The seam's own severity collapse then discards it: only `linkage-cycle`
+      // and `blocked` bubble out unchanged, `stopped` survives as `stopped`, and
+      // everything else becomes `handled`. So the value that reaches the collect
+      // boundary is `handled`, never `reported`. This test is the evidence for
+      // that claim — it walks child → inline parent → delegating grandparent and
+      // asserts BOTH halves: the grandparent's row was really written (so the
+      // delegation arm really ran) and the boundary still saw `handled`.
+      const greatGrand = state({ id: greatGrandRunId, resolvedCompletions: {} });
+      await manager.save(greatGrand);
+      // The inline parent, itself a delegated child of `greatGrandRunId`.
+      await manager.save(
+        state({
+          id: ancestorRunId,
+          lifecycle: 'completed',
+          resolvedCompletions: {},
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: greatGrandRunId,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+            tokenHash,
+          },
+        }),
+      );
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: inlineLinkage,
+      });
+      // `done` drives the seam's release-and-recurse arm, which is the only way
+      // to reach the delegation level above the inline parent.
+      const advanceInlineParent = jest
+        .fn<AdvanceInlineParent>()
+        .mockResolvedValue({ status: 'done' });
+      const svc = makeCollectionService({ advanceInlineParent });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+      // The recursion really crossed the delegation boundary...
+      expect(
+        Object.keys((await manager.load(greatGrandRunId))?.resolvedCompletions ?? {}),
+      ).toHaveLength(1);
+      // ...and the seam still handed the collect boundary an INLINE arm.
+      expect(outcome.terminalInlineAdvance).toEqual({ kind: 'handled' });
+      expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Aggregate recovery actors — one per OWNED member, not just the target.
+  //
+  // `runAll` records `recovery_pending` for EVERY attempt in the set when the
+  // aggregate effect fails ambiguously, then asks `makeRecoveryActor` to
+  // rehydrate each one. A member with no cached steps makes that factory throw,
+  // and the runner downgrades the throw to `logger.warn('aggregate member
+  // recovery failed; attempt left pending')` and continues — so the delegating
+  // parent could never be recovered through the collect path, silently.
+  // ---------------------------------------------------------------------------
+
+  describe('aggregate recovery actors', () => {
+    /** Inert stand-in so a factory call asserts wiring, not machine rehydration. */
+    function stubRecoveryActor(): RecoveryActor {
+      return {
+        send: () => undefined,
+        getPersistedSnapshot: () => ({}),
+        isInRecoveryState: () => true,
+        stop: () => undefined,
+      };
+    }
+
+    /**
+     * Capture the recovery factory the collection hands to the fence.
+     *
+     * @param overrides - Extra collection-service dependency overrides.
+     * @returns The service and a reader for the captured factory.
+     */
+    function serviceCapturingRecoveryFactory(
+      overrides: Partial<RunbookCollectionServiceDependencies> = {},
+    ) {
+      let captured: EffectfulActorMutationSetRunnerInput<unknown>['makeRecoveryActor'] | undefined;
+      const svc = makeCollectionService({
+        actorMutationRunner: {
+          run: (input) => actorMutationRunner.run(input),
+          async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
+            captured = input.makeRecoveryActor;
+            return await actorMutationRunner.runAll<TResult>(input);
+          },
+        },
+        ...overrides,
+      });
+      return {
+        svc,
+        /**
+         * Read the factory the fence received.
+         *
+         * @returns The captured recovery-actor factory.
+         */
+        makeRecoveryActor: () => {
+          if (!captured) throw new Error('the fence must receive a recovery factory');
+          return captured;
+        },
+      };
+    }
+
+    /**
+     * Seed a terminal delegated child whose collect names its parent in the set.
+     *
+     * @returns The child's captured state.
+     */
+    async function seedDelegatedChildWithParent(): Promise<RunbookState> {
+      await manager.save(state({ id: ancestorRunId, resolvedCompletions: {} }));
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: delegationLinkage,
+      });
+      return controlled;
+    }
+
+    it('rehydrates the delegating parent from that run own resolved steps', async () => {
+      const controlled = await seedDelegatedChildWithParent();
+      // The parent is a DIFFERENT runbook: answering with the collect target's
+      // steps would rehydrate the wrong machine graph, so the loader is keyed on
+      // the run it is asked about.
+      const loadSteps = jest.fn(async (target: RunbookState) => {
+        expect(target.id).toBe(ancestorRunId);
+        return steps;
+      });
+      const createRecoveryActor = jest
+        .spyOn(actorService, 'createRecoveryActor')
+        .mockImplementation(stubRecoveryActor);
+      const { svc, makeRecoveryActor } = serviceCapturingRecoveryFactory({ loadSteps });
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+      expect(outcome.kind).toBe('collection_applied');
+
+      const parent = await manager.load(ancestorRunId);
+      if (!parent) throw new Error('fixture ancestor must exist');
+      // Before this fix the factory threw here, and `runAll` downgraded the
+      // throw to a warn — so the parent could never be recovered by a collect.
+      makeRecoveryActor()(ancestorRunId, parent);
+      expect(loadSteps).toHaveBeenCalledTimes(1);
+      // Read the call directly rather than `toHaveBeenCalledWith`: the matcher
+      // instantiates `RunbookState` deeply enough to trip TS2589, and reference
+      // identity is the stronger assertion here anyway — it pins that the
+      // parent's OWN steps were handed over, not a structural look-alike.
+      const [recoveredState, recoveredSteps] = createRecoveryActor.mock.calls[0] ?? [];
+      expect(recoveredState).toBe(parent);
+      expect(recoveredSteps).toBe(steps);
+    });
+
+    it('rehydrates the collect target from the steps the caller supplied', async () => {
+      // The control: the target's own recovery already worked, and must keep
+      // working — from `input.steps`, never from the parent loader's answer.
+      const controlled = await seedDelegatedChildWithParent();
+      const loadSteps = jest.fn(async () => steps);
+      const createRecoveryActor = jest
+        .spyOn(actorService, 'createRecoveryActor')
+        .mockImplementation(stubRecoveryActor);
+      const { svc, makeRecoveryActor } = serviceCapturingRecoveryFactory({ loadSteps });
+
+      await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      const target = await manager.load(controlledRunId);
+      if (!target) throw new Error('fixture target must exist');
+      makeRecoveryActor()(controlledRunId, target);
+      // Read the call directly: `toHaveBeenCalledWith` trips TS2589 on
+      // `RunbookState`, and identity is the stronger assertion — the target must
+      // rehydrate from the caller's own `steps`, not the loader's answer.
+      const [recoveredState, recoveredSteps] = createRecoveryActor.mock.calls[0] ?? [];
+      expect(recoveredState).toBe(target);
+      expect(recoveredSteps).toBe(oneSubstepSteps);
+    });
+
+    it('never consults the parent loader when the target has no delegating parent', async () => {
+      // A single-member aggregate owns exactly the run whose steps the caller
+      // already supplied, so the loader must not be reached at all.
+      const frameKey = buildFrameKey('1');
+      const target = state({
+        resolvedCompletions: {
+          [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+            agentId: 'delegated-a',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:01:00.000Z',
+          }),
+          [buildCompletionKey(activeFrame(frameKey, 1), '2')]: buildResolvedCompletion({
+            agentId: 'delegated-b',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:02:00.000Z',
+          }),
+        },
+      });
+      await manager.save(target);
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockResolvedValueOnce(
+          preparedMutation(
+            state({ substep: '2', resolvedCompletions: target.resolvedCompletions }),
+          ),
+        )
+        .mockResolvedValueOnce(
+          preparedMutation(state({ step: '2', substep: undefined, lifecycle: 'running' })),
+        );
+      const loadSteps = jest.fn(async () => steps);
+      const createRecoveryActor = jest
+        .spyOn(actorService, 'createRecoveryActor')
+        .mockImplementation(stubRecoveryActor);
+      const { svc, makeRecoveryActor } = serviceCapturingRecoveryFactory({ loadSteps });
+
+      const outcome = await svc.collectDelegationOutcomes({
         targetState: target,
         steps,
         callerEvidence: ORCHESTRATOR_EVIDENCE,
         frame: activeFrame(frameKey, 1),
-      }),
-    ).resolves.toMatchObject({
-      kind: 'collection_failed',
-      reason: 'frontier_consume_failed',
-      code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      expect(loadSteps).not.toHaveBeenCalled();
+      const committed = await manager.load(runId);
+      if (!committed) throw new Error('fixture target must exist');
+      makeRecoveryActor()(runId, committed);
+      // Read the call directly: `toHaveBeenCalledWith` trips TS2589 on
+      // `RunbookState`, and identity pins that the sole member rehydrated from
+      // the caller's own `steps` without the loader contributing anything.
+      const [recoveredState, recoveredSteps] = createRecoveryActor.mock.calls[0] ?? [];
+      expect(recoveredState).toBe(committed);
+      expect(recoveredSteps).toBe(steps);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Post-commit re-entry disclosure — the deliberate fail-loud boundary.
+  // ---------------------------------------------------------------------------
+
+  describe('post-commit re-entry disclosure', () => {
+    /** Seed a collect whose one projected frontier is consumed by the commit. */
+    async function seedFrontierReadyToProject() {
+      const retry = frontierEntry();
+      const target = state({
+        retryCount: 1,
+        snapshot: { context: { delegateFrontier: [retry.persisted] } },
+      });
+      await manager.save(target);
+      const drainSpy = jest
+        .spyOn(completionService, 'prepareResolvedCompletionDrain')
+        .mockResolvedValue({ status: 'continue', state: target, unresolved: 1, applied: [] });
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockResolvedValue(preparedMutation(state({ ...target, snapshot: { context: {} } })));
+      return { target, drainSpy };
+    }
+
+    it('propagates a post-commit observation failure rather than reporting a phantom success', async () => {
+      // The alternative — swallowing and returning `reEntryObservations: []` —
+      // would tell the orchestrator "collected, nothing to re-enter" while the
+      // frontier's bearers had already been consumed and thrown away. That is
+      // silent stranding; a rejection is at least an operator-visible fact.
+      const { target } = await seedFrontierReadyToProject();
+      const observeEntrySpy = jest
+        .spyOn(actorService, 'observeExecutionUnitEntry')
+        .mockRejectedValue(new Error('entry observation exploded'));
+
+      await expect(
+        collectionService.collectDelegationOutcomes({
+          targetState: target,
+          steps,
+          callerEvidence: ORCHESTRATOR_EVIDENCE,
+          frame: activeFrame(buildFrameKey('1'), 1),
+        }),
+      ).rejects.toThrow('entry observation exploded');
+      expect(observeEntrySpy).toHaveBeenCalledTimes(1);
+      // The transaction COMMITTED before the disclosure was attempted: the
+      // frontier is gone, which is exactly why the failure must not be silent.
+      expect(await persistedFrontier(runId)).toEqual([]);
+    });
+
+    it('answers a retry of that committed collection as an idempotent no-op', async () => {
+      // What bounds the fail-loud choice: the caller who retries on the
+      // rejection cannot double-apply. The collection already landed, so the
+      // retry drains nothing and re-projects nothing.
+      const { target, drainSpy } = await seedFrontierReadyToProject();
+      const observeEntrySpy = jest
+        .spyOn(actorService, 'observeExecutionUnitEntry')
+        .mockRejectedValue(new Error('entry observation exploded'));
+      await expect(
+        collectionService.collectDelegationOutcomes({
+          targetState: target,
+          steps,
+          callerEvidence: ORCHESTRATOR_EVIDENCE,
+          frame: activeFrame(buildFrameKey('1'), 1),
+        }),
+      ).rejects.toThrow('entry observation exploded');
+
+      const committed = await manager.load(runId);
+      if (!committed) throw new Error('the committed target must exist');
+      drainSpy.mockResolvedValue({
+        status: 'continue',
+        state: committed,
+        unresolved: 1,
+        applied: [],
+      });
+      observeEntrySpy.mockResolvedValue([]);
+
+      await expect(
+        collectionService.collectDelegationOutcomes({
+          targetState: committed,
+          steps,
+          callerEvidence: ORCHESTRATOR_EVIDENCE,
+          frame: activeFrame(buildFrameKey('1'), 1),
+        }),
+      ).resolves.toMatchObject({ kind: 'already_collected', targetRunId: runId });
+      // No second disclosure attempt: there is no frontier left to project.
+      expect(observeEntrySpy).toHaveBeenCalledTimes(1);
     });
   });
 });

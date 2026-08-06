@@ -395,8 +395,8 @@ describe('SessionService', () => {
       expect(adoption.kind).toBe('adopted');
       if (adoption.kind !== 'adopted') throw new Error('expected adopted');
       expect(adoption.runtime.claimId).not.toBe(original.claimId);
-      expect(typeof adoption.runtime.issueDelegationCredential).toBe('function');
-      expect(typeof adoption.runtime.deriveDelegationToken).toBe('function');
+      expect(typeof adoption.runtime.delegationRuntime.issueDelegationCredential).toBe('function');
+      expect(typeof adoption.runtime.delegationRuntime.deriveDelegationToken).toBe('function');
       await expect(sessionService.verifyClaimId(adoption.runtime.claimId)).resolves.toMatchObject({
         status: 'verified',
         claim: { controlledRunId: state.id },

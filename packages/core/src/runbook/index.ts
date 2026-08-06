@@ -176,6 +176,7 @@ export {
   deriveEffectiveRole,
   resolveCommandIntent,
   type CommandIntent,
+  type CollectionWorkflowResult,
   type CommandTargetSelector,
   type DelegationPolicyOutcome,
   type ResolveCommandIntentInput,
@@ -238,8 +239,12 @@ export {
 // Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
 // above and by the CLI execution loop, which is why it is exported.
 export {
+  prepareReEntryFrontierConsume,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
+  type PrepareReEntryFrontierActorService,
+  type PrepareReEntryFrontierConsumeInput,
+  type PreparedReEntryProjection,
   type ProjectAndConsumeReEntryFrontierInput,
   type ReEntryFrontierActorService,
   type ReEntryProjection,
@@ -376,11 +381,14 @@ export {
   type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
-// The two runtime capability types ARE public: a front end that owns the CLI
-// execution loop threads a verified issuer and deriver through its own option
-// bags, so it must be able to name them.
+// The runtime capability types ARE public: a front end that owns the CLI
+// execution loop threads verified delegation capabilities through its own
+// option bags, so it must be able to name them. `DelegationRuntimeCapabilities`
+// is the shape those bags should carry — the individual callables remain
+// exported for the narrow seams that genuinely take only one.
 export type {
   DelegationCredentialIssuer,
+  DelegationRuntimeCapabilities,
   DelegationTokenDeriver,
 } from './delegation-credential.js';
 export { inferFrameEntryFromState } from './frame-entry.js';

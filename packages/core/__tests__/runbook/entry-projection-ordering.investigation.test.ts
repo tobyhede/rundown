@@ -355,9 +355,9 @@ describe('INVESTIGATION: entry projection ordering vs machine credential issuanc
       steps,
       target: { step: '2' },
       terminalReleaseMode: allowed.terminalReleaseMode,
-      ...(allowed.issueDelegationCredential === undefined
+      ...(allowed.delegationRuntime === undefined
         ? {}
-        : { issueDelegationCredential: allowed.issueDelegationCredential }),
+        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     expect(outcome.kind).toBe('applied');
 

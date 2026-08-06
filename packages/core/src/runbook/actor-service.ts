@@ -1234,9 +1234,13 @@ export class RunbookActorService {
    * @returns The captured state with machine-prepared substep state applied
    *   (`prepared`), or the domain refusal produced by core delegation logic:
    *   `already_cancelled`, `needs_force`, `child_in_flight`, or `error`.
-   * @throws {Error} If a live-child refusal carries a non-canonical child run
-   *   id, or if the snapshot-backed abort path fails in
-   *   {@link prepareActorMutation} (invalid state, actor error state).
+   * @throws {unknown} Whatever a delegation primitive threw inside
+   *   {@link prepareManualDelegation}, rethrown unchanged — the same value, not
+   *   a wrapped copy, and never mapped onto a refusal arm.
+   * @throws {Error} If the snapshot-backed abort path fails in
+   *   {@link prepareActorMutation} (invalid state, actor error state), or if
+   *   {@link prepareManualDelegation} dispatched a command its machine did not
+   *   handle, so preparation produced neither a result nor a throw.
    */
   async prepareManualDelegationMutation(
     previousState: RunbookState,

@@ -20,6 +20,7 @@ import {
 } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { delegationRuntimeDouble } from './delegation-runtime-helpers.js';
 
 const DEFAULT_RUNBOOK_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
 const PARENT_RUNBOOK_ID = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
@@ -271,16 +272,18 @@ describe('buildGotoContext claim-target coupling (#613)', () => {
 
 describe('buildGotoContext delegation authority propagation', () => {
   /**
-   * Pin that BOTH claim-bound capabilities reach the goto context.
+   * Pin that the claim-bound capability pair reaches the goto context.
    *
-   * `resolveRunNavigation` mints `issueDelegationCredential` and
-   * `deriveDelegationToken` from one verified authority, or neither. The issuer
+   * `resolveRunNavigation` mints `delegationRuntime` from one verified
+   * authority, or nothing at all — the branded pair is now what makes "only the
+   * deriver was dropped" unrepresentable rather than merely untested. The issuer
    * lets the GOTO mutation enter a delegation frontier; the deriver is what
-   * `runExecutionLoop` needs to project that frontier onto STEP_ENTERED. Dropping
-   * only the deriver here would leave a goto that authors a frontier it cannot
-   * then render — the loop refuses `ACTOR_CONTEXT_REQUIRED` and stops the run it
-   * just navigated. Nothing else in this suite fails if the deriver goes missing,
-   * so it is pinned at the assembly site where the drift would originate.
+   * `runExecutionLoop` needs to project that frontier onto STEP_ENTERED, so a
+   * goto that carried one without the other would author a frontier it cannot
+   * then render (the loop refuses `ACTOR_CONTEXT_REQUIRED` and stops the run it
+   * just navigated). What remains to assert — and is asserted below — is that
+   * the pair reaches the context at all, and that BOTH members survive the
+   * hand-off by identity rather than by shape.
    */
   function seamReturning(outcome: unknown): void {
     jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
@@ -301,23 +304,31 @@ describe('buildGotoContext delegation authority propagation', () => {
   });
 
   it('carries both claim-bound delegation capabilities onto the context', async () => {
-    const issueDelegationCredential = jest.fn();
-    const deriveDelegationToken = jest.fn();
-    seamReturning(allowedOutcome({ issueDelegationCredential, deriveDelegationToken }));
+    const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
+    const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;
+    const delegationRuntime = delegationRuntimeDouble({
+      issueDelegationCredential,
+      deriveDelegationToken,
+    });
+    seamReturning(allowedOutcome({ delegationRuntime }));
     const output = {} as unknown as OutputEmitter;
 
     const result = await buildGotoContext(output, '/cwd', {});
 
     expect(result.kind).toBe('ready');
     if (result.kind !== 'ready') return;
-    expect(result.ctx.issueDelegationCredential).toBe(issueDelegationCredential);
-    expect(result.ctx.delegationTokenDeriver).toBe(deriveDelegationToken);
+    // Identity on the pair itself, then on each half: the first fails if the
+    // assembly reconstructs a look-alike object, the second two fail if it keeps
+    // the field but loses a member on the way through.
+    expect(result.ctx.delegationRuntime).toBe(delegationRuntime);
+    expect(result.ctx.delegationRuntime?.issueDelegationCredential).toBe(issueDelegationCredential);
+    expect(result.ctx.delegationRuntime?.deriveDelegationToken).toBe(deriveDelegationToken);
   });
 
   it('leaves both capabilities absent when the seam allowed without verified authority', async () => {
-    // Anti-vacuity for the case above, and the reason the fields stay optional
+    // Anti-vacuity for the case above, and the reason the field stays optional
     // on `GotoContext`: a bare goto on a run with no delegation exposure is
-    // `allowed` carrying neither capability, so requiring them on the context
+    // `allowed` carrying no capabilities at all, so requiring them on the context
     // type would state a contract the seam does not honour.
     seamReturning(allowedOutcome({}));
     const output = {} as unknown as OutputEmitter;
@@ -326,8 +337,7 @@ describe('buildGotoContext delegation authority propagation', () => {
 
     expect(result.kind).toBe('ready');
     if (result.kind !== 'ready') return;
-    expect(result.ctx.issueDelegationCredential).toBeUndefined();
-    expect(result.ctx.delegationTokenDeriver).toBeUndefined();
+    expect(result.ctx.delegationRuntime).toBeUndefined();
   });
 });
 
@@ -944,11 +954,11 @@ describe('executeGoto', () => {
     }
   });
 
-  it('forwards the token deriver into the continuation loop', async () => {
+  it('forwards the delegation runtime into the continuation loop', async () => {
     // The other half of the authority handoff: `buildGotoContext` puts the
-    // deriver on the context, and this is the only place it reaches the loop.
-    // Without it the loop refuses `ACTOR_CONTEXT_REQUIRED` and stops the run
-    // the moment the navigated-to substep carries a persisted frontier.
+    // branded pair on the context, and this is the only place it reaches the
+    // loop. Without it the loop refuses `ACTOR_CONTEXT_REQUIRED` and stops the
+    // run the moment the navigated-to substep carries a persisted frontier.
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
     runNavigationMutation.mockResolvedValue({
       kind: 'applied',
@@ -962,7 +972,11 @@ describe('executeGoto', () => {
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
     const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
-    const delegationTokenDeriver = jest.fn() as unknown as DelegationTokenDeriver;
+    const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;
+    const delegationRuntime = delegationRuntimeDouble({
+      issueDelegationCredential,
+      deriveDelegationToken,
+    });
     const ctx = {
       output: {
         action: jest.fn(),
@@ -977,8 +991,7 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
-      issueDelegationCredential,
-      delegationTokenDeriver,
+      delegationRuntime,
     };
 
     await executeGoto(ctx, { step: '2' });
@@ -986,11 +999,14 @@ describe('executeGoto', () => {
     const call = jest.mocked(runExecutionLoop).mock.calls.at(-1);
     expect(call).toBeDefined();
     expect(call?.slice(0, 5)).toEqual([ctx.manager, DEFAULT_RUNBOOK_ID, ctx.steps, '/test', false]);
-    expect(call?.[6]).toEqual(
-      expect.objectContaining({
-        issueDelegationCredential,
-        delegationTokenDeriver,
-      }),
+    // By reference, not by shape: a structural matcher would also accept a pair
+    // rebuilt from the same halves, and forwarding the caller's own runtime is
+    // the whole point of the assertion.
+    expect(call?.[6]?.delegationRuntime).toBe(delegationRuntime);
+    // The mutation takes only the issuer, so the pair is unpacked at that call
+    // site — pinned by identity so the unpack cannot silently take the wrong half.
+    expect(runNavigationMutation).toHaveBeenCalledWith(
+      expect.objectContaining({ issueDelegationCredential }),
     );
   });
 });

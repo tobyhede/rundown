@@ -200,8 +200,18 @@ export function prepareManualDelegation(
                   childRunId: result.childRunId,
                   error: result.error,
                 };
-              default:
+              case 'step_not_found':
+              case 'step_not_current':
+              case 'substep_required':
+              case 'substep_not_found':
+              case 'not_delegatable':
+              case 'delegation_exists':
+              case 'parent_is_delegated':
                 return { status: 'error', error: result.error };
+              default: {
+                const _exhaustive: never = result;
+                return _exhaustive;
+              }
             }
           }),
         ),
@@ -229,8 +239,14 @@ export function prepareManualDelegation(
                   childRunId: result.childRunId,
                   error: result.error,
                 };
-              default:
+              case 'not_found':
+              case 'not_current':
+              case 'error':
                 return { status: 'error', error: result.error };
+              default: {
+                const _exhaustive: never = result;
+                return _exhaustive;
+              }
             }
           }),
         ),

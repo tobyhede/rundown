@@ -11,6 +11,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import type { ExecutionEpoch, RunId, SessionMutationRefusalOutcome } from '@rundown-org/core';
 import {
   isSessionMutationRefusal,
+  isTransactionalMutationRefusal,
   renderSessionMutationRefusal,
   renderTransactionalMutationRefusal,
   sessionMutationRefusalCode,
@@ -144,6 +145,39 @@ describe('isSessionMutationRefusal', () => {
     // capture any of them, or `terminal-command.ts` would render a cleanup
     // success as a refusal.
     expect(isSessionMutationRefusal(outcome)).toBe(false);
+  });
+});
+
+describe('isTransactionalMutationRefusal', () => {
+  // Restated INDEPENDENTLY of the source's own key map, and held to the union by
+  // the same `satisfies Record<…, true>` obligation: a refusal arm added to
+  // `TransactionalMutationRefusal` fails to compile here as well as in the
+  // module, so this list cannot quietly lag the guard it checks.
+  const everyRefusalKind = Object.keys({
+    claim_superseded: true,
+    concurrent_modification: true,
+    execution_in_progress: true,
+    recovery_required: true,
+    missing: true,
+    aggregate_recovery_required: true,
+  } satisfies Record<TransactionalMutationRefusal['kind'], true>);
+
+  it.each(everyRefusalKind)('narrows %s to a transactional refusal', (kind) => {
+    expect(isTransactionalMutationRefusal({ kind })).toBe(true);
+  });
+
+  it.each([
+    { kind: 'committed' },
+    { kind: 'allowed' },
+    { kind: 'collection_applied' },
+    { kind: 'already_collected' },
+    { kind: 'collection_failed' },
+    { kind: 'open_claims' },
+  ])('leaves $kind alone', (outcome) => {
+    // The committed arm plus `CollectionWorkflowResult`'s own policy members:
+    // narrowing must not capture any of them, or `collect.ts` would render a
+    // successful aggregation as a refusal and exit non-zero.
+    expect(isTransactionalMutationRefusal(outcome)).toBe(false);
   });
 });
 

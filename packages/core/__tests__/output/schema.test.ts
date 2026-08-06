@@ -18,6 +18,7 @@ import {
   ErrorDetailsSchema,
   ErrorResponseSchema,
   CLIErrorCodes,
+  CLISymbolicErrorCodeValues,
   CLIWarningCodes,
   ErrorCodeSchema,
   WarningCodeSchema,
@@ -229,6 +230,63 @@ describe('ErrorCodeSchema code registry', () => {
         kind: 'error',
         error: 'The aggregate execution outcome is unknown and requires recovery.',
         code: 'AGGREGATE_RECOVERY_REQUIRED',
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each(CLISymbolicErrorCodeValues)('parses the registered symbolic code %s', (code) => {
+    // `ErrorCodeSchema` is built from this list, so a member that fails to parse
+    // means the enum construction dropped it. Registration is what makes a code
+    // usable in a published-schema-validating consumer; the docs drift guard is
+    // one-way (documented ⊆ registered) and cannot see an unregistered code at
+    // all, which is exactly how `STALE_CLAIM` stayed missing.
+    expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+  });
+
+  it.each([
+    'EXECUTION_IN_PROGRESS',
+    'RECOVERY_REQUIRED',
+    'STALE_CLAIM',
+    'CONCURRENT_MODIFICATION',
+    'RUN_TARGET_UNAVAILABLE',
+    'AGGREGATE_RECOVERY_REQUIRED',
+  ] as const)('accepts the transactional refusal code %s (#608)', (code) => {
+    // The exact six codes `transactionalRefusalCode` maps the transactional
+    // delegation refusal union onto (`packages/cli/src/helpers/
+    // session-mutation-result.ts`). Every one must be a registered error code,
+    // or a consumer validating against the published schema rejects an envelope
+    // the CLI genuinely emits.
+    expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: `transactional mutation refused with ${code}`,
+        code,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('registers STALE_CLAIM as its own code, distinct from the resolution-time refusals (#608)', () => {
+    // `STALE_CLAIM` is the compare-and-swap loss: the bearer WAS the run's
+    // controlling authority when the mutation captured it and was not at commit.
+    // `DELEGATION_SUPERSEDED` / `CLAIMED_RUNBOOK_UNAVAILABLE` are the
+    // target-resolution refusals raised before any mutation is attempted. Three
+    // codes, three causes — collapsing them would give a retrying agent the
+    // wrong remediation.
+    for (const code of ['STALE_CLAIM', 'DELEGATION_SUPERSEDED', 'CLAIMED_RUNBOOK_UNAVAILABLE']) {
+      expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    }
+    expect(CLISymbolicErrorCodeValues).toContain('STALE_CLAIM');
+    // Unlike `AGGREGATE_RECOVERY_REQUIRED`, the stale-claim arm carries no
+    // structured details — the run id travels inside the message — so the
+    // detail-free envelope is the shape consumers must accept.
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error:
+          'Run rd_9e725b142d81dabcefb9e04919568fcd claim generation advanced since it was captured.',
+        code: 'STALE_CLAIM',
+        command: 'pass',
       }).success,
     ).toBe(true);
   });

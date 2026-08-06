@@ -40,9 +40,8 @@ import {
   type RunbookState,
   type ParentLinkage,
   type CommandExecutionStreamOptions,
-  type DelegationCredentialIssuer,
   type DelegationOutcome,
-  type DelegationTokenDeriver,
+  type DelegationRuntimeCapabilities,
   type RunId,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
@@ -90,10 +89,14 @@ export function extractParentLinkage(state: RunbookState): ParentLinkage | undef
 export interface RunScopedDelegationRuntime {
   /** The only run these capabilities may be exercised for. */
   readonly runId: RunId;
-  /** Issuer for machine-owned delegation issuance on `runId`. */
-  readonly issueDelegationCredential?: DelegationCredentialIssuer;
-  /** Same-issuer deriver used only to project `runId`'s delegation frontier. */
-  readonly delegationTokenDeriver?: DelegationTokenDeriver;
+  /**
+   * The branded issuer/deriver pair, when the caller holds one for `runId`.
+   *
+   * One field rather than two independently optional callables: both halves
+   * bind to the same verified authority by construction, so scoping them is one
+   * decision about one value rather than two decisions that could disagree.
+   */
+  readonly runtime?: DelegationRuntimeCapabilities;
 }
 
 /**
@@ -101,20 +104,13 @@ export interface RunScopedDelegationRuntime {
  *
  * @param runtime - Capabilities bound to one run, when the caller holds any.
  * @param runId - Run the continuation is about to drive.
- * @returns The capabilities when they belong to `runId`, otherwise an empty pair.
+ * @returns The capabilities when they belong to `runId`, otherwise `undefined`.
  */
 function delegationRuntimeFor(
   runtime: RunScopedDelegationRuntime | undefined,
   runId: RunId,
-): {
-  readonly issueDelegationCredential?: DelegationCredentialIssuer;
-  readonly delegationTokenDeriver?: DelegationTokenDeriver;
-} {
-  if (runtime?.runId !== runId) return {};
-  return {
-    issueDelegationCredential: runtime.issueDelegationCredential,
-    delegationTokenDeriver: runtime.delegationTokenDeriver,
-  };
+): DelegationRuntimeCapabilities | undefined {
+  return runtime?.runId === runId ? runtime.runtime : undefined;
 }
 
 /**
@@ -192,10 +188,7 @@ export function buildAdvanceInlineParent(
     // release — report `active` (the seam treats it as handled).
     if (!parentState) return { status: 'active' };
 
-    const { issueDelegationCredential, delegationTokenDeriver } = delegationRuntimeFor(
-      parentDelegationRuntime,
-      parentRunId,
-    );
+    const delegationRuntime = delegationRuntimeFor(parentDelegationRuntime, parentRunId);
 
     const parentSteps = [...getRunbookFromState(parentState, cwd)];
     const emitter = createBridgedEmitter(parentState, output);
@@ -211,7 +204,7 @@ export function buildAdvanceInlineParent(
       transitionPolicy: inlinePolicy,
       computeActionResult: transitionConfig.computeActionResult,
       frameOverride: exactFrame(parentFrameKey, parentEntry),
-      issueDelegationCredential,
+      issueDelegationCredential: delegationRuntime?.issueDelegationCredential,
     });
 
     if (drained.status === 'stopped') {
@@ -249,8 +242,7 @@ export function buildAdvanceInlineParent(
           terminalReleaseMode: 'defer-to-caller',
           output,
           commandStreamOptions,
-          issueDelegationCredential,
-          delegationTokenDeriver,
+          delegationRuntime,
         },
       );
       output.flush();

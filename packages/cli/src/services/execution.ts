@@ -39,7 +39,7 @@ import {
   type FrameKey,
   RUNS_DIR,
   type DelegationCredentialIssuer,
-  type DelegationTokenDeriver,
+  type DelegationRuntimeCapabilities,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
   type ReEntryProjection,
@@ -255,10 +255,18 @@ export interface ExecutionLoopOptions {
   readonly actorService?: RunbookActorService;
   /** Exact claim authority retained by a claim-authenticated continuation. */
   readonly claimKey?: ClaimLookupKey;
-  /** Verified claim-bound issuer supplied to machine-owned delegation transitions. */
-  readonly issueDelegationCredential?: DelegationCredentialIssuer;
-  /** Verified same-issuer deriver used only for intentional frontier output. */
-  readonly delegationTokenDeriver?: DelegationTokenDeriver;
+  /**
+   * Verified claim-bound delegation capabilities for this loop.
+   *
+   * ONE branded pair rather than two independently optional callables. The loop
+   * needs the issuer to cross into a DELEGATE frontier and the same-issuer
+   * deriver to project the frontier that issuance stored, and they must come
+   * from the same authority — a descriptor minted by one issuer is refused
+   * RD-821 by a deriver bound to another. Carrying them separately let the
+   * frontier gate below test the deriver alone, which is a question about
+   * authority the deriver's absence could only answer by coincidence.
+   */
+  readonly delegationRuntime?: DelegationRuntimeCapabilities;
   /** Optional core mutation runner test seam. */
   readonly actorMutationRunner?: EffectfulActorMutationRunner;
   /** Optional command services test seam. */
@@ -767,8 +775,7 @@ async function launchInlineChildFromIntent({
           commandStreamOptions,
           ...(adoption.kind === 'adopted'
             ? {
-                issueDelegationCredential: adoption.runtime.issueDelegationCredential,
-                delegationTokenDeriver: adoption.runtime.deriveDelegationToken,
+                delegationRuntime: adoption.runtime.delegationRuntime,
               }
             : {}),
         },
@@ -1412,7 +1419,7 @@ export async function runExecutionLoop(
       steps,
       currentState,
       transitionPolicy: terminalPolicy,
-      issueDelegationCredential: options.issueDelegationCredential,
+      issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential,
     });
     if (drainResult.status === 'done') {
       if (terminalReleaseMode === 'release-runbook') {
@@ -1528,7 +1535,7 @@ export async function runExecutionLoop(
       prompted: prompted || stepIsPrompted,
     };
 
-    const delegationTokenDeriver = options.delegationTokenDeriver;
+    const delegationTokenDeriver = options.delegationRuntime?.deriveDelegationToken;
     // The authority precondition, and the only frontier question the loop asks
     // itself: is there something to disclose that we hold no authority to
     // disclose? The pending-frontier read is core's — the same validating reader
@@ -1696,11 +1703,7 @@ export async function runExecutionLoop(
         // capabilities are exactly the authority the child's terminal flow-back
         // needs to drain and re-run this run. Named with `runbookId` so nothing
         // further up the inline chain can be advanced under it.
-        parentDelegationRuntime: {
-          runId: runbookId,
-          issueDelegationCredential: options.issueDelegationCredential,
-          delegationTokenDeriver: options.delegationTokenDeriver,
-        },
+        parentDelegationRuntime: { runId: runbookId, runtime: options.delegationRuntime },
       });
     }
 
@@ -1765,7 +1768,7 @@ export async function runExecutionLoop(
             nakedOutputs,
             rdInjected,
           },
-          { issueDelegationCredential: options.issueDelegationCredential },
+          { issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential },
         );
         const projected = lifecycleService.deriveActiveEntry(
           prepared.nextState,

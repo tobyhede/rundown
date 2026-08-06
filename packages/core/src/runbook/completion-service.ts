@@ -1,4 +1,5 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { Errors } from '../errors/factory.js';
 import { CompletionLock } from './completion-lock.js';
 import { DelegationLock } from './delegation-lock.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -12,6 +13,7 @@ import {
   activeFrame,
   buildCompletionKey,
   buildResolvedCompletion,
+  completionEntryForFrame,
   deriveActiveFrame,
   exactFrame,
   findSubstepState,
@@ -310,6 +312,76 @@ export interface DrainResolvedCompletionsArgs {
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
+/** Arguments for preparing a resolved-completion drain without persisting it. */
+export interface PrepareResolvedCompletionDrainArgs {
+  /** Run id of the runbook being drained. */
+  readonly runbookId: RunId;
+  /** Resolved step definitions for the runbook (used for substep ordering). */
+  readonly steps: readonly ResolvedStep[];
+  /**
+   * The EXACT state captured under the caller's lease. Unlike the persisted
+   * drain, nothing is re-read: every iteration chains off the previous
+   * iteration's prepared state, so the whole pass is derived from one captured
+   * version and can be committed against it.
+   */
+  readonly capturedState: RunbookState;
+  /**
+   * Optional override frame — when supplied and not equal to the active frame,
+   * preparation short-circuits to `not_active` without deriving any transition.
+   */
+  readonly frameOverride?: Frame;
+  /** Verified runtime-only issuer for a completion transition that enters delegation. */
+  readonly issueDelegationCredential?: DelegationCredentialIssuer;
+}
+
+/**
+ * Result of preparing a resolved-completion drain against a captured state.
+ *
+ * Structurally the persisted drain's result with `state` present on EVERY arm.
+ * The persisted drain can omit it on the terminal arms because its caller
+ * reloads the run it just wrote; a prepared pass has written nothing, so the
+ * prepared state is the only carrier of what the commit must persist.
+ */
+export type PreparedResolvedCompletionDrain =
+  | {
+      /** Preparation advanced the cursor with remaining substeps still pending. */
+      readonly status: 'continue';
+      /** Prepared state after the last derived completion (or the captured state if none). */
+      readonly state: RunbookState;
+      /** Count of substeps still without a persisted completion. */
+      readonly unresolved: number;
+      /** Each completion derived during this pass, in dispatch order. */
+      readonly applied: readonly AppliedResolvedCompletion[];
+    }
+  | {
+      /** Preparation reached a terminal lifecycle (`done` or `stopped`). */
+      readonly status: 'done' | 'stopped';
+      /** Prepared terminal state the commit must persist. */
+      readonly state: RunbookState;
+      /** Always zero on terminal exits. */
+      readonly unresolved: number;
+      /** Each completion derived during this pass, in dispatch order. */
+      readonly applied: readonly AppliedResolvedCompletion[];
+    }
+  | (DrainCompletionTargetMismatch & {
+      /** Prepared state at the point the mismatch was detected. */
+      readonly state: RunbookState;
+    })
+  | {
+      /** Requested frame is not currently active; preparation derived nothing. */
+      readonly status: 'not_active';
+      /** Prepared state, unchanged apart from the active-entry projection. */
+      readonly state: RunbookState;
+      /** Frame key that was requested via `frameOverride`. */
+      readonly frameKey: FrameKey;
+      /** Frame key the machine is actually positioned on. */
+      readonly activeFrameKey: FrameKey;
+      /** Count of substeps still without a persisted completion. */
+      readonly unresolved: number;
+      /** Always empty when `not_active`. */
+      readonly applied: readonly [];
+    };
+
 /** Result of a resolved-completion drain pass. */
 export type DrainResolvedCompletionsResult =
   | {
@@ -350,10 +422,162 @@ function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): Reso
   return step;
 }
 
-function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined {
-  if (result.state.lifecycle === 'completed') return 'done';
-  if (result.state.lifecycle === 'stopped') return 'stopped';
+/**
+ * Map a state's lifecycle to the drain status that reports it, if terminal.
+ *
+ * The single lifecycle→status mapping, shared by the persisted drain (via
+ * {@link terminalStatus}) and the prepared one, so a run reaching terminal is
+ * named identically whether the pass committed per completion or derived the
+ * whole thing for one commit.
+ *
+ * @param state - State whose lifecycle is classified.
+ * @returns `'done'`/`'stopped'` for a terminal lifecycle, otherwise `undefined`.
+ */
+function terminalLifecycleStatus(state: RunbookState): 'done' | 'stopped' | undefined {
+  if (state.lifecycle === 'completed') return 'done';
+  if (state.lifecycle === 'stopped') return 'stopped';
   return undefined;
+}
+
+function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined {
+  return terminalLifecycleStatus(result.state);
+}
+
+/**
+ * Verdict on whether one applied completion advanced a drain pass.
+ *
+ * Both drain loops are unbounded `for (;;)`, and both terminate only because
+ * every apply changes what the NEXT iteration selects. Nothing in this module
+ * observed that: an apply that changed neither left the drain re-selecting the
+ * same row from the same cursor forever, growing `applied` without bound — a
+ * hang, not a failure. These classifications make the missing post-condition
+ * explicit so a violation fails fast on the FIRST non-advancing apply.
+ */
+type ResolvedCompletionDrainProgress =
+  | { readonly kind: 'progressed' }
+  | { readonly kind: 'stalled'; readonly reason: string };
+
+/**
+ * The coordinates a drain iteration's selection is computed from.
+ *
+ * Selection is `listResolvedCompletions*(state, activeFrame(activeFrameKey,
+ * entry))` narrowed to `state.substep` on `state.step`. Holding all four fixed
+ * fixes the candidate row, which is why an apply that moves ANY of them has
+ * made progress even if it consumed nothing.
+ */
+interface DrainSelectionCursor {
+  /** Step the drain is positioned on. */
+  readonly step: string;
+  /** Substep the candidate row must target. */
+  readonly substep: string | undefined;
+  /** Frame key the candidate row's key must be prefixed with. */
+  readonly frameKey: FrameKey | undefined;
+  /** Frame entry the candidate row's key must be prefixed with. */
+  readonly entry: number | undefined;
+}
+
+/**
+ * Read the selection coordinates out of a drain state.
+ *
+ * @param state - State whose cursor is read.
+ * @returns The four coordinates the next selection depends on.
+ */
+function drainSelectionCursor(state: RunbookState): DrainSelectionCursor {
+  return {
+    step: state.step,
+    substep: state.substep,
+    frameKey: state.activeFrameKey,
+    entry: state.activeEntry,
+  };
+}
+
+/**
+ * Classify whether one apply moved the drain forward.
+ *
+ * The post-condition BOTH drains share, and deliberately a DISJUNCTION rather
+ * than the actor's consume patch: consuming the applied row removes it from the
+ * candidate set, and moving the cursor changes which rows are candidates at all.
+ * Either alone is progress. Only when NEITHER holds is the next iteration
+ * guaranteed to re-select the same row from the same position — the spin.
+ *
+ * Asserting the consume alone would be asserting a neighbouring module's
+ * implementation detail instead of this loop's termination requirement, and
+ * would refuse honest transitions that advance the cursor by other means.
+ *
+ * @param runbookId - Run whose drain is being classified (named in the reason).
+ * @param key - Completion key handed to the apply.
+ * @param before - State the apply was derived from.
+ * @param after - State produced by the apply.
+ * @returns `progressed` when the row was consumed or the cursor moved,
+ *   otherwise a `stalled` reason.
+ */
+function classifyDrainApplyProgress(
+  runbookId: RunId,
+  key: string,
+  before: RunbookState,
+  after: RunbookState,
+): ResolvedCompletionDrainProgress {
+  if (!Object.hasOwn(after.resolvedCompletions ?? {}, key)) return { kind: 'progressed' };
+  const from = drainSelectionCursor(before);
+  const to = drainSelectionCursor(after);
+  const moved =
+    from.step !== to.step ||
+    from.substep !== to.substep ||
+    from.frameKey !== to.frameKey ||
+    from.entry !== to.entry;
+  if (moved) return { kind: 'progressed' };
+  return {
+    kind: 'stalled',
+    reason:
+      `Resolved-completion drain for runbook "${runbookId}" applied completion "${key}" without ` +
+      `consuming it or moving the cursor off ${from.step}.${from.substep ?? '(none)'} ` +
+      `(frame ${from.frameKey ?? '(none)'} entry ${String(from.entry ?? '(none)')}). The next ` +
+      `iteration would re-select the same row from the same position, so the drain is refused ` +
+      `rather than looped.`,
+  };
+}
+
+/**
+ * Classify progress for a CHAINED (prepared) drain iteration.
+ *
+ * The prepared drain selects only from the state it chains forward, so it can
+ * additionally require that an apply never INTRODUCES a row. Without that, a
+ * transition that consumed its key and added another would satisfy
+ * {@link classifyDrainApplyProgress} on every pass while the candidate set never
+ * shrank, and the loop would still not terminate.
+ *
+ * The persisted twin cannot carry this half: it re-selects from the store, where
+ * a concurrent writer may legitimately add a row mid-drain, so it checks
+ * {@link classifyDrainApplyProgress} alone.
+ *
+ * @param runbookId - Run whose drain is being classified (named in the reason).
+ * @param key - Completion key handed to the apply.
+ * @param before - State the apply was derived from.
+ * @param after - State produced by the apply.
+ * @returns `progressed` when the chained candidate set did not grow and the
+ *   apply advanced, otherwise a `stalled` reason.
+ */
+function classifyChainedDrainProgress(
+  runbookId: RunId,
+  key: string,
+  before: RunbookState,
+  after: RunbookState,
+): ResolvedCompletionDrainProgress {
+  const previousKeys = new Set(Object.keys(before.resolvedCompletions ?? {}));
+  const introduced = Object.keys(after.resolvedCompletions ?? {}).filter(
+    (candidate) => !previousKeys.has(candidate),
+  );
+  if (introduced.length > 0) {
+    return {
+      kind: 'stalled',
+      reason:
+        `Resolved-completion drain for runbook "${runbookId}" applied completion "${key}" and ` +
+        `introduced ${String(introduced.length)} new row(s) (${introduced.join(', ')}). A prepared ` +
+        `apply may only consume rows from the state it chains forward; a candidate set that never ` +
+        `shrinks leaves the pass unable to terminate, so the drain is refused rather than looped.`,
+    };
+  }
+  return classifyDrainApplyProgress(runbookId, key, before, after);
 }
 
 function assertCompleteParentLinkage(
@@ -400,6 +624,58 @@ function findCompletionKeyInState(
       completion.targetFrameKey === targetFrame.frameKey &&
       completion.targetSubstep === targetSubstep,
   )?.[0];
+}
+
+/**
+ * List a state's resolved completions for a frame target, without IO.
+ *
+ * The in-state twin of {@link ExecutionLifecycleService.listResolvedCompletions},
+ * matching its key-prefix rule exactly (an `active` frame also admits the
+ * sentinel entry; an exact frame does not). The prepared drain must classify
+ * against the state it captured, not against whatever the store holds now, so
+ * it cannot reuse the loading method.
+ *
+ * @param state - State whose `resolvedCompletions` map is read.
+ * @param frame - Frame target to list.
+ * @returns Key/completion pairs matching the frame target.
+ */
+function listResolvedCompletionsInState(
+  state: RunbookState,
+  frame: Frame,
+): ReadonlyArray<{ readonly key: string; readonly completion: ResolvedCompletion }> {
+  const entry = completionEntryForFrame(frame);
+  const exactPrefix = `${frame.frameKey}|${String(entry)}|`;
+  const sentinelPrefix = `${frame.frameKey}|${String(SENTINEL_ENTRY)}|`;
+  return Object.entries(state.resolvedCompletions ?? {})
+    .filter(([key]) =>
+      frame.kind === 'active'
+        ? key.startsWith(exactPrefix) || key.startsWith(sentinelPrefix)
+        : key.startsWith(exactPrefix),
+    )
+    .map(([key, completion]) => ({ key, completion }));
+}
+
+/**
+ * Observe every substep a state records a completion for on one frame key.
+ *
+ * The in-state twin of `RunbookCompletionService#observedSubstepsForFrame`,
+ * matching its `targetFrameKey` rule (frame-wide, across entries) rather than
+ * the key-prefix rule used for an entry-scoped list.
+ *
+ * @param state - State whose `resolvedCompletions` map is read.
+ * @param frameKey - Frame key to observe.
+ * @returns The set of substep ids carrying a completion on that frame.
+ */
+function observedSubstepsForFrameInState(
+  state: RunbookState,
+  frameKey: FrameKey,
+): ReadonlySet<string> {
+  return new Set(
+    Object.values(state.resolvedCompletions ?? {})
+      .filter((completion) => completion.targetFrameKey === frameKey)
+      .map((completion) => completion.targetSubstep)
+      .filter((substep): substep is string => substep !== undefined),
+  );
 }
 
 /** State the manual-completion decision reads, supplied by each caller. */
@@ -1004,6 +1280,158 @@ export class RunbookCompletionService {
   }
 
   /**
+   * Derive a whole resolved-completion drain against one captured state,
+   * without persisting anything.
+   *
+   * The fenced twin of {@link drainResolvedCompletionsUnlocked}, and the seam
+   * that makes a drain committable in ONE transaction. Three substitutions turn
+   * the persisted loop into a pure one, and each replaces a write or a re-read
+   * with its existing pure counterpart:
+   *
+   * - {@link ExecutionLifecycleService.ensureActiveEntry} (which persists the
+   *   active-entry projection) becomes
+   *   {@link ExecutionLifecycleService.deriveActiveEntry}, whose projection is
+   *   carried forward on the chained state instead of written. This also side-
+   *   steps the unfenced read-modify-write `ensureActiveEntry` performs: the
+   *   projection is derived from — and committed against — the captured version.
+   * - Every store read of `resolvedCompletions` becomes the in-state twin, so
+   *   the pass classifies against the exact captured version rather than
+   *   whatever the store holds by the time each iteration runs.
+   * - {@link RunbookActorService.sendAndSync} (one transaction per completion)
+   *   becomes {@link RunbookActorService.prepareActorMutation}, whose
+   *   `nextState` already folds in the consumed-completion patch and feeds the
+   *   next iteration.
+   *
+   * WHY NOT MAKE THE PERSISTED DRAIN ATOMIC IN PLACE. That drain is shared with
+   * the CLI execution loop and the delegation-completion adapters, and its
+   * per-completion commit is a deliberate decision (see the guard comment in
+   * {@link drainResolvedCompletionsUnlocked}): only the FIRST apply carries the
+   * parent-advance guard, because re-arming it on a follow-on apply would let an
+   * unrelated child claiming mid-drain abort a pass whose earlier applies had
+   * already committed, stranding them behind a bare refusal. That trade-off is a
+   * consequence of partial commits, and it does not transfer here: this seam
+   * commits once, so a refusal leaves NOTHING committed and there is no stranded
+   * prefix to protect. It accepts no guard for the same reason — its sole caller,
+   * `collectDelegationOutcomes`, passes none, and an aggregate guard belongs on
+   * the commit rather than on an individual derivation.
+   *
+   * @param args - Captured state, steps, and optional frame override.
+   * @returns The prepared pass: every arm carries the state the commit must persist.
+   * @throws {Error} If a step named by the cursor is missing from `steps`, or if
+   *   {@link RunbookActorService.prepareActorMutation} rejects the derived
+   *   snapshot (invalid shape, actor error state).
+   * @throws {RundownError} RD-821 if an apply neither advances the cursor nor
+   *   shrinks the chained candidate set (see
+   *   {@link classifyChainedDrainProgress}). The pass has written nothing, so
+   *   refusing costs no committed prefix — and looping instead would hang while
+   *   `applied` grew without bound.
+   */
+  async prepareResolvedCompletionDrain(
+    args: PrepareResolvedCompletionDrainArgs,
+  ): Promise<PreparedResolvedCompletionDrain> {
+    let state = args.capturedState;
+    const applied: AppliedResolvedCompletion[] = [];
+    for (;;) {
+      const currentStep = findStepOrThrow(args.steps, state.step);
+      if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
+        return { status: 'continue', state, unresolved: 0, applied };
+      }
+      const ensured = this.lifecycleService.deriveActiveEntry(state);
+      state = ensured.state;
+      const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
+      const requestedFrame = args.frameOverride;
+      if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
+        // Same two cases the persisted drain distinguishes: an INITIAL mismatch
+        // is observation-only and reports `not_active`; a mismatch AFTER work
+        // means an apply advanced the cursor out of the override frame, and the
+        // derived entries must be kept so the caller can still observe them.
+        if (applied.length > 0) {
+          return { status: 'continue', state, unresolved: 0, applied };
+        }
+        const overrideResolvedSubsteps = observedSubstepsForFrameInState(
+          state,
+          requestedFrame.frameKey,
+        );
+        const unresolved = currentStep.substeps.filter(
+          (substep) => !overrideResolvedSubsteps.has(substep.id),
+        ).length;
+        return {
+          status: 'not_active',
+          state,
+          frameKey: requestedFrame.frameKey,
+          activeFrameKey,
+          unresolved,
+          applied: [],
+        };
+      }
+
+      const entry = state.activeEntry ?? ensured.entry;
+      const activeTargetFrame = activeFrame(activeFrameKey, entry);
+      const resolved = listResolvedCompletionsInState(state, activeTargetFrame);
+      const resolvedBySubstep = new Map(
+        resolved
+          .filter(({ completion }) => completion.targetSubstep !== undefined)
+          .map(({ completion }) => [completion.targetSubstep, completion]),
+      );
+      const unresolved = currentStep.substeps.filter(
+        (substep) => !resolvedBySubstep.has(substep.id),
+      ).length;
+      const currentKey = buildCompletionKey(activeTargetFrame, state.substep);
+      const current =
+        resolved.find(({ key }) => key === currentKey) ??
+        resolved.find(
+          ({ key, completion }) =>
+            key === buildCompletionKey(inactiveFrame(activeFrameKey), state.substep) ||
+            completion.targetSubstep === state.substep,
+        );
+      if (!current) {
+        return { status: 'continue', state, unresolved, applied };
+      }
+
+      const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
+      if (!(currentCursorValidatedBrand in validated)) {
+        return { ...validated, state, unresolved, applied };
+      }
+
+      const mutation = await this.actorService.prepareActorMutation(
+        args.runbookId,
+        state,
+        args.steps,
+        {
+          type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+          completionKey: current.key,
+          completion: validated,
+        },
+        args.issueDelegationCredential === undefined
+          ? undefined
+          : { issueDelegationCredential: args.issueDelegationCredential },
+      );
+      // Nothing above this line observes that the apply changed what the next
+      // iteration selects. In production that comes from `prepareActorMutation`'s
+      // consumed-completion patch, in another module; assert the post-condition
+      // here so a violation fails on the FIRST apply instead of spinning the loop
+      // and growing `applied` without bound.
+      const progress = classifyChainedDrainProgress(
+        args.runbookId,
+        current.key,
+        state,
+        mutation.nextState,
+      );
+      if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
+      applied.push({
+        key: current.key,
+        completion: validated,
+        stateBefore: state,
+        stateAfter: mutation.nextState,
+        snapshot: mutation.snapshot,
+      });
+      state = mutation.nextState;
+      const terminal = terminalLifecycleStatus(state);
+      if (terminal) return { status: terminal, state, unresolved: 0, applied };
+    }
+  }
+
+  /**
    * Drain active-frame resolved completions into the runbook state machine.
    *
    * Acquires the run {@link CompletionLock} for the duration of the drain
@@ -1012,6 +1440,9 @@ export class RunbookCompletionService {
    *
    * @param args - Drain target and current state
    * @returns Drain outcome
+   * @throws {RundownError} RD-821 if an apply commits without consuming the row
+   *   it was handed or moving the cursor (see
+   *   {@link drainResolvedCompletionsUnlocked}).
    */
   async drainResolvedCompletions(
     args: DrainResolvedCompletionsArgs,
@@ -1032,6 +1463,12 @@ export class RunbookCompletionService {
    *
    * @param args - Drain target and current state
    * @returns Drain outcome
+   * @throws {RundownError} RD-821 if an apply commits without consuming the row
+   *   it was handed or moving the cursor (see
+   *   {@link classifyDrainApplyProgress}). Unlike the prepared twin this pass
+   *   may already have committed applies, so the refusal reports a bug rather
+   *   than protecting an all-or-nothing commit — but a spin here would hang the
+   *   CLI outright.
    */
   async drainResolvedCompletionsUnlocked(
     args: DrainResolvedCompletionsArgs,
@@ -1139,6 +1576,12 @@ export class RunbookCompletionService {
       if (!result) {
         return { status: 'continue', state, unresolved, applied };
       }
+      // Same missing post-condition as the prepared twin, checked against what
+      // the write actually committed. Only the shared half applies: this loop
+      // re-selects from the STORE, so a concurrent writer may legitimately add a
+      // row mid-drain and a no-growth assertion would refuse honest work.
+      const progress = classifyDrainApplyProgress(args.runbookId, current.key, state, result.state);
+      if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
       applied.push({
         key: current.key,
         completion: validated,

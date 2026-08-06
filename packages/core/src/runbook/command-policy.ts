@@ -5,16 +5,15 @@ import {
   type ClaimId,
   type ClaimRecord,
 } from './claim-id.js';
-import type {
-  DelegationCredentialIssuer,
-  DelegationTokenDeriver,
-} from './delegation-credential.js';
+import type { DelegationRuntimeCapabilities } from './delegation-credential.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
 import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
+import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
+import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
 import type { ErrorCodes } from '../errors/codes.js';
@@ -259,27 +258,26 @@ export type DelegationPolicyOutcome =
        */
       readonly reEntryObservations?: readonly ExecutionObservationEffect[];
       /**
-       * Verified collector-bound issuer for the continuation the frontend drives
-       * next. Collection can leave the target run standing one transition short
-       * of a DELEGATE step, and machine-owned issuance needs a verified issuer at
-       * that moment; without one the continuation is refused
-       * `actor_context_required` rather than advanced. Bound to the SAME verified
-       * authority the drain issued under — the bearer holding `collect-for-run`
-       * over `targetRunId`, which is a run-control claim and therefore also holds
-       * `delegate-from-run` over it.
+       * Verified collector-bound delegation capabilities for the continuation
+       * the frontend drives next. Collection can leave the target run standing
+       * one transition short of a DELEGATE step, and machine-owned issuance needs
+       * a verified issuer at that moment; without one the continuation is refused
+       * `actor_context_required` rather than advanced. The following turn then
+       * projects the frontier that issuance stored, which needs the same-issuer
+       * deriver — a descriptor naming a different issuer claim is refused RD-821.
+       *
+       * The two travel as ONE branded value rather than two optional fields
+       * precisely because they are two halves of one authority: the bearer
+       * holding `collect-for-run` over `targetRunId`, which is a run-control
+       * claim and therefore also holds `delegate-from-run` over it. Only
+       * `delegationRuntimeCapabilities` can produce the value, so the pairing is
+       * established by construction and a consumer cannot forward one half alone.
        *
        * Runtime-only, and set only on a non-terminal (`running`) outcome: a
        * closure cannot be serialised, and must never reach persisted context, a
        * snapshot, or a diagnostic (CLAUDE.md § Actor dependencies).
        */
-      readonly issueDelegationCredential?: DelegationCredentialIssuer;
-      /**
-       * Same-issuer deriver for the turn AFTER issuance, when the continuation
-       * projects the persisted frontier it just stored. Necessarily the same
-       * authority as {@link issueDelegationCredential}: a descriptor naming a
-       * different issuer claim is refused RD-821. Runtime-only, never persisted.
-       */
-      readonly deriveDelegationToken?: DelegationTokenDeriver;
+      readonly delegationRuntime?: DelegationRuntimeCapabilities;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */
@@ -290,21 +288,28 @@ export type DelegationPolicyOutcome =
        * Machine/core reason. Every member has a real producer (no dead arms):
        * - `not_delegate_step` — `collectDelegationOutcomes` non-DELEGATE-step guard
        * - `step_not_found` — `collectDelegationOutcomes` stale-state guard
-       * - `target_mismatch` — `drainResolvedCompletions` `status: 'failed'`
+       * - `target_mismatch` — `prepareResolvedCompletionDrain` `status: 'failed'`
        *   (CompletionTargetMismatch.reason is the only drain failure reason).
-       * - `frontier_consume_failed` — collect projected a retry re-entry
-       *   frontier but failed to sync `DELEGATE_FRONTIER_CONSUMED`, so no
-       *   frontier observations were returned.
        * - `frontier_projection_refused` — the verified collector cannot derive
        *   the persisted frontier or the derived bearer does not match its hash.
-       *   There is NO `state_error` reason; drain never produces one.
+       *   There is NO `state_error` reason; the drain never produces one.
+       *
+       * `frontier_consume_failed` was REMOVED rather than retained unused. It
+       * reported a frontier that projected but whose consume did not commit —
+       * a state only a separately committed consume can reach. A fenced collect
+       * derives its consume inside the one transaction, so the condition is
+       * unrepresentable and nothing can construct the arm. Keeping it would
+       * have made this docstring's own "no dead arms" promise false. RD-829
+       * itself is still live on a different shape: the execution loop emits its
+       * own envelope from the unfenced `projectAndConsumeReEntryFrontier`
+       * (`packages/cli/src/services/execution.ts`), which still commits its
+       * consume separately.
        */
       readonly reason:
         | 'target_mismatch'
         | 'not_delegate_step'
         | 'step_not_found'
-        | 'frontier_projection_refused'
-        | 'frontier_consume_failed';
+        | 'frontier_projection_refused';
       /**
        * User-facing error code, attached by core so the CLI renders a flat
        * passthrough (no CLI reason→code ternary — keeps "no CLI lifecycle
@@ -313,21 +318,46 @@ export type DelegationPolicyOutcome =
        * - `step_not_found` → `STEP_NOT_FOUND`
        * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
        * - `frontier_projection_refused` → `RD-821`
-       * - `frontier_consume_failed` → `RD-829`
        *
-       * The two frontier codes name the CONDITION rather than the command, so
-       * the shared re-entry seam reports each one identically whether `collect`
-       * or the execution loop drove it (F6).
+       * `RD-821` names the CONDITION rather than the command, so the shared
+       * re-entry seam reports it identically whether `collect` or the execution
+       * loop drove it (F6).
        */
       readonly code:
         | 'NOT_DELEGATE_STEP'
         | 'STEP_NOT_FOUND'
         | 'COLLECT_OPERATION_FAILED'
-        | typeof ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code
-        | typeof ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code;
+        | typeof ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code;
       /** Operator-facing failure message. */
       readonly message: string;
     };
+
+/**
+ * Every outcome `rundown collect` can produce, policy and transactional alike.
+ *
+ * A WRAPPER, not a widening of {@link DelegationPolicyOutcome}. That union is
+ * shared with `lifecycle-command-service.ts`, so adding transaction arms to it
+ * in place would force every unrelated consumer to handle refusals it can never
+ * receive — and would erase, by collapsing, the collection-specific variants the
+ * CLI renders today. Composing instead keeps each policy arm's JSON/text shape,
+ * exit code, and code mapping exactly as they are, and adds the transactional
+ * refusals as new arms alongside them.
+ *
+ * The refusal arms are DERIVED from the canonical storage results rather than
+ * restated. A structurally parallel restatement compiles but de-brands `RunId` /
+ * `ExecutionEpoch` down to `string` / `number` and lets the two spellings drift;
+ * this composition is the same one the CLI's `TransactionalMutationRefusal`
+ * already derives, so core's producer and the CLI's renderer cannot disagree
+ * about the arm set.
+ *
+ * `committed` is excluded on purpose: a committed collect is reported by its
+ * collection-specific arm (`collection_applied`, `already_collected`, …), never
+ * by a bare transaction success that says nothing about what was collected.
+ */
+export type CollectionWorkflowResult =
+  | DelegationPolicyOutcome
+  | Exclude<GuardedMutationResult<never>, { readonly kind: 'committed' }>
+  | AbandonedAttemptSetOutcome;
 
 /**
  * Derive effective role from actor evidence and a resolved target run.
