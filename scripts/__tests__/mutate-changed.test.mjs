@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
+  LARGE_SOURCE_FILE_LINES,
   PACKAGES,
   formatPlan,
   parseArgs,
   parseInstrumented,
   runOutcome,
+  scopedConcurrency,
   scorerArgs,
   spawnStreaming,
   strykerArgs,
@@ -288,4 +294,65 @@ test('scorerArgs: a whole-file entry is scored as a changed file, without ranges
     'packages/core',
   );
   assert.deepEqual(args, ['--changed-file', 'packages/core/src/a.ts']);
+});
+
+/**
+ * Write a source file of a given line count into a fresh temp dir.
+ *
+ * @param {number} lines - number of lines the file should contain.
+ * @returns {{path: string, cleanup: () => void}} the file path and its disposer.
+ */
+function sourceFileOfLines(lines) {
+  const dir = mkdtempSync(join(tmpdir(), 'mutate-concurrency-'));
+  const path = join(dir, 'source.ts');
+  writeFileSync(path, 'const x = 1;\n'.repeat(lines));
+  return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('scopedConcurrency: a large source file is forced to a single unit', () => {
+  const { path, cleanup } = sourceFileOfLines(LARGE_SOURCE_FILE_LINES + 50);
+  try {
+    // Memory is per worker and scales with the mutated file, so a big module is
+    // exactly where the package default of 2 (four processes) becomes untenable.
+    assert.equal(scopedConcurrency(path), '1');
+  } finally {
+    cleanup();
+  }
+});
+
+test('scopedConcurrency: a small source file inherits the package default', () => {
+  const { path, cleanup } = sourceFileOfLines(10);
+  try {
+    assert.equal(scopedConcurrency(path), undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test('scopedConcurrency: the boundary line count is not yet large', () => {
+  // Pins the comparison as strictly-greater. An off-by-one here would silently
+  // halve throughput for every file of exactly the threshold size.
+  const { path, cleanup } = sourceFileOfLines(LARGE_SOURCE_FILE_LINES - 1);
+  try {
+    assert.equal(scopedConcurrency(path), undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test('scopedConcurrency: an explicit STRYKER_CONCURRENCY always wins', () => {
+  const { path, cleanup } = sourceFileOfLines(LARGE_SOURCE_FILE_LINES + 50);
+  const previous = process.env.STRYKER_CONCURRENCY;
+  process.env.STRYKER_CONCURRENCY = '4';
+  try {
+    assert.equal(scopedConcurrency(path), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.STRYKER_CONCURRENCY;
+    else process.env.STRYKER_CONCURRENCY = previous;
+    cleanup();
+  }
+});
+
+test('scopedConcurrency: an unreadable path inherits the default rather than guessing', () => {
+  assert.equal(scopedConcurrency(join(tmpdir(), 'definitely-not-a-real-file-xyz.ts')), undefined);
 });

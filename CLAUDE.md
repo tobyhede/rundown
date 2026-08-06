@@ -468,6 +468,47 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   NoCoverage = 86.11% — both real survivors erased. Reduce mutant count (ranges)
   or tests per mutant (`testFiles`) instead.
 
+  **Bound concurrency — mutation runs are memory-bound, not CPU-bound.** Every
+  package config reads `STRYKER_CONCURRENCY` (default **2**). That number is not
+  the process count: Stryker spawns a test-runner worker _and_ a TypeScript
+  checker worker per unit, so `concurrency=2` is **four** Node processes, each
+  holding the whole instrumented module graph. Memory scales with the size of
+  the mutated file, not with the number of mutants, so a big module is where
+  this bites: measured on `lifecycle-command-service.ts` (3596 lines),
+  `concurrency=2` ran 4 workers at 3–4 GB each — **~14 GB**, enough to make the
+  machine unusable for everything else.
+
+  Set it explicitly rather than inheriting the default:
+
+  ```bash
+  STRYKER_CONCURRENCY=1 pnpm --filter @rundown-org/core exec stryker run \
+    --mutate 'src/runbook/lifecycle-command-service.ts:1200-1450' \
+    --testFiles __tests__/runbook/lifecycle-command-service.test.ts \
+    --force
+  ```
+
+  Rules of thumb: **`STRYKER_CONCURRENCY=1`** for any source file over ~1000
+  lines, and whenever anything else is running concurrently (another agent, a
+  `pnpm run verify`, a dev server) — a mutation run must never be the reason a
+  developer's machine starts swapping. The default 2 is for a small, isolated
+  scope. Raising it above 2 needs a specific reason and a machine with the RAM
+  to match.
+
+  Concurrency trades wall-clock for memory and nothing else — it does not change
+  which mutants are tested or whether they are killed — so lowering it is always
+  safe for correctness. That makes it the **first** knob to reach for when a run
+  is too heavy, ahead of narrowing scope, and far ahead of `timeoutMS`, which is
+  never a legitimate knob (see above).
+
+  If you kill a mutation run mid-flight, kill the whole tree — the workers are
+  children of the `stryker` process and outlive a bare `kill` on the pnpm
+  wrapper:
+
+  ```bash
+  pkill -f 'child-process-proxy-worker.js'   # the memory-holding workers
+  pkill -f 'stryker run'                     # the parent
+  ```
+
   Reach for the manual form below only when you need a scope the diff does not
   describe (a single function, a file you did not touch).
 
@@ -497,9 +538,37 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     --testFiles __tests__/runbook/storage/runbook-store.test.ts
   ```
 
+  **Derive the ranges from the diff; never guess them.** A hand-picked range
+  that is wider than the change sweeps in pre-existing untested code and reports
+  it as your survivors. Measured on `lifecycle-command-service.ts`: a guessed
+  `1240-1420` produced 12 in-scope Survived/NoCoverage mutants, **all twelve on
+  lines the branch never touched**. The diff-derived scope over the same file
+  reported none of them. Use
+  `git diff -U0 <merge-base> -- <file> | grep -E '^@@'` and convert the
+  `+start,count` hunks — and diff against the **working tree**, not
+  `main...HEAD`, whenever you have uncommitted changes, or every line number is
+  shifted relative to the file Stryker actually mutated.
+
   Judge the result on survivors **in the lines you changed**, never on the
   aggregate score: a scope this narrow makes the percentage meaningless, and the
   70% break threshold will fail the run regardless.
+
+  **The report lists survivors from outside your scope.** With
+  `incremental: true`, the textual report and the per-file table merge cached
+  results for the whole project over the mutants this run actually tested, so a
+  clean scoped run can print hundreds of `[Survived]` entries for files and
+  lines you never mutated. This is the inverse of the two foot-guns below —
+  those make a broken run look green, this makes a green run look broken — and
+  it is why the only valid reading is to filter the survivor list by your own
+  line ranges:
+
+  ```bash
+  # after a scoped run, keep only survivors inside the ranges you mutated
+  grep -A2 '^\[Survived\]\|^\[NoCoverage\]' run.log | grep '<your-file>.ts:'
+  ```
+
+  Confirm `Instrumented N source file(s) with M mutant(s)` matches the scope you
+  asked for; that count, not the survivor list, tells you what this run tested.
 
   Check the `Instrumented N source file(s) with M mutant(s)` line before
   trusting any score — `N > 0` is what proves the scope actually resolved. Two

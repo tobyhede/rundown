@@ -59,7 +59,7 @@
  * @module scripts/mutate-changed
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -260,6 +260,47 @@ export function testOnlyStrykerArgs() {
   return ['--incremental'];
 }
 
+/** Source lines above which a scope is forced to single-unit concurrency. */
+export const LARGE_SOURCE_FILE_LINES = 1000;
+
+/**
+ * Choose Stryker's concurrency for one scoped run from the mutated file's size.
+ *
+ * Mutation runs are MEMORY-bound, not CPU-bound, and the memory is per worker:
+ * Stryker spawns a test-runner worker AND a TypeScript checker worker per
+ * concurrency unit, and each holds the whole instrumented module graph. So the
+ * cost scales with the size of the file being mutated, not with how many
+ * mutants it yields. Measured on `lifecycle-command-service.ts` (3596 lines),
+ * the package default of 2 ran four workers at 3-4 GB each — ~14 GB, enough to
+ * make the machine unusable for anything else.
+ *
+ * Lowering concurrency trades wall-clock for memory and NOTHING else: the same
+ * mutants are tested and the same ones are killed. That is what makes it safe
+ * to decide here rather than leaving it to whoever runs the script, and it is
+ * why this is the first knob to reach for on a heavy run — ahead of narrowing
+ * scope, and far ahead of `timeoutMS`, which is never a legitimate knob because
+ * a timeout counts as a detected kill no test performed.
+ *
+ * An explicit `STRYKER_CONCURRENCY` in the environment always wins; this only
+ * supplies a size-aware default where there was a flat one.
+ *
+ * @param {string} absoluteFilePath - Absolute path to the source file being mutated.
+ * @returns {string | undefined} The concurrency to set, or undefined to inherit
+ *   the caller's environment / package default.
+ */
+export function scopedConcurrency(absoluteFilePath) {
+  if (process.env.STRYKER_CONCURRENCY) return undefined;
+  try {
+    const lines = readFileSync(absoluteFilePath, 'utf8').split('\n').length;
+    return lines > LARGE_SOURCE_FILE_LINES ? '1' : undefined;
+  } catch {
+    // An unreadable path is not this function's problem to report — Stryker
+    // will fail the scope loudly on its own. Inherit the default rather than
+    // guessing, so a transient read error cannot silently halve throughput.
+    return undefined;
+  }
+}
+
 /**
  * Render a human-readable plan for one package's scope.
  *
@@ -376,7 +417,16 @@ async function main() {
         ],
         {
           cwd: repoRoot,
-          env: { ...process.env, STRYKER_SCOPED: 'true' },
+          env: {
+            ...process.env,
+            STRYKER_SCOPED: 'true',
+            // Size-aware, and only where the caller left it unset. See
+            // `scopedConcurrency` for why memory — not CPU — sets this bound.
+            ...(() => {
+              const concurrency = scopedConcurrency(join(repoRoot, pkg.dir, entry.file));
+              return concurrency === undefined ? {} : { STRYKER_CONCURRENCY: concurrency };
+            })(),
+          },
         },
       );
       const { output } = result;
