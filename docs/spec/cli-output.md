@@ -366,6 +366,15 @@ such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`,
 `INLINE_CHILD_FRAME_SUPERSEDED`, or `INLINE_LAUNCH_FORBIDDEN`; consumers should
 treat these as terminal workflow failures for the active runbook.
 
+The two linkage refusals are registered error codes —
+`INLINE_CHILD_FRAME_SUPERSEDED` is **RD-830** and
+`INLINE_CHILD_LINKAGE_MISMATCH` is **RD-831** — so each carries a title,
+remediation description, and doc slug in the registry, and the emitting switch
+is typed against `ErrorCodeKey` rather than against bare strings. The emitted
+`code` value remains the symbolic name, which is what consumers match on.
+`INLINE_CHILD_LAUNCH_FAILED` and `INLINE_LAUNCH_FORBIDDEN` are not yet
+registered.
+
 `INLINE_CHILD_FRAME_SUPERSEDED` is the one refusal in that set an ordinary
 gesture reaches. A self-targeting `GOTO` or `RETRY` re-enters the parent's frame
 and advances its entry counter, so an inline child launched at an earlier entry

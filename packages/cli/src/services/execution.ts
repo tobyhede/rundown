@@ -50,6 +50,7 @@ import {
   reconstituteContextVars,
   extractInheritedUserVars,
   ErrorCodes,
+  type ErrorCodeKey,
   getErrorMessage,
   partitionOutputDeclarations,
   resolveCurrentExecutionUnit,
@@ -493,7 +494,7 @@ function describeInlineChildLinkageRefusal(
   childRunId: RunId,
   linkage: InlineLinkage,
   mismatch: Exclude<InlineChildLinkageMatch, { kind: 'matched' }>,
-): { readonly message: string; readonly code: string } {
+): { readonly message: string; readonly code: ErrorCodeKey } {
   switch (mismatch.kind) {
     case 'superseded-entry':
       // Names both entries and the remedy, because this refusal is reachable
@@ -502,6 +503,11 @@ function describeInlineChildLinkageRefusal(
       // the sanctioned one for any superseded run: finish, stop, or prune it.
       // Once the stale child's state is gone the same re-entry launches a fresh
       // child under the current entry.
+      //
+      // The message stays specific rather than reusing RD-830's registry
+      // description: it names THIS child, THIS frame, and both entries, which no
+      // static prose can. The registry owns the code's identity and its
+      // documentation; the emission site owns the particulars.
       return {
         message:
           `Inline child ${childRunId} was launched at entry ${String(mismatch.recordedEntry)} of frame ` +

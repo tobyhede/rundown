@@ -1,6 +1,7 @@
 import { type Command, Option } from 'commander';
 import {
   DELEGATION_TOKEN_PREFIX,
+  ErrorCodes,
   RunbookStateManager,
   SessionService,
   ExecutionLifecycleService,
@@ -114,8 +115,11 @@ function claimFailureToEnvelope(failure: Exclude<ClaimFailure, { reason: 'sessio
     case 'delegation-superseded':
       return {
         code: 'DELEGATION_SUPERSEDED',
-        message:
-          'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator.',
+        // Sourced from the registry rather than retyped. This message was a
+        // verbatim copy of RD-825's description minus its last sentence, so the
+        // two were free to drift with nothing to catch it — and the sentence the
+        // copy dropped (when the latch refuses) is the operative one.
+        message: ErrorCodes.DELEGATION_SUPERSEDED.description,
         details: {
           parentRunId: failure.parentRunId,
           stepId: failure.stepId,

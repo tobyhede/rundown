@@ -490,6 +490,33 @@ export const ErrorCodes = {
       `re-projects and re-consumes the same frontier.`,
     docSlug: 'delegation-frontier-consume-failed',
   },
+  INLINE_CHILD_FRAME_SUPERSEDED: {
+    code: 'RD-830',
+    category: ErrorCategory.DELEGATION,
+    title: 'Inline child superseded by frame re-entry',
+    description:
+      `The inline child recorded at this frame was launched at an earlier entry, ` +
+      `and the parent has since re-entered the frame. A re-entered frame never ` +
+      `adopts the previous entry's child — the same judgement delegation makes ` +
+      `when it closes a child cursor-advanced (RD-826). Reachable from an ` +
+      `ordinary gesture rather than corrupt state: a self-targeting GOTO or RETRY ` +
+      `advances the frame's entry counter. Finish, stop, or prune the superseded ` +
+      `child run, after which the same re-entry launches a fresh child under the ` +
+      `current entry.`,
+    docSlug: 'inline-child-frame-superseded',
+  },
+  INLINE_CHILD_LINKAGE_MISMATCH: {
+    code: 'RD-831',
+    category: ErrorCategory.DELEGATION,
+    title: 'Inline child linkage mismatch',
+    description:
+      `The persisted inline child names a different parent run, step, substep, or ` +
+      `frame than the launch intent describes. Distinct from RD-830: that is a ` +
+      `superseded generation of the same linkage, reachable by an ordinary ` +
+      `re-entry, whereas this is inconsistent state. Prune the child run and ` +
+      `restart execution rather than adopting a child the parent does not claim.`,
+    docSlug: 'inline-child-linkage-mismatch',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated
