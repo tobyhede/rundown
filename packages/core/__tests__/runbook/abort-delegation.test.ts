@@ -7,6 +7,7 @@ import {
   brandStoredOutputsForTest,
   brandEffectiveVarsForTest,
   brandRunIdForTest,
+  brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 
@@ -32,6 +33,7 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
 /** Helper: create minimal RunbookState for testing. */
 function makeState(substepStates: SubstepState[]): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: RUN_ID,
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',

@@ -58,13 +58,10 @@ export function getRunbookFromState(state: RunbookState, cwd: string): readonly 
     );
   }
 
-  if (!state.templateVars) {
-    throw new Error(
-      `Persisted run ${state.id} is missing templateVars. ` +
-        `This indicates incompatible state. Prune the run and re-run the runbook.`,
-    );
-  }
-
+  // No `templateVars` guard here: the field is required on `RunbookState`, and
+  // the refusal belongs at the JSON boundary where the invariant can actually
+  // be violated — `RunbookStateManager.load` rejects a persisted row without it
+  // before the value is ever typed as a `RunbookState`.
   const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
   const errors = diagnostics.filter((d) => d.severity === 'error');
   if (errors.length > 0) {

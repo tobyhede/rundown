@@ -22,7 +22,10 @@ import {
 } from '../../src/runbook/targeting.js';
 import type { RunbookState, SubstepState } from '../../src/runbook/types.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 import {
   makeBaseStep,
   makeCommandStep,
@@ -211,6 +214,7 @@ function buildState(clauses: ExposureClauses, noise: ExposureNoise): RunbookStat
     substepStates.push(inlineSubstepRecord(noise));
   }
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 'exposure-properties.md' },
     runbookPath: 'exposure-properties.md',

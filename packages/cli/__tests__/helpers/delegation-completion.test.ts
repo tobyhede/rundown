@@ -1,3 +1,4 @@
+import { brandInitialTemplateVarsForTest } from './brand-helpers.js';
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
@@ -235,6 +236,7 @@ const {
 
 function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
   const base: RunbookState = {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',

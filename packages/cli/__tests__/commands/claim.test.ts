@@ -692,8 +692,8 @@ Execute with {{Env}} environment.
         source: 'plugin',
         path: childRel,
       });
-      expect(childState!.templateVars?.RunbookRef).toEqual(childState!.runbook);
-      expect(childState!.templateVars?.RunId).toBe(childState!.id);
+      expect(childState!.templateVars.RunbookRef).toEqual(childState!.runbook);
+      expect(childState!.templateVars.RunId).toBe(childState!.id);
     });
   });
 

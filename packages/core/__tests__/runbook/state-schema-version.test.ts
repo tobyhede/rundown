@@ -305,9 +305,14 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
       runbook: { source: 'project', path: 'x.md' },
     });
 
-    await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
-    await expect(manager.load(id)).rejects.toThrow(/missing templateVars/);
-    await expect(manager.load(id)).rejects.toThrow(/prune/i);
+    // One load, three assertions against the same rejection: re-invoking would
+    // assert about three separate calls, so a refusal that only held on the
+    // first would still pass.
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(load).rejects.toThrow(/missing templateVars/);
+    await expect(load).rejects.toThrow(/prune/i);
   });
 
   it('rejects state with future schemaVersion', async () => {

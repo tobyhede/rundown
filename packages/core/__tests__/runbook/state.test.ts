@@ -989,7 +989,8 @@ describe('RunbookStateManager', () => {
 
     it('always persists templateVars, even when create() is given none', async () => {
       // Persisted state has no compatibility contract: `load` refuses a row
-      // without templateVars, so `create` must never write one.
+      // without templateVars, so `create` must always persist it — `{}` when
+      // the caller supplies none.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
@@ -1230,12 +1231,12 @@ describe('RunbookStateManager', () => {
       });
 
       // Verify templateVars are present in created state
-      expect(state.templateVars?.items).toEqual(['a', 'b']);
-      expect(state.templateVars?.env).toBe('prod');
+      expect(state.templateVars.items).toEqual(['a', 'b']);
+      expect(state.templateVars.env).toBe('prod');
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
-      expect(loaded?.templateVars?.items).toEqual(['a', 'b']);
+      expect(loaded?.templateVars.items).toEqual(['a', 'b']);
     });
   });
 

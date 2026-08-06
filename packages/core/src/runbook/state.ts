@@ -482,13 +482,16 @@ export class RunbookStateManager {
    * Read a runbook state back from the project's store by ID.
    *
    * Reassembles the run's `state_json` from its row and validates it. Returns
-   * `null` — never throws — when no such record exists, which also covers an id
-   * that is safe but cannot name a run. Anything else is invalid persisted state
-   * and is refused rather than adapted: there is no migration path, and the
-   * caller's recovery is always to finish, stop, prune, or restart the run.
+   * `null` when a traversal-safe id has no matching record, which also covers a
+   * safe id that cannot name a run at all. A traversal-unsafe id never reaches
+   * the store: {@link RunbookStateManager.toRunId} rejects it first. Anything
+   * else is invalid persisted state and is refused rather than adapted: there is
+   * no migration path, and the caller's recovery is always to finish, stop,
+   * prune, or restart the run.
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
-   * @returns The loaded RunbookState, or null when no record for `id` exists
+   * @returns The loaded RunbookState, or null when a traversal-safe `id` has no record
+   * @throws {Error} If `id` is traversal-unsafe — rejected before any store access
    * @throws {InvalidRunbookStateError} If the record exists but its `state_json`
    *   is unparseable, fails schema validation, has an incompatible schemaVersion,
    *   or is missing `templateVars`

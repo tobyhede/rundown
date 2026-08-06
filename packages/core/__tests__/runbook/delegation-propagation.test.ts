@@ -12,7 +12,11 @@ import {
 } from '../../src/runbook/targeting.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandRunIdForTest,
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
@@ -278,6 +282,7 @@ describe('parentLinkage discriminated union schema', () => {
 describe('frame identity derivation for propagation', () => {
   function makeState(overrides: Partial<RunbookState>): RunbookState {
     return {
+      templateVars: brandInitialTemplateVarsForTest({}),
       id: LOCAL_RUN_ID,
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: '/tmp/test.md',

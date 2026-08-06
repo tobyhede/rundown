@@ -263,7 +263,7 @@ describe('delegation claim inheritance integration', () => {
     const childState = await readRunbookState(workspace, claimOutput!.run_id);
 
     expect(childState).not.toBeNull();
-    expect(childState!.templateVars?.Plan).toBe('literal');
+    expect(childState!.templateVars.Plan).toBe('literal');
     expect(childState!.variables).not.toHaveProperty('Plan');
   });
 

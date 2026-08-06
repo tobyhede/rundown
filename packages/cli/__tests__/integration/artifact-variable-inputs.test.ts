@@ -182,7 +182,7 @@ ${body}
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
     expect(state!.variables.Plan).toMatchObject({ contextId: 'producer-context' });
-    expect(state!.templateVars?.ContextId).not.toBe('producer-context');
+    expect(state!.templateVars.ContextId).not.toBe('producer-context');
   });
 
   it('clean break: a missing rd:// URI via --input stays a plain template string', async () => {
@@ -199,7 +199,7 @@ ${body}
 
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
-    expect(state!.templateVars?.Plan).toBe(uri);
+    expect(state!.templateVars.Plan).toBe(uri);
     expect(state!.variables).not.toHaveProperty('Plan');
   });
 
@@ -214,7 +214,7 @@ ${body}
 
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
-    expect(state!.templateVars?.Plan).toBe('plan.json');
+    expect(state!.templateVars.Plan).toBe('plan.json');
     expect(state!.variables).not.toHaveProperty('Plan');
   });
 

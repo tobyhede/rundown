@@ -38,20 +38,13 @@ echo done
     expect(steps[1].name).toBe('2');
   });
 
-  it('should reject state missing templateVars instead of re-parsing pre-expanded source', () => {
-    // A persisted row without templateVars is incompatible state, not something
-    // to reconstruct by re-parsing the stored source. No migration, no fallback.
-    const state: Partial<RunbookState> = {
-      id: 'legacy-id' as RunbookState['id'],
-      runbook: { source: 'project', path: 'test.runbook.md' },
-      runbookSrc: '# Test Runbook\n\n## 1. First Step\n- PASS COMPLETE\n',
-      // templateVars is undefined
-    };
-
-    expect(() => getRunbookFromState(state as RunbookState, '/unused')).toThrow(
-      'Persisted run legacy-id is missing templateVars',
-    );
-  });
+  // A persisted row without templateVars is incompatible state, not something to
+  // reconstruct by re-parsing the stored source. That refusal is asserted where
+  // it is enforceable — against raw persisted JSON, in
+  // core's `state-schema-version.test.ts` ('rejects current-schema state missing
+  // templateVars instead of reconstructing it'). It cannot be re-asserted here:
+  // `templateVars` is required on `RunbookState`, so reaching this function
+  // without one takes a cast, which would test the cast rather than the system.
 
   it('should throw when runbookSrc is missing (corrupted state)', () => {
     const state: Partial<RunbookState> = {

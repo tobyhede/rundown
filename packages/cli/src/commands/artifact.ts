@@ -60,7 +60,7 @@ async function resolveActiveArtifactState(): Promise<ActiveArtifactState> {
   // unreachable today — guard the `.state` narrowing below (never crash).
   if (active.kind === 'unknown_run') return { kind: 'none' };
   const workPath =
-    typeof active.state.templateVars?.WorkPath === 'string'
+    typeof active.state.templateVars.WorkPath === 'string'
       ? active.state.templateVars.WorkPath
       : WORK_DIR;
   return { kind: 'ok', state: active.state, artifactPathOptions: { cwd, workPath } };

@@ -3006,11 +3006,11 @@ echo ok
         templateVars: templateVars,
       });
 
-      expect(state.templateVars?.items).toEqual(['a', 'b', 'c']);
+      expect(state.templateVars.items).toEqual(['a', 'b', 'c']);
 
       // Update step
       const updated1 = await manager.update(state.id, { step: '1' });
-      expect(updated1.templateVars?.items).toEqual(['a', 'b', 'c']);
+      expect(updated1.templateVars.items).toEqual(['a', 'b', 'c']);
 
       // updateFromActor
       const actor = mockActor({
@@ -3023,11 +3023,11 @@ echo ok
       });
 
       const { state: updated2 } = await actorService.updateFromActor(state.id, actor, mockSteps);
-      expect(updated2.templateVars?.items).toEqual(['a', 'b', 'c']);
+      expect(updated2.templateVars.items).toEqual(['a', 'b', 'c']);
 
       // Load from disk and verify templateVars still present
       const loaded = await manager.load(state.id);
-      expect(loaded?.templateVars?.items).toEqual(['a', 'b', 'c']);
+      expect(loaded?.templateVars.items).toEqual(['a', 'b', 'c']);
     });
   });
 

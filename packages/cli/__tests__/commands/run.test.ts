@@ -661,7 +661,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
-      const templateVars = childState!.templateVars!;
+      const templateVars = childState!.templateVars;
       expect(templateVars.Region).toBe('cli-region');
     });
   });

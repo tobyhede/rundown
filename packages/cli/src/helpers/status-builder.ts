@@ -123,7 +123,7 @@ export interface StatusOutputData {
 
 function buildArtifactPathOptions(state: RunbookState, cwd: string): ArtifactPathOptions {
   const workPath =
-    typeof state.templateVars?.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
+    typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
   return { cwd, workPath };
 }
 

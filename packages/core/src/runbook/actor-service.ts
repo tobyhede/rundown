@@ -62,7 +62,6 @@ import {
 import type { RecoveryActor } from './execution-recovery-service.js';
 import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
-import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
 import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
@@ -917,8 +916,8 @@ export class RunbookActorService {
       );
     }
     return compileRunbookToMachine(steps, {
-      templateVars: flattenTemplateVars(state.templateVars ?? {}),
-      sourceTemplateVars: state.templateVars ?? brandInitialTemplateVars({}),
+      templateVars: flattenTemplateVars(state.templateVars),
+      sourceTemplateVars: state.templateVars,
       initialVariables: state.variables,
       evaluationOptions: {
         cwd: this.manager.cwd,
@@ -1636,7 +1635,7 @@ export class RunbookActorService {
           }
         : entry;
     const workPath =
-      typeof state.templateVars?.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
+      typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
     return [
       deriveStepEnteredEffect({
         snapshot,
