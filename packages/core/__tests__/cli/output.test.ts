@@ -104,6 +104,24 @@ describe('output formatter', () => {
       ]);
     });
 
+    it('prints the run id after State when runId is present', () => {
+      printMetadata(
+        {
+          file: 'runbooks/build.md',
+          state: '.rundown/rundown.db',
+          runId: 'rd_0123456789abcdef0123456789abcdef',
+        },
+        writer,
+      );
+      // `state` is the same constant for every run, so `runId` is the only
+      // thing in the text header that identifies which run this output is for.
+      expect(writer.getLines()).toEqual([
+        'File:     runbooks/build.md',
+        'State:    .rundown/rundown.db',
+        'Run:      rd_0123456789abcdef0123456789abcdef',
+      ]);
+    });
+
     it('prints prompt line when prompted is true', () => {
       printMetadata(
         {

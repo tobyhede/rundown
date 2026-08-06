@@ -43,7 +43,7 @@ echo done
 
     expect(() => {
       getRunbookFromState(state as RunbookState, '/unused');
-    }).toThrow('State file corrupted-id is missing runbookSrc');
+    }).toThrow('Persisted run corrupted-id is missing runbookSrc');
   });
 
   it('should substitute templateVars when present in state', () => {
@@ -147,6 +147,6 @@ Plans: {{ Plans }}
     // Should throw immediately without checking disk
     expect(() => {
       getRunbookFromState(state as RunbookState, '/some/cwd');
-    }).toThrow('State file missing-src-id is missing runbookSrc');
+    }).toThrow('Persisted run missing-src-id is missing runbookSrc');
   });
 });

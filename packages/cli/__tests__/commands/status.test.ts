@@ -284,13 +284,13 @@ describe('claim-id delegated children', () => {
     const claimId2 = child2Output!.claim_id as string;
 
     let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
-    expect(JSON.parse(status.stdout).state).toContain(child1Id);
+    expect(JSON.parse(status.stdout).runId).toBe(child1Id);
 
     status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
-    expect(JSON.parse(status.stdout).state).toContain(child2Id);
+    expect(JSON.parse(status.stdout).runId).toBe(child2Id);
 
     status = await runCliInProcess('status', workspace);
-    expect(JSON.parse(status.stdout).state).toContain(parentId);
+    expect(JSON.parse(status.stdout).runId).toBe(parentId);
   });
 
   async function setupOwnedStash() {
@@ -355,7 +355,7 @@ describe('claim-id delegated children', () => {
   }
 
   it('plain status can report the global stashed child without claim vars', async () => {
-    await setupOwnedStash();
+    const { childRunId } = await setupOwnedStash();
 
     const status = await runCliInProcess('status', workspace);
 
@@ -364,6 +364,11 @@ describe('claim-id delegated children', () => {
       expect.objectContaining({ active: false, stashed: true }),
     );
     expect(status.stdout).toContain('child-secret.runbook.md');
+    // Identity is not caller-scoped: `runId` joins `file`, `position`, and the
+    // unconditional `parentLinkage` (which already carries `parentRunId` and
+    // `tokenHash`). No read command accepts a run id as a selector, so a plain
+    // caller cannot trade it for the vars below.
+    expect(JSON.parse(status.stdout).runId).toBe(childRunId);
     // Plain status must not leak claim-scoped variables: only `--claim-id`
     // callers see them (asserted positively in the next test).
     expect(status.stdout).not.toContain('top-secret-input');
@@ -380,7 +385,7 @@ describe('claim-id delegated children', () => {
     expect(output.active).toBe(true);
     expect(output.stashed).toBe(true);
     expect(output.file).toContain('child-secret.runbook.md');
-    expect(output.state).toContain(childRunId);
+    expect(output.runId).toBe(childRunId);
     expect(output.parentLinkage).toEqual(
       expect.objectContaining({
         kind: 'delegation',
@@ -407,7 +412,7 @@ describe('claim-id delegated children', () => {
     expect(status.exitCode).toBe(0);
     expect(output.active).toBe(false);
     expect(output.status).toBe('completed');
-    expect(output.state).toContain(childRunId);
+    expect(output.runId).toBe(childRunId);
   });
 
   it('anonymous stash remains visible to plain callers', async () => {

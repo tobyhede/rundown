@@ -91,10 +91,12 @@ export class CLISubscriber {
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
 
-    // Print metadata with the shared SQLite authority.
+    // Print metadata with the shared SQLite authority. `state` is the same
+    // constant for every run, so `runId` is what identifies this one.
     const meta: RunbookMetadata = {
       file: runbook.path,
       state: DB_FILE,
+      runId: event.runbookId,
       prompted: payload.prompted,
     };
     printMetadata(meta, this.writer);

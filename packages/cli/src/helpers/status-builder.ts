@@ -54,6 +54,16 @@ export interface StatusOutputData {
   file?: string;
   /** SQLite run/session authority path. */
   state?: string;
+  /**
+   * Run id this status describes.
+   *
+   * Not caller-scoped: `isCallerScoped` withholds variable *contents* (`vars`,
+   * `artifacts`) from callers who cannot identify themselves, not identity.
+   * `parentLinkage` already discloses `parentRunId` and `tokenHash`
+   * unconditionally, and no read command accepts a run id as a selector, so a
+   * plain caller gains no access from it.
+   */
+  runId?: string;
   /** Whether runbook is in prompted mode */
   prompted?: boolean;
   /** Current position in runbook */
@@ -254,6 +264,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     stashed: true,
     file: metadata.file,
     state: metadata.state,
+    ...(metadata.runId != null && { runId: metadata.runId }),
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: buildStepPosition(
       stashedState.step,
@@ -392,6 +403,7 @@ export function buildActiveStatus(
     stashed: !!stashedId,
     file: metadata.file,
     state: metadata.state,
+    ...(metadata.runId != null && { runId: metadata.runId }),
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: {
       ...basePosition,

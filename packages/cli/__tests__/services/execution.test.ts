@@ -17,15 +17,18 @@ import {
 import type { ForClause, Step } from '@rundown-org/parser';
 
 describe('execution service', () => {
-  it('reports the SQLite authority in runbook metadata', () => {
+  it('reports the SQLite authority and the run id in runbook metadata', () => {
     const state = {
       id: 'rd_0123456789abcdef0123456789abcdef',
       runbook: { source: 'project', path: 'runbooks/test.md' },
     } as unknown as RunbookState;
 
+    // `state` is the same constant for every run, so `runId` is what says
+    // which run this metadata describes.
     expect(buildMetadata(state)).toEqual({
       file: 'runbooks/test.md',
       state: '.rundown/rundown.db',
+      runId: 'rd_0123456789abcdef0123456789abcdef',
       prompted: undefined,
     });
   });

@@ -282,6 +282,8 @@ export const RunbookContextSchema = z
     file: z.string().describe('Path to the runbook file'),
     /** SQLite run/session authority path. */
     state: z.string().describe('Path to the SQLite run/session authority'),
+    /** Run id this context describes; `state` is the same constant for every run. */
+    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id this context describes'),
     /** Whether runbook is in prompted mode (waiting for user input) */
     prompted: z.boolean().optional().describe('Whether the runbook is awaiting user input'),
   })
@@ -437,6 +439,7 @@ export const ActionResponseSchema = z
     // Flat format fields
     file: z.string().optional().describe('Path to the runbook file'),
     state: z.string().optional().describe('Path to the SQLite run/session authority'),
+    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id this action describes'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     message: z.string().optional().describe('Status message from the action'),
     /** Idempotency status for action-family responses */
@@ -579,6 +582,7 @@ export const StatusResponseSchema = z
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),
+    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id this status describes'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     vars: z
       .record(z.string(), z.string())
@@ -1193,6 +1197,7 @@ export const StashResponseSchema = z
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     file: z.string().optional().describe('Path to the runbook file'),
     state: z.string().optional().describe('Path to the SQLite run/session authority'),
+    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id that was stashed'),
     message: z.string().optional().describe('Status message'),
     position: PositionSchema.optional().describe('Position when stashed'),
   })
@@ -1215,6 +1220,7 @@ export const PopResponseSchema = z
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     file: z.string().optional().describe('Path to the runbook file'),
     state: z.string().optional().describe('Path to the SQLite run/session authority'),
+    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id that was restored'),
     message: z.string().optional().describe('Status message'),
     position: PositionSchema.optional().describe('Position when restored'),
     step: z

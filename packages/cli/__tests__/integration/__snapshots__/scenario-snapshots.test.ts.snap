@@ -20,6 +20,7 @@ exports[`scenario output snapshots delegation-outputs text 1`] = `
 "=== command: rd run snapshot-delegation-outputs.runbook.md --allow-all --text ===
 File:     .rundown/runbooks/snapshot-delegation-outputs.runbook.md
 State:    .rundown/rundown.db
+Run:      <runbookId>
 Action:   START
 
 ## 1. Set message
@@ -61,6 +62,7 @@ exports[`scenario output snapshots multi-step JSON 1`] = `
 exports[`scenario output snapshots multi-step text 1`] = `
 "File:     .rundown/runbooks/snapshot-multi-step.runbook.md
 State:    .rundown/rundown.db
+Run:      <runbookId>
 Action:   START
 
 ## 1. First
@@ -119,6 +121,7 @@ exports[`scenario output snapshots retry JSON 1`] = `
 exports[`scenario output snapshots retry text 1`] = `
 "File:     .rundown/runbooks/snapshot-retry.runbook.md
 State:    .rundown/rundown.db
+Run:      <runbookId>
 Action:   START
 
 ## 1. Flaky step
@@ -161,6 +164,7 @@ exports[`scenario output snapshots simple-complete JSON 1`] = `
 exports[`scenario output snapshots simple-complete text 1`] = `
 "File:     .rundown/runbooks/snapshot-simple-complete.runbook.md
 State:    .rundown/rundown.db
+Run:      <runbookId>
 Action:   START
 
 ## 1. Single step
@@ -191,6 +195,7 @@ exports[`scenario output snapshots simple-stop JSON 1`] = `
 exports[`scenario output snapshots simple-stop text 1`] = `
 "File:     .rundown/runbooks/snapshot-simple-stop.runbook.md
 State:    .rundown/rundown.db
+Run:      <runbookId>
 Action:   START
 
 ## 1. Single step

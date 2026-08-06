@@ -1915,6 +1915,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
   return {
     file: state.runbook.path,
     state: DB_FILE,
+    runId: state.id,
     prompted: state.prompted ?? undefined,
   };
 }
