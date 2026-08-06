@@ -10,15 +10,23 @@ npm run build    # Build to dist/
 npm run preview  # Preview production build
 ```
 
-**Before running Playwright tests** (`npm test`), build the WebContainer snapshot first:
+## Verifying a site change
+
+**`pnpm run verify` does not cover this directory.** It runs no Playwright, and both Biome and cspell exclude `site` (`biome.json`'s `"!site"`), so a change here can break the shipped demo with the repo-wide gate fully green. Run this from the repo root as well, whenever you touch `site/src`:
 
 ```bash
-npm run build:snapshot -w site  # fast if packages already built
-# or
-npm run build -w site           # full build including snapshot
+pnpm run verify:site   # builds the snapshot, then runs Playwright
 ```
 
-`public/rundown-snapshot.bin` is not committed — it must exist on disk before `npm run dev` or `npm test` will work. CI builds it automatically.
+**Use `verify:site` rather than calling Playwright directly** — `pnpm --filter site test` on its own fails from a clean state, and the reason is not obvious:
+
+**Astro 7's `astro dev` daemonizes.** It prints `Dev server running at http://localhost:4321 (pid N)` and the foreground process exits 0 while the server keeps serving. Playwright's `webServer` runs `npm run dev` and treats its command exiting as the server dying, so it aborts with `Process from config.webServer exited early` before running a single test. This is not the "server already running" guard — it happens with nothing listening at all, and setting `CI=1` does not change it. `scripts/verify-site.sh` therefore starts the server itself, waits for it to answer, and lets Playwright reuse it (`reuseExistingServer` is on whenever `CI` is unset). It stops the server on exit only if it was the one that started it.
+
+The consequence for running the suite by hand: start the dev server first, then run `pnpm --filter site test`. It will reuse the running server. And confirm a stray server belongs to *this* worktree before reusing it — `lsof -a -p <pid> -d cwd -Fn` — or you will test a different checkout's code.
+
+**Use the pnpm forms.** This is a pnpm workspace, so the npm `-w` flag does not resolve: `npm run build:snapshot -w site` fails with `No workspaces found: --workspace=site`.
+
+`public/rundown-snapshot.bin` is not committed — it must exist on disk before `astro dev` or Playwright will work. CI builds it automatically.
 
 ## Homepage Architecture
 

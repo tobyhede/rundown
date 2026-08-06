@@ -400,6 +400,15 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   before every push.** Scoped `jest` runs are not a substitute: spelling
   (`cspell`) and typed lint (`jsdoc/require-throws` and friends) only run here,
   so a change can be green in every targeted suite and still fail the gate.
+- **`pnpm run verify:site` — `verify` does not cover `site/` at all.** It runs
+  no Playwright, and both Biome and cspell exclude the directory (`biome.json`'s
+  `"!site"`), so a site change can break the shipped demo with the gate fully
+  green — which is exactly how two regressions on the single-store branch
+  reached CI. **Touching `site/src` means running `pnpm run verify:site`**
+  (snapshot build, then Playwright) in addition to `verify`. It is separate
+  rather than folded in because the snapshot build plus browser run costs
+  minutes on every invocation, and most changes never touch `site/`. See
+  [site/CLAUDE.md](site/CLAUDE.md) for the dev-server foot-gun.
 - **Biome owns JS/TS/JSON/CSS; Prettier is Markdown-only** (`.prettierignore`
   line 1). **Never run `prettier` on TypeScript** — it reformats to a different
   quote/width style, and `biome format` will not undo it because it preserves
