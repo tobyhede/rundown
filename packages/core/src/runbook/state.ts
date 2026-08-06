@@ -422,7 +422,15 @@ export class RunbookStateManager {
   }
 
   /**
-   * Create a new runbook state and persist it to disk.
+   * Create a new runbook state and insert it as a row in the project's store.
+   *
+   * The state is committed through {@link save}, which inserts the run row into
+   * the shared SQLite database. No per-run directory is created here: the
+   * filesystem-backed `.rundown/runs/<id>/outputs/` tree holds captured command
+   * output only, and is created on demand by the capture path.
+   *
+   * `templateVars` is always written — `{}` when the caller supplies none — because
+   * {@link load} refuses a persisted row without it.
    *
    * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
@@ -457,10 +465,10 @@ export class RunbookStateManager {
       updatedAt: now,
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
-      templateVars:
-        options.templateVars === undefined
-          ? undefined
-          : brandInitialTemplateVars(options.templateVars),
+      // Always written, `{}` when the caller supplies none: `load` refuses a
+      // persisted row without templateVars rather than reconstructing it, so a
+      // run created without one would be unreadable the moment it is saved.
+      templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
       frontmatterOutputs: options.frontmatterOutputs ?? [],
       lifecycle: 'running',
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -471,12 +479,19 @@ export class RunbookStateManager {
   }
 
   /**
-   * Load a runbook state from disk by ID.
+   * Read a runbook state back from the project's store by ID.
+   *
+   * Reassembles the run's `state_json` from its row and validates it. Returns
+   * `null` — never throws — when no such record exists, which also covers an id
+   * that is safe but cannot name a run. Anything else is invalid persisted state
+   * and is refused rather than adapted: there is no migration path, and the
+   * caller's recovery is always to finish, stop, prune, or restart the run.
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
-   * @returns The loaded RunbookState, or null if file not found
-   * @throws {InvalidRunbookStateError} If the persisted row exists but its `state_json`
-   *   is unparseable, fails schema validation, or has an incompatible schemaVersion
+   * @returns The loaded RunbookState, or null when no record for `id` exists
+   * @throws {InvalidRunbookStateError} If the record exists but its `state_json`
+   *   is unparseable, fails schema validation, has an incompatible schemaVersion,
+   *   or is missing `templateVars`
    * @throws {LegacySnapshotError} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
@@ -529,6 +544,18 @@ export class RunbookStateManager {
       );
     }
 
+    // A current-schema row without templateVars is incompatible state. Readers
+    // substitute `runbookSrc` against it on every resume; re-parsing the stored
+    // source to stand in for it would be a silent migration. Named explicitly
+    // rather than left to the schema parse below so the refusal says which field
+    // is missing and what to do about it.
+    if (obj.templateVars === undefined) {
+      throw new InvalidRunbookStateError(
+        `Invalid runbook state for "${id}": missing templateVars. ` +
+          `Prune this run and re-run the runbook.`,
+      );
+    }
+
     const result = makeRunbookStateSchema(this.cwd).safeParse(raw);
     if (!result.success) {
       throw new InvalidRunbookStateError(
@@ -541,12 +568,17 @@ export class RunbookStateManager {
   }
 
   /**
-   * Save a runbook state to disk.
+   * Write a runbook state to the project's store.
    *
-   * Creates the state directory if it does not exist and writes the state
-   * as a JSON file, automatically updating the `updatedAt` timestamp.
+   * Inserts the run row when no record for `state.id` exists yet and otherwise
+   * commits a wholesale replacement of the existing one, stamping the current
+   * schema version and a fresh `updatedAt` either way. Per-run captured output
+   * under `.rundown/runs/<id>/outputs/` is separate filesystem state and is not
+   * touched here.
    *
    * @param state - The runbook state to persist
+   * @throws {Error} When the run exists but the replacement cannot be committed
+   *   (owned by a live execution, or contended).
    */
   async save(state: RunbookState): Promise<void> {
     const store = await this.store();

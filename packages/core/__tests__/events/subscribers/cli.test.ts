@@ -39,6 +39,9 @@ describe('CLISubscriber', () => {
     expect(output).toContain('File:');
     expect(output).toContain('State:');
     expect(output).toContain('.rundown/rundown.db');
+    // `State:` is the same database for every run, so the run identity has to
+    // come from the `Run:` line.
+    expect(output).toContain('Run:      wf-test');
     expect(output).toContain('Action:');
     expect(output).toContain('START');
   });

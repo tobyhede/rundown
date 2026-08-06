@@ -69,7 +69,7 @@ The `--schema` flag's command-to-schema map lives in
 
 ```json
 {
-  "id": "string",      // State file identifier
+  "id": "string",      // Run identifier (`rd_` + 32 hex)
   "runbook": "string", // Runbook filename
   "status": "string",  // active, stashed, complete, stopped, inactive, invalid
   "step": "string",    // (optional) Current step position
@@ -151,10 +151,13 @@ newline-delimited event objects.
 
 **Text:**
 
+Text mode truncates the run id to its first 8 characters; JSON carries it in
+full.
+
 ```text
 ID        STATUS   STEP  RUNBOOK                    TITLE
-abc12345  active   1/3   deploy.runbook.md          Deploy to Production
-def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
+rd_01234  active   1/3   deploy.runbook.md          Deploy to Production
+rd_56789  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ```
 
 **JSON:**
@@ -162,7 +165,7 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ```json
 [
   {
-    "id": "abc12345-...",
+    "id": "rd_0123456789abcdef0123456789abcdef",
     "status": "active",
     "runbook": "deploy.runbook.md",
     "step": "1",
@@ -527,9 +530,11 @@ transition, and the step after). There is no `to` field.
 
 Transition responses (`pass`, `fail`, `goto`) carry no metadata block: no
 `file`, `state`, or `runId` in JSON, and no `File:`/`State:`/`Run:` header in
-text. Only the session and lifecycle commands (`status`, `stop`, `complete`,
-`stash`, `pop`) emit metadata. Correlate a transition with its run through the
-`runbook_started` event's `runbookId`, or by calling `rundown status`.
+text — on terminal and non-terminal transitions alike. `rundown run` and the
+session and lifecycle commands (`status`, `stop`, `complete`, `stash`, `pop`) do
+emit that metadata, including `runId`. Correlate a transition with its run
+through the `runbook_started` event's `runbookId` emitted by `rundown run`, or
+by calling `rundown status`.
 
 ### `rundown pass --claim-id <claim_id>`
 

@@ -25,6 +25,10 @@ echo done
       id: 'test-id' as RunbookState['id'],
       runbook: { source: 'project', path: 'test.runbook.md' },
       runbookSrc,
+      templateVars: brandInitialTemplateVarsForTest({
+        ContextId: 'current-context',
+        WorkPath: '.rundown/work',
+      }),
     };
 
     const steps = getRunbookFromState(state as RunbookState, '/unused');
@@ -32,6 +36,21 @@ echo done
     expect(steps).toHaveLength(2);
     expect(steps[0].name).toBe('1');
     expect(steps[1].name).toBe('2');
+  });
+
+  it('should reject state missing templateVars instead of re-parsing pre-expanded source', () => {
+    // A persisted row without templateVars is incompatible state, not something
+    // to reconstruct by re-parsing the stored source. No migration, no fallback.
+    const state: Partial<RunbookState> = {
+      id: 'legacy-id' as RunbookState['id'],
+      runbook: { source: 'project', path: 'test.runbook.md' },
+      runbookSrc: '# Test Runbook\n\n## 1. First Step\n- PASS COMPLETE\n',
+      // templateVars is undefined
+    };
+
+    expect(() => getRunbookFromState(state as RunbookState, '/unused')).toThrow(
+      'Persisted run legacy-id is missing templateVars',
+    );
   });
 
   it('should throw when runbookSrc is missing (corrupted state)', () => {

@@ -925,7 +925,13 @@ const RunbookStateObjectSchema = z
     lastResult: z.enum(['pass', 'fail']).optional(),
     lastAction: LastActionSchema.optional(),
     runbookSrc: z.string().optional(),
-    templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
+    // Required: `RunbookStateManager.create` always writes it (`{}` at minimum),
+    // and readers substitute `runbookSrc` against it on every resume. A row
+    // without it is incompatible state whose only recovery is prune/restart —
+    // never a re-parse of the stored source. `state.load()` checks
+    // `schemaVersion` before this schema parses, so requiring it here cannot
+    // mask invalid-state detection for rows of another version.
+    templateVars: z.record(z.string(), TemplateVarValueSchema),
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
     finalVars: z.record(z.string(), VariableValueSchema).optional(),
     // Optional by design: state.create() always writes these fields, but
@@ -1201,9 +1207,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
     // process via `state.load` flows through this schema, so applying
     // the brand here covers the entire load path. The matching write
     // path is in `RunbookStateManager.create` / `update` (state.ts).
-    templateVars: VarsSchema.optional().transform((v) =>
-      v === undefined ? undefined : brandInitialTemplateVars(v),
-    ),
+    templateVars: VarsSchema.transform((v) => brandInitialTemplateVars(v)),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
     finalVars: VariablesSchema.optional(),
     resolvedCompletions: z.record(z.string(), ResolvedCompletionSchemaValidated).optional(),

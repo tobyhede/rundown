@@ -32,6 +32,7 @@ import {
   validateErrorOutput,
   validateWarningOutput,
 } from '../helpers/schema-validator.js';
+import { RUN_ID_PATTERN } from '@rundown-org/core';
 import { seedSession } from '@rundown-org/core/testing/session-fixtures';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -843,6 +844,9 @@ echo hello
         const event = startedEvent;
         expect(event).toHaveProperty('prompted');
         expect(event).not.toHaveProperty('statePath');
+        // State lives in the shared database, so `runbookId` is the only run
+        // identity on the envelope — it must be present and well formed.
+        expect(event.runbookId).toMatch(RUN_ID_PATTERN);
       }
 
       // Should have runbook_completed event for successful run
@@ -851,6 +855,8 @@ echo hello
       if (completedEvent) {
         const event = completedEvent;
         expect(event).toHaveProperty('finalPosition');
+        // Every event of one run carries the same identity.
+        expect(event.runbookId).toBe(startedEvent?.runbookId);
       }
     });
 

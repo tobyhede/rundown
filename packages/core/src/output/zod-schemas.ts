@@ -581,7 +581,7 @@ export const StatusResponseSchema = z
       .describe('Parent linkage projection when this runbook is a child'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
-    state: z.string().optional().describe('Current runbook execution state'),
+    state: z.string().optional().describe('Path to the SQLite run/session authority'),
     runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id this status describes'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     vars: z
@@ -677,8 +677,12 @@ export const ArtifactInspectResponseSchema = z.union([
  */
 export const ActiveRunbookEntrySchema = z
   .object({
-    /** Unique runbook instance ID */
-    id: z.string().describe('Unique run identifier'),
+    /**
+     * Unique run id. Both producers (`rundown ls`, `rundown prune`) read ids
+     * through the store's `assertRunId` edge, so every emitted value is a run
+     * id — validated here as one, matching the newer `runId` fields.
+     */
+    id: z.string().regex(RUN_ID_PATTERN).describe('Unique run identifier'),
     /** Runbook filename */
     runbook: z.string().describe('Runbook filename'),
     /** Current step display (e.g., "1/5", "Step") */

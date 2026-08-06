@@ -114,7 +114,9 @@ export function RunbookRunner({
   // Set while reset()'s async cleanRundownState is awaiting. Without this
   // gate, status stays `ready` during cleanup, which would let a Next click
   // start a new run before the SQLite authority and locks are gone — and the
-  // new run would inherit stale persisted state.
+  // new run would inherit stale persisted state. It stays set if cleanup
+  // fails, so the same gate keeps blocking the run that would inherit the
+  // state cleanup could not remove.
   const [isResetting, setIsResetting] = useState(false);
 
   // Instance-scoped IDs so multiple RunbookRunner instances on the same page
@@ -334,10 +336,20 @@ export function RunbookRunner({
     setIsResetting(true);
     resetInternalState();
     try {
-      // cleanRundownState uses Promise.allSettled internally — never rejects.
       if (container) await cleanRundownState(container);
-    } finally {
+      // Only clear the gate once the SQLite authority and locks are actually
+      // gone. Deliberately not a `finally`: see the catch.
       setIsResetting(false);
+    } catch (err) {
+      // cleanRundownState rejects when a path could not be removed for a
+      // reason other than not existing, so stale state is still on disk and a
+      // new run would inherit it. Keep `isResetting` set — it gates `canRun`
+      // and `executeStep` — and surface the failure. The Reset button stays
+      // enabled while `error` is set, so retrying the cleanup is the way out.
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus('error');
+      setError(msg);
+      xtermInstance.current?.writeln(`\x1b[31mError: ${msg}\x1b[0m`);
     }
   }, [container, resetInternalState]);
 

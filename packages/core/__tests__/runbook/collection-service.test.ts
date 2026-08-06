@@ -56,7 +56,10 @@ import {
   exactFrame,
 } from '../../src/runbook/targeting.js';
 import type { ResolvedCompletion } from '../../src/runbook/types.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../../src/testing/effective-vars.js';
 
 // NOTE: there is no `createTempRunbookStateManager` helper in this repo. Core
 // runbook tests build the manager inline with `mkdtemp` + `new
@@ -226,6 +229,7 @@ describe('RunbookCollectionService', () => {
       stepName: 'Delegate work',
       retryCount: 0,
       variables: brandStoredOutputsForTest({}),
+      templateVars: brandInitialTemplateVarsForTest({}),
       steps: [],
       lifecycle: 'running',
       startedAt: '2026-06-17T00:00:00.000Z',

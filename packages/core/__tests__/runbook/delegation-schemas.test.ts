@@ -1048,6 +1048,7 @@ function createMinimalRunbookState(overrides: Record<string, unknown> = {}) {
     stepName: 'Test step',
     retryCount: 0,
     variables: {},
+    templateVars: {},
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',

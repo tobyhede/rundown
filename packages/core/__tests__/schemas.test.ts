@@ -29,6 +29,7 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   stepName: 'Test Step',
   retryCount: 0,
   variables: {},
+  templateVars: {},
   steps: [],
   startedAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',
@@ -1195,13 +1196,16 @@ describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       const data = result.data as ValidatedRunbookState;
-      expect(isJsonArrayStream(data.templateVars?.items as never)).toBe(true);
+      expect(isJsonArrayStream(data.templateVars.items as never)).toBe(true);
     }
   });
 
-  it('accepts state with no templateVars', () => {
+  it('accepts state whose templateVars is an empty map', () => {
+    // `create` writes `{}` when the caller supplies no template variables, so
+    // the empty map is the floor of the contract — absence is rejected instead
+    // (see 'rejects state without templateVars' in state-schema-version.test.ts).
     const schema = makeRunbookStateSchema('/project');
-    const state = createValidState();
+    const state = createValidState({ templateVars: {} });
     const result = schema.safeParse(state);
     expect(result.success).toBe(true);
   });

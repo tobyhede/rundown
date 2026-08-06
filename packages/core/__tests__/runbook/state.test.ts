@@ -987,6 +987,19 @@ describe('RunbookStateManager', () => {
       expect(updated.templateVars).not.toHaveProperty('port');
     });
 
+    it('always persists templateVars, even when create() is given none', async () => {
+      // Persisted state has no compatibility contract: `load` refuses a row
+      // without templateVars, so `create` must never write one.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      expect(state.templateVars).toEqual({});
+
+      const loaded = await manager.load(state.id);
+      expect(loaded?.templateVars).toEqual({});
+    });
+
     it('preserves existing templateVars when updates.templateVars is undefined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

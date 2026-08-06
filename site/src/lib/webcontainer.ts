@@ -79,27 +79,66 @@ export async function mountRunbook(
 }
 
 /**
+ * Paths removed by {@link cleanRundownState}, in the order their failures are
+ * reported. Unreleased JSON locations are inert and deliberately untouched.
+ *
+ * `.rundown/runs` no longer holds run authority — post-cutover it is purely the
+ * per-run captured-output tree (RUNS_DIR in packages/core/src/paths.ts, torn
+ * down per run by RunbookStateManager). Dropping the database without it would
+ * orphan those files: their state and manifest records go, the bytes stay, and
+ * every reset adds more to browser storage.
+ */
+const RUNDOWN_STATE_PATHS: ReadonlyArray<{ path: string; recursive?: boolean }> = [
+  { path: '.rundown/rundown.db' },
+  { path: '.rundown/rundown.db-wal' },
+  { path: '.rundown/rundown.db-shm' },
+  { path: '.rundown/runs', recursive: true },
+  { path: '.rundown/locks', recursive: true },
+];
+
+/**
  * Clean up runbook state between scenario runs.
  *
+ * Removes the SQLite authority and lock files. A path that does not exist is
+ * not a failure; anything else is, and is propagated so the caller can block
+ * the next run rather than silently reusing stale state.
+ *
  * @param container - The WebContainer instance to clean up
+ * @throws {Error} If any path could not be removed for a reason other than not
+ *   existing (e.g. a locked or undeletable database). Every path is still
+ *   attempted first; the message aggregates all failures.
  */
 export async function cleanRundownState(container: WebContainer): Promise<void> {
-  // Remove current SQLite authority and lock files best-effort per path so one
-  // missing entry does not skip the others. Unreleased JSON locations are inert
-  // and deliberately untouched.
+  // `force: true` is the not-found discriminator, and the only reliable one
+  // available: WebContainer's `fs.rm` forwards options verbatim to its
+  // Node-compatible fs (FileSystemAPIClient.rm is a pass-through), where
+  // `force` ignores a missing path and suppresses nothing else. Discriminating
+  // client-side is not an option — @webcontainer/api's RPC bridge serializes
+  // only `message`/`name`/`stack`, so `err.code` never survives the worker
+  // boundary and only a fragile message match would remain.
   //
-  // `.rundown/runs` no longer holds run authority — post-cutover it is purely
-  // the per-run captured-output tree (RUNS_DIR in packages/core/src/paths.ts,
-  // torn down per run by RunbookStateManager). Dropping the database without it
-  // would orphan those files: their state and manifest records go, the bytes
-  // stay, and every reset adds more to browser storage.
-  await Promise.allSettled([
-    container.fs.rm('.rundown/rundown.db'),
-    container.fs.rm('.rundown/rundown.db-wal'),
-    container.fs.rm('.rundown/rundown.db-shm'),
-    container.fs.rm('.rundown/runs', { recursive: true }),
-    container.fs.rm('.rundown/locks', { recursive: true }),
-  ]);
+  // `allSettled` (not `all`) keeps the property that one failing path does not
+  // skip the others; genuine failures are aggregated and thrown afterwards
+  // instead of being swallowed.
+  const results = await Promise.allSettled(
+    RUNDOWN_STATE_PATHS.map(({ path, recursive }) =>
+      container.fs.rm(path, { force: true, recursive })
+    )
+  );
+
+  const failures = results.flatMap((result, index) =>
+    result.status === 'rejected'
+      ? [
+          `${RUNDOWN_STATE_PATHS[index].path}: ${
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
+          }`,
+        ]
+      : []
+  );
+
+  if (failures.length > 0) {
+    throw new Error(`Failed to clean runbook state — ${failures.join('; ')}`);
+  }
 }
 
 /**

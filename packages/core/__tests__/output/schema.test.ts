@@ -9,6 +9,7 @@ import {
 } from '../../src/output/schema.js';
 import {
   AbortResponseSchema,
+  ActiveRunbookEntrySchema,
   ArtifactAssertionInputSchema,
   ResolveSourceInfoSchema,
   CheckResponseSchema,
@@ -804,5 +805,29 @@ describe('ArtifactAssertionInputSchema normalization contract', () => {
       alias: 'Plan',
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('ActiveRunbookEntrySchema id contract', () => {
+  // `ls` and `prune` both emit `id` from run state whose ids reach the model
+  // through `assertRunId` / `RunIdSchema`, so every real value is a run id.
+  it('accepts a real-shaped run id', () => {
+    const result = ActiveRunbookEntrySchema.safeParse({
+      id: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      runbook: 'deploy.runbook.md',
+      status: 'active',
+      step: '1',
+      total: 3,
+      title: 'Deploy to Production',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an id that is not a run id', () => {
+    const result = ActiveRunbookEntrySchema.safeParse({
+      id: 'abc12345',
+      runbook: 'deploy.runbook.md',
+    });
+    expect(result.success).toBe(false);
   });
 });

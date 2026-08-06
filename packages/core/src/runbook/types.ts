@@ -1079,7 +1079,15 @@ export interface RunbookState {
   /** Runbook source content (raw markdown with {{placeholders}}), frozen at run time */
   readonly runbookSrc?: string;
 
-  /** Template variables used for AST-level substitution, frozen at run time */
+  /**
+   * Template variables used for AST-level substitution, frozen at run time.
+   *
+   * REQUIRED by the persisted-state schema: `RunbookStateManager.create` always
+   * writes it (`{}` at minimum) and `load` refuses a row without it, because
+   * readers substitute `runbookSrc` against it on every resume and there is no
+   * sanctioned way to reconstruct it. Optional at the type level only so
+   * in-memory shapes that never reach persistence can omit it.
+   */
   readonly templateVars?: InitialTemplateVars;
 
   /**

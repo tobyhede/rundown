@@ -37,6 +37,7 @@ function runState(overrides: Partial<RunbookState> = {}): RunbookState {
     stepName: 'Step',
     retryCount: 0,
     variables: {} as RunbookState['variables'],
+    templateVars: {} as RunbookState['templateVars'],
     steps: [],
     startedAt: '2026-04-23T00:00:00.000Z',
     updatedAt: '2026-04-23T00:00:00.000Z',

@@ -311,8 +311,20 @@ Persisted state MUST NOT be migrated between runtime versions. This applies to:
 | Session state      | `defaultStack`, `stashedRunbookId`, and `claims`.                                                |
 | Delegation state   | Claim records, parent links, child links, credential descriptors/hashes, and completion records. |
 
-If persisted state is structurally incompatible, corrupt, unreadable, or not
-schema version 1, Rundown MUST fail closed and refuse to continue that run.
+Two independent version checks guard this state. They are separate mechanisms
+and MUST NOT be conflated:
+
+| Check                        | Governs                                                                                     | Requirement                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST be `1`. Any other value makes that run's state invalid.                                                                   |
+| SQLite schema version        | The whole state database, including the session, stash, and delegation/claim tables.        | Stored in `PRAGMA user_version` and MUST equal the version this build installs. Any other version is rejected as incompatible. |
+
+Session, stash, and delegation rows carry no `schemaVersion` field of their own;
+they are governed solely by the database schema version. Do not apply
+`RunbookState.schemaVersion` to them.
+
+If persisted state is structurally incompatible, corrupt, unreadable, or fails
+either version check, Rundown MUST fail closed and refuse to continue that run.
 
 The recovery path is to finish or close the affected run if possible, or prune
 the incompatible state and restart from the source runbook. The runtime MUST NOT

@@ -103,6 +103,67 @@ export function isSqliteBusy(err: unknown): boolean {
   return primaryCode === SQLITE_BUSY || primaryCode === SQLITE_LOCKED;
 }
 
+/**
+ * Report whether the connection's `main` database is backed by a file.
+ *
+ * `PRAGMA database_list` names the file behind each attached database; `main`
+ * carries an empty path for an in-memory (or transient) database. That is the
+ * only distinction that matters here — an in-memory database is single
+ * connection by construction, so the WAL guarantee is vacuous for it.
+ *
+ * @param db - Open `node:sqlite` connection.
+ * @returns Whether `main` resolves to a filesystem path.
+ */
+function isFileBacked(db: DatabaseSync): boolean {
+  const rows = db.prepare('PRAGMA database_list').all() as unknown as readonly {
+    readonly name?: unknown;
+    readonly file?: unknown;
+  }[];
+  return rows.some((row) => row.name === 'main' && typeof row.file === 'string' && row.file !== '');
+}
+
+/**
+ * Put the connection into WAL mode and REFUSE any silent fallback.
+ *
+ * `PRAGMA journal_mode` is a query as much as a setting: it returns the mode
+ * actually in force, and SQLite keeps running on a rollback journal whenever WAL
+ * cannot be established — a database on a network filesystem, or a host whose
+ * filesystem provides no shared memory ("WAL does not work over a network
+ * filesystem", https://www.sqlite.org/wal.html). Issuing the pragma through
+ * `exec` discards that answer, so the driver would go on advertising
+ * `capabilities.multiProcess` over a connection that no longer serializes
+ * writes across processes, leaving a `rundown.db-journal` sidecar as the only
+ * evidence. This module refuses to downgrade silently; the same rule applies to
+ * the journal mode.
+ *
+ * `memory` is accepted only for a connection with no file behind it: `:memory:`
+ * cannot use WAL and always reports `memory`, and it is single connection by
+ * construction. A FILE-backed database reporting `memory` is the rollback-journal
+ * hazard wearing a different name, and is refused with everything else.
+ *
+ * @param db - Open `node:sqlite` connection to configure.
+ * @throws {Error} When a file-backed connection did not enter WAL mode.
+ */
+function enterWalJournalMode(db: DatabaseSync): void {
+  const applied = db.prepare('PRAGMA journal_mode = WAL').get() as unknown as
+    | { readonly journal_mode?: unknown }
+    | undefined;
+  const mode =
+    typeof applied?.journal_mode === 'string' ? applied.journal_mode.toLowerCase() : undefined;
+  if (mode === 'wal') {
+    return;
+  }
+  if (mode === 'memory' && !isFileBacked(db)) {
+    return;
+  }
+  throw new Error(
+    `Database did not enter WAL journal mode (effective mode: ${mode ?? 'unknown'}). ` +
+      'WAL is what makes cross-process write serialization real; a rollback journal ' +
+      'silently voids it. Move the project directory off a network filesystem (NFS/SMB), ' +
+      'which cannot support WAL.',
+  );
+}
+
 /** Wraps a `node:sqlite` prepared statement in the {@link SqlStatement} contract. */
 class NativeStatement implements SqlStatement {
   constructor(private readonly stmt: ReturnType<DatabaseSync['prepare']>) {}
@@ -158,6 +219,8 @@ export class NativeSqlDriver implements SqlDriver {
    *
    * @param db - Open `node:sqlite` database connection.
    * @param options - Optional busy-timeout and retry tuning.
+   * @throws {Error} When a file-backed connection did not enter WAL mode — the
+   *   silent rollback-journal fallback {@link enterWalJournalMode} refuses.
    */
   constructor(
     private readonly db: DatabaseSync,
@@ -167,7 +230,7 @@ export class NativeSqlDriver implements SqlDriver {
     this.maxBusyRetries = options.maxBusyRetries ?? DEFAULT_MAX_BUSY_RETRIES;
     this.busyRetryBaseMs = options.busyRetryBaseMs ?? DEFAULT_BUSY_RETRY_BASE_MS;
     this.db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
-    this.db.exec('PRAGMA journal_mode = WAL');
+    enterWalJournalMode(this.db);
     this.db.exec('PRAGMA foreign_keys = ON');
   }
 
@@ -277,9 +340,26 @@ export class NativeSqlDriver implements SqlDriver {
  * @param dbPath - Path to the database file, or `':memory:'`.
  * @param options - Optional busy-timeout and retry tuning.
  * @returns An initialized {@link NativeSqlDriver}.
+ * @throws {Error} When the connection cannot be opened or configured — notably
+ *   the WAL refusal, which rejects a file-backed database that fell back to a
+ *   rollback journal.
  */
 export function openNativeDriver(dbPath: string, options?: NativeDriverOptions): NativeSqlDriver {
-  return new NativeSqlDriver(new DatabaseSync(dbPath), options);
+  const db = new DatabaseSync(dbPath);
+  try {
+    return new NativeSqlDriver(db, options);
+  } catch (err) {
+    // The driver never took ownership, so nothing else can close this handle:
+    // a refused configuration would otherwise leak the connection (and, on
+    // Windows, keep the file locked) for the process lifetime. Closing must not
+    // replace the refusal that caused it.
+    try {
+      db.close();
+    } catch {
+      // The open failure is the one worth surfacing.
+    }
+    throw err;
+  }
 }
 
 /**

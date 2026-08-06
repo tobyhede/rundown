@@ -46,7 +46,7 @@ Persisted runtime state is not migrated between incompatible Rundown versions.
 If the SQLite run/session state becomes structurally incompatible, finish or
 stop the affected run if possible, then prune/clean the state and restart from
 the source runbook. See
-[docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration).
+[docs/reference/runtime.md Invalid Persisted State / No Migration](../reference/runtime.md#invalid-persisted-state--no-migration).
 
 ## Discovery
 

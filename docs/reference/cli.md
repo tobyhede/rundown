@@ -1181,7 +1181,8 @@ Scenario: COMPLETE
 | Element    | Description                                                 |
 | ---------- | ----------------------------------------------------------- |
 | `File:`    | Runbook file path                                           |
-| `State:`   | State JSON file path                                        |
+| `State:`   | State database path (`.rundown/rundown.db`)                 |
+| `Run:`     | Run id this output describes (`rd_…`)                       |
 | `Action:`  | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP)  |
 | `From:`    | Previous step position                                      |
 | `Result:`  | PASS or FAIL                                                |

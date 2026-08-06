@@ -11,6 +11,7 @@ import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/
 import {
   brandStoredOutputsForTest,
   brandEffectiveVarsForTest,
+  brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 import {
   generateDelegationToken,
@@ -67,6 +68,7 @@ describe('DelegationScanService', () => {
       stepName: 'Main step',
       retryCount: 0,
       variables: brandStoredOutputsForTest({}),
+      templateVars: brandInitialTemplateVarsForTest({}),
       steps: [{ id: '1', status: 'running' }],
       startedAt: '2026-02-27T10:00:00.000Z',
       updatedAt: '2026-02-27T10:00:00.000Z',
