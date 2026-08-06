@@ -252,6 +252,13 @@ export function registerDelegateCommand(program: Command): void {
 
           const cwd = getCwd();
 
+          // Buffer for input-routing warnings. `resolveDelegateExtraVars` runs
+          // inside core's `beforeEffect`, which precedes BOTH lease acquisition
+          // and the commit, so emitting at routing time would warn about vars a
+          // refused delegation never applied. The buffer is drained only from
+          // the two committed branches (`delegated` / `retried`).
+          const inputWarnings: string[] = [];
+
           const target = parseTransitionTarget(options, output);
           if (!target) return;
           const seamFields = delegateSeamFields(target);
@@ -293,11 +300,12 @@ export function registerDelegateCommand(program: Command): void {
               // and the gate passes. This preserves precondition priority: a bad
               // --input-file can no longer mask TOKEN_NOT_FOUND / NO_ACTIVE_RUNBOOK
               // / a refusal. Mirrors the fresh path's lazy resolveExtraVars.
-              resolveOverrides: () => resolveDelegateExtraVars(options, cwd, output),
+              resolveOverrides: () => resolveDelegateExtraVars(options, cwd, inputWarnings),
             });
 
             switch (outcome.kind) {
               case 'retried':
+                emitBufferedInputWarnings(output, inputWarnings);
                 if (!options.text) {
                   output.json({
                     kind: 'delegate',
@@ -446,10 +454,12 @@ export function registerDelegateCommand(program: Command): void {
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),
             // Lazily parse extra vars (Category-A flag handling stays in the CLI),
             // deferred to the issuable moment by the seam so the echo / conflict /
-            // no-active paths never parse — or warn about — vars that would never
-            // be applied. Reproduces pre-migration ordering: parse/warn/throw only
-            // when a delegation is actually minted.
-            resolveExtraVars: () => resolveDelegateExtraVars(options, cwd, output),
+            // no-active paths never parse vars that would never be applied. The
+            // seam can only defer as far as `beforeEffect`, which still precedes
+            // the commit — so warnings are buffered here and drained from the
+            // `delegated` branch, keeping "warn only when actually minted" true
+            // for the refusal arms too.
+            resolveExtraVars: () => resolveDelegateExtraVars(options, cwd, inputWarnings),
           });
 
           switch (outcome.kind) {
@@ -515,6 +525,7 @@ export function registerDelegateCommand(program: Command): void {
               });
               break;
             case 'delegated':
+              emitBufferedInputWarnings(output, inputWarnings);
               if (!options.text) {
                 output.json({
                   kind: 'delegate',
@@ -650,13 +661,19 @@ function buildDelegateSeam(
  * Shared by the fresh (`resolveExtraVars`) and `--retry` (`resolveOverrides`)
  * seam thunks so var parsing is deferred identically: the seam invokes it only
  * on the issuable / retry-able branch, AFTER its echo/conflict/precondition
- * decisions. Routing warnings (e.g. reserved runtime names) surface here, so they
- * too are emitted only when a delegation is actually minted — never on an echo or
- * a precondition failure.
+ * decisions. That defers parsing past the echo, but NOT past the transaction:
+ * core calls both thunks from `beforeEffect`, which precedes execution-lease
+ * acquisition and the commit. Routing warnings are therefore *buffered* into
+ * `warnings` rather than emitted, and the caller drains the buffer only from
+ * the `delegated` / `retried` branches — the two outcomes that actually
+ * committed a delegation. A refused preparation (`error` / `child_in_flight`)
+ * or a refused transaction (`execution_in_progress`, `claim_superseded`,
+ * `concurrent_modification`, …) leaves the buffer undrained, so no warning
+ * describes vars that were never applied.
  *
  * @param options - Parsed delegate options (the three input channels).
  * @param cwd - Current working directory for `--input-file` discovery.
- * @param output - OutputEmitter used to surface routing warnings.
+ * @param warnings - Sink collecting routing warnings for deferred emission.
  * @returns The routed extra vars, or `undefined` when none were supplied.
  * @throws {RundownError} When an `--input-file` is missing/invalid (RD-101) or a
  *   value fails normalization.
@@ -664,7 +681,7 @@ function buildDelegateSeam(
 async function resolveDelegateExtraVars(
   options: DelegateActionOptions,
   cwd: string,
-  output: OutputEmitter,
+  warnings: string[],
 ): Promise<Record<string, TemplateVarValue> | undefined> {
   const rawVars = await collectCliFlags(
     { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
@@ -673,9 +690,25 @@ async function resolveDelegateExtraVars(
   if (Object.keys(rawVars).length === 0) return undefined;
   const routed = await routeExtraVars(rawVars, cwd);
   for (const w of routed.warnings) {
-    output.warning(w);
+    warnings.push(w);
   }
   return Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
+}
+
+/**
+ * Drain buffered input-routing warnings from {@link resolveDelegateExtraVars}.
+ *
+ * Called from the `delegated` and `retried` branches only — the commit already
+ * happened by the time either is rendered, so a drained warning always
+ * describes vars that were genuinely applied to the child context.
+ *
+ * @param output - OutputEmitter used to surface the warnings.
+ * @param warnings - Buffer filled by the seam thunk; emptied by this call.
+ */
+function emitBufferedInputWarnings(output: OutputEmitter, warnings: string[]): void {
+  for (const warning of warnings.splice(0)) {
+    output.warning(warning);
+  }
 }
 
 /**
