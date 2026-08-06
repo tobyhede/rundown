@@ -498,15 +498,12 @@ for jump).
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/rundown.db
-Run:      rd_0123456789abcdef0123456789abcdef
-
 ─── 2 ──────────────────────────────────────────
 
 Action:   CONTINUE
 From:     1
-At:       2/3
+Result:   PASS
+At:       2
 
 ## 2. Second Step
 
@@ -519,9 +516,7 @@ Next step description.
 {
   "kind": "action",
   "action": "CONTINUE",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/rundown.db",
-  "runId": "rd_0123456789abcdef0123456789abcdef",
+  "stepResult": "PASS",
   "from": "1",
   "at": "2"
 }
@@ -529,6 +524,12 @@ Next step description.
 
 `from` and `at` are plain qualified step-ID strings (the step before the
 transition, and the step after). There is no `to` field.
+
+Transition responses (`pass`, `fail`, `goto`) carry no metadata block: no
+`file`, `state`, or `runId` in JSON, and no `File:`/`State:`/`Run:` header in
+text. Only the session and lifecycle commands (`status`, `stop`, `complete`,
+`stash`, `pop`) emit metadata. Correlate a transition with its run through the
+`runbook_started` event's `runbookId`, or by calling `rundown status`.
 
 ### `rundown pass --claim-id <claim_id>`
 
@@ -552,10 +553,6 @@ for stopping).
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/rundown.db
-Run:      rd_0123456789abcdef0123456789abcdef
-
 Action:   RETRY (1/3)
 At:       1/3
 
@@ -570,9 +567,6 @@ Step description.
 {
   "kind": "action",
   "action": "RETRY (1/3)",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/rundown.db",
-  "runId": "rd_0123456789abcdef0123456789abcdef",
   "at": "1"
 }
 ```
@@ -582,10 +576,6 @@ Step description.
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/rundown.db
-Run:      rd_0123456789abcdef0123456789abcdef
-
 Runbook:  STOP
 ```
 
@@ -594,10 +584,10 @@ Runbook:  STOP
 ```json
 {
   "kind": "action",
-  "action": "STOP",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/rundown.db",
-  "runId": "rd_0123456789abcdef0123456789abcdef",
+  "action": "stop",
+  "stepResult": "FAIL",
+  "from": "1",
+  "at": "1",
   "stopped": true
 }
 ```
@@ -625,10 +615,6 @@ The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/rundown.db
-Run:      rd_0123456789abcdef0123456789abcdef
-
 ─── 3 ──────────────────────────────────────────
 
 Action:   GOTO 3
@@ -646,9 +632,6 @@ Step description.
 {
   "kind": "action",
   "action": "GOTO 3",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/rundown.db",
-  "runId": "rd_0123456789abcdef0123456789abcdef",
   "from": "1",
   "at": "3"
 }

@@ -177,6 +177,51 @@ describe('JSONRenderer', () => {
     });
   });
 
+  describe('metadata rendering', () => {
+    it('carries runId into the JSON envelope alongside file and state', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+
+      renderer.render({
+        type: 'metadata',
+        metadata: {
+          file: 'runbooks/deploy.runbook.md',
+          state: '.rundown/rundown.db',
+          runId: 'rd_0123456789abcdef0123456789abcdef',
+          prompted: true,
+        },
+      });
+      renderer.flush();
+
+      const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
+      // `state` is the same database path for every run, so a consumer of
+      // `stash`/`pop`/`stop`/`complete` JSON can only identify the affected
+      // run through `runId`.
+      expect(parsed).toEqual(
+        expect.objectContaining({
+          file: 'runbooks/deploy.runbook.md',
+          state: '.rundown/rundown.db',
+          runId: 'rd_0123456789abcdef0123456789abcdef',
+          prompted: true,
+        }),
+      );
+    });
+
+    it('omits runId when the metadata carries none', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+
+      renderer.render({
+        type: 'metadata',
+        metadata: { file: 'runbooks/deploy.runbook.md', state: '.rundown/rundown.db' },
+      });
+      renderer.flush();
+
+      const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
+      expect(parsed).not.toHaveProperty('runId');
+    });
+  });
+
   describe('status-action → kind mapping', () => {
     // Each StatusOutput action carries a distinct lifecycle payload and the
     // renderer assigns the appropriate `kind` discriminant. stash, pop, and
