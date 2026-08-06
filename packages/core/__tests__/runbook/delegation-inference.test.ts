@@ -21,7 +21,6 @@ import {
   isPostDelegateAggregationCursor,
   resolveDelegateTarget,
   resolveDelegationIssuance,
-  resolveRetryIssuance,
   resolveTargetedDelegation,
   type DelegationInferenceState,
   type FrameKey,
@@ -30,6 +29,13 @@ import {
   type StepDelegation,
   type SubstepState,
 } from '../../src/runbook/index.js';
+import {
+  buildRetryIssuanceCapture,
+  resolveRetryIssuance,
+  type RetryIssuanceCapture,
+  type RetryIssuanceCaptureInput,
+  type RetrySupersessionRow,
+} from '../../src/runbook/delegation-inference.js';
 import type { DelegateFrontierEntry } from '../../src/index.js';
 import {
   brandEffectiveVarsForTest,
@@ -38,7 +44,10 @@ import {
   brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  type DelegationTokenHash,
+} from '../../src/runbook/delegation-token.js';
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -1314,6 +1323,198 @@ describe('resolveTargetedDelegation', () => {
   });
 });
 
+describe('buildRetryIssuanceCapture', () => {
+  const H = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+  const H_CURRENT = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+  const OWN_RUN = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
+  const OTHER_RUN = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
+  const FRAME = buildFrameKey('1');
+  const OTHER_FRAME = buildFrameKey('1', 2);
+
+  /** Hash stub: the builder takes the hasher so this module stays token-agnostic. */
+  const hashToken = (token: string): DelegationTokenHash => (token === 'named' ? H : H_CURRENT);
+
+  /**
+   * A delegation carrying `supersedesTokenHash`.
+   *
+   * @param supersedes - Bearer hash the row records as superseded.
+   * @returns The delegation row.
+   */
+  const superseding = (supersedes: DelegationTokenHash | undefined): StepDelegation =>
+    makeActiveDelegation({
+      tokenHash: H_CURRENT,
+      credential: makeDelegationCredentialDescriptor(
+        supersedes === undefined ? {} : { supersedesTokenHash: supersedes },
+      ),
+    });
+
+  /**
+   * A persisted substep row.
+   *
+   * @param id - Substep id.
+   * @param delegation - Delegation recorded on it, if any.
+   * @param frameKey - Frame the row is scoped to.
+   * @returns The substep state.
+   */
+  const row = (
+    id: string,
+    delegation: StepDelegation | undefined,
+    frameKey: FrameKey = FRAME,
+  ): SubstepState => ({
+    id,
+    frameKey,
+    status: 'running',
+    ...(delegation === undefined ? {} : { delegation }),
+  });
+
+  /**
+   * Build the capture with the fixture's fixed cursor.
+   *
+   * @param over - Per-case overrides.
+   * @returns The capture.
+   */
+  const build = (over: Partial<RetryIssuanceCaptureInput>) =>
+    buildRetryIssuanceCapture(
+      {
+        token: 'named',
+        capturedState: { id: OWN_RUN, substepStates: [] },
+        scannedSuperseding: [],
+        current: undefined,
+        substepId: '1',
+        frameKey: FRAME,
+        frameEntry: 3,
+        ...over,
+      },
+      hashToken,
+    );
+
+  it('builds the step capture when no bearer was named', () => {
+    const current = superseding(H);
+    expect(
+      build({ token: undefined, current, capturedState: { id: OWN_RUN, substepStates: [] } }),
+    ).toEqual({ locator: 'step', current, frameEntry: 3 });
+  });
+
+  it('anchors the token capture on the resolved cursor, not on the rows it found', () => {
+    // `own*` names where the retry resolved to. Sourcing it from a matched row
+    // instead is the defect the identity check exists to catch: the judge reads
+    // `frameEntry` for THIS frame and the caller reports under THIS cursor.
+    const capture = build({ current: superseding(undefined) });
+    expect(capture).toMatchObject({
+      locator: 'token',
+      identityTokenHash: H,
+      ownRunId: OWN_RUN,
+      ownSubstepId: '1',
+      ownFrameKey: FRAME,
+      frameEntry: 3,
+    });
+  });
+
+  it('tags each captured row with the coordinate it was found at', () => {
+    const here = superseding(H);
+    const elsewhere = superseding(H);
+    const capture = build({
+      capturedState: {
+        id: OWN_RUN,
+        substepStates: [row('1', here), row('2', elsewhere, OTHER_FRAME)],
+      },
+    });
+    if (capture.locator !== 'token') throw new Error('expected a token capture');
+    expect(capture.supersededBy).toEqual([
+      { runId: OWN_RUN, substepId: '1', frameKey: FRAME, delegation: here },
+      { runId: OWN_RUN, substepId: '2', frameKey: OTHER_FRAME, delegation: elsewhere },
+    ]);
+  });
+
+  it('ignores captured rows that record a different bearer, or none at all', () => {
+    const capture = build({
+      capturedState: {
+        id: OWN_RUN,
+        substepStates: [
+          row('1', superseding(H_CURRENT)),
+          row('2', superseding(undefined)),
+          row('3', undefined),
+        ],
+      },
+    });
+    if (capture.locator !== 'token') throw new Error('expected a token capture');
+    expect(capture.supersededBy).toEqual([]);
+  });
+
+  it('takes only FOREIGN rows from the scan, so the two collections stay disjoint', () => {
+    // A same-run scan row is dropped: the captured state is the in-transaction
+    // authority for its own rows, and admitting the scan's stale copy as well
+    // would double-count it into a false RD-828.
+    const staleSameRun = superseding(H);
+    const captured = superseding(H);
+    const foreign = superseding(H);
+    const capture = build({
+      capturedState: { id: OWN_RUN, substepStates: [row('1', captured)] },
+      scannedSuperseding: [
+        {
+          parentState: { id: OWN_RUN },
+          stepId: '1',
+          substepId: '1',
+          frameKey: FRAME,
+          delegation: staleSameRun,
+        },
+        {
+          parentState: { id: OTHER_RUN },
+          stepId: '1',
+          substepId: '4',
+          frameKey: OTHER_FRAME,
+          delegation: foreign,
+        },
+      ],
+    });
+    if (capture.locator !== 'token') throw new Error('expected a token capture');
+    expect(capture.supersededBy).toEqual([
+      { runId: OWN_RUN, substepId: '1', frameKey: FRAME, delegation: captured },
+      { runId: OTHER_RUN, substepId: '4', frameKey: OTHER_FRAME, delegation: foreign },
+    ]);
+  });
+
+  it('falls back to the scan row stepId when it reports no substep', () => {
+    const foreign = superseding(H);
+    const capture = build({
+      scannedSuperseding: [
+        { parentState: { id: OTHER_RUN }, stepId: '7', frameKey: FRAME, delegation: foreign },
+      ],
+    });
+    if (capture.locator !== 'token') throw new Error('expected a token capture');
+    expect(capture.supersededBy).toEqual([
+      { runId: OTHER_RUN, substepId: '7', frameKey: FRAME, delegation: foreign },
+    ]);
+  });
+
+  it('keeps duplicate rows rather than de-duplicating them by verifier', () => {
+    // Two rows sharing a tokenHash must both survive: collapsing them drops
+    // `supersededBy.length` to 1 and skips the RD-828 refusal entirely.
+    const a = superseding(H);
+    const b = superseding(H);
+    const capture = build({
+      capturedState: { id: OWN_RUN, substepStates: [row('1', a), row('2', b)] },
+    });
+    if (capture.locator !== 'token') throw new Error('expected a token capture');
+    expect(capture.supersededBy).toHaveLength(2);
+  });
+
+  it('does not pre-filter displaced rows out of the capture', () => {
+    // Displaced rows are counted for ambiguity and then refused by identity in
+    // `resolveRetryIssuance`. Filtering them here would drop the count and let
+    // the resolver silently resolve whichever row survived.
+    const displaced = superseding(H);
+    const capture = build({
+      capturedState: { id: OWN_RUN, substepStates: [row('9', displaced, OTHER_FRAME)] },
+    });
+    if (capture.locator !== 'token') throw new Error('expected a token capture');
+    expect(capture.supersededBy).toHaveLength(1);
+    expect(resolveRetryIssuance({ ...capture, current: superseding(undefined) })).toEqual({
+      kind: 'identity-unmatched',
+    });
+  });
+});
+
 describe('resolveRetryIssuance', () => {
   const H = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
   const H_OTHER = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
@@ -1339,41 +1540,93 @@ describe('resolveRetryIssuance', () => {
       credential: makeDelegationCredentialDescriptor({ parentEntry: ENTRY, ...cred }),
     });
 
+  const OWN_RUN = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
+  const OTHER_RUN = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
+  const OWN_SUBSTEP = '1';
+  const OWN_FRAME = buildFrameKey('1');
+
+  /**
+   * Wrap a delegation as a supersession row at the retry's own coordinate.
+   *
+   * `supersededBy` carries `(runId, substepId, frameKey)` per row precisely so
+   * a row from somewhere else cannot be judged against THIS frame's entry or
+   * echoed under THIS cursor's label. Every row `retryDelegation` can actually
+   * write is co-located with the bearer it supersedes, which is this shape.
+   *
+   * @param delegationRow - The delegation the row carries.
+   * @returns The supersession row at the retry's own coordinate.
+   */
+  const local = (delegationRow: StepDelegation): RetrySupersessionRow => ({
+    runId: OWN_RUN,
+    substepId: OWN_SUBSTEP,
+    frameKey: OWN_FRAME,
+    delegation: delegationRow,
+  });
+
+  /**
+   * Wrap a delegation as a supersession row at a DISPLACED coordinate — the
+   * shapes only corrupted persisted state can produce.
+   *
+   * @param where - Coordinate overrides applied over the retry's own coordinate.
+   * @param delegationRow - The delegation the row carries.
+   * @returns The displaced supersession row.
+   */
+  const at = (
+    where: Partial<Omit<RetrySupersessionRow, 'delegation'>>,
+    delegationRow: StepDelegation,
+  ): RetrySupersessionRow => ({ ...local(delegationRow), ...where });
+
+  /**
+   * A token-locator capture anchored at the retry's own coordinate.
+   *
+   * @param over - The fields each decision-table row varies.
+   * @returns The capture.
+   */
+  const tokenCapture = (
+    over: Pick<
+      Extract<RetryIssuanceCapture, { locator: 'token' }>,
+      'current' | 'supersededBy' | 'frameEntry'
+    >,
+  ): RetryIssuanceCapture => ({
+    locator: 'token',
+    identityTokenHash: H,
+    ownRunId: OWN_RUN,
+    ownSubstepId: OWN_SUBSTEP,
+    ownFrameKey: OWN_FRAME,
+    ...over,
+  });
+
   // --- token locator -------------------------------------------------------
   it('row 1 — token, row or delegation absent -> rotatable', () => {
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: undefined,
-        supersededBy: [],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: undefined, supersededBy: [], frameEntry: ENTRY }),
+      ),
     ).toEqual({ kind: 'rotatable' });
   });
 
   it('row 2 — token, H === Hc -> rotatable', () => {
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: delegation({ tokenHash: H }),
-        supersededBy: [],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({
+          current: delegation({ tokenHash: H }),
+          supersededBy: [],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'rotatable' });
   });
 
   it('row 3 — token, H === Hs, unobserved, entryCurrent -> already-replaced', () => {
     const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY });
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: replacement,
-        supersededBy: [replacement],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({
+          current: replacement,
+          supersededBy: [local(replacement)],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'already-replaced', delegation: replacement });
   });
 
@@ -1383,13 +1636,13 @@ describe('resolveRetryIssuance', () => {
       { supersedesTokenHash: H },
     );
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: replacement,
-        supersededBy: [replacement],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({
+          current: replacement,
+          supersededBy: [local(replacement)],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'replacement-consumed', reason: 'claimed' });
   });
 
@@ -1399,26 +1652,26 @@ describe('resolveRetryIssuance', () => {
       { supersedesTokenHash: H },
     );
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: replacement,
-        supersededBy: [replacement],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({
+          current: replacement,
+          supersededBy: [local(replacement)],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'replacement-consumed', reason: 'cancelled' });
   });
 
   it('row 6 — token, H === Hs, entry advanced -> replacement-consumed(entry_superseded)', () => {
     const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY - 1 });
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: replacement,
-        supersededBy: [replacement],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({
+          current: replacement,
+          supersededBy: [local(replacement)],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'replacement-consumed', reason: 'entry_superseded' });
   });
 
@@ -1426,26 +1679,93 @@ describe('resolveRetryIssuance', () => {
     for (const stamped of [ENTRY - 1, ENTRY + 1]) {
       const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: stamped });
       expect(
-        resolveRetryIssuance({
-          locator: 'token',
-          identityTokenHash: H,
-          current: replacement,
-          supersededBy: [replacement],
-          frameEntry: ENTRY,
-        }),
+        resolveRetryIssuance(
+          tokenCapture({
+            current: replacement,
+            supersededBy: [local(replacement)],
+            frameEntry: ENTRY,
+          }),
+        ),
       ).toEqual({ kind: 'replacement-consumed', reason: 'entry_superseded' });
     }
   });
 
   it('row 7 — token, matches neither Hc nor Hs -> identity-unmatched', () => {
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: delegation(),
-        supersededBy: [],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: delegation(), supersededBy: [], frameEntry: ENTRY }),
+      ),
+    ).toEqual({ kind: 'identity-unmatched' });
+  });
+
+  it('row 7b — token, the lone superseding row belongs to a DIFFERENT run -> identity-unmatched', () => {
+    // The judge reads `parentEntry` against THIS frame's entry and the caller
+    // echoes under THIS run id and step label, so a credential minted in
+    // another run must never reach it. Shaped so every judge arm would resolve
+    // rather than refuse: unclaimed, uncancelled, stamped at ENTRY. Without the
+    // identity check this echoes a foreign delegation labelled with the local
+    // run.
+    const foreign = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY });
+    expect(
+      resolveRetryIssuance(
+        tokenCapture({
+          current: delegation(),
+          supersededBy: [at({ runId: OTHER_RUN }, foreign)],
+          frameEntry: ENTRY,
+        }),
+      ),
+    ).toEqual({ kind: 'identity-unmatched' });
+  });
+
+  it('row 7c — token, the lone superseding row sits on a DIFFERENT substep -> identity-unmatched', () => {
+    // Same-run half of the same defect: the caller collects superseding rows
+    // across every substep of the captured parent, so a replacement recorded at
+    // substep 2 would be echoed under substep 1's `stepLabel`.
+    const elsewhere = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY });
+    expect(
+      resolveRetryIssuance(
+        tokenCapture({
+          current: delegation(),
+          supersededBy: [at({ substepId: '2' }, elsewhere)],
+          frameEntry: ENTRY,
+        }),
+      ),
+    ).toEqual({ kind: 'identity-unmatched' });
+  });
+
+  it('row 7d — token, the lone superseding row sits on a DIFFERENT frame -> identity-unmatched', () => {
+    // Rows are keyed `(id, frameKey)`, so the same substep id in another FOR
+    // iteration is a different row with its own entry counter. Judging it
+    // against this frame's entry compares two unrelated counters.
+    const otherFrame = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY });
+    expect(
+      resolveRetryIssuance(
+        tokenCapture({
+          current: delegation(),
+          supersededBy: [at({ frameKey: buildFrameKey('1', 2) }, otherFrame)],
+          frameEntry: ENTRY,
+        }),
+      ),
+    ).toEqual({ kind: 'identity-unmatched' });
+  });
+
+  it('displacement is refused before the consumed judge, not after it', () => {
+    // A displaced row carrying committed evidence of use must still refuse as
+    // `identity-unmatched`: the evidence belongs to a delegation this retry
+    // does not identify, so reporting it as RD-826 would attribute another
+    // row's claim to this cursor.
+    const claimedElsewhere = delegation(
+      { childRunId: brandRunIdForTest(`rd_${'9'.repeat(32)}`) },
+      { supersedesTokenHash: H },
+    );
+    expect(
+      resolveRetryIssuance(
+        tokenCapture({
+          current: delegation(),
+          supersededBy: [at({ runId: OTHER_RUN }, claimedElsewhere)],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'identity-unmatched' });
   });
 
@@ -1453,13 +1773,9 @@ describe('resolveRetryIssuance', () => {
     const a = delegation({}, { supersedesTokenHash: H });
     const b = delegation({}, { supersedesTokenHash: H });
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: a,
-        supersededBy: [a, b],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: a, supersededBy: [local(a), local(b)], frameEntry: ENTRY }),
+      ),
     ).toEqual({ kind: 'ambiguous' });
   });
 
@@ -1467,13 +1783,27 @@ describe('resolveRetryIssuance', () => {
     const a = delegation({ tokenHash: H }, { supersedesTokenHash: H });
     const b = delegation({}, { supersedesTokenHash: H });
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: a,
-        supersededBy: [a, b],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: a, supersededBy: [local(a), local(b)], frameEntry: ENTRY }),
+      ),
+    ).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('row 8 outranks the identity check — a displaced second row is ambiguous, not unmatched', () => {
+    // Ambiguity is counted over every row the caller collected, displaced ones
+    // included. Filtering displaced rows out before the count would drop the
+    // length to 1 and resolve the survivor, which is the silent resolution the
+    // identity check exists to prevent.
+    const a = delegation({}, { supersedesTokenHash: H });
+    const b = delegation({}, { supersedesTokenHash: H });
+    expect(
+      resolveRetryIssuance(
+        tokenCapture({
+          current: a,
+          supersededBy: [local(a), at({ runId: OTHER_RUN }, b)],
+          frameEntry: ENTRY,
+        }),
+      ),
     ).toEqual({ kind: 'ambiguous' });
   });
 
@@ -1486,13 +1816,9 @@ describe('resolveRetryIssuance', () => {
     const a = delegation({ tokenHash: shared }, { supersedesTokenHash: H });
     const b = delegation({ tokenHash: shared }, { supersedesTokenHash: H });
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: a,
-        supersededBy: [a, b],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: a, supersededBy: [local(a), local(b)], frameEntry: ENTRY }),
+      ),
     ).toEqual({ kind: 'ambiguous' });
   });
 
@@ -1505,13 +1831,9 @@ describe('resolveRetryIssuance', () => {
       { supersedesTokenHash: H, parentEntry: ENTRY - 1 },
     );
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: all,
-        supersededBy: [all],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: all, supersededBy: [local(all)], frameEntry: ENTRY }),
+      ),
     ).toEqual({ kind: 'replacement-consumed', reason: 'claimed' });
   });
 
@@ -1521,13 +1843,9 @@ describe('resolveRetryIssuance', () => {
       { supersedesTokenHash: H, parentEntry: ENTRY - 1 },
     );
     expect(
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: both,
-        supersededBy: [both],
-        frameEntry: ENTRY,
-      }),
+      resolveRetryIssuance(
+        tokenCapture({ current: both, supersededBy: [local(both)], frameEntry: ENTRY }),
+      ),
     ).toEqual({ kind: 'replacement-consumed', reason: 'cancelled' });
   });
 
@@ -1580,15 +1898,24 @@ describe('resolveRetryIssuance', () => {
     ).toEqual({ kind: 'rotatable' });
   });
 
+  it('row 15b — the step locator reads the fourth conjunct as exact equality, never >=', () => {
+    // #681: "do not soften it to `>=` or a one-entry tolerance". Row 15 alone
+    // cannot pin that on this path: it stamps ENTRY - 1, which a `>=`-softened
+    // predicate also rules out, so the softening survives there. Only a stamp
+    // ABOVE the committed entry separates the two — `===` rules it out
+    // (rotatable), `>=` admits it (already-replaced). Row 6b makes the same
+    // assertion on the token locator, where the identity check is a separate
+    // statement; this is the step locator's only route into
+    // `unobservedReplacement`.
+    const replacement = delegation({}, { supersedesTokenHash: H, parentEntry: ENTRY + 1 });
+    expect(
+      resolveRetryIssuance({ locator: 'step', current: replacement, frameEntry: ENTRY }),
+    ).toEqual({ kind: 'rotatable' });
+  });
+
   it('never throws and performs no I/O', () => {
     expect(() =>
-      resolveRetryIssuance({
-        locator: 'token',
-        identityTokenHash: H,
-        current: undefined,
-        supersededBy: [],
-        frameEntry: 1,
-      }),
+      resolveRetryIssuance(tokenCapture({ current: undefined, supersededBy: [], frameEntry: 1 })),
     ).not.toThrow();
   });
 });

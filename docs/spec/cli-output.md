@@ -362,9 +362,20 @@ to local substep execution. The stopped reason is `inline_launch_failed` for
 ordinary launch failures such as unresolved or ambiguous child runbooks, and
 `inline_launch_forbidden` when an inline launch is attempted inside a claimed
 delegated child scope. The corresponding JSON error/action output uses codes
-such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`, or
-`INLINE_LAUNCH_FORBIDDEN`; consumers should treat these as terminal workflow
-failures for the active runbook.
+such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`,
+`INLINE_CHILD_FRAME_SUPERSEDED`, or `INLINE_LAUNCH_FORBIDDEN`; consumers should
+treat these as terminal workflow failures for the active runbook.
+
+`INLINE_CHILD_FRAME_SUPERSEDED` is the one refusal in that set an ordinary
+gesture reaches. A self-targeting `GOTO` or `RETRY` re-enters the parent's frame
+and advances its entry counter, so an inline child launched at an earlier entry
+belongs to an earlier visit and is never adopted by the new one — the same
+judgement delegation makes when it closes a child `cursor-advanced`. The message
+names both entries and the frame; the remedy is to finish, stop, or prune the
+superseded child run, after which the same re-entry launches a fresh child under
+the current entry. `INLINE_CHILD_LINKAGE_MISMATCH` is a different condition: the
+persisted child names a different parent run, step, substep, or frame, which is
+inconsistent state rather than a superseded generation.
 
 ### `STEP_ENTERED` with artifacts
 

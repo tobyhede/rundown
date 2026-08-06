@@ -19,10 +19,9 @@ import type {
   SubstepState,
 } from './types.js';
 import type { RunbookContext } from './compiler.js';
-import type { ForContext } from './types.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
-import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
+import { findSubstepState, frameKeyForCursor, type FrameKey } from './targeting.js';
 import { inferFrameEntryFromState } from './frame-entry.js';
 import { isRunId } from './run-id.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
@@ -108,17 +107,6 @@ export type RetryWorkingState = Pick<
    */
   readonly id?: RunbookState['id'];
 };
-
-/**
- * Return the topmost `ForContext` on the stack, or undefined when empty.
- *
- * @param stack - FOR-context stack from the runbook context, or undefined.
- * @returns The top entry, or undefined when the stack is missing or empty.
- */
-function peekForStack(stack: readonly ForContext[] | undefined): ForContext | undefined {
-  if (!stack || stack.length === 0) return undefined;
-  return stack[stack.length - 1];
-}
 
 /**
  * Per-substep iteration of the retry hook. Side-effect free: returns a
@@ -300,11 +288,12 @@ export function runRetryHook(
   // `forStack` on every FOR-iteration advance keep that field fresh, so
   // deriving here is always current; caching `activeFrameKey` separately would
   // re-introduce the stale-bootstrap class of bug.
-  const activeFor = peekForStack(context.forStack);
-  const activeFrameKey = buildFrameKey(
-    parentStep.name,
-    activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
-  );
+  //
+  // `frameKeyForCursor` is the single derivation, not a local rewrite of it:
+  // the inline advance the compiler runs before calling this hook keys its
+  // `advanceFrameEntry` on the same helper, so a divergence here would restage
+  // exactly the stamped-versus-committed lag #680 removed.
+  const activeFrameKey = frameKeyForCursor(parentStep.name, context.forStack);
   const activeDelegation = substepStates.find(
     (substepState) =>
       substepState.frameKey === activeFrameKey && substepState.delegation !== undefined,

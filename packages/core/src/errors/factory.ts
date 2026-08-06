@@ -208,6 +208,13 @@ export const Errors = {
   ): RundownError =>
     new RundownError('DELEGATION_REPLACEMENT_CONSUMED', {
       step,
+      // `reason` is a closed discriminant naming which remedy applies, so it
+      // rides as a structured key and not only inside the sentence. Like
+      // `claimSeenUnreadable`'s `childId` below, it is OUTSIDE
+      // `formatMessage`'s fixed key list, so it reaches the agent through
+      // `context` (the CLI envelope's `details.context`) and leaves the
+      // rendered message unchanged — `message` still names it in prose.
+      reason,
       message: `the replacement for this bearer shows committed evidence of use (${reason})`,
     }),
 

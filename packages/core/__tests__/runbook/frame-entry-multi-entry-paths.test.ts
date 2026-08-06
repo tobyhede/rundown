@@ -95,7 +95,6 @@ describe('one mutation, one entry bump', () => {
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
-      lifecycleService,
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
@@ -104,10 +103,8 @@ describe('one mutation, one entry bump', () => {
         path: name,
         ref: { source: 'project' as const, path: name },
       }),
-      findDelegationByToken: async (token) =>
-        (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
-      findDelegationsBySupersededToken: (token) =>
-        new DelegationScanService(manager).findBySupersededToken(token),
+      findDelegationsByTokenHash: (tokenHash) =>
+        new DelegationScanService(manager).scanByTokenHash(tokenHash),
     });
   });
 
@@ -196,9 +193,9 @@ describe('one mutation, one entry bump', () => {
       steps,
       target,
       terminalReleaseMode: allowed.terminalReleaseMode,
-      ...(allowed.issueDelegationCredential === undefined
+      ...(allowed.delegationRuntime === undefined
         ? {}
-        : { issueDelegationCredential: allowed.issueDelegationCredential }),
+        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);

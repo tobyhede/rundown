@@ -25,8 +25,17 @@ import {
   type DelegationLivenessLinkage,
   type DelegationLivenessParent,
 } from '../../src/runbook/targeting.js';
-import type { ForContext, RunbookState, SubstepState } from '../../src/runbook/types.js';
+import type {
+  ForContext,
+  ResolvedStep,
+  ResolvedStepHavingSubsteps,
+  RunbookState,
+  SubstepState,
+} from '../../src/runbook/types.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { compileRunbookToMachine, type RunbookContext } from '../../src/runbook/compiler.js';
+import { runRetryHook } from '../../src/runbook/retry-hook.js';
+import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { makeStepDelegation } from '../helpers/step-factories.js';
 
 describe('targeting helpers', () => {
@@ -823,5 +832,143 @@ describe('frameKeyForCursor', () => {
     expect(frameKeyForCursor('2', forStack)).toBe(
       deriveActiveFrame({ step: '2', forStack } as never).frameKey,
     );
+  });
+
+  describe('is the single derivation every consumer routes through', () => {
+    // The discriminating input is a non-implicit FOR context on top of the
+    // stack whose `stepId` names a DIFFERENT step from the cursor's. The rule
+    // this helper replaced filtered `implicit` but never compared `stepId`, so
+    // it answers `<step>|<foreign iteration>` where `frameKeyForCursor` answers
+    // the bare `<step>|`.
+    //
+    // `initForStack` returns a single-element stack naming the step being
+    // entered, so no live transition produces that input today — which is
+    // precisely why these cases are written against the consumers directly.
+    // A divergence here is unobservable until the day nesting or a new entry
+    // path makes it reachable, and by then it is a silently mis-keyed frame:
+    // a delegation issued under one key and looked up under another.
+    const foreignTop = (): ForContext =>
+      ({
+        stepId: 'other',
+        iteration: 7,
+        start: 1,
+        implicit: false,
+      }) as ForContext;
+
+    it('answers the bare step frame where the unguarded rule answers an iteration frame', () => {
+      expect(frameKeyForCursor('1', [foreignTop()])).toBe(buildFrameKey('1'));
+      expect(frameKeyForCursor('1', [foreignTop()])).not.toBe(buildFrameKey('1', 7));
+    });
+
+    it('runRetryHook selects the frame this helper names, not the raw stack top', () => {
+      // The delegation lives in the bare `1|` frame. Under this helper the hook
+      // finds it and refuses without an issuer (ACTOR_CONTEXT_REQUIRED); under
+      // the unguarded rule it looks in `1|7`, finds nothing, and falls through
+      // to the stale-frame invariant (RD-902).
+      const frameKey = buildFrameKey('1');
+      const substepTransitions = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
+      const parentStep = {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent',
+        transitions: {
+          pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+          fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+        },
+        aggregation: { strategy: 'ALL' as const },
+        substeps: [
+          { kind: 'base', id: '1', description: 'Sub 1', transitions: substepTransitions },
+        ],
+      } as unknown as ResolvedStepHavingSubsteps;
+      const substepStates: readonly SubstepState[] = [
+        {
+          id: '1',
+          frameKey,
+          status: 'done',
+          result: 'fail',
+          delegation: makeStepDelegation({
+            tokenHash: assertDelegationTokenHash(`sha256:${'f'.repeat(64)}`),
+          }),
+        },
+      ];
+      const context = {
+        retryCount: 0,
+        parentRetryCount: 0,
+        iterationRetryCount: 0,
+        variables: {},
+        forStack: [foreignTop()],
+        substepCompletedCount: 0,
+        templateVars: { RunId: brandRunIdForTest(`rd_${'1'.repeat(32)}`) },
+        frontmatterOutputs: [],
+        finalVars: {},
+        lifecycle: 'running' as const,
+        substepStates,
+      } as unknown as RunbookContext;
+
+      const result = runRetryHook(context, parentStep, [parentStep]);
+
+      expect(result).toMatchObject({ status: 'error', code: 'ACTOR_CONTEXT_REQUIRED' });
+    });
+
+    it('the compiled inline-launch invoke input keys on this helper', () => {
+      // `buildInlineLaunchInvokeBlock` is the sibling of the already-migrated
+      // `buildDelegationIssueInvokeBlock`; both must answer identically for the
+      // same cursor, since a launch intent and a delegation issued from one
+      // leaf entry have to agree on the frame they belong to.
+      const inlineSteps = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          aggregation: { strategy: 'ALL' as const },
+          substeps: [
+            {
+              kind: 'base',
+              id: '1',
+              description: 'Inline child',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+              runbooks: ['child.runbook.md'],
+            },
+          ],
+        },
+      ] as unknown as ResolvedStep[];
+      // No resolver: the case reads the `invoke.input` factory's answer, and the
+      // actor that would consume it is never started.
+      const machine = compileRunbookToMachine(inlineSteps);
+      const leaf = (
+        machine.config as {
+          states: Record<
+            string,
+            {
+              states: Record<
+                string,
+                | { invoke?: { input: (args: { context: unknown }) => { frameKey: string } } }
+                | undefined
+              >;
+            }
+          >;
+        }
+      ).states['step::1::1'];
+      const input = leaf.states['__prepare-inline-launch']?.invoke?.input;
+      if (input === undefined) throw new Error('inline launch invoke input missing');
+
+      const context = {
+        substep: '1',
+        forStack: [foreignTop()],
+        variables: {},
+        templateVars: { RunId: brandRunIdForTest(`rd_${'1'.repeat(32)}`) },
+      };
+      expect(input({ context }).frameKey).toBe(frameKeyForCursor('1', [foreignTop()]));
+    });
   });
 });

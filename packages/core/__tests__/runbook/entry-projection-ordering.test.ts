@@ -131,7 +131,6 @@ describe('entry projection ordering: machine credential issuance agrees with com
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
-      lifecycleService,
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
@@ -140,10 +139,8 @@ describe('entry projection ordering: machine credential issuance agrees with com
         path: name,
         ref: { source: 'project' as const, path: name },
       }),
-      findDelegationByToken: async (token) =>
-        (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
-      findDelegationsBySupersededToken: (token) =>
-        new DelegationScanService(manager).findBySupersededToken(token),
+      findDelegationsByTokenHash: (tokenHash) =>
+        new DelegationScanService(manager).scanByTokenHash(tokenHash),
     });
   });
 

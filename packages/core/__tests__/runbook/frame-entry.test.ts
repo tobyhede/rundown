@@ -1,6 +1,35 @@
 import { advanceFrameEntry, inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
+import type { FrameEntryCoordinates } from '../../src/runbook/frame-entry.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+
+describe('FrameEntryCoordinates', () => {
+  const FRAME = buildFrameKey('1');
+
+  it('pairs the frame key and the entry structurally', () => {
+    // `activeEntry` is meaningless without the `activeFrameKey` that says which
+    // frame it belongs to, and an `activeFrameKey` with no entry is a frame
+    // nothing has been recorded for. Both halves travel together or neither
+    // does — the type says so, so `advanceFrameEntry` does not have to defend
+    // the hole at runtime.
+    const bootstrap: FrameEntryCoordinates = { frameEntryCounts: { [FRAME]: 3 } };
+    const active: FrameEntryCoordinates = {
+      activeFrameKey: FRAME,
+      activeEntry: 3,
+      frameEntryCounts: { [FRAME]: 3 },
+    };
+    expect(bootstrap.activeEntry).toBeUndefined();
+    expect(active.activeEntry).toBe(3);
+
+    // @ts-expect-error an entry with no frame key is not a coordinate
+    const entryWithoutFrame: FrameEntryCoordinates = { activeEntry: 5 };
+    // @ts-expect-error a frame key with no entry is not a coordinate
+    const frameWithoutEntry: FrameEntryCoordinates = { activeFrameKey: FRAME };
+    // @ts-expect-error an explicitly undefined entry does not satisfy the pair
+    const halfPaired: FrameEntryCoordinates = { activeFrameKey: FRAME, activeEntry: undefined };
+    expect([entryWithoutFrame, frameWithoutEntry, halfPaired]).toHaveLength(3);
+  });
+});
 
 describe('inferFrameEntryFromState', () => {
   const frameKey = buildFrameKey('1');
@@ -65,13 +94,23 @@ describe('advanceFrameEntry', () => {
     });
   });
 
-  it('bootstraps when activeFrameKey is present but activeEntry is not', () => {
-    expect(
-      advanceFrameEntry({ activeFrameKey: FRAME_1, frameEntryCounts: {} }, FRAME_1, false),
-    ).toEqual({
+  it('bootstraps to 1 when the frame has an empty recorded history', () => {
+    // The bootstrap arm's `known > 0` test: an empty `frameEntryCounts` is not
+    // the same input as an absent one, and both must land on 1.
+    expect(advanceFrameEntry({ frameEntryCounts: {} }, FRAME_1, false)).toEqual({
       activeFrameKey: FRAME_1,
       activeEntry: 1,
       frameEntryCounts: { [FRAME_1]: 1 },
+    });
+  });
+
+  it('bootstraps to another frame recorded count without claiming it as the entry', () => {
+    // Bootstrap reads the count of the frame being ENTERED, not the highest
+    // count in the map.
+    expect(advanceFrameEntry({ frameEntryCounts: { [FRAME_2]: 9 } }, FRAME_1, false)).toEqual({
+      activeFrameKey: FRAME_1,
+      activeEntry: 1,
+      frameEntryCounts: { [FRAME_2]: 9, [FRAME_1]: 1 },
     });
   });
 
@@ -143,35 +182,22 @@ describe('advanceFrameEntry', () => {
     expect(counts).toEqual({ [FRAME_1]: 1 });
   });
 
-  it('bootstraps rather than switching when the frame key is recorded but the entry is not', () => {
-    // Both disjuncts of the bootstrap predicate matter independently. A missing
-    // `activeEntry` alongside a recorded `activeFrameKey` must still bootstrap
-    // even though the frame is changing, because the switch arm reads
-    // `activeEntry` arithmetically and has nothing to add to.
-    expect(
-      advanceFrameEntry(
-        { activeFrameKey: FRAME_1, activeEntry: undefined, frameEntryCounts: { [FRAME_1]: 5 } },
-        FRAME_2,
-        false,
-      ),
-    ).toEqual({
+  it('bootstraps into a different frame without claiming a switch', () => {
+    // What the two half-paired cases used to prove, now that the type makes
+    // them unrepresentable: bootstrap never takes the switch arm, so it never
+    // adds one to an entry it does not have. The frame it enters differs from
+    // every frame in the recorded history.
+    expect(advanceFrameEntry({ frameEntryCounts: { [FRAME_1]: 5 } }, FRAME_2, false)).toEqual({
       activeFrameKey: FRAME_2,
       activeEntry: 1,
       frameEntryCounts: { [FRAME_1]: 5, [FRAME_2]: 1 },
     });
   });
 
-  it('bootstraps when the entry is recorded but the frame key is not', () => {
-    // The other half of the bootstrap predicate. With no `activeFrameKey` there
-    // is no frame the entry can be said to belong to, so the switch arm must not
-    // claim this as a frame change and add one to it.
-    expect(
-      advanceFrameEntry(
-        { activeFrameKey: undefined, activeEntry: 5, frameEntryCounts: { [FRAME_1]: 5 } },
-        FRAME_1,
-        false,
-      ),
-    ).toEqual({
+  it('bootstraps to the entered frame recorded count even when re-entry is declared', () => {
+    // `reentered` is only consulted once a frame is active. From bootstrap it
+    // must not add one, or a rehydrated run's first GOTO would skip an ordinal.
+    expect(advanceFrameEntry({ frameEntryCounts: { [FRAME_1]: 5 } }, FRAME_1, true)).toEqual({
       activeFrameKey: FRAME_1,
       activeEntry: 5,
       frameEntryCounts: { [FRAME_1]: 5 },
@@ -181,13 +207,24 @@ describe('advanceFrameEntry', () => {
   it('carries a same-frame entry through in preference to the recorded count', () => {
     // The carry-through arm returns the ACTIVE entry, not the frame's recorded
     // count, when the two disagree.
+    //
+    // This is also the only fixture where `known > entry`, so it is the one that
+    // can prove the `Math.max(known, entry)` floor on the recorded count: with
+    // `known === entry` the max is indistinguishable from either operand. A
+    // count that followed the entry down would let `inferFrameEntryFromState`
+    // answer a lower ordinal for this frame than a credential already stamped
+    // in it, so the whole assignment is asserted, not just `.activeEntry`.
     expect(
       advanceFrameEntry(
         { activeFrameKey: FRAME_1, activeEntry: 1, frameEntryCounts: { [FRAME_1]: 3 } },
         FRAME_1,
         false,
-      ).activeEntry,
-    ).toBe(1);
+      ),
+    ).toEqual({
+      activeFrameKey: FRAME_1,
+      activeEntry: 1,
+      frameEntryCounts: { [FRAME_1]: 3 },
+    });
   });
 
   it('normalises a non-positive persisted entry up to the recorded count', () => {

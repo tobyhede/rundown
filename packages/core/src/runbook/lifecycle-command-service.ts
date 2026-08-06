@@ -30,7 +30,7 @@ import {
   type DelegationRuntimeCapabilities,
   type DelegationTokenDeriver,
 } from './delegation-credential.js';
-import type { TokenScanResult } from './delegation-scan.js';
+import type { DelegationTokenScan, TokenScanResult } from './delegation-scan.js';
 import {
   hashDelegationToken,
   truncateDelegationToken,
@@ -38,11 +38,11 @@ import {
   type DelegationTokenHash,
 } from './delegation-token.js';
 import {
+  buildRetryIssuanceCapture,
   resolveDelegationIssuance,
   resolveRetryIssuance,
   type DelegationIssuanceResolution,
   type RequestedRunbookArg,
-  type RetryIssuanceResolution,
 } from './delegation-inference.js';
 import { inferFrameEntryFromState } from './frame-entry.js';
 import { Errors } from '../errors/factory.js';
@@ -61,7 +61,6 @@ import {
   type UnknownRunRefusal,
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
-import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import {
   type IssuanceAnchorResolution,
@@ -93,13 +92,9 @@ import {
   inactiveFrame,
   replaceSubstepStateEntry,
 } from './targeting.js';
-import type {
-  ResolvedStep,
-  RunbookState,
-  StepDelegation,
-  SubstepState,
-  TemplateVarValue,
-} from './types.js';
+import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
+import type { RunbookContext } from './compiler.js';
+import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { PreparedActorMutation } from './effectful-mutation-executor.js';
@@ -119,8 +114,6 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly sessionService: SessionService;
   /** Actor service used to dispatch top-level PASS/FAIL through the state machine. */
   readonly actorService: RunbookActorService;
-  /** Lifecycle service used to ensure the active frame entry before/after a transition. */
-  readonly lifecycleService: ExecutionLifecycleService;
   /** Completion service used to record and drain resolved substep completions. */
   readonly completionService: RunbookCompletionService;
   /** Core-owned execution fence for actor-derived lifecycle mutations. */
@@ -158,24 +151,15 @@ export interface RunbookLifecycleCommandServiceDependencies {
    */
   readonly resolveChildRunbook: ResolveChildRunbook;
   /**
-   * Locate a delegation across runs by its plain-text token.
+   * Locate a delegation bearer across runs, by verifier.
    *
-   * CLI-bound; wraps `DelegationScanService.findByToken` (which returns
-   * `TokenScanResult | null`), coercing `null → undefined`. Used by the retry
-   * `token` locator, whose target run is the scan result's parent — not the
-   * active run.
+   * CLI-bound; wraps `DelegationScanService.scanByTokenHash`. One dependency
+   * rather than two because the seam's two questions about a bearer — which row
+   * still carries it, and which rows record it as superseded — are always asked
+   * together about the same hash, and answering them from one state listing is
+   * what keeps the retry locator to a single full scan.
    */
-  readonly findDelegationByToken: FindDelegationByToken;
-  /**
-   * Locate every delegation across runs that records a plain-text token as
-   * superseded.
-   *
-   * CLI-bound; wraps `DelegationScanService.findBySupersededToken`. Required,
-   * like its {@link findDelegationByToken} sibling: the retry `token` locator
-   * scans this index unconditionally, and an omitted dependency would silently
-   * return every replayed retry to `token-not-found` rather than failing loudly.
-   */
-  readonly findDelegationsBySupersededToken: FindDelegationsBySupersededToken;
+  readonly findDelegationsByTokenHash: FindDelegationsByTokenHash;
 }
 
 /**
@@ -192,22 +176,20 @@ export type ResolveChildRunbook = (
 ) => Promise<{ readonly path: string; readonly ref: RunbookRef } | undefined>;
 
 /**
- * Cross-run token lookup, CLI-bound (wraps `DelegationScanService.findByToken`).
+ * Cross-run bearer lookup, CLI-bound (wraps `DelegationScanService.scanByTokenHash`).
  *
- * @param token - The plain-text delegation token.
- * @returns The scan result, or `undefined` when no run owns the token.
- */
-export type FindDelegationByToken = (token: string) => Promise<TokenScanResult | undefined>;
-
-/**
- * Where the seam obtains every delegation superseding a given plain-text token.
+ * Takes the verifier rather than the raw bearer: the seam hashes the token once
+ * to identify the retry and passes that hash on, instead of handing the token
+ * back for the scan to hash a second time. It also keeps the plain-text bearer
+ * off one more callable boundary.
  *
- * @param token - Plain-text delegation bearer that may have been superseded.
- * @returns Every matching scan result; empty when none match.
+ * @param tokenHash - Verifier of the delegation bearer being located.
+ * @returns The row still carrying the bearer (or `undefined`), plus every row
+ *   recording it as superseded.
  */
-export type FindDelegationsBySupersededToken = (
-  token: string,
-) => Promise<readonly TokenScanResult[]>;
+export type FindDelegationsByTokenHash = (
+  tokenHash: DelegationTokenHash,
+) => Promise<DelegationTokenScan>;
 
 /**
  * How a retry locates its target delegation.
@@ -1612,19 +1594,24 @@ export class RunbookLifecycleCommandService {
     let supersedingScan: readonly TokenScanResult[] = [];
 
     if (locator.kind === 'token') {
-      const scan = await this.#deps.findDelegationByToken(locator.token);
-      // `findByToken` matches `tokenHash` only, so a replayed retry naming a
-      // bearer that has since been rotated away resolves to nothing there.
+      // Both halves come from ONE scan. `current` matches `tokenHash` only, so a
+      // replayed retry naming a bearer that has since been rotated away resolves
+      // to nothing there.
       //
-      // The supersession index is scanned UNCONDITIONALLY — not as a fallback
-      // when `findByToken` misses. Skipping it on a hit would make "more than
-      // one attempt records this bearer as superseded" invisible in exactly the
-      // case where a current row also matches, which is the corrupted state the
-      // refusal exists for. Scanning always is the fail-closed choice, and it is
-      // what lets `resolveRetryIssuance` remain the single place the priority
-      // between ambiguity and a matching current row is expressed. This seam
-      // decides nothing from the result but *where* the target run is.
-      supersedingScan = await this.#deps.findDelegationsBySupersededToken(locator.token);
+      // The supersession index is populated UNCONDITIONALLY — not as a fallback
+      // when `current` misses. Skipping it on a hit would make "more than one
+      // attempt records this bearer as superseded" invisible in exactly the case
+      // where a current row also matches, which is the corrupted state the
+      // refusal exists for. Collecting always is the fail-closed choice, and it
+      // is what lets `resolveRetryIssuance` remain the single place the priority
+      // between ambiguity and a matching current row is expressed. Answering
+      // both from one listing also removes the window in which the two lookups
+      // observed different disk states. This seam decides nothing from the
+      // result but *where* the target run is.
+      const { current: scan, superseding } = await this.#deps.findDelegationsByTokenHash(
+        hashDelegationToken(locator.token),
+      );
+      supersedingScan = superseding;
       // `.at(0)` for the same reason as `resolveRetryIssuance`'s `replacement`:
       // an index read is typed as always-present, so the guard below would read
       // as dead code even though an empty scan yields `undefined` and must fall
@@ -1931,59 +1918,25 @@ export class RunbookLifecycleCommandService {
         // echo-versus-issue in `beforeEffect` and the machine runs only on the
         // issuable branch.
         //
-        // `supersededBy` is derived primarily from the CAPTURED parent state:
-        // the disk scan ran before this transaction took its capture, so only
-        // the captured rows carry in-transaction authority. The scan's
-        // contribution is the rows it found in *other* runs, which the captured
-        // parent cannot contain and which are the only way cross-run ambiguity
-        // becomes visible.
-        //
-        // Plain concatenation — the two collections are disjoint BY
-        // CONSTRUCTION: `capturedSuperseding` reads only
-        // `parent.state.substepStates`, and `foreignSuperseding` keeps only rows
-        // whose `parentState.id !== parent.state.id`. A same-run row can reach
-        // this list only through the capture; a foreign row only through the
-        // scan. Do NOT "make it safe" with a `new Map(...)` keyed on
-        // `tokenHash`: two distinct corrupted rows can carry the same
-        // replacement verifier, and collapsing them drops `supersededBy.length`
-        // to 1, silently skipping the very refusal that exists to catch that
-        // state.
-        //
-        // Build the capture inside an explicit `if`, not a ternary over a
-        // separately derived `identityTokenHash` const. Narrowing `locator.kind`
-        // in a ternary narrows `locator`, not a const computed from it, so a
-        // hoisted `const identityTokenHash = locator.kind === 'token' ? hash(...)
-        // : undefined` stays `DelegationTokenHash | undefined` and is not
-        // assignable to the capture's required field. Computing the hash inside
-        // the branch makes the type follow from the branch.
-        const frameEntry = inferFrameEntryFromState(parent.state, exactCursor.frameKey);
-        let retryResolution: RetryIssuanceResolution;
-        if (locator.kind === 'token') {
-          const identityTokenHash = hashDelegationToken(locator.token);
-          const capturedSuperseding = (parent.state.substepStates ?? [])
-            .map((row) => row.delegation)
-            .filter(
-              (row): row is StepDelegation =>
-                row?.credential.supersedesTokenHash === identityTokenHash,
-            );
-          const foreignSuperseding = supersedingScan
-            .filter((row) => row.parentState.id !== parent.state.id)
-            .map((row) => row.delegation)
-            .filter((row) => row.credential.supersedesTokenHash === identityTokenHash);
-          retryResolution = resolveRetryIssuance({
-            locator: 'token',
-            identityTokenHash,
-            current: exactSubstep?.delegation,
-            supersededBy: [...capturedSuperseding, ...foreignSuperseding],
-            frameEntry,
-          });
-        } else {
-          retryResolution = resolveRetryIssuance({
-            locator: 'step',
-            current: exactSubstep?.delegation,
-            frameEntry,
-          });
-        }
+        // Both halves are pure and live in `delegation-inference.ts`:
+        // `buildRetryIssuanceCapture` owns how superseding rows are collected
+        // and tagged with the coordinate they came from, and
+        // `resolveRetryIssuance` owns the decision. This seam supplies the
+        // captured state and the resolved cursor, and narrows on the result.
+        const retryResolution = resolveRetryIssuance(
+          buildRetryIssuanceCapture(
+            {
+              token: locator.kind === 'token' ? locator.token : undefined,
+              capturedState: parent.state,
+              scannedSuperseding: supersedingScan,
+              current: exactSubstep?.delegation,
+              substepId: exactCursor.substepId,
+              frameKey: exactCursor.frameKey,
+              frameEntry: inferFrameEntryFromState(parent.state, exactCursor.frameKey),
+            },
+            hashDelegationToken,
+          ),
+        );
         switch (retryResolution.kind) {
           case 'ambiguous':
             return {
@@ -2142,12 +2095,14 @@ export class RunbookLifecycleCommandService {
    * @returns Domain, policy, transaction, or committed abort outcome.
    */
   async abortDelegation(input: DelegationAbortInput): Promise<DelegationAbortOutcome> {
-    const scan = await this.#deps.findDelegationByToken(input.token);
+    // Hashed once, here: the lookup takes the verifier, so the abort no longer
+    // hashes the same bearer a second time to compare it below.
+    const tokenHash = hashDelegationToken(input.token);
+    const { current: scan } = await this.#deps.findDelegationsByTokenHash(tokenHash);
     if (!scan) return { kind: 'token_not_found' };
     const parentRunId = scan.parentState.id;
     const substepId = scan.substepId ?? scan.stepId;
     const frameKey = scan.frameKey;
-    const tokenHash = hashDelegationToken(input.token);
     const scannedChildRunId = scan.delegation.childRunId;
 
     const authority = await this.#resolveMutationActorContext({
@@ -3522,7 +3477,8 @@ export class RunbookLifecycleCommandService {
     // A bare transition means "advance the thing currently in front of the
     // operator". When that thing is an already-running inline child, resume
     // it instead of recording a completion against its parent substep.
-    if (await this.#reactivateRunningInlineChild(state)) {
+    const reactivation = await this.#reactivateRunningInlineChild(state);
+    if (reactivation) {
       return {
         kind: 'applied',
         runId: state.id,
@@ -3530,7 +3486,7 @@ export class RunbookLifecycleCommandService {
         terminalReleaseMode,
         status: 'continue',
         events: [],
-        loop: { kind: 'none' },
+        loop: reactivation,
       };
     }
     return this.#driveSubstepFenced(
@@ -3970,15 +3926,32 @@ export class RunbookLifecycleCommandService {
     return isRunId(childRunId) ? childRunId : undefined;
   }
 
+  // Does the parent still carry the one-shot launch intent that named this
+  // child? Only an interrupted launch does: the launcher records `startedAt` and
+  // consumes the intent in the same continuation, so a launch that ran to
+  // completion leaves neither behind. That makes the surviving intent the exact
+  // discriminant for "this launch is unfinished", and it is the same value the
+  // launch seam re-projects, so the two agree by construction rather than by a
+  // second rule about what "interrupted" means.
+  #hasUnconsumedInlineLaunchIntent(parentState: RunbookState, childRunId: RunId): boolean {
+    const context = (parentState.snapshot as { readonly context?: Partial<RunbookContext> } | null)
+      ?.context;
+    const intent = context?.inlineLaunchIntent;
+    return isInlineLaunchIntentWithoutParentEntry(intent) && intent.childRunId === childRunId;
+  }
+
   // Resume the active substep's running inline child when its linkage matches the
   // parent cursor, pushing it onto the session if it is not already active.
-  // Returns true when the child was reactivated (caller must skip recording).
-  async #reactivateRunningInlineChild(parentState: RunbookState): Promise<boolean> {
+  // Returns the seam's loop directive for the parent, or `undefined` when there
+  // was no child to reactivate (caller then records the completion as usual).
+  async #reactivateRunningInlineChild(
+    parentState: RunbookState,
+  ): Promise<LifecycleLoopDirective | undefined> {
     const childRunId = this.#findRunningInlineChildRunId(parentState);
-    if (!childRunId) return false;
+    if (!childRunId) return undefined;
 
     const childState = await this.#deps.loadRun(childRunId);
-    if (childState?.lifecycle !== 'running') return false;
+    if (childState?.lifecycle !== 'running') return undefined;
     const linkage = childState.parentLinkage;
     const parentFrame = deriveActiveFrame(parentState);
     const parentFrameKey = parentState.activeFrameKey ?? parentFrame.frameKey;
@@ -3991,14 +3964,23 @@ export class RunbookLifecycleCommandService {
       linkage.parentFrameKey !== parentFrameKey ||
       linkage.parentEntry !== parentEntry
     ) {
-      return false;
+      return undefined;
     }
 
     const active = await this.#deps.sessionService.getActive();
     if (active?.id !== childRunId) {
       await this.#deps.sessionService.pushRunbook(childRunId);
     }
-    return true;
+    // An unfinished launch needs the parent's own loop to finish it: recording
+    // `startedAt`, consuming the intent and re-establishing the child's
+    // run-control authority are Category-A continuation work the launch seam
+    // owns, and nothing else reaches it. A launch that already finished has
+    // none of that left to do, so running the loop there would only re-enter an
+    // execution unit the parent never left — re-announcing the step and
+    // re-running any command it carries.
+    return this.#hasUnconsumedInlineLaunchIntent(parentState, childRunId)
+      ? { kind: 'run', prompted: Boolean(parentState.prompted) }
+      : { kind: 'none' };
   }
 
   // Per-run step memo shared by both aggregate terminal paths. The map is what

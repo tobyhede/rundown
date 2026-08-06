@@ -525,17 +525,23 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  *
  * All three fields travel together: `activeEntry` is only interpretable against
  * the `activeFrameKey` it was recorded for, and `frameEntryCounts` supplies the
- * answer for every other frame.
+ * answer for every other frame. Persisted state carries them independently, so
+ * this is where the pair is established: a half-recorded state (a frame key with
+ * no entry, or an entry with no frame key) projects to the bootstrap variant,
+ * which is what both consumers already did with it — `advanceFrameEntry`
+ * bootstrapped, and `inferFrameEntryFromState`'s active-frame branch requires
+ * `activeEntry` to be present — so nothing is lost by dropping the orphaned half.
  *
  * @param state - Persisted runbook state.
- * @returns The coordinates {@link inferFrameEntryFromState} consumes.
+ * @returns The coordinates the machine carries; `frameEntryCounts` is preserved
+ *   in both variants.
  */
 function frameEntryCoordinatesOf(state: RunbookState): FrameEntryCoordinates {
-  return {
-    activeFrameKey: state.activeFrameKey,
-    activeEntry: state.activeEntry,
-    frameEntryCounts: state.frameEntryCounts,
-  };
+  const frameEntryCounts = state.frameEntryCounts;
+  const { activeFrameKey, activeEntry } = state;
+  return activeFrameKey !== undefined && activeEntry !== undefined
+    ? { activeFrameKey, activeEntry, frameEntryCounts }
+    : { frameEntryCounts };
 }
 
 /**

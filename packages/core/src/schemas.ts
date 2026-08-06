@@ -565,9 +565,14 @@ const ResolvedCompletionSchema = z
     result: z.enum(['pass', 'fail']),
     targetStep: z.string(),
     targetSubstep: z.string().optional(),
+    // `targetIteration` IS a FOR iteration index, so it keeps the FOR ceiling.
     targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     targetFrameKey: FrameKeySchema,
-    targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
+    // `targetEntry` is the frame entry ordinal under another name — the same
+    // run-global counter `activeEntry` carries (see the note on
+    // `RunbookStateObjectSchema.frameEntryCounts`), so it takes the same
+    // treatment: validated as a safe integer, not capped at a FOR bound.
+    targetEntry: z.number().int().nonnegative(),
     finalVars: z.record(z.string(), VariableValueSchema).optional(),
     completedAt: z.string(),
   })
@@ -874,11 +879,28 @@ const RunbookStateObjectSchema = z
       }),
     ),
     resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
-    frameEntryCounts: z
-      .record(z.string(), z.number().int().positive().max(MAX_FOR_BOUND))
-      .optional(),
+    // ENTRY ORDINALS ARE NOT FOR BOUNDS. `frameEntryCounts` and `activeEntry`
+    // count frame *entries* — a run-global monotonic ordinal that starts at 1
+    // and advances once per re-entry (RETRY, GOTO, a bounded self-GOTO pass).
+    // `MAX_FOR_BOUND` is the largest iteration count a single `FOR` clause may
+    // declare. The two are unrelated quantities, and sharing the constant made
+    // any run past 10,000 re-entries impossible to persist regardless of loop size:
+    // `update` does not validate its write, so the run committed state that
+    // `load` and the next `update` then refused, leaving prune as the only
+    // recovery. It also put the ceiling one below the last pass the machine's
+    // own `MAX_SELF_GOTO_PASSES` bound admits, so that bound's STOP could never
+    // be observed through persisted state.
+    //
+    // No explicit ceiling replaces it. A monotonic ordinal has no domain
+    // maximum to protect — nothing downstream allocates against it, and every
+    // consumer compares or increments. What must hold is that the value is a
+    // whole number JSON can round-trip without precision loss, and `.int()`
+    // already enforces exactly that (Zod 4 constrains `int` to the safe-integer
+    // range), so an out-of-range ordinal is still rejected, on the only bound
+    // that means anything here.
+    frameEntryCounts: z.record(z.string(), z.number().int().positive()).optional(),
     activeFrameKey: FrameKeySchema.optional(),
-    activeEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+    activeEntry: z.number().int().positive().optional(),
     substepStates: z.array(SubstepStateSchema).optional(),
     parentLinkage: z
       .discriminatedUnion('kind', [

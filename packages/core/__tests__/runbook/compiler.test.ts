@@ -3,11 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { createActor, fromPromise, waitFor } from 'xstate';
+import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import {
   compileRunbookToMachine,
   DelegationChildLinkPreparationError,
   deriveDelegationChildUnlinkedSubsteps,
   MAX_FILE_ITERATIONS,
+  MAX_SELF_GOTO_PASSES,
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
   deriveDelegationChildLinkedSubsteps,
@@ -13703,6 +13705,278 @@ echo ok
         { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
       ]);
 
+    /** Base step `1` whose FAIL is an authored `GOTO 1` — the transition targets its own source. */
+    const selfGotoStepSteps = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '1',
+          description: 'Self-goto step',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: {
+              kind: 'fail' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '1' } },
+            },
+          },
+        },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /**
+     * Step `1`, then parent `2` whose substep `2.1` is `PASS CONTINUE` / `FAIL GOTO 2.1`.
+     *
+     * Step `2` declares no ARTIFACTS, so the authored self-GOTO targets
+     * `step::2::1` from `step::2::1` with no `__parent-entry::` hop, and PASS
+     * advances 2.1 -> 2.2 inside the one frame.
+     */
+    const selfGotoSubstepSteps = (): ResolvedStep[] =>
+      inferSteps([
+        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
+        {
+          name: '2',
+          description: 'Parent',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: {
+                  kind: 'fail' as const,
+                  retry: 0,
+                  action: { type: 'GOTO' as const, target: { step: '2', substep: '1' } },
+                },
+              },
+            },
+            { id: '2', description: 'Sub 2', transitions: DEFER_BOTH },
+          ],
+        },
+        { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** Read the one-shot re-entry marker out of the persisted (not live) snapshot. */
+    function persistedMarker(
+      actor: ReturnType<typeof createActor>,
+    ): RunbookContext['frameReentry'] {
+      const persisted = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
+      return persisted.context.frameReentry;
+    }
+
+    describe('self-targeting transitions re-enter the leaf', () => {
+      // XState v5 defaults `reenter: false`, and `getTransitionDomain` returns
+      // the transition source when every effective target IS the source — so
+      // `computeEntrySet` never adds the leaf and its `entry` array never runs.
+      // The leaf's *children* are still exited and re-entered, so a self-GOTO
+      // re-fires `__issue-delegations` while skipping `syncFrameEntry`. Both
+      // halves of that are wrong: the frame is genuinely re-entered, so the
+      // entry must bump, and the one-shot marker must be consumed rather than
+      // left to bump the next ordinary advance.
+
+      it('bumps once when a GOTO targets the step the cursor already occupies', async () => {
+        const actor = createActor(compileFixture(selfGotoStepSteps()));
+        actor.start();
+        await settle(actor);
+        const before = entryOf(actor);
+
+        actor.send({ type: 'GOTO', target: { step: '1' } });
+        await settle(actor);
+
+        expect(entryOf(actor)).toBe(before + 1);
+        expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
+        actor.stop();
+      });
+
+      it('bumps once when an authored FAIL GOTO targets the step the cursor occupies', async () => {
+        const actor = createActor(compileFixture(selfGotoStepSteps()));
+        actor.start();
+        await settle(actor);
+        const before = entryOf(actor);
+
+        actor.send({ type: 'FAIL' }); // authored `GOTO 1` from step 1
+        await settle(actor);
+
+        expect(entryOf(actor)).toBe(before + 1);
+        expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
+        actor.stop();
+      });
+
+      it('bumps once when a GOTO targets the substep the cursor already occupies', async () => {
+        const actor = createActor(compileFixture(selfGotoSubstepSteps()));
+        actor.start();
+        actor.send({ type: 'PASS' }); // 1 -> 2.1
+        await settle(actor);
+        const before = entryOf(actor);
+
+        actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
+        await settle(actor);
+
+        expect(entryOf(actor)).toBe(before + 1);
+        expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
+        actor.stop();
+      });
+
+      it('bumps once when an authored FAIL GOTO targets the substep the cursor occupies', async () => {
+        const actor = createActor(compileFixture(selfGotoSubstepSteps()));
+        actor.start();
+        actor.send({ type: 'PASS' }); // 1 -> 2.1
+        await settle(actor);
+        const before = entryOf(actor);
+
+        actor.send({ type: 'FAIL' }); // authored `GOTO 2.1` from 2.1
+        await settle(actor);
+
+        expect(entryOf(actor)).toBe(before + 1);
+        expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
+        actor.stop();
+      });
+
+      it('bumps once on RETRY when the step declares no parent ARTIFACTS', async () => {
+        // `routeThroughParentArtifactsIfNeeded` returns `config.id` unchanged,
+        // so the RETRY transition self-targets `step::2::1`.
+        const actor = createActor(compileFixture(twoSubstepSteps()));
+        actor.start();
+        await settle(actor);
+        const before = entryOf(actor);
+
+        actor.send({ type: 'RETRY' });
+        await settle(actor);
+
+        expect(entryOf(actor)).toBe(before + 1);
+        expect(actor.getSnapshot().context.frameReentry).toBeUndefined();
+        actor.stop();
+      });
+
+      it('does not leak the marker onto the next same-frame substep advance', async () => {
+        const actor = createActor(compileFixture(selfGotoSubstepSteps()));
+        actor.start();
+        actor.send({ type: 'PASS' }); // 1 -> 2.1
+        await settle(actor);
+
+        actor.send({ type: 'FAIL' }); // self-GOTO 2.1 -> 2.1
+        await settle(actor);
+        const afterSelfGoto = entryOf(actor);
+
+        actor.send({ type: 'PASS' }); // ordinary 2.1 -> 2.2, same frame
+        await settle(actor);
+
+        expect(actor.getSnapshot().context.substep).toBe('2');
+        expect(entryOf(actor)).toBe(afterSelfGoto);
+        actor.stop();
+      });
+
+      it('leaves no marker in the persisted snapshot after a settled self-GOTO', async () => {
+        const actor = createActor(compileFixture(selfGotoSubstepSteps()));
+        actor.start();
+        actor.send({ type: 'PASS' });
+        await settle(actor);
+
+        actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
+        await settle(actor);
+        expect(persistedMarker(actor)).toBeUndefined();
+
+        actor.send({ type: 'RETRY' });
+        await settle(actor);
+        expect(persistedMarker(actor)).toBeUndefined();
+        actor.stop();
+      });
+
+      it('does not mint a second credential when a self-GOTO re-enters a delegating leaf', async () => {
+        // The leaf's children are exited and re-entered on a self-target with
+        // or without `reenter`, so `__issue-delegations` fires either way.
+        // Making the leaf itself re-enter adds entry actions, not a second
+        // mint: the substep row survives frame re-entry with its delegation
+        // attached, so `inferAllDelegateSubsteps` finds no target and the
+        // actor resolves `skipped`. Re-minting here would orphan the bearer a
+        // child may already hold — that rotation is `delegate --retry`'s job.
+        const issuer = recordingIssuer();
+        const actor = createActor(compileFixture(delegatingSteps(), issuer));
+        actor.start();
+        actor.send({ type: 'PASS' }); // into frame 2, one fresh issuance
+        await settle(actor);
+        expect(issuer.locations).toHaveLength(1);
+        const before = entryOf(actor);
+
+        actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
+        await settle(actor);
+
+        expect(issuer.locations).toHaveLength(1);
+        expect(entryOf(actor)).toBe(before + 1);
+        actor.stop();
+      });
+
+      it('marks every self-targeting transition out of an entry-bearing state as reentering', () => {
+        // Structural guard against a *new* self-targeting transition landing
+        // without `reenter`. Walks the resolved XState graph rather than the
+        // config literal, so relative target strings are already resolved to
+        // state nodes and no site can hide behind `#id` vs bare-name syntax.
+        //
+        // Scoped to states that carry entry actions, which is exactly where the
+        // omission is observable: `syncFrameEntry` is a leaf entry action, and
+        // an internal self-transition skips the source's entry array. The
+        // parent-aggregation state self-targets deliberately (its retry assign
+        // runs, then a sibling priority-0 `always` routes onward) and carries no
+        // entry actions, so it is correctly out of scope.
+        type Node = {
+          key: string;
+          entry: readonly unknown[];
+          transitions: Map<string, { target?: readonly Node[]; reenter: boolean }[]>;
+          always?: readonly { target?: readonly Node[]; reenter: boolean }[];
+          states: Record<string, Node>;
+        };
+        const offenders: string[] = [];
+        const walk = (node: Node): void => {
+          const all = [...[...node.transitions.values()].flat(), ...(node.always ?? [])];
+          for (const transition of all) {
+            if (
+              node.entry.length > 0 &&
+              transition.target?.some((t) => t === node) &&
+              !transition.reenter
+            ) {
+              offenders.push(node.key);
+            }
+          }
+          for (const child of Object.values(node.states)) walk(child);
+        };
+        for (const fixture of [
+          selfGotoStepSteps(),
+          selfGotoSubstepSteps(),
+          twoSubstepSteps(),
+          parentArtifactSteps(),
+          forLoopSteps(3),
+          forIterationRetrySteps(),
+          aggregationRetrySteps(),
+          retryBudgetSteps(),
+          delegatingSteps(),
+        ]) {
+          walk(compileFixture(fixture).root);
+        }
+        expect(offenders).toEqual([]);
+      });
+
+      it('preserves the live FOR iteration when a self-GOTO re-enters a loop body', async () => {
+        // The leaf's own entry action re-runs `initForStack`, which preserves a
+        // same-step frame, so re-entry must not rewind the loop to its start.
+        const actor = createActor(compileFixture(forLoopSteps(3)));
+        actor.start();
+        actor.send({ type: 'PASS' }); // 1 -> 2|1
+        await settle(actor);
+        actor.send({ type: 'PASS' }); // 2|1 -> 2|2
+        await settle(actor);
+        expect(actor.getSnapshot().context.frameEntry?.activeFrameKey).toBe(buildFrameKey('2', 2));
+        const before = entryOf(actor);
+
+        actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
+        await settle(actor);
+
+        expect(actor.getSnapshot().context.frameEntry?.activeFrameKey).toBe(buildFrameKey('2', 2));
+        expect(entryOf(actor)).toBe(before + 1);
+        actor.stop();
+      });
+    });
+
     it('advances the entry on entry to a leaf state, before its invoked children run', async () => {
       // The credential the machine stamps must equal the entry the machine
       // holds once the transition settles.
@@ -13877,6 +14151,651 @@ echo ok
       expect(entryOf(actor)).toBe(before + 1);
       expect(actor.getSnapshot().context.frameEntry?.activeFrameKey).toBe(buildFrameKey('2', 1));
       actor.stop();
+    });
+  });
+
+  describe('bounded self-targeting GOTO', () => {
+    // `GOTO <self>` is bounded re-execution, not an infinite loop:
+    //   GOTO SELF == GOTO SELF, MAX_FOR_BOUND times, then STOP.
+    // The bound lives in the machine, mirroring the RETRY precedent
+    // (`buildRetryStateConfig`): a guard on the step-scoped counter admits the
+    // loop while budget remains, and a lower-priority sibling entry dispatches
+    // the exhausted case through the same STOP compilation an authored
+    // `FAIL STOP` uses.
+
+    /** Step `1` whose FAIL is an authored `GOTO 1` — the action targets its own source. */
+    const authoredSelfGoto = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '1',
+          description: 'Self-goto step',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: {
+              kind: 'fail' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '1' } },
+            },
+          },
+        },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** The same shape with `FAIL STOP`, giving the terminal state a self-GOTO must reach. */
+    const authoredStop = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '1',
+          description: 'Stopping step',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** Parent `1` whose substep `1.1` is `FAIL GOTO 1.1` — the substep-scoped self-target. */
+    const authoredSelfGotoSubstep = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '1',
+          description: 'Parent',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: {
+                  kind: 'fail' as const,
+                  retry: 0,
+                  action: { type: 'GOTO' as const, target: { step: '1', substep: '1' } },
+                },
+              },
+            },
+          ],
+        },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /** Step `1` with `PASS GOTO 1` (self) alongside an authored `FAIL RETRY 2 STOP`. */
+    const selfGotoBesideRetryBudget = (): ResolvedStep[] =>
+      inferSteps([
+        {
+          name: '1',
+          description: 'Both bounds on one step',
+          transitions: {
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '1' } },
+            },
+            fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
+          },
+        },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+    /**
+     * Start an actor for `steps` with `seed` overlaid on the initial context.
+     *
+     * Drives the counters directly instead of sending `MAX_FOR_BOUND` events, so
+     * the boundary can be pinned on the exact two transitions that straddle it.
+     *
+     * @param steps - Compiled runbook steps.
+     * @param seed - Context fields to overlay (the self-GOTO counter, the
+     *   authored retry counter, or both).
+     * @returns A started actor sitting on the runbook's first state.
+     */
+    function startSeeded(
+      steps: ResolvedStep[],
+      seed: Partial<RunbookContext>,
+    ): ReturnType<typeof createActor> {
+      const machine = compileRunbookToMachine(steps);
+      const probe = createActor(machine).start();
+      const baseSnapshot = probe.getPersistedSnapshot();
+      const baseContext = probe.getSnapshot().context;
+      const baseValue = probe.getSnapshot().value;
+      probe.stop();
+      const snapshot = {
+        ...baseSnapshot,
+        value: baseValue,
+        context: { ...baseContext, ...seed },
+      } satisfies typeof baseSnapshot & {
+        readonly value: typeof baseValue;
+        readonly context: RunbookContext;
+      };
+      return createActor(machine, { snapshot }).start();
+    }
+
+    /** The live FOR iteration on the top of an actor's stack. */
+    function peekIteration(actor: ReturnType<typeof createActor>): number | undefined {
+      const stack = actor.getSnapshot().context.forStack;
+      return stack[stack.length - 1]?.iteration;
+    }
+
+    /** The observable terminal shape a run reaches, for STOP-parity assertions. */
+    function terminalShape(actor: ReturnType<typeof createActor>): {
+      status: string;
+      value: unknown;
+      lifecycle: string;
+      lastActionType: string | undefined;
+      lastActionOrigin: string | undefined;
+    } {
+      const snapshot = actor.getSnapshot();
+      return {
+        status: snapshot.status,
+        value: snapshot.value,
+        lifecycle: snapshot.context.lifecycle,
+        lastActionType: snapshot.context.lastAction?.type,
+        lastActionOrigin: snapshot.context.lastAction?.origin,
+      };
+    }
+
+    it('bounds the self-loop at the FOR ceiling', () => {
+      // The two bounds are deliberately one number: a self-loop and a fully
+      // unrolled FOR share one notion of how many passes Rundown will run.
+      expect(MAX_SELF_GOTO_PASSES).toBe(MAX_FOR_BOUND);
+    });
+
+    it('stops the run once a self-GOTO exhausts its bound instead of looping forever', () => {
+      const actor = createActor(compileRunbookToMachine(authoredSelfGoto()));
+      actor.start();
+      let lastAdmittedEntry = 0;
+
+      for (let pass = 0; pass <= MAX_SELF_GOTO_PASSES; pass += 1) {
+        const before = actor.getSnapshot().context.frameEntry?.activeEntry ?? 0;
+        actor.send({ type: 'FAIL' });
+        const after = actor.getSnapshot().context.frameEntry?.activeEntry ?? 0;
+        if (after > before) lastAdmittedEntry = after;
+      }
+
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().status).toBe('done');
+      expect(actor.getSnapshot().context.lifecycle).toBe('stopped');
+      // Exactly MAX_SELF_GOTO_PASSES jumps were taken, one bump each — on the
+      // loop's own counter, never on the author's retry budget.
+      expect(actor.getSnapshot().context.selfGotoCount).toBe(MAX_SELF_GOTO_PASSES);
+      expect(actor.getSnapshot().context.retryCount).toBe(0);
+      // The run-global entry ordinal starts at 1 and bumps once per pass, so the
+      // last admitted pass reaches MAX_FOR_BOUND + 1 — past the ceiling a FOR
+      // clause may declare, and deliberately so: the ordinal is not a loop
+      // bound, and `schemas.ts` no longer caps it as one. Pinned here because
+      // that ceiling once made the persisted state of this very run unreadable
+      // one pass before the machine's bound could fire.
+      expect(lastAdmittedEntry).toBe(MAX_FOR_BOUND + 1);
+      actor.stop();
+    });
+
+    it('reaches exactly the terminal state an authored STOP action produces', () => {
+      const stopped = createActor(compileRunbookToMachine(authoredStop()));
+      stopped.start();
+      stopped.send({ type: 'FAIL' });
+      const authored = terminalShape(stopped);
+      stopped.stop();
+
+      const exhausted = startSeeded(authoredSelfGoto(), { selfGotoCount: MAX_FOR_BOUND });
+      exhausted.send({ type: 'FAIL' });
+
+      expect(terminalShape(exhausted)).toEqual(authored);
+      // The bound is diagnosable: the STOP carries a reason the authored one has no need for.
+      expect(exhausted.getSnapshot().context.lastMessage).toEqual(expect.stringContaining('GOTO'));
+      exhausted.stop();
+    });
+
+    it('takes the last self-GOTO inside the bound and refuses the one past it', () => {
+      // Pass MAX_FOR_BOUND is still a loop; pass MAX_FOR_BOUND + 1 is the STOP.
+      const inBudget = startSeeded(authoredSelfGoto(), { selfGotoCount: MAX_FOR_BOUND - 1 });
+      inBudget.send({ type: 'FAIL' });
+      expect(inBudget.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+      expect(inBudget.getSnapshot().context.selfGotoCount).toBe(MAX_FOR_BOUND);
+      inBudget.stop();
+
+      const atBound = startSeeded(authoredSelfGoto(), { selfGotoCount: MAX_FOR_BOUND });
+      atBound.send({ type: 'FAIL' });
+      expect(atBound.getSnapshot().value).toBe('STOPPED');
+      atBound.stop();
+    });
+
+    it('bounds a self-GOTO that targets the substep the cursor already occupies', () => {
+      const inBudget = startSeeded(authoredSelfGotoSubstep(), { selfGotoCount: MAX_FOR_BOUND - 1 });
+      inBudget.send({ type: 'FAIL' });
+      expect(inBudget.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+      inBudget.stop();
+
+      const atBound = startSeeded(authoredSelfGotoSubstep(), { selfGotoCount: MAX_FOR_BOUND });
+      atBound.send({ type: 'FAIL' });
+      expect(atBound.getSnapshot().value).toBe('STOPPED');
+      expect(atBound.getSnapshot().context.lifecycle).toBe('stopped');
+      atBound.stop();
+    });
+
+    it('bounds a GOTO event that targets the state the cursor already occupies', () => {
+      // `rundown goto <current>` dispatches the same GOTO action, so it carries
+      // the same bound — the limit belongs to the action, not to the caller.
+      const inBudget = startSeeded(authoredSelfGoto(), { selfGotoCount: MAX_FOR_BOUND - 1 });
+      inBudget.send({ type: 'GOTO', target: { step: '1' } });
+      expect(inBudget.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+      inBudget.stop();
+
+      const atBound = startSeeded(authoredSelfGoto(), { selfGotoCount: MAX_FOR_BOUND });
+      atBound.send({ type: 'GOTO', target: { step: '1' } });
+      expect(atBound.getSnapshot().value).toBe('STOPPED');
+      atBound.stop();
+    });
+
+    it('leaves a GOTO to a different step unbounded by the self-loop counter', () => {
+      // The counter is scoped to re-entry of the cursor's own unit. A jump that
+      // leaves the unit resets it, so a high counter must not divert it to STOP.
+      const actor = startSeeded(authoredSelfGoto(), { selfGotoCount: MAX_FOR_BOUND });
+
+      actor.send({ type: 'GOTO', target: { step: '2' } });
+
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
+      expect(actor.getSnapshot().context.selfGotoCount).toBe(0);
+      actor.stop();
+    });
+
+    it('advances the frame entry exactly once per bounded self-GOTO pass', () => {
+      // The bound must not disturb the one-bump-per-re-entry invariant.
+      const actor = createActor(compileRunbookToMachine(authoredSelfGoto()));
+      actor.start();
+      const before = actor.getSnapshot().context.frameEntry?.activeEntry ?? 0;
+
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.frameEntry?.activeEntry).toBe(before + 1);
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.frameEntry?.activeEntry).toBe(before + 2);
+      expect(actor.getSnapshot().context.selfGotoCount).toBe(2);
+      actor.stop();
+    });
+
+    it('leaves an authored RETRY budget intact across self-GOTO passes', () => {
+      // The self-loop counts its passes on its own counter. An authored
+      // `RETRY N` is the author's budget and no loop pass may draw on it, so the
+      // budget a run reaches its first FAIL with is the same whether the loop
+      // ran or not. Regression pin: the two constructs shared `retryCount`, so
+      // two self-GOTO passes made the very first FAIL exhaust `RETRY 2`.
+      const fresh = createActor(compileRunbookToMachine(selfGotoBesideRetryBudget()));
+      fresh.start();
+      fresh.send({ type: 'FAIL' }); // retry 1 of 2
+      fresh.send({ type: 'FAIL' }); // retry 2 of 2
+      expect(fresh.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+      fresh.send({ type: 'FAIL' }); // budget spent -> STOP
+      expect(fresh.getSnapshot().value).toBe('STOPPED');
+      fresh.stop();
+
+      const afterSelfJumps = createActor(compileRunbookToMachine(selfGotoBesideRetryBudget()));
+      afterSelfJumps.start();
+      afterSelfJumps.send({ type: 'PASS' }); // self-GOTO pass 1
+      afterSelfJumps.send({ type: 'PASS' }); // self-GOTO pass 2
+
+      afterSelfJumps.send({ type: 'FAIL' }); // retry 1 of 2 — budget untouched
+      expect(afterSelfJumps.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+      afterSelfJumps.send({ type: 'FAIL' }); // retry 2 of 2
+      expect(afterSelfJumps.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+      afterSelfJumps.send({ type: 'FAIL' }); // budget spent -> STOP
+      expect(afterSelfJumps.getSnapshot().value).toBe('STOPPED');
+      afterSelfJumps.stop();
+    });
+
+    describe('loop-counter reset sites', () => {
+      // `selfGotoCount` is scoped to the execution unit that authored the loop:
+      // it counts passes the cursor has taken around that unit. Every transition
+      // that leaves the unit, or reopens it from the top, must therefore zero
+      // it. Missing one site is silent in both directions — a later loop that
+      // inherits a spent counter STOPs on its first pass, and one that inherits
+      // nothing never reaches the bound at all — so there is one entry here per
+      // reset site in `compiler.ts`, plus one per site that deliberately does
+      // NOT reset. `self-goto-counter.source-text.test.ts` covers the pairing
+      // for every site at once, including any added later.
+      const SPENT = 7;
+      const spent = { selfGotoCount: SPENT } satisfies Partial<RunbookContext>;
+
+      const GOTO_2 = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: {
+          kind: 'fail' as const,
+          retry: 0,
+          action: { type: 'GOTO' as const, target: { step: '2' } },
+        },
+      };
+      const PASS_DEFER = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
+      const PASS_NEXT = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      };
+
+      /** Read the loop counter off a live actor. */
+      const loopCount = (actor: ReturnType<typeof createActor>): number =>
+        actor.getSnapshot().context.selfGotoCount;
+
+      it('starts a fresh run with the counter at zero', () => {
+        // Reset site: the machine's initial `context`.
+        const actor = createActor(compileRunbookToMachine(authoredSelfGoto()));
+        actor.start();
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on an authored GOTO to another simple unit', () => {
+        // Reset site: `buildSimpleGotoAssign`, non-self branch.
+        const steps = inferSteps([
+          { name: '1', description: 'Jumper', transitions: GOTO_2 },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on an authored GOTO to a substep-bearing unit', () => {
+        // Reset site: `buildGotoTransition`, substep-bearing branch.
+        const steps = inferSteps([
+          { name: '1', description: 'Jumper', transitions: GOTO_2 },
+          {
+            name: '2',
+            description: 'Parent',
+            transitions: DEFAULT_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on a dispatched GOTO event naming a FOR substep', () => {
+        // Reset site: the leaf GOTO handler's FOR-target branch.
+        const steps = inferSteps([
+          { name: '1', description: 'Start', transitions: DEFAULT_TRANSITIONS },
+          {
+            name: '2',
+            description: 'Loop',
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
+            aggregation: { strategy: 'ALL' },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'GOTO', target: { step: '2' } });
+        expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('advances it on a dispatched GOTO event naming the FOR substep it sits on', () => {
+        // Increment site: the leaf GOTO handler's FOR-target branch, self case.
+        // `rundown goto <current>` on a FOR substep is the same bounded
+        // re-execution an authored `GOTO <self>` compiles to, and the FOR branch
+        // of that handler is a separate assign from the simple-target branch, so
+        // it needs its own coverage or the bound silently stops counting there.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
+            aggregation: { strategy: 'ALL' },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const selfGoto = { type: 'GOTO' as const, target: { step: '1', substep: '1' } };
+
+        const actor = startSeeded(steps, spent);
+        actor.send(selfGoto);
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+        expect(loopCount(actor)).toBe(SPENT + 1);
+        actor.stop();
+
+        // ...and the bound it feeds still fires on the pass past it.
+        const atBound = startSeeded(steps, { selfGotoCount: MAX_SELF_GOTO_PASSES });
+        atBound.send(selfGoto);
+        expect(atBound.getSnapshot().value).toBe('STOPPED');
+        atBound.stop();
+      });
+
+      it('zeroes it on a parent-aggregation exit', () => {
+        // Reset site: `buildParentExitAssign`.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: DEFAULT_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on an unconditional parent exit', () => {
+        // Reset site: `commonAssign` — substeps with no declared aggregation.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on an aggregating FOR loop-back to the next iteration', () => {
+        // Reset site: aggregating guard 4c (accumulating loop-back).
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
+            aggregation: { strategy: 'ALL' },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+        expect(peekIteration(actor)).toBe(2);
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on an aggregating FOR NEXT loop-back', () => {
+        // Reset site: aggregating guard 4a (NEXT loop-back).
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
+            aggregation: { strategy: 'ALL' },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_NEXT }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+        expect(peekIteration(actor)).toBe(2);
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on a sequential FOR loop-back', () => {
+        // Reset site: sequential loop-back (no iteration aggregation).
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: { start: 1, end: 2 },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+        expect(peekIteration(actor)).toBe(2);
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on a sequential FOR NEXT loop-back', () => {
+        // Reset site: sequential NEXT loop-back.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: { start: 1, end: 2 },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_NEXT }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+        expect(peekIteration(actor)).toBe(2);
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on a sequential FOR exit', () => {
+        // Reset site: sequential exit straight to `nextTarget`. A single-pass
+        // loop reaches the exit without first taking a loop-back, so the seed
+        // can only have been cleared here.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: { start: 1, end: 1 },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('zeroes it on a recoveryRequired GOTO reconcile', () => {
+        // Reset site: `buildRecoveryReconcileTransitions`. A reconcile is a
+        // canonical GOTO, so it reopens the unit with every budget fresh.
+        const actor = startSeeded(authoredSelfGoto(), spent);
+        actor.send({
+          type: 'EXECUTION_OUTCOME_UNKNOWN',
+          epoch: 1,
+          reason: 'owner_dead',
+          interruptedStepId: '1',
+        });
+        expect(actor.getSnapshot().value).toBe('recoveryRequired');
+        actor.send({ type: 'GOTO', target: { step: '1' } });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+        expect(loopCount(actor)).toBe(0);
+        actor.stop();
+      });
+
+      it('leaves it untouched across an authored RETRY', () => {
+        // NOT a reset site: `buildRetryStateConfig`. A retry re-enters the same
+        // unit without taking a loop pass, so the loop budget neither advances
+        // nor refills — the two constructs are independent in both directions.
+        const actor = startSeeded(selfGotoBesideRetryBudget(), spent);
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+        expect(actor.getSnapshot().context.retryCount).toBe(1);
+        expect(loopCount(actor)).toBe(SPENT);
+        actor.stop();
+      });
+
+      it('leaves it untouched across a dispatched RETRY event', () => {
+        // NOT a reset site: the leaf `RETRY` event handler.
+        const actor = startSeeded(authoredSelfGoto(), spent);
+        actor.send({ type: 'RETRY' });
+        expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+        expect(actor.getSnapshot().context.retryCount).toBe(1);
+        expect(loopCount(actor)).toBe(SPENT);
+        actor.stop();
+      });
+
+      it('leaves it untouched across a parent-aggregation RETRY', () => {
+        // NOT a reset site: the parent-aggregation retry assign.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 1, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+            },
+            aggregation: { strategy: 'ALL' },
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
+        expect(loopCount(actor)).toBe(SPENT);
+        actor.stop();
+      });
+
+      it('leaves it untouched across a FOR-iteration RETRY', () => {
+        // NOT a reset site: the FOR-iteration retry assign.
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Loop',
+            forClause: {
+              start: 1,
+              end: 2,
+              aggregation: { strategy: 'ALL' as const },
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 1, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
+              },
+            },
+            aggregation: { strategy: 'ALL' },
+            transitions: DEFAULT_TRANSITIONS,
+            substeps: [{ id: '1', description: 'Sub', transitions: PASS_DEFER }],
+          },
+          { name: '2', description: 'Landing', transitions: DEFAULT_TRANSITIONS },
+        ]);
+        const actor = startSeeded(steps, spent);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+        expect(loopCount(actor)).toBe(SPENT);
+        actor.stop();
+      });
     });
   });
 });

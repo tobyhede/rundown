@@ -248,12 +248,21 @@ export function getActiveForContext(
 /**
  * Derive the frame key for an execution cursor.
  *
- * The single frame-key derivation. It replaces three subtly different ones that
- * agreed only by accident: `deriveActiveFrame` checked both `implicit` and
- * `stepId`, while `deriveActorStatePatch` and `buildDelegationIssueInvokeBlock`
- * filtered `implicit` but never compared `stepId`. Once the machine's entry
- * ordinal depends on the frame key matching what committed-state readers
- * compute, that accident becomes load-bearing, so all three route here.
+ * The single frame-key derivation. It replaces a family of subtly different
+ * ones that agreed only by accident: `deriveActiveFrame` checked both
+ * `implicit` and `stepId`, while `deriveActorStatePatch`,
+ * `buildDelegationIssueInvokeBlock`, `buildInlineLaunchInvokeBlock`,
+ * `buildSubstepGotoResetAssignValue` and `runRetryHook` filtered `implicit` but
+ * never compared `stepId`. Once the machine's entry ordinal depends on the
+ * frame key matching what committed-state readers compute, that accident
+ * becomes load-bearing, so every cursor-keyed site routes here.
+ *
+ * They coincide for every stack `initForStack` can build today — it always
+ * returns a single-element stack naming the step being entered — so this is a
+ * guarantee replacing an accident, not a live repair. `targeting.test.ts` pins
+ * each consumer against a stack whose top names a foreign step, and scans
+ * `src/runbook` for any site that re-derives the iteration from a raw stack
+ * top.
  *
  * @param stepName - The step the cursor sits on.
  * @param forStack - The live FOR context stack, or undefined.

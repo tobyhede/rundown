@@ -328,22 +328,15 @@ export function registerDelegateCommand(program: Command): void {
                 // committed evidence of use, so nothing was written. The current
                 // bearer is echoed so a caller who genuinely wants a new one can
                 // rotate deliberately by naming it.
-                if (!options.text) {
-                  output.json({
-                    kind: 'delegate',
-                    action: 'retry-already-applied',
-                    step: outcome.stepLabel,
-                    runbook: outcome.runbookPath,
-                    token: outcome.token,
-                    token_hash: outcome.tokenHash,
-                    parent_run_id: outcome.parentRunId,
-                  });
-                } else {
-                  output.message(`ALREADY    step ${outcome.stepLabel} -> ${outcome.runbookPath}`);
-                  output.message(`Token:     ${outcome.token}`);
-                  output.message('');
-                  output.message(`RD_CLAIM_TOKEN=${outcome.token}`);
-                }
+                emitDelegationEcho(output, {
+                  action: 'retry-already-applied',
+                  stepId: outcome.stepLabel,
+                  runbookRef: outcome.runbookPath,
+                  token: outcome.token,
+                  tokenHash: outcome.tokenHash,
+                  parentRunId: outcome.parentRunId,
+                  text: options.text,
+                });
                 break;
               case 'token-not-found':
                 // Never interpolate the bearer. `tokenHint` is already truncated
@@ -544,7 +537,8 @@ export function registerDelegateCommand(program: Command): void {
               // with the same code/message as the pre-migration throw.
               throw outcome.error;
             case 'already-delegated':
-              emitAlreadyDelegated(output, {
+              emitDelegationEcho(output, {
+                action: 'already-delegated',
                 stepId: outcome.stepId,
                 runbookRef: outcome.runbookRef,
                 token: outcome.token,
@@ -607,25 +601,51 @@ export function registerDelegateCommand(program: Command): void {
 }
 
 /**
- * Emit the `already-delegated` echo (idempotent delegate) in JSON or text form.
+ * The two idempotent-echo actions `delegate` can report.
  *
- * Shared by the bare `rd delegate` path and the targeted `--step` path so the
- * JSON/text shapes cannot drift between them.
+ * Both mean "nothing was written, here is the live bearer", but they answer
+ * different questions and imply different next moves: `already-delegated` says
+ * the substep already had a delegation, while `retry-already-applied` says the
+ * caller's rotation had already been applied. Keyed on the action so the text
+ * label and the JSON `action` cannot drift apart.
+ */
+const DELEGATION_ECHO_LABELS = {
+  // Padded to the same 11-column field as `DELEGATED  ` / `RETRIED    `.
+  'already-delegated': 'ALREADY    ',
+  'retry-already-applied': 'UNCHANGED  ',
+} as const;
+
+/** Action discriminant of an idempotent `delegate` echo. */
+type DelegationEchoAction = keyof typeof DELEGATION_ECHO_LABELS;
+
+/**
+ * Emit an idempotent `delegate` echo in JSON or text form.
+ *
+ * The single renderer for both echo actions, shared by the bare `rd delegate`
+ * path, the targeted `--step` path, and `--retry`. Single-sourcing it is what
+ * keeps the JSON envelope and the text rendering from drifting between them —
+ * and what makes the one field that legitimately differs (`token_hash`, which
+ * only the retry echo carries) an explicit optional rather than an accident of
+ * which copy was edited last.
  *
  * @param output - OutputEmitter to render through.
  * @param opts - Echo fields.
- * @param opts.stepId - Qualified step id of the already-delegated substep.
- * @param opts.runbookRef - Child runbook reference for the in-flight delegation.
+ * @param opts.action - Which echo this is; selects both the JSON action and the text label.
+ * @param opts.stepId - Qualified step id of the echoed substep.
+ * @param opts.runbookRef - Child runbook reference for the live delegation.
  * @param opts.token - Recoverable plaintext delegation token to echo.
+ * @param opts.tokenHash - Verifier for the echoed bearer; omitted by the plain echo.
  * @param opts.parentRunId - Parent run id that owns the delegation.
  * @param opts.text - When true, render human-readable text instead of JSON.
  */
-function emitAlreadyDelegated(
+function emitDelegationEcho(
   output: OutputEmitter,
   opts: {
+    action: DelegationEchoAction;
     stepId: string;
     runbookRef: string;
     token: string;
+    tokenHash?: string;
     parentRunId: string;
     text?: boolean;
   },
@@ -633,18 +653,19 @@ function emitAlreadyDelegated(
   if (!opts.text) {
     output.json({
       kind: 'delegate',
-      action: 'already-delegated',
+      action: opts.action,
       step: opts.stepId,
       runbook: opts.runbookRef,
       token: opts.token,
+      ...(opts.tokenHash === undefined ? {} : { token_hash: opts.tokenHash }),
       parent_run_id: opts.parentRunId,
     });
-  } else {
-    output.message(`ALREADY    step ${opts.stepId} -> ${opts.runbookRef}`);
-    output.message(`Token:     ${opts.token}`);
-    output.message('');
-    output.message(`RD_CLAIM_TOKEN=${opts.token}`);
+    return;
   }
+  output.message(`${DELEGATION_ECHO_LABELS[opts.action]}step ${opts.stepId} -> ${opts.runbookRef}`);
+  output.message(`Token:     ${opts.token}`);
+  output.message('');
+  output.message(`RD_CLAIM_TOKEN=${opts.token}`);
 }
 
 /**
@@ -652,7 +673,7 @@ function emitAlreadyDelegated(
  *
  * Shared by the fresh-issue and `--retry` flows so the injected discovery
  * (`resolveChildRunbook`) and cross-run
- * token lookup (`findDelegationByToken`) callables are wired identically.
+ * bearer lookup (`findDelegationsByTokenHash`) callables are wired identically.
  *
  * @param manager - State manager bound to the project root.
  * @param sessionService - Session service used for active-run resolution.
@@ -669,7 +690,6 @@ function buildDelegateSeam(
   return new RunbookLifecycleCommandService({
     sessionService,
     actorService,
-    lifecycleService,
     completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
@@ -678,10 +698,8 @@ function buildDelegateSeam(
       const resolved = await resolveRunbookFile(cwd, name);
       return resolved ? { path: resolved.path, ref: await buildRunbookRef(resolved) } : undefined;
     },
-    findDelegationByToken: async (token) =>
-      (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
-    findDelegationsBySupersededToken: (token) =>
-      new DelegationScanService(manager).findBySupersededToken(token),
+    findDelegationsByTokenHash: (tokenHash) =>
+      new DelegationScanService(manager).scanByTokenHash(tokenHash),
   });
 }
 

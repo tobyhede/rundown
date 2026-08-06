@@ -413,15 +413,113 @@ function createCliCommandServices(
   };
 }
 
-function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinkage): boolean {
-  return (
-    left?.kind === 'inline' &&
-    left.parentRunId === right.parentRunId &&
-    left.parentStepId === right.parentStepId &&
-    left.parentStep === right.parentStep &&
-    left.parentFrameKey === right.parentFrameKey &&
-    left.parentEntry === right.parentEntry
-  );
+/**
+ * Whether an already-persisted inline child describes the launch its parent is
+ * currently attempting, and if not, why not.
+ *
+ * The two refusal arms are deliberately distinct conditions with distinct
+ * remedies, so they are separate variants rather than one "not equal" boolean:
+ *
+ * - `superseded-entry` — the child names the same parent, substep and frame, at
+ *   a *different* frame entry. This is the staleness rule, not corruption. A
+ *   self-targeting GOTO/RETRY is a genuine frame re-entry that advances the
+ *   entry counter, and a child stamped at the previous entry belongs to that
+ *   previous entry — the same judgement `classifyDelegationLiveness` makes when
+ *   it closes a delegated child `cursor-advanced` because the parent's current
+ *   entry no longer matches the one captured at delegation time. Inline children
+ *   follow the delegation rule.
+ * - `conflicting-parent` — the child names a different parent run, substep,
+ *   step or frame, or was not linked inline at all. That is inconsistent state,
+ *   not a superseded generation.
+ */
+export type InlineChildLinkageMatch =
+  | { readonly kind: 'matched' }
+  | {
+      readonly kind: 'superseded-entry';
+      /** Frame entry the persisted child was launched at. */
+      readonly recordedEntry: number;
+      /** Frame entry the parent has now reached for the same frame. */
+      readonly currentEntry: number;
+    }
+  | { readonly kind: 'conflicting-parent' };
+
+/**
+ * Classify a persisted inline child's parent linkage against the linkage the
+ * parent's current launch intent describes.
+ *
+ * This is the inline-child staleness check. `parentEntry` is not one field
+ * among several here: the four coordinate fields answer "is this the same
+ * launch site?" and `parentEntry` answers "is this the same *visit* to it?".
+ * Collapsing the two would make a genuinely stale child indistinguishable from
+ * a live one, which is the failure the entry counter exists to prevent, so the
+ * coordinate check is evaluated first and reported as its own outcome.
+ *
+ * @param recorded - Parent linkage persisted on the existing child run, if any.
+ * @param current - Linkage the parent's active inline launch intent describes.
+ * @returns The typed match outcome; callers must narrow before refusing.
+ */
+export function classifyInlineChildLinkage(
+  recorded: ParentLinkage | undefined,
+  current: InlineLinkage,
+): InlineChildLinkageMatch {
+  if (
+    recorded?.kind !== 'inline' ||
+    recorded.parentRunId !== current.parentRunId ||
+    recorded.parentStepId !== current.parentStepId ||
+    recorded.parentStep !== current.parentStep ||
+    recorded.parentFrameKey !== current.parentFrameKey
+  ) {
+    return { kind: 'conflicting-parent' };
+  }
+  if (recorded.parentEntry !== current.parentEntry) {
+    return {
+      kind: 'superseded-entry',
+      recordedEntry: recorded.parentEntry,
+      currentEntry: current.parentEntry,
+    };
+  }
+  return { kind: 'matched' };
+}
+
+/**
+ * Render the operator-facing refusal for an inline child that cannot be adopted.
+ *
+ * @param childRunId - Run id of the persisted inline child being refused.
+ * @param linkage - Linkage the parent's current launch intent describes.
+ * @param mismatch - The non-matching classification to describe.
+ * @returns Error payload fields for the emitted `ERROR_OCCURRED` event.
+ */
+function describeInlineChildLinkageRefusal(
+  childRunId: RunId,
+  linkage: InlineLinkage,
+  mismatch: Exclude<InlineChildLinkageMatch, { kind: 'matched' }>,
+): { readonly message: string; readonly code: string } {
+  switch (mismatch.kind) {
+    case 'superseded-entry':
+      // Names both entries and the remedy, because this refusal is reachable
+      // from an ordinary operator gesture (`rundown goto` back onto a frame that
+      // already launched a child) rather than from corrupt state. The remedy is
+      // the sanctioned one for any superseded run: finish, stop, or prune it.
+      // Once the stale child's state is gone the same re-entry launches a fresh
+      // child under the current entry.
+      return {
+        message:
+          `Inline child ${childRunId} was launched at entry ${String(mismatch.recordedEntry)} of frame ` +
+          `${linkage.parentFrameKey}, but the parent has re-entered that frame as entry ` +
+          `${String(mismatch.currentEntry)}. A re-entered frame never adopts the previous entry's ` +
+          `child. Finish, stop, or prune run ${childRunId}, then re-enter.`,
+        code: 'INLINE_CHILD_FRAME_SUPERSEDED',
+      };
+    case 'conflicting-parent':
+      return {
+        message: `Inline child ${childRunId} has conflicting parent linkage`,
+        code: 'INLINE_CHILD_LINKAGE_MISMATCH',
+      };
+    default: {
+      const _exhaustive: never = mismatch;
+      return _exhaustive;
+    }
+  }
 }
 
 /**
@@ -660,13 +758,11 @@ async function launchInlineChildFromIntent({
 
     const existingChild = await manager.load(childRunId);
     if (existingChild) {
-      if (!parentLinkagesEqual(existingChild.parentLinkage, parentLinkage)) {
+      const linkageMatch = classifyInlineChildLinkage(existingChild.parentLinkage, parentLinkage);
+      if (linkageMatch.kind !== 'matched') {
         emitter.emit({
           type: 'ERROR_OCCURRED',
-          payload: {
-            message: `Inline child ${childRunId} has conflicting parent linkage`,
-            code: 'INLINE_CHILD_LINKAGE_MISMATCH',
-          },
+          payload: describeInlineChildLinkageRefusal(childRunId, parentLinkage, linkageMatch),
         });
         return 'stopped';
       }

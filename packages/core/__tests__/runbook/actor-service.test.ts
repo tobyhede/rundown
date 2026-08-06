@@ -24,9 +24,11 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import {
   compileRunbookToMachine,
+  MAX_SELF_GOTO_PASSES,
   PENDING_MACHINE_EFFECT_TAG,
   RECOVERY_REQUIRED_STATE_NAME,
 } from '../../src/runbook/compiler.js';
+import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
@@ -4227,6 +4229,61 @@ echo ok
       // Untouched: the patch omitted both fields rather than clearing them.
       expect(state.activeEntry).toBe(5);
       expect(state.frameEntryCounts).toEqual({ [FRAME_1]: 5 });
+    });
+
+    it('keeps a run readable across the self-GOTO bound and through its STOP', async () => {
+      // The machine bound is only worth having if a run can be observed
+      // reaching it. Every pass bumps the run-global entry ordinal, so the last
+      // admitted pass lands past the FOR ceiling — while that ceiling also
+      // capped the persisted ordinal, the run committed state its own next read
+      // refused, and the STOP could never be reached, let alone read back.
+      const selfGotoSteps = createRunbook(`## 1. Loop
+- PASS CONTINUE
+- FAIL GOTO 1
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const created = await manager.create(
+        { source: 'project', path: 'self-goto.md' },
+        { title: 'Self goto', description: 'Self goto', steps: selfGotoSteps },
+        { runbookPath: 'self-goto.md', frontmatterOutputs: [] },
+      );
+      await actorService.initializeState(created.id, selfGotoSteps);
+
+      const actor = await actorService.createActor(created.id, selfGotoSteps);
+      if (!actor) throw new Error('expected an actor');
+      try {
+        for (let pass = 0; pass < MAX_SELF_GOTO_PASSES; pass += 1) {
+          actor.send({ type: 'FAIL' });
+        }
+        // Still looping, and one past the ceiling the FOR bound used to impose.
+        expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+        expect(actor.getSnapshot().context.frameEntry?.activeEntry).toBe(MAX_FOR_BOUND + 1);
+
+        const { state: mid } = await actorService.updateFromActor(created.id, actor, selfGotoSteps);
+        expect(mid.activeEntry).toBe(MAX_FOR_BOUND + 1);
+        const reloaded = await manager.load(created.id);
+        expect(reloaded?.activeEntry).toBe(MAX_FOR_BOUND + 1);
+        expect(reloaded?.frameEntryCounts).toEqual({ [FRAME_1]: MAX_FOR_BOUND + 1 });
+
+        // The pass past the bound is the STOP, and it persists and reads back.
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+
+        const { state: stopped } = await actorService.updateFromActor(
+          created.id,
+          actor,
+          selfGotoSteps,
+        );
+        expect(stopped.lifecycle).toBe('stopped');
+        const finalState = await manager.load(created.id);
+        expect(finalState?.lifecycle).toBe('stopped');
+        expect(finalState?.activeEntry).toBe(MAX_FOR_BOUND + 1);
+      } finally {
+        actor.stop();
+      }
     });
   });
 });

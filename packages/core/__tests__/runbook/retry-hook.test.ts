@@ -168,6 +168,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
 
     const context: RunbookContext = {
       retryCount: 0,
+      selfGotoCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
       variables: {},
@@ -410,6 +411,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     ];
     const context: RunbookContext = {
       retryCount: 0,
+      selfGotoCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
       variables: {},
@@ -506,6 +508,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     ];
     const context: RunbookContext = {
       retryCount: 0,
+      selfGotoCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
       variables: {},

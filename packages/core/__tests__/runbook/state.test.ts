@@ -21,6 +21,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertClaimLookupKey, assertClaimSecretHash } from '../../src/runbook/claim-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import {
   parentAdvanceGuard,
   isOpenDelegatedChildrenError,
@@ -1411,6 +1412,69 @@ describe('RunbookStateManager', () => {
       expect(result.state).toBeNull();
       expect(result.value).toBeNull();
       expect(buildResult).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('frame entry ordinal persistence', () => {
+    // The entry ordinal is a run-global monotonic counter, not a FOR bound. A
+    // long-lived run — a bounded self-GOTO loop being the shortest path there —
+    // necessarily walks past whatever number a FOR clause may declare, and the
+    // run must stay readable and mutable when it does. See the ceiling rationale
+    // on `RunbookStateObjectSchema.activeEntry`.
+    const FRAME = buildFrameKey('1');
+    const BEYOND_FOR_BOUND = MAX_FOR_BOUND + 1;
+
+    it('round-trips an entry ordinal past the FOR ceiling through save, load, and update', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const updated = await manager.update(state.id, {
+        activeFrameKey: FRAME,
+        activeEntry: BEYOND_FOR_BOUND,
+        frameEntryCounts: replace({ [FRAME]: BEYOND_FOR_BOUND }),
+      });
+      expect(updated.activeEntry).toBe(BEYOND_FOR_BOUND);
+
+      // `update` does not validate its write, so a rejected ordinal only
+      // surfaces on the next read — the run commits state it can never read.
+      const loaded = await manager.load(state.id);
+      expect(loaded?.activeEntry).toBe(BEYOND_FOR_BOUND);
+      expect(loaded?.frameEntryCounts).toEqual({ [FRAME]: BEYOND_FOR_BOUND });
+
+      // ...and on the next mutation, which must still be able to drive the run
+      // to a terminal state rather than leaving prune as the only recovery.
+      const stopped = await manager.update(state.id, { lifecycle: 'stopped' });
+      expect(stopped.lifecycle).toBe('stopped');
+      expect(stopped.activeEntry).toBe(BEYOND_FOR_BOUND);
+    });
+
+    it('round-trips a resolved completion recorded at an entry past the FOR ceiling', async () => {
+      // `targetEntry` is the same run-global ordinal under another name
+      // (`completionEntryForFrame`), so it shares the ceiling and the fix.
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      await manager.update(state.id, {
+        resolvedCompletions: replace({
+          [`${FRAME}::a`]: {
+            agentId: 'agent-1',
+            result: 'pass' as const,
+            targetStep: '1',
+            targetFrameKey: FRAME,
+            targetEntry: BEYOND_FOR_BOUND,
+            completedAt: '2026-08-04T00:00:00.000Z',
+          },
+        }),
+      });
+
+      const loaded = await manager.load(state.id);
+      expect(loaded?.resolvedCompletions?.[`${FRAME}::a`]?.targetEntry).toBe(BEYOND_FOR_BOUND);
     });
   });
 

@@ -259,4 +259,20 @@ describe('retry idempotency error codes', () => {
     );
     expect(Errors.delegationReplacementConsumed('2.1', 'cancelled').message).toContain('cancelled');
   });
+
+  it('keeps the consumption reason machine-readable, not only interpolated into prose', () => {
+    // `RetryReplacementConsumedReason` is a closed discriminant that tells an
+    // agent WHICH remedy applies — re-target the current bearer (claimed),
+    // re-delegate (cancelled), or re-enter the frame (entry_superseded).
+    // Interpolating it into a sentence and nothing else forces the agent to
+    // parse prose. `reason` is outside `formatMessage`'s fixed key list, so it
+    // rides in `context` (rendered as `details.context` in the CLI envelope)
+    // without changing the message.
+    for (const reason of ['claimed', 'cancelled', 'entry_superseded'] as const) {
+      const error = Errors.delegationReplacementConsumed('2.1', reason);
+      expect((error.toJSON() as { context: Record<string, unknown> }).context.reason).toBe(reason);
+      // Still prose-visible: the structured key is an addition, not a move.
+      expect(error.message).toContain(reason);
+    }
+  });
 });

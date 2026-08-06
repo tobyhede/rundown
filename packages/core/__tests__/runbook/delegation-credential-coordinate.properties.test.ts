@@ -23,7 +23,7 @@ import {
   assertDelegationIssuanceNonce,
   hashDelegationToken,
 } from '../../src/runbook/delegation-token.js';
-import { advanceFrameEntry, inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
+import { inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
 import { buildFrameKey, type FrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, RunbookState, Transitions } from '../../src/runbook/types.js';
 import {
@@ -294,9 +294,31 @@ describe('delegation credential coordinate: manual and machine issuance agree', 
         // coordinates is what puts both on the same footing; handing it the
         // pre-entry mirror would compare the entry before a frame switch
         // against the entry after one.
-        const committed = advanceFrameEntry(frameEntry, ISSUING_FRAME, false);
+        //
+        // The advance is spelled out here rather than delegated to
+        // `advanceFrameEntry`, which is the very function the machine side runs.
+        // Calling it would move both sides of the comparison together, so no
+        // defect in the bump rule could ever make this property fail. The rule
+        // it encodes, for a non-re-entering entry into `ISSUING_FRAME`:
+        //   already on the frame -> the entry carries through unchanged
+        //   entering it          -> one past the greater of the frame's
+        //                           recorded count and the current entry
+        // and the frame's recorded count is raised to the result, never lowered.
+        const knownIssuing = frameEntry.frameEntryCounts[ISSUING_FRAME] ?? 0;
+        const expectedEntry =
+          frameEntry.activeFrameKey === ISSUING_FRAME
+            ? frameEntry.activeEntry
+            : Math.max(knownIssuing, frameEntry.activeEntry) + 1;
+        const committed: FrameEntryFixture = {
+          activeFrameKey: ISSUING_FRAME,
+          activeEntry: expectedEntry,
+          frameEntryCounts: {
+            ...frameEntry.frameEntryCounts,
+            [ISSUING_FRAME]: Math.max(knownIssuing, expectedEntry),
+          },
+        };
         const fromMachine = await machineLocation(frameEntry);
-        const fromManual = manualLocation(committed as FrameEntryFixture);
+        const fromManual = manualLocation(committed);
 
         expect(fromMachine).toBeDefined();
         expect(fromManual).toBeDefined();

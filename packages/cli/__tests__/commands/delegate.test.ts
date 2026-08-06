@@ -1852,8 +1852,39 @@ describe('delegate command', () => {
       );
 
       expect(replay.exitCode).toBe(0);
-      expect(replay.stdout).toContain('ALREADY    step 1.1 ->');
+      expect(replay.stdout).toContain('UNCHANGED  step 1.1 ->');
       expect(replay.stdout).toContain('RD_CLAIM_TOKEN=');
+    });
+
+    // The JSON envelopes already differ (`action`, and `retry-already-applied`
+    // additionally carries `token_hash`). The text renderings were byte-identical,
+    // so a human reading `--text` could not tell "this substep was already
+    // delegated" from "your retry rotated nothing" — two different situations
+    // with two different next moves.
+    it('distinguishes a retry no-op from an already-delegated echo in --text', async () => {
+      await setupDelegation();
+      await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
+      const alreadyDelegated = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1', '--text'], workspace),
+        workspace,
+      );
+      expect(alreadyDelegated.exitCode).toBe(0);
+      expect(alreadyDelegated.stdout).toContain('ALREADY    step 1.1 ->');
+
+      await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
+      const retryNoOp = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1', '--text'], workspace),
+        workspace,
+      );
+      expect(retryNoOp.exitCode).toBe(0);
+      expect(retryNoOp.stdout).not.toContain('ALREADY    step');
+      expect(retryNoOp.stdout).toContain('UNCHANGED  step 1.1 ->');
     });
 
     it('rotates again when the caller names the current bearer', async () => {
