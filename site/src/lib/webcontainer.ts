@@ -87,10 +87,17 @@ export async function cleanRundownState(container: WebContainer): Promise<void> 
   // Remove current SQLite authority and lock files best-effort per path so one
   // missing entry does not skip the others. Unreleased JSON locations are inert
   // and deliberately untouched.
+  //
+  // `.rundown/runs` no longer holds run authority — post-cutover it is purely
+  // the per-run captured-output tree (RUNS_DIR in packages/core/src/paths.ts,
+  // torn down per run by RunbookStateManager). Dropping the database without it
+  // would orphan those files: their state and manifest records go, the bytes
+  // stay, and every reset adds more to browser storage.
   await Promise.allSettled([
     container.fs.rm('.rundown/rundown.db'),
     container.fs.rm('.rundown/rundown.db-wal'),
     container.fs.rm('.rundown/rundown.db-shm'),
+    container.fs.rm('.rundown/runs', { recursive: true }),
     container.fs.rm('.rundown/locks', { recursive: true }),
   ]);
 }
