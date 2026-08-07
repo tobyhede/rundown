@@ -149,6 +149,41 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.code).toBe('RD-304');
       expect(error.context.file).toBe('deploy.runbook.md');
     });
+
+    // CLAUDE.md § State Persistence requires the CLI to "prompt the user to
+    // finish or prune" on invalid state. The prompt has to live in `message`:
+    // the code's `description` reaches an operator only under `--text
+    // --verbose`, and never appears in the JSON envelope agents read.
+    describe('invalidPersistedRunState → RD-309', () => {
+      it('appends the finish / stop / prune recovery to the store diagnosis', () => {
+        const error = Errors.invalidPersistedRunState(
+          'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 1.',
+        );
+
+        expect(error).toBeInstanceOf(RundownError);
+        expect(error.code).toBe('RD-309');
+        expect(error.message).toContain('invalid schemaVersion');
+        expect(error.message).toContain('rundown complete');
+        expect(error.message).toContain('rundown stop');
+        expect(error.message).toContain('rundown prune');
+      });
+
+      it('does not double-punctuate a diagnosis that already ends in a period', () => {
+        const error = Errors.invalidPersistedRunState('Something is wrong.');
+        expect(error.message).toContain('Something is wrong. Rundown never migrates');
+        expect(error.message).not.toContain('wrong.. ');
+      });
+
+      it('terminates a diagnosis that does not end in a period', () => {
+        const error = Errors.invalidPersistedRunState('Something is wrong');
+        expect(error.message).toContain('Something is wrong. Rundown never migrates');
+      });
+
+      it('trims surrounding whitespace before joining', () => {
+        const error = Errors.invalidPersistedRunState('  Something is wrong  ');
+        expect(error.message).toContain('Something is wrong. Rundown never migrates');
+      });
+    });
   });
 
   describe('Validation errors', () => {

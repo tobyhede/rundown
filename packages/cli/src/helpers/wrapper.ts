@@ -3,9 +3,14 @@ import {
   isError,
   getErrorMessage,
   RundownError,
+  ConcurrentStateModificationError,
   Errors,
   getWriter,
   IncompatibleSchemaError,
+  InvalidRunbookStateError,
+  LegacySnapshotError,
+  NativeSqliteUnavailableError,
+  SqljsUnavailableError,
   WalJournalModeUnavailableError,
 } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
@@ -61,6 +66,66 @@ function toRundownError(error: unknown): RundownError {
   // reports "Unknown error" for a condition with a specific, actionable cause.
   if (error instanceof WalJournalModeUnavailableError) {
     return Errors.walJournalModeUnavailable(error.effectiveMode);
+  }
+
+  // A database that would not open at all — RD-307. `openRunbookDriver` raises
+  // four disjoint classes (none extends another): the schema and WAL ones
+  // handled above, and these two, which are the RESIDUAL arm — everything the
+  // driver factory could not diagnose more specifically is wrapped here. That
+  // makes this the arm real failures actually take. A read-only database file
+  // and a read-only directory both fail on the write that establishes WAL, so
+  // neither ever RETURNS a fallback journal mode and neither can reach
+  // WalJournalModeUnavailableError; both arrive as NativeSqliteUnavailableError,
+  // as do a corrupt file and a directory sitting at the database path. All four
+  // were reproduced against the built CLI reporting RD-999 "Unknown error -
+  // Native SQLite (node:sqlite) is unavailable ..." — a fully diagnosed cause
+  // wearing the envelope that says nothing was diagnosed.
+  //
+  // `error.message` is forwarded rather than the code alone because the driver's
+  // wording ("attempt to write a readonly database", "file is not a database",
+  // "unable to open database file") is what separates the causes; node surfaces
+  // them all under the single `code` of `ERR_SQLITE_ERROR`.
+  if (error instanceof NativeSqliteUnavailableError) {
+    return Errors.stateStoreUnavailable(error.message, error.code, error);
+  }
+  // The WebContainer half of the same surface. Split from the native arm only
+  // because the sql.js error carries no driver code to forward.
+  if (error instanceof SqljsUnavailableError) {
+    return Errors.stateStoreUnavailable(error.message, undefined, error);
+  }
+
+  // A run-state write that lost its optimistic CAS — RD-308, and the only
+  // storage arm here that is transient rather than a refusal. It must not share
+  // RD-999 with genuinely unknown failures: the operator action is "run it
+  // again", which "Unknown error" actively argues against.
+  if (error instanceof ConcurrentStateModificationError) {
+    return Errors.concurrentStateModification(error.runId, error.message);
+  }
+
+  // One run's persisted state that this build refuses — RD-309. The two classes
+  // are the same condition in two shapes and share one arm because they share
+  // one recovery: `InvalidRunbookStateError` covers unparseable persisted state,
+  // a schemaVersion other than 1, a missing `templateVars`, and a failed schema
+  // parse; `LegacySnapshotError` covers the deprecated dynamic-step snapshot.
+  // Both are raised by `RunbookStateManager.load`, at the same point, and both
+  // are cleared by `rundown complete` / `rundown stop` (which route through
+  // `isRecoverableActiveStackError` to drop the unusable entry) or by
+  // `rundown prune`.
+  //
+  // This arm is what makes CLAUDE.md § State Persistence's required behaviour —
+  // "detect invalid state ... and prompt the user to finish or prune" —
+  // reachable at all. Reproduced against the built CLI before it existed:
+  // RD-999 "Unknown error - Invalid runbook state for "rd_..." : invalid
+  // schemaVersion; expected schema version 1." An envelope titled "Unknown
+  // error" cannot carry a recovery instruction, so the documented path existed
+  // only in the docs.
+  //
+  // Ordered AFTER IncompatibleSchemaError deliberately: RD-305 is the whole
+  // database (`PRAGMA user_version`) and RD-309 is one row inside it. The
+  // classes are disjoint so order is not load-bearing for correctness, but the
+  // narrower diagnosis must never be able to shadow the broader one.
+  if (error instanceof InvalidRunbookStateError || error instanceof LegacySnapshotError) {
+    return Errors.invalidPersistedRunState(error.message);
   }
 
   // Generic error - wrap it

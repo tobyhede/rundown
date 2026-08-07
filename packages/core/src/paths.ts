@@ -58,6 +58,26 @@ export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
 /** Single authoritative runbook state database. */
 export const DB_FILE = `${RUNDOWN_DIR}/rundown.db`;
 
+/**
+ * Suffixes SQLite appends beside {@link DB_FILE} while the database is in WAL mode.
+ *
+ * SQLite creates and removes the write-ahead log (`-wal`) and its shared-memory
+ * index (`-shm`) itself, but they are Rundown-owned state everywhere it matters
+ * to a caller: file-mode hardening has to `chmod` them alongside the database,
+ * the default policy has to grant the sandbox write access to them, and anything
+ * clearing a project's state has to delete them — a surviving `-wal` replays the
+ * previous run's frames into the next one.
+ *
+ * Declared once, as a `readonly` tuple of string literals, so the set has a
+ * single definition to extend and every consumer derives its own paths from it
+ * rather than re-typing the pair. The literal types are load-bearing: the site
+ * mirrors this constant in `site/src/lib/rundown-paths.ts` for browser code that
+ * cannot import this Node module, and `site/src/lib/rundown-paths.parity.ts`
+ * compares the two at the type level — a comparison that only has meaning while
+ * both sides stay literal. Do not widen the annotation to `readonly string[]`.
+ */
+export const DB_SIDECAR_SUFFIXES = ['-wal', '-shm'] as const;
+
 /** Directory path (relative to project root) for context-scoped output stores. */
 export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
 

@@ -117,17 +117,26 @@ Active step.
   /**
    * Open `.rundown/rundown.db` out of band and run `work` against it.
    *
-   * Two of the fixtures below need the store to hold bytes this build cannot
-   * read — an incompatible `PRAGMA user_version`, and session columns that fail
-   * `SessionDataSchema`. Core's testing fixtures deliberately expose no
-   * "corrupt the store" seam for either, so these reach for SQLite directly.
-   * Everything else goes through the fixtures.
+   * Three of the fixtures below need the store to hold bytes this build cannot
+   * read — an incompatible `PRAGMA user_version`, session columns that fail
+   * `SessionDataSchema`, and a malformed `session_stack` run id. Core's testing
+   * fixtures deliberately expose no "corrupt the store" seam for any of them,
+   * so these reach for SQLite directly. Everything else goes through the
+   * fixtures.
+   *
+   * `PRAGMA foreign_keys = ON` mirrors the driver constructor
+   * (`native-sqlite-driver.ts`), and it is load-bearing rather than decorative:
+   * SQLite defaults foreign keys OFF per connection, so without it a fixture
+   * could stage a state the product can never reach and the test would prove
+   * nothing. Every tamper below is therefore only as damaging as the real
+   * schema permits.
    *
    * @param cwd - Project root whose store is opened.
    * @param work - Statements to run against the open database.
    */
   function tamperWithStore(cwd: string, work: (db: DatabaseSync) => void): void {
     const db = new DatabaseSync(path.join(cwd, '.rundown', 'rundown.db'));
+    db.exec('PRAGMA foreign_keys = ON');
     try {
       work(db);
     } finally {
@@ -481,6 +490,17 @@ Active step.
         await breakIt(cwd, runId);
       };
 
+    /**
+     * A run id that no `rundown` write path can produce.
+     *
+     * `setStack` takes `readonly RunId[]` and `SessionDataSchema.defaultStack`
+     * is `z.array(RunIdSchema)`, so this reaches `session_stack` only through
+     * out-of-band corruption — the same reachability class as every other
+     * `tamperWithStore` fixture here, and exactly the class `rdpath` must
+     * tolerate rather than exit non-zero on.
+     */
+    const MALFORMED_RUN_ID = 'not-a-run-id';
+
     const UNREADABLE_ACTIVE_STATES: readonly UnreadableActiveState[] = [
       {
         what: 'the run state is not valid JSON',
@@ -528,6 +548,38 @@ Active step.
           });
         }),
         realError: 'Session data is invalid for this runbook schema',
+      },
+      {
+        what: 'the session stack carries a malformed run id',
+        seed: brokenRun(async (cwd, runId) => {
+          tamperWithStore(cwd, (db) => {
+            // `session_stack`'s foreign key forbids a DANGLING run id, not a
+            // MALFORMED one — `runs.id` is `TEXT PRIMARY KEY NOT NULL` with no
+            // format CHECK. Inserting a `runs` row that CARRIES the malformed
+            // id satisfies the key (`PRAGMA foreign_key_check` reports nothing,
+            // and this connection has foreign keys ON), so the session read
+            // reaches `assertRunId` and fails on branding instead of on
+            // referential integrity. Pointing the stack at an id with no `runs`
+            // row would instead be refused by SQLite, which is why the row is
+            // cloned first.
+            db.prepare(
+              `INSERT INTO runs (id, state_version, claim_generation, lifecycle,
+                                 state_json, created_at, updated_at)
+               SELECT :malformed, state_version, claim_generation, lifecycle,
+                      state_json, created_at, updated_at
+                 FROM runs WHERE id = :runId`,
+            ).run({ malformed: MALFORMED_RUN_ID, runId });
+            db.prepare('UPDATE session_stack SET run_id = :malformed').run({
+              malformed: MALFORMED_RUN_ID,
+            });
+          });
+        }),
+        // The offending value itself, which ONLY the typed `InvalidRunIdError`
+        // carries — the bare `Error` this replaced said just "Invalid run id:
+        // expected rd_<32 lowercase hex chars>" with no id in it. Asserting the
+        // value here is what stops this fixture from passing against a
+        // reinstated message-fragment match.
+        realError: MALFORMED_RUN_ID,
       },
       {
         what: 'the database carries an incompatible schema version',

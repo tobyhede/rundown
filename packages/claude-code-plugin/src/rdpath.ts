@@ -14,7 +14,10 @@ import {
   findRdPathFiles,
   IncompatibleSchemaError,
   InvalidRunbookStateError,
+  InvalidRunIdError,
   LegacySnapshotError,
+  NativeSqliteUnavailableError,
+  SqljsUnavailableError,
 } from '@rundown-org/core';
 import { readActiveRunScope } from '@rundown-org/core/session-reader';
 import { getErrorMessage, isError, isNodeError } from './shared/errors.js';
@@ -61,18 +64,6 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
 }
 
 /**
- * Error `name`s that mean "the run store could not be opened", for the one
- * failure core does not surface as an exported class.
- *
- * `NativeSqliteUnavailableError` is raised by core's storage driver factory when
- * `node:sqlite` cannot open `.rundown/rundown.db` — the file is not a database,
- * a directory sits in its place, or the path is unreadable. Core keeps it
- * internal, so a name match is the only handle available; when core exports it,
- * this set collapses into the `instanceof` chain below.
- */
-const UNREADABLE_STORE_ERROR_NAMES: ReadonlySet<string> = new Set(['NativeSqliteUnavailableError']);
-
-/**
  * Message fragment identifying the untyped session-validation failure.
  *
  * `RunbookStateManager.loadSession` throws a bare `Error` when the session it
@@ -110,6 +101,30 @@ const STORE_OPEN_ERROR_CODES: ReadonlySet<string> = new Set([
  * assembly whose base directory is already known from a flag or the environment.
  * Anything else is a real fault and must reach the user.
  *
+ * Every class arm is an `instanceof` against a core export rather than a match
+ * on `error.name` or on message text. Both string forms previously lived here
+ * and both were the same defect: renaming or rewording in core turns the branch
+ * into silently dead code with a green suite, whereas `instanceof` against a
+ * removed or renamed export fails `tsc`. The plugin imports `@rundown-org/core`
+ * as an ordinary package dependency in the same process — no worker, no vm, no
+ * second copy — so `instanceof` is same-realm and reliable here; verified by
+ * running the real store-open failure through `readActiveRunScope` in this
+ * package's own resolution and observing `instanceof NativeSqliteUnavailableError
+ * === true`. (Structural guards remain correct for genuinely cross-realm values
+ * — see `isZodError` in `shared/errors.ts`.)
+ *
+ * `NativeSqliteUnavailableError` / `SqljsUnavailableError` are core's storage
+ * driver-factory refusals: `.rundown/rundown.db` is not a database, a directory
+ * sits in its place, the path is unreadable, or the host's SQLite adapter cannot
+ * initialize. `InvalidRunIdError` is a persisted id that is not
+ * `rd_<32 lowercase hex chars>`; the session read reaches it for every
+ * `session_stack` row and for the stash slot, so one corrupt id fails the whole
+ * lookup. That state is representable — `runs.id` is `TEXT PRIMARY KEY NOT NULL`
+ * with no format CHECK, so `session_stack`'s foreign key forbids a *dangling* id
+ * but not a *malformed* one — and reaching it needs out-of-band corruption, but
+ * `rdpath` is a hook binary where skipping an unreadable context id beats exiting
+ * non-zero on an invocation whose base directory was already supplied.
+ *
  * @param error - The value thrown by the active-state lookup.
  * @returns True when the lookup may be treated as "no active state".
  */
@@ -117,16 +132,15 @@ function isRecoverableActiveStateLookupError(error: unknown): boolean {
   if (
     error instanceof InvalidRunbookStateError ||
     error instanceof LegacySnapshotError ||
-    error instanceof IncompatibleSchemaError
+    error instanceof IncompatibleSchemaError ||
+    error instanceof NativeSqliteUnavailableError ||
+    error instanceof SqljsUnavailableError ||
+    error instanceof InvalidRunIdError
   ) {
     return true;
   }
 
   if (!isError(error)) return false;
-
-  if (UNREADABLE_STORE_ERROR_NAMES.has(error.name)) {
-    return true;
-  }
 
   if (error.message.includes(INVALID_SESSION_DATA_MESSAGE)) {
     return true;

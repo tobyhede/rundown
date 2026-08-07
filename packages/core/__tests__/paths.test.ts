@@ -1,11 +1,13 @@
 // packages/core/__tests__/paths.test.ts
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   completionLockPath,
   CONTEXTS_DIR,
+  DB_SIDECAR_SUFFIXES,
   delegationLockPath,
   ensureStateDirs,
   LOCKS_DIR,
@@ -59,5 +61,43 @@ describe('ensureStateDirs', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('DB_SIDECAR_SUFFIXES', () => {
+  // The value is a SQLite contract, not a Rundown preference: every consumer
+  // (file-mode hardening, the default policy write allow-list, the site's state
+  // reset) derives its paths from this tuple, so drift here silently un-hardens,
+  // un-grants, or un-deletes real files. Asserting the literal alone would only
+  // compare the constant to itself, so the set is checked against what a real
+  // WAL-mode database actually leaves on disk.
+  it('matches the sidecars a real WAL-mode SQLite database creates', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rd-paths-wal-'));
+    const dbFile = join(dir, 'rundown.db');
+    const db = new DatabaseSync(dbFile);
+    try {
+      db.exec('PRAGMA journal_mode = WAL');
+      // The -wal/-shm pair appears on first write, not on open.
+      db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+      db.exec('INSERT INTO t (id) VALUES (1)');
+
+      // Read while the connection is open: closing checkpoints the WAL and
+      // removes both sidecars.
+      const observed = readdirSync(dir)
+        .filter((name) => name !== basename(dbFile))
+        .map((name) => name.slice(basename(dbFile).length))
+        .sort();
+
+      expect(observed).toEqual([...DB_SIDECAR_SUFFIXES].sort());
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('composes sidecar paths that sit beside the database file', () => {
+    const sidecars = DB_SIDECAR_SUFFIXES.map((suffix) => `/repo/.rundown/rundown.db${suffix}`);
+
+    expect(sidecars).toEqual(['/repo/.rundown/rundown.db-wal', '/repo/.rundown/rundown.db-shm']);
   });
 });

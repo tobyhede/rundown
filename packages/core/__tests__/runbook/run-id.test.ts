@@ -1,5 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
-import { RUN_ID_PATTERN, RUN_ID_PREFIX, assertRunId, isRunId } from '../../src/runbook/run-id.js';
+import {
+  InvalidRunIdError,
+  RUN_ID_PATTERN,
+  RUN_ID_PREFIX,
+  assertRunId,
+  isRunId,
+} from '../../src/runbook/run-id.js';
+import * as coreBarrel from '../../src/index.js';
 
 describe('isRunId', () => {
   it('accepts canonical rd_ + 32 lowercase hex chars', () => {
@@ -165,6 +172,57 @@ describe('isRunId – additional boundary cases', () => {
   it('rejects ids that merely contain rd_ without the exact prefix', () => {
     // Extra characters before 'rd_' must fail.
     expect(isRunId('xrd_00000000000000000000000000000000')).toBe(false);
+  });
+});
+
+// `assertRunId` used to throw a bare `Error`, which left every consumer that
+// needs to classify the failure matching on message text — `rdpath`'s
+// best-effort active-state guard did exactly that, against the fragment
+// `'Invalid run id'`. That is the string-discriminant smell CLAUDE.md §
+// Design Principles names: the discriminant belongs in a type.
+describe('InvalidRunIdError', () => {
+  it('is what assertRunId throws, not a bare Error', () => {
+    expect(() => assertRunId('not-a-run-id')).toThrow(InvalidRunIdError);
+  });
+
+  it('carries the offending value as data, not only inside the message', () => {
+    // The value is what a caller correlates against (which stack row, which
+    // stash slot); recovering it by re-parsing the message would reintroduce
+    // the string coupling this class exists to remove.
+    let caught: unknown;
+    try {
+      assertRunId('not-a-run-id');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(InvalidRunIdError);
+    expect((caught as InvalidRunIdError).value).toBe('not-a-run-id');
+    expect((caught as InvalidRunIdError).name).toBe('InvalidRunIdError');
+  });
+
+  it('names the offending value in the message so a CLI/hook surface shows it', () => {
+    expect(() => assertRunId('not-a-run-id')).toThrow(/not-a-run-id/);
+  });
+
+  // Additive, not breaking: introducing the subclass must not change what any
+  // existing `catch (error) { if (error instanceof Error) ... }` caller sees.
+  // Asserted rather than assumed — every `assertRunId` call site in
+  // `runbook-store.ts`, `compiler.ts`, `state.ts` and `execution.ts` relies on it.
+  it('remains an Error subclass so existing catch-Error callers are unaffected', () => {
+    const error = new InvalidRunIdError('nope');
+    expect(error).toBeInstanceOf(Error);
+    expect(Object.prototype.toString.call(error)).toBe('[object Error]');
+    expect(typeof error.stack).toBe('string');
+  });
+
+  it('preserves the format guidance the previous bare Error carried', () => {
+    expect(() => assertRunId('rd_short')).toThrow(/rd_<32 lowercase hex chars>/);
+  });
+
+  // The plugin narrows on this class through the package barrel; without the
+  // re-export it would have to keep matching a string.
+  it('is exported from the core barrel for cross-package narrowing', () => {
+    expect(coreBarrel.InvalidRunIdError).toBe(InvalidRunIdError);
   });
 });
 

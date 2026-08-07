@@ -7,6 +7,10 @@
  * duplication. `rundown-paths.parity.ts` compares every constant below against
  * the core declaration it copies at the type level, so `astro check` fails if
  * core renames a path and the site does not follow.
+ *
+ * The parity check compares literal types, so every constant here must keep its
+ * inferred literal type. Annotating one `: string` (or the suffix tuple
+ * `: readonly string[]`) is itself the type error — see `IsLiteral` there.
  */
 
 /** Root for all Rundown-owned artifacts (core: `RUNDOWN_DIR`). */
@@ -25,13 +29,14 @@ export const LOCKS_DIR = `${RUNDOWN_DIR}/locks`;
 export const DB_FILE = `${RUNDOWN_DIR}/rundown.db`;
 
 /**
- * Suffixes SQLite appends beside {@link DB_FILE} in WAL mode.
+ * Suffixes SQLite appends beside {@link DB_FILE} in WAL mode (core:
+ * `DB_SIDECAR_SUFFIXES`).
  *
- * Core inlines the same pair in `runbook/storage/store-registry.ts` (file-mode
- * hardening) and `policy/schema.ts` (default write allow-list) and exports no
- * constant for it, so the parity check cannot cover these two strings. Naming
- * them once here is what keeps them out of reach of a per-path edit — see
- * {@link DB_FILES}.
+ * Mirrored from core like every path above it, and checked the same way: the
+ * tuple is compared against core's element by element in
+ * `rundown-paths.parity.ts`, so dropping `-shm` here — or reordering the pair —
+ * fails `astro check`. Written as one tuple rather than two loose strings so
+ * {@link DB_FILES} can derive from it and there is no per-sidecar line to edit.
  */
 export const DB_SIDECAR_SUFFIXES = ['-wal', '-shm'] as const;
 

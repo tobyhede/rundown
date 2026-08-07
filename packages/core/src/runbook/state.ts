@@ -157,6 +157,71 @@ export class InvalidRunbookStateError extends Error {
 }
 
 /**
+ * Thrown when a guarded run-state read-modify-write spent its optimistic
+ * compare-and-swap budget without landing.
+ *
+ * This is the throwing face of {@link StateMutationResult}'s
+ * `concurrent_modification` arm. The CAS that replaced the per-run file lock
+ * replays at most 8 times with no backoff, so a few-way concurrent writer can
+ * exhaust the budget where the lock would have waited and won — CLAUDE.md
+ * therefore requires callers to handle or retry it, which is only implementable
+ * against a type. A bare `Error` forced message matching and reached the CLI as
+ * RD-999 "Unknown error".
+ *
+ * Distinct from every other 3xx state condition in that it is **transient**:
+ * nothing was written, the persisted state is intact, and the same command
+ * retried unchanged is expected to succeed. {@link retryable} states that at the
+ * type level so a consumer branches on a property rather than on the class name.
+ */
+export class ConcurrentStateModificationError extends Error {
+  /**
+   * The run whose state write was lost.
+   *
+   * A caller retrying a batch needs to know which run to replay, and the run id
+   * is not recoverable from the message without parsing it.
+   */
+  readonly runId: string;
+
+  /**
+   * Always `true`, as a literal type.
+   *
+   * The discriminant that separates this from the refusals that share its
+   * throwing seam (`missing`, `execution_in_progress`), where retrying is
+   * pointless. A caller narrows on this rather than re-deriving "is this the
+   * retryable one?" from the class.
+   */
+  readonly retryable = true as const;
+
+  /**
+   * Create a new ConcurrentStateModificationError.
+   *
+   * @param runId - The run whose state write was lost.
+   * @param message - The store's description of the lost cycle.
+   */
+  constructor(runId: string, message: string) {
+    super(message);
+    this.name = 'ConcurrentStateModificationError';
+    this.runId = runId;
+  }
+}
+
+/**
+ * Narrow an unknown thrown value to {@link ConcurrentStateModificationError}.
+ *
+ * Provided so a consumer that catches from a different realm — or that only has
+ * the value typed as `unknown` — can classify the retryable outcome without an
+ * `instanceof` against an import it would otherwise not need.
+ *
+ * @param error - The caught value.
+ * @returns True when `error` is a {@link ConcurrentStateModificationError}, narrowing it.
+ */
+export function isConcurrentStateModificationError(
+  error: unknown,
+): error is ConcurrentStateModificationError {
+  return error instanceof ConcurrentStateModificationError;
+}
+
+/**
  * Generate a concrete Rundown run identifier.
  *
  * @returns Run ID in canonical `rd_<32 lowercase hex>` form
@@ -404,10 +469,19 @@ export class RunbookStateManager {
   /**
    * Unwrap a committed mutation, mapping refusals to the manager's error contract.
    *
+   * The `concurrent_modification` arm is separated from the rest because it is
+   * the only transient one: nothing was written, and retrying is the correct
+   * response. It gets a dedicated type so callers can act on that (and so the
+   * CLI reports RD-308 rather than collapsing it into RD-999) instead of
+   * matching the store's message text.
+   *
    * @param result - The store mutation outcome.
    * @param id - Runbook id, for the error message.
    * @returns The committed (or unchanged) state.
-   * @throws {Error} When the run is missing, owned by an execution, or contended.
+   * @throws {ConcurrentStateModificationError} When the optimistic CAS budget was
+   *   spent because another writer committed first. Transient and retryable.
+   * @throws {Error} When the run is missing or owned by a live execution. Neither
+   *   is retryable.
    */
   private requireCommitted(result: StateMutationResult, id: string): RunbookState {
     switch (result.kind) {
@@ -416,6 +490,8 @@ export class RunbookStateManager {
         return result.value;
       case 'missing':
         throw new Error(`Runbook ${id} not found`);
+      case 'concurrent_modification':
+        throw new ConcurrentStateModificationError(result.runId, result.message);
       default:
         throw new Error(result.message);
     }
@@ -581,7 +657,9 @@ export class RunbookStateManager {
    *
    * @param state - The runbook state to persist
    * @throws {Error} When the run exists but the replacement cannot be committed
-   *   (owned by a live execution, or contended).
+   *   because a live execution owns it.
+   * @throws {ConcurrentStateModificationError} When another writer committed to
+   *   the same run first and the optimistic CAS budget was spent. Retryable.
    */
   async save(state: RunbookState): Promise<void> {
     const store = await this.store();
@@ -771,8 +849,10 @@ export class RunbookStateManager {
    * @param options.guard - Parent-advance guard forwarded to the store; when
    *   present the write refuses if the run still has a live delegated child.
    * @returns The resulting state, or null when missing and tolerated.
-   * @throws {Error} When the run is missing (and not tolerated), owned by an
-   *   execution, or lost to a concurrent writer.
+   * @throws {Error} When the run is missing (and not tolerated) or owned by an
+   *   execution.
+   * @throws {ConcurrentStateModificationError} When the cycle lost to a
+   *   concurrent writer and the CAS budget was spent. Retryable.
    * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
    *   live delegated child blocks the advance.
    */

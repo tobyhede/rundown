@@ -49,20 +49,68 @@ export const Errors = {
   // The candidate causes are spelled into the MESSAGE, not left to the code's
   // `description`: the description reaches an operator only through `--text
   // --verbose`, and never appears in the JSON envelope that is the default
-  // output. Listing them without asserting one is the whole point — a rollback
-  // journal also comes from a read-only database file or a VFS with no WAL
-  // implementation, so naming a network filesystem as THE cause sends an
-  // operator on local disk looking in the wrong place.
+  // output. Listing them without asserting one is the whole point — a temporary
+  // database and an in-transaction connection reach the same fallback, so naming
+  // a network filesystem as THE cause sends an operator on local disk looking in
+  // the wrong place.
+  //
+  // The list must match `WalJournalModeUnavailableError`'s own message, and every
+  // entry on it must be a condition under which `PRAGMA journal_mode = WAL`
+  // ANSWERS with a non-WAL mode — that answer is the only thing that reaches this
+  // code. A read-only file or directory is therefore excluded and said to be
+  // excluded: measured on Node 24.18.1 / SQLite 3.53.1 both THROW instead
+  // (errcode 8 `SQLITE_READONLY`, errcode 1544 `SQLITE_READONLY_DIRECTORY`), so
+  // they surface as RD-307, whose description lists them. Naming them here sent
+  // an operator to `chmod` for a fault that cannot produce this error.
   walJournalModeUnavailable: (effectiveMode: string | undefined): RundownError =>
     new RundownError('WAL_JOURNAL_MODE_UNAVAILABLE', {
       effectiveMode,
       message:
         `effective mode: ${effectiveMode ?? 'unknown'}. Cross-process write ` +
-        `serialization is not in force on this database. Candidate causes: a ` +
-        `filesystem without shared memory (a network mount such as NFS or SMB is ` +
-        `the common one), a read-only database file or directory, or a SQLite VFS ` +
-        `that does not implement WAL`,
+        `serialization is not in force on this database. SQLite answered with the ` +
+        `mode it kept instead of failing, which narrows the cause to one of: a ` +
+        `filesystem whose VFS provides no shared memory (a network mount such as ` +
+        `NFS or SMB is the common one), a temporary database opened with no ` +
+        `filename, or a connection already inside a write transaction. A read-only ` +
+        `database file or directory is NOT among them — that fails the pragma ` +
+        `outright and surfaces as RD-307`,
     }),
+
+  // The store-open refusals reach EVERY command, read-only ones included, because
+  // opening the database precedes all of them. The driver's own message is the
+  // only thing that distinguishes a read-only file from a locked database from a
+  // missing `node:sqlite`, so it rides in `message` where the default JSON
+  // envelope carries it; the code's `description` reaches an operator only under
+  // `--text --verbose`.
+  stateStoreUnavailable: (detail: string, driverCode?: string, cause?: Error): RundownError =>
+    new RundownError('STATE_STORE_UNAVAILABLE', { message: detail, driverCode }, cause),
+
+  concurrentStateModification: (runId: string, detail: string): RundownError =>
+    new RundownError('CONCURRENT_STATE_MODIFICATION', { runId, message: detail }),
+
+  // The recovery is spelled into the MESSAGE, not left to the code's
+  // `description`, for the same reason `walJournalModeUnavailable` spells its
+  // candidate causes there: the description reaches an operator only through
+  // `--text --verbose` and never appears in the default JSON envelope, which is
+  // the agent-facing surface. CLAUDE.md requires this condition to "prompt the
+  // user to finish or prune"; a prompt that only renders under a flag agents are
+  // told never to pass is not a prompt.
+  //
+  // `detail` is the store's own diagnosis ("invalid schemaVersion", "missing
+  // templateVars", "schema validation failed", the legacy-snapshot wording) and
+  // is preserved verbatim ahead of the recovery — it is what identifies WHICH
+  // run and WHY, and the recovery alone cannot be acted on without it.
+  invalidPersistedRunState: (detail: string): RundownError => {
+    const cause = detail.trim();
+    const terminated = cause.endsWith('.') ? cause : `${cause}.`;
+    return new RundownError('INVALID_PERSISTED_RUN_STATE', {
+      message:
+        `${terminated} Rundown never migrates persisted state, so this run ` +
+        `cannot be resumed: finish it with "rundown complete", stop it with ` +
+        `"rundown stop", or discard it with "rundown prune", then re-run the ` +
+        `runbook from source.`,
+    });
+  },
 
   // Validation
   gotoTargetNotFound: (step: string, substep?: string): RundownError =>

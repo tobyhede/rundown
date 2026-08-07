@@ -67,9 +67,18 @@ const SQLITE_LOCKED = 6;
 
 /** Tuning knobs for the native driver's transaction retry behavior. */
 export interface NativeDriverOptions {
-  /** `PRAGMA busy_timeout` in milliseconds. */
+  /**
+   * `PRAGMA busy_timeout` in milliseconds.
+   *
+   * This is SQLite's OWN budget, spent inside a single statement. It multiplies
+   * with {@link NativeDriverOptions.maxBusyRetries} rather than bounding it — see
+   * the WAL-conversion retry in `enterWalJournalMode`.
+   */
   readonly busyTimeoutMs?: number;
-  /** Maximum `BEGIN IMMEDIATE` attempts before surfacing `SQLITE_BUSY`. */
+  /**
+   * Retries allowed after the initial attempt before `SQLITE_BUSY` surfaces.
+   * Applies to `BEGIN IMMEDIATE` and to the constructor's WAL conversion alike.
+   */
   readonly maxBusyRetries?: number;
   /** Base backoff between busy retries in milliseconds (grows linearly). */
   readonly busyRetryBaseMs?: number;
@@ -167,51 +176,69 @@ export class WalJournalModeUnavailableError extends Error {
     super(
       `Database did not enter WAL journal mode (effective mode: ${effectiveMode ?? 'unknown'}). ` +
         'Only WAL serializes writes across processes, so that guarantee is not in ' +
-        'force on this connection. A rollback-journal fallback has more than one ' +
-        'cause: a filesystem without shared memory (a network mount such as NFS or ' +
-        'SMB is the common one), a read-only database file or directory, or a ' +
-        'SQLite VFS that does not implement WAL. Establish which applies before ' +
-        'moving the project directory.',
+        'force on this connection. SQLite ANSWERED with the mode it kept instead of ' +
+        'failing, which narrows the cause to one of: a filesystem whose VFS provides ' +
+        'no shared memory (a network mount such as NFS or SMB is the common one), a ' +
+        'temporary database opened with no filename, or a connection that was already ' +
+        'inside a write transaction. A read-only file or directory is NOT among them — ' +
+        'that fails the pragma outright and surfaces as a different error. Establish ' +
+        'which applies before moving the project directory.',
     );
     this.name = 'WalJournalModeUnavailableError';
     this.effectiveMode = effectiveMode;
   }
 }
 
+/** Bounded busy-retry budget for the WAL conversion. */
+interface WalConversionRetry {
+  /**
+   * Retries allowed AFTER the initial attempt before `SQLITE_BUSY` surfaces.
+   * The conversion therefore issues at most `maxBusyRetries + 1` pragmas.
+   */
+  readonly maxBusyRetries: number;
+  /** Base backoff in milliseconds, multiplied by the attempt number. */
+  readonly busyRetryBaseMs: number;
+}
+
 /**
  * Put the connection into WAL mode and REFUSE any silent fallback.
  *
  * `PRAGMA journal_mode` is a query as much as a setting: it returns the mode
- * actually in force, and SQLite keeps running on a rollback journal whenever WAL
- * cannot be established. A network filesystem is the best-known reason ("WAL does
- * not work over a network filesystem", https://www.sqlite.org/wal.html) but not
- * the only one — a read-only database file and a VFS with no WAL implementation
- * reach the same place, which is why neither this guard nor its message asserts a
- * single cause. Issuing the pragma through `exec` discards that answer, so the
- * driver would go on advertising `capabilities.multiProcess` over a connection
- * that no longer serializes writes across processes, leaving a
- * `rundown.db-journal` sidecar as the only evidence. This module refuses to
- * downgrade silently; the same rule applies to the journal mode.
+ * actually in force, and SQLite keeps that mode — answering rather than failing —
+ * whenever WAL cannot be established. A filesystem whose VFS provides no shared
+ * memory is the best-known reason ("WAL does not work over a network
+ * filesystem", https://www.sqlite.org/wal.html) but not the only one: a
+ * temporary database with no filename, and a connection already inside a write
+ * transaction, reach the same place, which is why neither this guard nor its
+ * message asserts a single cause. A read-only file or directory is NOT one of
+ * them — that THROWS (`SQLITE_READONLY`, `SQLITE_READONLY_DIRECTORY`) rather than
+ * returning a mode, so it never reaches this refusal. Issuing the pragma through
+ * `exec` discards the answer, so the driver would go on advertising
+ * `capabilities.multiProcess` over a connection that no longer serializes writes
+ * across processes, leaving a `rundown.db-journal` sidecar as the only evidence.
+ * This module refuses to downgrade silently; the same rule applies to the
+ * journal mode.
  *
  * `memory` is accepted only for a connection with no file behind it: `:memory:`
  * cannot use WAL and always reports `memory`, and it is single connection by
  * construction. A FILE-backed database reporting `memory` is the rollback-journal
  * hazard wearing a different name, and is refused with everything else.
  *
- * The conversion itself contends: it takes an EXCLUSIVE lock, so two processes
- * opening a fresh database race, and the loser must retry rather than die. See
- * the comment on the catch below for why `PRAGMA busy_timeout` does not cover it.
+ * The conversion itself contends: it rewrites the database header under a write
+ * transaction, so two processes opening a fresh database race and the loser must
+ * retry rather than die. See the comment on the catch below for which lock step
+ * `PRAGMA busy_timeout` fails to cover, and why.
  *
  * @param db - Open `node:sqlite` connection to configure.
- * @param maxBusyRetries - Retry budget for `SQLITE_BUSY` on the conversion,
- *   shared with the driver's transaction retries.
- * @param retryBaseMs - Base backoff in milliseconds, multiplied by the attempt.
+ * @param retry - Busy-retry budget for the conversion, shared with the driver's
+ *   transaction retries.
  * @throws {WalJournalModeUnavailableError} When a file-backed connection did not
  *   enter WAL mode.
  * @throws {Error} When the conversion is still `SQLITE_BUSY` after the budget,
  *   or fails for any non-contention reason.
  */
-function enterWalJournalMode(db: DatabaseSync, maxBusyRetries: number, retryBaseMs: number): void {
+function enterWalJournalMode(db: DatabaseSync, retry: WalConversionRetry): void {
+  const { maxBusyRetries, busyRetryBaseMs } = retry;
   for (let attempt = 0; ; attempt++) {
     let applied: { readonly journal_mode?: unknown } | undefined;
     try {
@@ -219,19 +246,42 @@ function enterWalJournalMode(db: DatabaseSync, maxBusyRetries: number, retryBase
       // own `SqlStatement` wrapper); the declared type of `applied` narrows it.
       applied = db.prepare('PRAGMA journal_mode = WAL').get();
     } catch (err) {
-      // Converting to WAL takes an EXCLUSIVE lock, and this is exactly the
-      // upgrade case where SQLite returns SQLITE_BUSY *instead of* invoking the
-      // busy handler — so `PRAGMA busy_timeout`, set on the line above, does not
-      // cover it. That is the same rule this module already cites to justify
-      // retrying `BEGIN IMMEDIATE`; it applies here for the same reason. Without
-      // this loop, two `rundown run` invocations racing to create the database
-      // on a fresh project leave one of them dead with "database is locked".
+      // Converting to WAL rewrites the database header, so it opens a write
+      // transaction (`sqlite3BtreeSetVersion` -> `sqlite3BtreeBeginTrans(…, 2, …)`)
+      // and walks NO_LOCK -> SHARED -> RESERVED -> EXCLUSIVE. SQLite consults the
+      // busy handler on only two of those four transitions, per the table
+      // `sqlite3PagerSetBusyHandler` states outright in pager.c:
+      //
+      //   NO_LOCK       -> SHARED_LOCK      | Yes
+      //   SHARED_LOCK   -> RESERVED_LOCK    | No
+      //   SHARED_LOCK   -> EXCLUSIVE_LOCK   | No
+      //   RESERVED_LOCK -> EXCLUSIVE_LOCK   | Yes
+      //
+      // The uncovered step is therefore the RESERVED ACQUISITION, not the
+      // EXCLUSIVE upgrade: "The busy-handler callback can be used when upgrading
+      // to the EXCLUSIVE lock, but not when obtaining the RESERVED lock"
+      // (`sqlite3PagerBegin`, pager.c). That is a DIFFERENT rule from the
+      // deadlock-avoidance one this module cites above for `BEGIN IMMEDIATE`, and
+      // the two must not be conflated. Either way `PRAGMA busy_timeout`, set on
+      // the line above, does not cover the conversion — measured on Node 24.18.1 /
+      // SQLite 3.53.1 with `busy_timeout = 5000`: against a writer already holding
+      // RESERVED the pragma fails in 0.24 ms with the handler never invoked;
+      // against a READER holding SHARED it fails in 5208 ms, having burned the
+      // whole timeout inside the handler. The first is what two `rundown run`
+      // invocations racing to create the database on a fresh project hit, and
+      // without this loop the loser dies with "database is locked".
       //
       // The retry is synchronous because the constructor is: `Atomics.wait` on a
-      // throwaway buffer is the only way to yield the wall clock here, and the
-      // budget is the driver's own, so tuning one tunes both.
+      // throwaway buffer is the only way to yield the wall clock here. The two
+      // budgets MULTIPLY rather than share — every attempt that reaches the busy
+      // handler pays `busy_timeout` in full, so a reader holding SHARED costs
+      // `maxBusyRetries + 1` times it: measured 58,408 ms at the defaults, with the
+      // event loop blocked throughout (a timer scheduled at +50 ms fired at
+      // +58,409 ms). Bounded, and acceptable for a one-shot CLI, but tuning
+      // `maxBusyRetries` and tuning `busyTimeoutMs` are separate levers on that
+      // same worst case, not one lever seen twice.
       if (isSqliteBusy(err) && attempt < maxBusyRetries) {
-        sleepSync(retryBaseMs * (attempt + 1));
+        sleepSync(busyRetryBaseMs * (attempt + 1));
         continue;
       }
       throw err;
@@ -318,7 +368,10 @@ export class NativeSqlDriver implements SqlDriver {
     this.maxBusyRetries = options.maxBusyRetries ?? DEFAULT_MAX_BUSY_RETRIES;
     this.busyRetryBaseMs = options.busyRetryBaseMs ?? DEFAULT_BUSY_RETRY_BASE_MS;
     this.db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)}`);
-    enterWalJournalMode(this.db, this.maxBusyRetries, this.busyRetryBaseMs);
+    enterWalJournalMode(this.db, {
+      maxBusyRetries: this.maxBusyRetries,
+      busyRetryBaseMs: this.busyRetryBaseMs,
+    });
     this.db.exec('PRAGMA foreign_keys = ON');
   }
 

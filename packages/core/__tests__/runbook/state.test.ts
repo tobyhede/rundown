@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import {
+  type ConcurrentStateModificationError,
   generateRunId,
+  isConcurrentStateModificationError,
   LegacySnapshotError,
   RunbookStateManager,
 } from '../../src/runbook/state.js';
@@ -1475,6 +1477,61 @@ describe('RunbookStateManager', () => {
       // would keep the assertion above green while the parent silently advanced.
       const parentAfter = await manager.load(parent.id);
       expect(parentAfter?.step).toBe('1');
+    });
+  });
+
+  describe('optimistic CAS exhaustion', () => {
+    /**
+     * Bump a run's persisted `state_version` out from under an in-flight cycle.
+     *
+     * @param runId - Run to churn.
+     */
+    async function churn(runId: string): Promise<void> {
+      const store = await getRunbookStore(testDir);
+      await store.transaction((txn) => {
+        txn.tx
+          .prepare(
+            "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+          )
+          .run({ id: runId });
+      });
+    }
+
+    // CLAUDE.md instructs callers to "handle it or retry it", which is only
+    // implementable against a typed outcome: a bare `Error` forces message
+    // matching, and reaches the CLI wrapper as RD-999 "Unknown error".
+    it('surfaces a losing read-modify-write as a typed, retryable error', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const error = await manager
+        .updateWithState(state.id, async () => {
+          // Always move the version behind our back, so no attempt can land and
+          // the whole budget is spent.
+          await churn(state.id);
+          return { stepName: 'never' };
+        })
+        .then(
+          (value) => value,
+          (reason: unknown) => reason,
+        );
+
+      expect(isConcurrentStateModificationError(error)).toBe(true);
+      expect((error as ConcurrentStateModificationError).runId).toBe(state.id);
+      // `retryable` is the discriminant, not the class name: it is what separates
+      // this from the refusals sharing the same throwing seam.
+      expect((error as ConcurrentStateModificationError).retryable).toBe(true);
+      // The name is not the discriminant, but it is what a stack trace and any
+      // structured log label the failure with, so it is pinned like its sibling
+      // InvalidRunIdError rather than left free to drift.
+      expect((error as ConcurrentStateModificationError).name).toBe(
+        'ConcurrentStateModificationError',
+      );
+      // Nothing was written: the losing cycle must not have persisted its patch.
+      expect((await manager.load(state.id))?.stepName).not.toBe('never');
     });
   });
 });
