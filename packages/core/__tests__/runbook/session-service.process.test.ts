@@ -35,20 +35,18 @@ import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js'
  * their own SQLite connections, driven through the real `SessionService` (see
  * `storage/fixtures/session-writer-child.ts`).
  *
- * DETERMINISM. Children are barrier-synchronized, never slept: each warms its
- * driver, signals readiness, and spins on a `go` file that the parent creates
- * once, after every child is parked. The DOMAIN assertions make no timing
- * assumptions — each property holds for every possible interleaving, so a lost
- * overlap costs sensitivity, never correctness.
+ * DETERMINISM. Children use a two-stage barrier: each warms its driver and parks;
+ * after the parent releases them, each signals that it is ready to mutate. Only
+ * once every child has reached that second barrier does the parent release the
+ * mutations. The DOMAIN assertions make no timing assumptions — each property
+ * holds for every possible interleaving.
  *
  * SENSITIVITY WITNESS. A correct-but-serialized implementation would pass every
- * domain assertion while proving nothing, so each race additionally asserts
- * `expectOverlap`: at least two children's mutation windows were concurrently in
- * flight. Overlap is MEASURED, not assumed — children stamp an epoch clock
- * around the mutation on both the success and failure arms — and a failure means
- * the barrier release degenerated to serial execution (lost sensitivity), never
- * a correctness regression. The barrier makes overlap reliable in practice; this
- * witness is what fails loudly if that ever stops being true.
+ * domain assertion while proving nothing, so the contention races additionally
+ * assert `expectOverlap`: at least two children's actual mutation intervals
+ * overlap. The interval begins after the staging barrier, so barrier waiting is
+ * excluded. Fast operations that can finish before another worker is scheduled
+ * retain the deterministic staging assertion instead.
  */
 
 const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts', import.meta.url));
@@ -114,6 +112,7 @@ async function newRun(
 /** A spawned child parked at the barrier, with the files it will read/write. */
 interface ParkedChild {
   readonly child: ChildProcess;
+  readonly enteredFile: string;
   readonly resultFile: string;
 }
 
@@ -124,21 +123,34 @@ interface ParkedChild {
  *
  * @param goFile - Barrier file every child in this cohort spins on.
  * @param op - The single session mutation this child will perform.
+ * @param options - Optional executable override and second-stage barrier.
  * @returns The parked child handle.
  * @throws {Error} When the child never signals readiness within the timeout.
  */
 async function park(
   goFile: string,
   op: ChildOp,
-  options: { readonly executable?: string } = {},
+  options: { readonly executable?: string; readonly mutationGoFile?: string } = {},
 ): Promise<ParkedChild> {
   opSeq += 1;
   const tag = String(opSeq);
   const readyFile = path.join(dir, `ready-${tag}`);
+  const enteredFile = path.join(dir, `entered-${tag}`);
   const resultFile = path.join(dir, `result-${tag}`);
   const child = spawn(
     options.executable ?? process.execPath,
-    ['--import', TSX, CHILD, dir, readyFile, goFile, resultFile, JSON.stringify(op)],
+    [
+      '--import',
+      TSX,
+      CHILD,
+      dir,
+      readyFile,
+      goFile,
+      enteredFile,
+      options.mutationGoFile ?? goFile,
+      resultFile,
+      JSON.stringify(op),
+    ],
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
   // A spawn failure emits 'error' and never 'exit'. This listener must be attached
@@ -163,7 +175,7 @@ async function park(
   for (;;) {
     try {
       await fs.access(readyFile);
-      return { child, resultFile };
+      return { child, enteredFile, resultFile };
     } catch {
       if (spawnError) throw new Error(`child failed to spawn: ${spawnError.message}`);
       if (child.exitCode !== null || child.signalCode !== null) {
@@ -178,8 +190,8 @@ async function park(
 }
 
 /**
- * Run a cohort of children concurrently: park them all, release them together,
- * and collect their results.
+ * Run a cohort through the two-stage barrier: park and release them, wait until
+ * every child is ready to mutate, release the mutations, and collect.
  *
  * @param ops - One mutation per child.
  * @returns Each child's result, in the order the ops were given.
@@ -187,7 +199,8 @@ async function park(
  */
 async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
   const goFile = path.join(dir, `go-${String(children.length)}`);
-  const parked = await Promise.all(ops.map((op) => park(goFile, op)));
+  const mutationGoFile = path.join(dir, `mutation-go-${String(children.length)}`);
+  const parked = await Promise.all(ops.map((op) => park(goFile, op, { mutationGoFile })));
 
   // Attach exit listeners BEFORE releasing the barrier. A child released first
   // could exit before its listener was attached, and `exit` does not replay —
@@ -205,8 +218,14 @@ async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
   // 'error' listener there. Do not remove that one believing this covers it.
   const exits = parked.map(({ child }) => childExit(child));
 
-  // Release every child at once. This is the only synchronization point.
+  // Release every warmed child toward the mutation staging barrier.
   await fs.writeFile(goFile, 'go');
+
+  // No mutation may run until every sibling has entered. Unlike a
+  // scheduler-sensitive simultaneous release, this establishes a concurrent
+  // cohort by protocol even when the host is heavily loaded.
+  await Promise.all(parked.map(({ enteredFile, child }) => waitForFile(enteredFile, child)));
+  await fs.writeFile(mutationGoFile, 'go');
 
   await Promise.all(exits);
 
@@ -232,15 +251,23 @@ function values(results: readonly ChildResult[]): readonly unknown[] {
 }
 
 /**
- * Sensitivity witness: assert at least two children's mutation windows were
- * concurrently in flight. Two half-open intervals overlap iff each starts before
- * the other ends (`a.t0 < b.t1 && b.t0 < a.t1`). A failure means the barrier
- * release degenerated to serial execution, so the race proved no concurrency —
- * it flags lost sensitivity, not a correctness bug (the domain assertions hold
- * for every interleaving regardless).
+ * Sensitivity witness: assert every child reached the mutation staging barrier
+ * before any child began its service call. The parent releases the second
+ * barrier only after observing every entry file, so this is deterministic under
+ * scheduler load while still excluding artificial barrier time from `t0`/`t1`.
  *
- * @param results - Child outcomes collected from the race; each carries `t0`/`t1`.
- * @throws {Error} Via `expect` when no interval pair overlaps.
+ * @param results - Child outcomes collected from a staged race.
+ */
+function expectEveryWorkerStagedBeforeAnyMutation(results: readonly ChildResult[]): void {
+  const lastStagingEntry = Math.max(...results.map(({ tEntered }) => tEntered));
+  const firstMutationStart = Math.min(...results.map(({ t0 }) => t0));
+  expect(lastStagingEntry).toBeLessThanOrEqual(firstMutationStart);
+}
+
+/**
+ * Assert that at least two actual service-mutation intervals overlap.
+ *
+ * @param results - Child outcomes collected from a staged race.
  */
 function expectOverlap(results: readonly ChildResult[]): void {
   const overlapping = results.some((a, i) =>
@@ -340,9 +367,8 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // to exactly one `claimed` and the rest `already-claimed` — never two claims
     // for one child, which would render the session unreadable.
     //
-    // Four contenders rather than two: the property is the same, but more
-    // writers widen the odds that at least two mutation windows genuinely
-    // overlap on any given run.
+    // Four contenders rather than two: the property is the same, but the larger
+    // cohort exercises more mutually exclusive outcomes in one staged race.
     const parentId = await newRun();
     const linkage = linkageFor(parentId, 'a');
     const childRunId = await newRun({ parentLinkage: linkage });
@@ -388,9 +414,8 @@ describe('cross-process session write contention (transaction replaces SessionLo
   it('does not clobber a #519 lastSeenAt refresh with concurrent unrelated mutations', async () => {
     // `recordClaimSeen` rewrites one claim record inside the session; each
     // concurrent push rewrites the stack. All four mutate the same session row,
-    // so an unserialized writer would roll one of them back. Three pushes rather
-    // than one both raises the odds of a genuine overlap and proves the refresh
-    // survives against a whole cohort, not a single racer.
+    // so an unserialized writer would roll one of them back. Three pushes prove
+    // the refresh survives against a whole cohort, not a single racer.
     const seenRunId = await newRun();
     const pushRunIds = await Promise.all([newRun(), newRun(), newRun()]);
     const { claimId, claim } = unwrapSessionMutation(
@@ -434,7 +459,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
       { kind: 'popRunbook' },
     ]);
     values(results);
-    expectOverlap(results);
+    expectEveryWorkerStagedBeforeAnyMutation(results);
 
     const session = await manager.loadSession();
     const { defaultStack } = session;
@@ -524,6 +549,15 @@ describe('cross-process session write contention (transaction replaces SessionLo
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toContain('unhandledFutureOp');
+  }, 120_000);
+
+  it('stages every worker before any immediately failing mutation starts', async () => {
+    const unhandledOperation = { kind: 'unhandledFutureOp' } as unknown as ChildOp;
+
+    const results = await race([unhandledOperation, unhandledOperation, unhandledOperation]);
+
+    expectEveryWorkerStagedBeforeAnyMutation(results);
+    expect(results.every((result) => !result.ok)).toBe(true);
   }, 120_000);
 
   it('reports a spawn failure from park instead of taking the worker down', async () => {

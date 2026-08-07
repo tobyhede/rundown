@@ -37,14 +37,17 @@ export type ChildOp =
 
 /**
  * A child's reported outcome, as written to its result file. `t0`/`t1` bracket
- * the mutation window (epoch ms) and `pid` names the writer; they carry on BOTH
- * arms so the overlap witness can read them without narrowing on `ok`.
+ * the actual mutation after the second-stage release, `tEntered` records when
+ * the child entered that staging barrier, and `pid` names the writer. The epoch
+ * timestamps carry on BOTH arms so the concurrency witness can read them without
+ * narrowing on `ok`.
  */
 export type ChildResult =
   | {
       readonly ok: true;
       readonly value: unknown;
       readonly t0: number;
+      readonly tEntered: number;
       readonly t1: number;
       readonly pid: number;
     }
@@ -52,6 +55,7 @@ export type ChildResult =
       readonly ok: false;
       readonly error: string;
       readonly t0: number;
+      readonly tEntered: number;
       readonly t1: number;
       readonly pid: number;
     };
