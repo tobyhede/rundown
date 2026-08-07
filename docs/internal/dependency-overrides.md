@@ -31,9 +31,49 @@ order:
    become reachable.
 
 **A pin is never justified by "the parent merely allows a newer version."** That
-is a lockfile-staleness problem. The test for whether an override is still
-needed is empirical: delete it, `pnpm install`, run `osv-scanner` — if nothing
-regresses, the parent has caught up and the pin is dead cruft; remove it.
+is a lockfile-staleness problem. Whether a pin is still needed is an empirical
+question — see the next section for how to ask it correctly.
+
+## The removal test: delete the lockfile, or the answer is meaningless
+
+Run `node scripts/audit-overrides.mjs`. Do **not** hand-roll the test.
+
+The obvious version — delete the pin, `pnpm install`, run `osv-scanner` — is
+**unsound**, and this repo documented it for years. pnpm never _downgrades_ an
+already-satisfying locked version. So a Category B pin, whose entire purpose is
+to stop resolution landing on a vulnerable version, leaves the lockfile
+untouched when you delete it, scans clean, and looks redundant whether or not it
+actually is. The test can only ever detect Category A pins, where the force is
+out-of-range and pnpm must undo it.
+
+The sound test does two things the manual one doesn't:
+
+1. **Deletes `pnpm-lock.yaml`** so resolution runs from scratch. This is the
+   whole point. Against an existing lockfile you are reading the lockfile's
+   existing opinion back to yourself.
+2. **Compares against a control run of the same shape** — a from-scratch resolve
+   with every pin still in place. A fresh resolve differs from the committed
+   lockfile in many unrelated ways, so comparing against the committed state
+   reports ordinary drift as this pin's regression.
+
+The script reports `LOAD-BEARING`, `INERT`, `PROTECTED`, or `ERROR` per pin, and
+runs each in a throwaway directory, so it never touches your working tree.
+
+**`INERT` is a candidate, not an instruction.** It means OSV sees nothing
+without the pin. Some pins guard something OSV cannot see — see below.
+
+### Pins the scanner cannot judge
+
+An entry may carry a `scannerInvisible` field explaining what a clean scan
+misses. The audit refuses to test those for removal, and the gate requires the
+field to be a substantive explanation rather than a bare `true`.
+
+The three Category A `js-yaml` pins are the worked example. They hold
+`gray-matter`, `read-yaml-file`, and `@istanbuljs/load-nyc-config` on 4.x.
+Dropping any of them resolves `3.15.1` — which OSV reports as **clean** — while
+turning the patched `load()` call into the full/unsafe loader (see the `js-yaml`
+section below). A tool that recommended removing them on a clean scan would be
+actively dangerous.
 
 ## Two override categories
 
@@ -43,9 +83,13 @@ Every entry in `pnpm-workspace.yaml`'s `overrides:` is one of:
   The declaring package pins a range that excludes the patched version, so the
   override overrules it. Example: `yaml-language-server` hard-pins `yaml 2.7.1`;
   the override forces `^2.8.3`. The `gray-matter` / `read-yaml-file` /
-  `@istanbuljs/load-nyc-config` `js-yaml ^4.3.1` pins are Category A and
-  additionally need `patchedDependencies` (their consumers call the removed 3.x
-  `safeLoad`/ `safeDump`).
+  `@istanbuljs/load-nyc-config` `js-yaml ^4.3.1` pins are Category A. Two of the
+  three additionally need `patchedDependencies` — `gray-matter` and
+  `read-yaml-file` call the removed 3.x `safeLoad`/`safeDump`, so the patch
+  rewrites those calls to `load`/`dump`. `@istanbuljs/load-nyc-config` already
+  calls `load()` and needs only the override. All three are marked
+  `scannerInvisible`: on 3.x that `load()` is the full/unsafe loader, which OSV
+  does not flag.
 - **Category B — the fix is in-range but pnpm resolves a vulnerable version
   without the pin.** The parent's range already allows the fix, but resolution
   picks an older in-range copy and `pnpm update` won't budge a deep transitive.
@@ -169,6 +213,16 @@ off on.
 ## Removal cadence
 
 `reviewBy` dates and OSV `ignoreUntil` dates are the recurring prompt to prune.
-When a date comes due, test each Category B pin and each ignore for removal
-(delete, install, scan). The goal is a shrinking override set, not a growing
-one.
+When a date comes due, run `node scripts/audit-overrides.mjs` and re-read each
+due entry's `reason` against it. The goal is a shrinking override set, not a
+growing one.
+
+Two signals are worth acting on between review dates:
+
+- **`osv-scanner` printing `.osv-scanner.toml has unused ignores`.** An
+  acceptance stops matching when the fix becomes reachable — which is exactly
+  when it should be retired. The warning is the earliest notice you get.
+- **An advisory being re-modified.** OSV edits advisories in place when a
+  maintainer backports a fix, so a Category A justification can go false without
+  anything in this repo changing. Re-read the fixed-version list before raising
+  a floor, not just before adding a pin.
