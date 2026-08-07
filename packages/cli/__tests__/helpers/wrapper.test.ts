@@ -1,5 +1,10 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { ErrorResponseSchema, Errors } from '@rundown-org/core';
+import {
+  ErrorResponseSchema,
+  Errors,
+  IncompatibleSchemaError,
+  WalJournalModeUnavailableError,
+} from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 const { withErrorHandling } = await import('../../src/helpers/wrapper.js');
@@ -106,6 +111,34 @@ describe('withErrorHandling', () => {
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.fileNotFound('x').code);
+  });
+
+  // Both of these fire while OPENING the store, so they reach every command,
+  // read-only ones included. Without a typed arm each falls through to
+  // Errors.unknown and reports RD-999 / "Unknown error" — a condition with a
+  // specific cause rendered as though the CLI had no idea what happened.
+  it('converts a WAL journal-mode refusal to RD-306, carrying the effective mode', async () => {
+    await withErrorHandling(async () => {
+      throw new WalJournalModeUnavailableError('delete');
+    });
+
+    expect(mockExit).toHaveBeenCalledWith(1);
+    const parsed = parseStdoutJson();
+    expect(parsed.code).toBe(Errors.walJournalModeUnavailable('delete').code);
+    expect(parsed.code).not.toBe(Errors.unknown('x').code);
+    // The observed mode is what tells an operator which fallback happened.
+    expect(parsed.error).toMatch(/delete/);
+  });
+
+  it('converts an incompatible schema to RD-305 rather than RD-999', async () => {
+    await withErrorHandling(async () => {
+      throw new IncompatibleSchemaError(99, 2);
+    });
+
+    expect(mockExit).toHaveBeenCalledWith(1);
+    const parsed = parseStdoutJson();
+    expect(parsed.code).toBe(Errors.incompatibleStateSchema(99, 2).code);
+    expect(parsed.code).not.toBe(Errors.unknown('x').code);
   });
 
   it('converts EACCES to fileNotReadable', async () => {

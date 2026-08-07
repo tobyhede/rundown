@@ -42,6 +42,14 @@ import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js'
  * released only after every contender has started. The DOMAIN assertions make no
  * timing assumptions — each property holds for every possible interleaving.
  *
+ * THE ONE COHORT THAT MUST NOT WARM is the cold start, whose subject is the
+ * creation of the database rather than a mutation of it. Warming opens the driver
+ * and installs the schema, so a warmed cold-start cohort would have built the
+ * authority before the barrier and would race only to re-read it. Its children
+ * therefore cross the barrier before touching the store (`coldStartSession`; see
+ * `storage/fixtures/child-protocol.ts`), which is what puts `ensureSchema`'s
+ * check-then-install inside the measured window.
+ *
  * SENSITIVITY WITNESS. A correct-but-serialized implementation would pass every
  * domain assertion while proving nothing, so every contention race asserts both
  * deterministic staging and actual `t0`/`t1` service-mutation overlap. The holder
@@ -412,7 +420,12 @@ async function waitForFile(file: string, child: ChildProcess): Promise<void> {
 }
 
 describe('cross-process session write contention (transaction replaces SessionLock)', () => {
-  it('initializes one valid SQLite authority while unreleased JSON remains inert', async () => {
+  it('initializes one valid SQLite authority when N processes race to create it, while unreleased JSON remains inert', async () => {
+    // The product's first-run moment: two `rundown run` invocations in two
+    // terminals on a project that has no `.rundown/rundown.db` yet. Both open a
+    // database that does not exist, both convert it to WAL, and both run
+    // `ensureSchema`'s check-then-install — the one window in the store's life
+    // where concurrent writers are creating the authority rather than mutating it.
     const inertFiles = [
       path.join(dir, '.rundown', 'session.json'),
       path.join(dir, '.rundown', 'runs', 'rd_legacy.json'),
@@ -424,11 +437,32 @@ describe('cross-process session write contention (transaction replaces SessionLo
       await fs.writeFile(file, invalidBytes);
     }
 
-    const results = await race([{ kind: 'readSession' }, { kind: 'readSession' }]);
+    // `coldStartSession`, not `readSession`: this cohort must cross the barrier
+    // BEFORE it touches the store, so the raced work is the CREATION of the
+    // database — `mkdir .rundown`, `new DatabaseSync` on a missing file, the
+    // rollback-journal -> WAL conversion, and the check-then-install of
+    // `ensureSchema` — not a read of one another child already built. Every other
+    // race here warms first because its subject is the mutation; warming this one
+    // would move the entire subject out of the measured window and leave the test
+    // asserting only that a database created seconds ago is still readable.
+    //
+    // Three contenders rather than two: two terminals is the product moment, and a
+    // third costs one process while widening the odds that a genuine install
+    // collision (rather than a merely simultaneous open) occurs.
+    const results = await race([
+      { kind: 'coldStartSession' },
+      { kind: 'coldStartSession' },
+      { kind: 'coldStartSession' },
+    ]);
+    // Every child got a usable, empty session. `values` throws on any child that
+    // reported a failure, which is where a double install ("table runs already
+    // exists"), an escaped SQLITE_BUSY, or a refused WAL conversion lands.
     expect(values(results)).toEqual([
       { defaultStack: [], claims: {} },
       { defaultStack: [], claims: {} },
+      { defaultStack: [], claims: {} },
     ]);
+    expectOverlap(results);
 
     const opened = await openRunbookStore(dir, { runtime: 'native' });
     const integrity = await opened.driver.read((tx) =>

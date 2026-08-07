@@ -1,10 +1,25 @@
+/**
+ * Integration coverage for `rdpath`'s directory/context scope resolution.
+ *
+ * Fixture policy: every "there is (or is not) an active runbook" condition is
+ * staged through the SQLite run store, via `@rundown-org/core/testing/*`.
+ * `.rundown/session.json` is inert — no build reads or writes it — so a fixture
+ * that writes one stages NOTHING: the store opens empty, `rdpath` falls through
+ * to `RD_WORK_PATH`, and every assertion about the failure path passes without
+ * that path ever being entered. Do not reintroduce one.
+ */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { RunbookStateManager, SessionService, parseRunbook, type Runbook } from '@rundown-org/core';
+import {
+  patchPersistedRunState,
+  seedActiveRun,
+  writeRawRunJson,
+} from '@rundown-org/core/testing/session-fixtures';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,52 +81,58 @@ describe('rdpath find integration', () => {
 
   const normalizeOutputPath = (value: string): string => value.trim().replaceAll('\\', '/');
 
-  async function setupActiveRunbook(
-    cwd: string,
-    vars: { WorkPath: string; ContextId: string },
-  ): Promise<void> {
-    const manager = new RunbookStateManager(cwd);
-    const sessionService = new SessionService(manager);
-    const steps = parseRunbook(`## 1. Active step
+  const ACTIVE_RUNBOOK_MARKDOWN = `# Active Runbook
+
+## 1. Active step
 
 - PASS COMPLETE
 - FAIL STOP
 
 Active step.
-`);
-    const runbook: Runbook = {
-      title: 'Active Runbook',
-      steps,
-    };
+`;
 
-    const state = await manager.create({ source: 'project', path: 'active.runbook.md' }, runbook, {
+  /**
+   * Seed a real active run through the core session fixtures, which drive the
+   * SQLite store the same way `rundown run` does. `variables` is what
+   * `readActiveRunScope` reads back as WorkPath / ContextId.
+   *
+   * @param cwd - Project root receiving the run.
+   * @param vars - WorkPath / ContextId the active run should carry.
+   * @returns The seeded run id.
+   */
+  async function setupActiveRunbook(
+    cwd: string,
+    vars: { WorkPath: string; ContextId: string },
+  ): Promise<string> {
+    const { runId } = await seedActiveRun(cwd, {
+      markdown: ACTIVE_RUNBOOK_MARKDOWN,
+      runbookRef: { source: 'project', path: 'active.runbook.md' },
       runbookPath: 'active.runbook.md',
       prompted: true,
-      templateVars: vars,
+      variables: vars,
     });
-    await sessionService.pushRunbook(state.id);
+    return runId;
   }
 
-  async function setupStaleActiveRunbook(cwd: string): Promise<void> {
-    const runId = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    const runsDir = path.join(cwd, '.rundown', 'runs');
-    await fs.mkdir(runsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(cwd, '.rundown', 'session.json'),
-      JSON.stringify({ defaultStack: [runId] }, null, 2),
-    );
-    await fs.writeFile(
-      path.join(runsDir, `${runId}.json`),
-      JSON.stringify({ schemaVersion: 1 }, null, 2),
-    );
-  }
-
-  async function setupActiveRunbookWithInvalidId(cwd: string): Promise<void> {
-    await fs.mkdir(path.join(cwd, '.rundown'), { recursive: true });
-    await fs.writeFile(
-      path.join(cwd, '.rundown', 'session.json'),
-      JSON.stringify({ defaultStack: ['../outside'] }, null, 2),
-    );
+  /**
+   * Open `.rundown/rundown.db` out of band and run `work` against it.
+   *
+   * Two of the fixtures below need the store to hold bytes this build cannot
+   * read — an incompatible `PRAGMA user_version`, and session columns that fail
+   * `SessionDataSchema`. Core's testing fixtures deliberately expose no
+   * "corrupt the store" seam for either, so these reach for SQLite directly.
+   * Everything else goes through the fixtures.
+   *
+   * @param cwd - Project root whose store is opened.
+   * @param work - Statements to run against the open database.
+   */
+  function tamperWithStore(cwd: string, work: (db: DatabaseSync) => void): void {
+    const db = new DatabaseSync(path.join(cwd, '.rundown', 'rundown.db'));
+    try {
+      work(db);
+    } finally {
+      db.close();
+    }
   }
 
   it('outputs one matching path per line', async () => {
@@ -391,23 +412,6 @@ Active step.
       );
     });
 
-    it('does not fail on stale active state when --dir is supplied', async () => {
-      await setupStaleActiveRunbook(testDir);
-
-      const result = await runRdpath(
-        ['--dir', '.work'],
-        {
-          RD_WORK_PATH: undefined,
-          RD_CONTEXT_ID: undefined,
-        },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toBe('.work');
-      expect(result.stderr).toBe('');
-    });
-
     it('uses active ContextId when RD_WORK_PATH is set and RD_CONTEXT_ID is omitted', async () => {
       await setupActiveRunbook(testDir, {
         WorkPath: '.rundown/work',
@@ -430,221 +434,200 @@ Active step.
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-state-ctx', 'state-context.json'));
     });
+    /**
+     * A project whose active-run lookup FAILS, staged through the SQLite store.
+     *
+     * Every case here is produced the way the store can actually reach it —
+     * `.rundown/session.json` is not read or written by any build that owns this
+     * file, so seeding one stages nothing at all: the store opens empty, rdpath
+     * falls through to RD_WORK_PATH, and the soft-fail assertion passes without
+     * the guard ever running.
+     */
+    interface UnreadableActiveState {
+      /** Names the persisted condition; interpolated into the test titles. */
+      readonly what: string;
+      /** Puts a fresh project into that condition. */
+      readonly seed: (cwd: string) => Promise<void>;
+      /**
+       * A fragment of the error the lookup REALLY throws for {@link seed}.
+       *
+       * Asserted on the mandatory-lookup path, where rdpath deliberately does
+       * not apply its recoverable-error guard. That pairing is what keeps these
+       * cases honest: a fixture that stopped making the lookup throw would still
+       * satisfy the soft-fail assertion (there is nothing left to recover from),
+       * but it cannot satisfy this one.
+       */
+      readonly realError: string;
+    }
 
-    it('soft-fails active-state lookup when RD_WORK_PATH is set with invalid state', async () => {
-      // Asymmetric case: dir is known via RD_WORK_PATH; ctx lookup hits stale
-      // state. The lookup must not propagate the invalid-state error — the path
-      // assembles without a context segment and exits 0.
-      await setupStaleActiveRunbook(testDir);
+    /**
+     * Seed a healthy active run, then break it.
+     *
+     * The run always carries `ContextId: state-ctx`, so the soft-fail assertions
+     * discriminate: a readable run puts a `.rd-state-ctx` segment in the output
+     * (see the control test above), and its absence is what proves the lookup
+     * was skipped rather than merely satisfied.
+     *
+     * @param breakIt - Applies the damage to the seeded run.
+     * @returns A seeder for {@link UnreadableActiveState.seed}.
+     */
+    const brokenRun =
+      (breakIt: (cwd: string, runId: string) => Promise<void>) =>
+      async (cwd: string): Promise<void> => {
+        const runId = await setupActiveRunbook(cwd, {
+          WorkPath: '.rundown/work',
+          ContextId: 'state-ctx',
+        });
+        await breakIt(cwd, runId);
+      };
 
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
+    const UNREADABLE_ACTIVE_STATES: readonly UnreadableActiveState[] = [
+      {
+        what: 'the run state is not valid JSON',
+        seed: brokenRun(async (cwd, runId) => {
+          await writeRawRunJson(cwd, runId, '{ this is not : valid json');
+        }),
+        realError: 'persisted state is not valid JSON',
+      },
+      {
+        what: 'the run carries an unsupported schemaVersion',
+        seed: brokenRun(async (cwd, runId) => {
+          await patchPersistedRunState(cwd, runId, { schemaVersion: 2 });
+        }),
+        realError: 'invalid schemaVersion',
+      },
+      {
+        what: 'the run is missing templateVars',
+        seed: brokenRun(async (cwd, runId) => {
+          await patchPersistedRunState(cwd, runId, (current) => {
+            const { templateVars: _dropped, ...rest } = current;
+            return rest;
+          });
+        }),
+        realError: 'missing templateVars',
+      },
+      {
+        what: 'the run state fails schema validation',
+        seed: brokenRun(async (cwd, runId) => {
+          await patchPersistedRunState(cwd, runId, { step: 12345 });
+        }),
+        realError: 'schema validation failed',
+      },
+      {
+        what: 'the run carries a legacy dynamic-step snapshot',
+        seed: brokenRun(async (cwd, runId) => {
+          await patchPersistedRunState(cwd, runId, { lastAction: { type: 'GOTO_NEXT' } });
+        }),
+        realError: 'dynamic-step snapshots',
+      },
+      {
+        what: 'the session carries claim data this build cannot read',
+        seed: brokenRun(async (cwd) => {
+          tamperWithStore(cwd, (db) => {
+            db.prepare(`UPDATE claims SET grants_json = '[{"bogus":true}]'`).run();
+          });
+        }),
+        realError: 'Session data is invalid for this runbook schema',
+      },
+      {
+        what: 'the database carries an incompatible schema version',
+        seed: brokenRun(async (cwd) => {
+          tamperWithStore(cwd, (db) => {
+            db.exec('PRAGMA user_version = 9');
+          });
+        }),
+        realError: 'Incompatible runbook database schema',
+      },
+      {
+        what: 'the database file is not a database',
+        seed: async (cwd) => {
+          await fs.mkdir(path.join(cwd, '.rundown'), { recursive: true });
+          await fs.writeFile(path.join(cwd, '.rundown', 'rundown.db'), 'not a database at all');
         },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).toBe('');
-    });
-
-    it('soft-fails invalid active-state lookup when RD_WORK_PATH is set', async () => {
-      await setupActiveRunbookWithInvalidId(testDir);
-
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
+        realError: 'file is not a database',
+      },
+      {
+        what: '.rundown is a regular file',
+        seed: async (cwd) => {
+          await fs.writeFile(path.join(cwd, '.rundown'), 'not a directory');
         },
-        testDir,
-      );
+        realError: 'EEXIST',
+      },
+    ];
 
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).not.toContain('Invalid id');
-    });
+    describe.each(UNREADABLE_ACTIVE_STATES)(
+      'unreadable active state: $what',
+      ({ seed, realError }: UnreadableActiveState) => {
+        it('surfaces the real error when the active-state lookup is mandatory', async () => {
+          // No --dir and no RD_WORK_PATH: the lookup is the only source of a base
+          // directory, so rdpath runs it OUTSIDE the recoverable-error guard and
+          // the user sees the real cause.
+          await seed(testDir);
 
-    it('soft-fails legacy session ownership format when RD_WORK_PATH is set', async () => {
-      // SessionService.loadSession throws 'Legacy session ownership format
-      // detected' when session.json contains 'ownedRunbooks' (or
-      // 'stashedRunbookOwnership'). isRecoverableActiveStateLookupError must
-      // recognize this so rdpath assembles a path without a context segment.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        JSON.stringify({ ownedRunbooks: { 'wf-old-run': { runbookPath: 'foo.md' } } }, null, 2),
-      );
-
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
-        },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).toBe('');
-    });
-
-    it('soft-fails legacy stacks session format when RD_WORK_PATH is set', async () => {
-      // Second variant of the legacy ownership branch: 'stacks' key triggers
-      // the same recoverable error path.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        JSON.stringify({ stacks: { default: [] } }, null, 2),
-      );
-
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
-        },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).toBe('');
-    });
-
-    it('soft-fails session.json that fails schema validation when RD_WORK_PATH is set', async () => {
-      // 'Session file contains invalid runbook targeting data' is thrown when
-      // session.json parses as JSON but fails SessionDataSchema validation.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        JSON.stringify({ defaultStack: [{ not: 'a-string' }] }, null, 2),
-      );
-
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
-        },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).toBe('');
-    });
-
-    it('soft-fails legacy stashedRunbookOwnership session format when RD_WORK_PATH is set', async () => {
-      // 'stashedRunbookOwnership' is a third key that triggers the same
-      // 'Legacy session ownership format detected' error path in state.ts.
-      // Confirm isRecoverableActiveStateLookupError catches it too.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        JSON.stringify(
-          { stashedRunbookOwnership: { runbookId: 'wf-old', sessionId: 'session-1' } },
-          null,
-          2,
-        ),
-      );
-
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
-        },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).toBe('');
-    });
-
-    it('soft-fails legacy claim record format when RD_WORK_PATH is set', async () => {
-      // #519 made ClaimRecord.lastSeenAt required, so state.ts rejects a
-      // session whose claims predate it with 'Legacy claim record format
-      // detected'. Without this message in the allow-list, rdpath would hard-fail
-      // on exactly the sessions that change invalidates, instead of degrading to
-      // a path with no context segment.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      const claimKey = `rdclk_${'a'.repeat(32)}`;
-      const runId = `rd_${'0'.repeat(32)}`;
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        JSON.stringify(
-          {
-            defaultStack: [runId],
-            claims: {
-              [claimKey]: {
-                claimKey,
-                secretHash: `sha256:${'b'.repeat(64)}`,
-                controlledRunId: runId,
-                grants: [{ action: 'mutate-run', runId }],
-                issuedAt: '2026-07-01T00:00:00.000Z',
-                updatedAt: '2026-07-01T00:00:00.000Z',
-              },
+          const result = await runRdpath(
+            ['--file', 'plan.json'],
+            {
+              RD_WORK_PATH: undefined,
+              RD_CONTEXT_ID: undefined,
             },
-          },
-          null,
-          2,
-        ),
-      );
+            testDir,
+          );
+
+          expect(result.exitCode).toBe(1);
+          expect(result.stderr).toContain('error:');
+          expect(result.stderr).toContain(realError);
+        });
+
+        it('soft-fails the best-effort ContextId lookup when RD_WORK_PATH is set', async () => {
+          // Asymmetric case: dir is known, only ctx is missing. The lookup is
+          // best-effort, so the unreadable state is skipped and the path
+          // assembles without a context segment.
+          await seed(testDir);
+
+          const result = await runRdpath(
+            ['--file', 'plan.json'],
+            {
+              RD_WORK_PATH: '.work',
+              RD_CONTEXT_ID: undefined,
+            },
+            testDir,
+          );
+
+          expect(result.exitCode).toBe(0);
+          expect(normalizeOutputPath(result.stdout)).toMatch(
+            /^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/,
+          );
+          expect(result.stderr).toBe('');
+        });
+      },
+    );
+
+    const seedUnreadableRun = UNREADABLE_ACTIVE_STATES[0].seed;
+
+    it('soft-fails the best-effort ContextId lookup when --dir is supplied', async () => {
+      // --dir is the flag counterpart of the RD_WORK_PATH case above.
+      await seedUnreadableRun(testDir);
 
       const result = await runRdpath(
-        ['--file', 'plan.json'],
+        ['--dir', '.work'],
         {
-          RD_WORK_PATH: '.work',
+          RD_WORK_PATH: undefined,
           RD_CONTEXT_ID: undefined,
         },
         testDir,
       );
 
       expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stdout.trim()).toBe('.work');
       expect(result.stderr).toBe('');
     });
 
-    it('soft-fails corrupt JSON session.json when RD_WORK_PATH is set', async () => {
-      // A session.json that is not valid JSON at all triggers a SyntaxError,
-      // which isRecoverableActiveStateLookupError catches by error.name.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        '{ this is not : valid json',
-      );
-
-      const result = await runRdpath(
-        ['--file', 'plan.json'],
-        {
-          RD_WORK_PATH: '.work',
-          RD_CONTEXT_ID: undefined,
-        },
-        testDir,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
-      expect(result.stderr).toBe('');
-    });
-
-    it('find subcommand soft-fails legacy session ownership format when RD_WORK_PATH is set', async () => {
-      // Verify that the soft-fail path applies to the `find` subcommand as
-      // well, not just the default path-assembly command.
-      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
-      await fs.writeFile(
-        path.join(testDir, '.rundown', 'session.json'),
-        JSON.stringify({ ownedRunbooks: { 'wf-old-run': { runbookPath: 'foo.md' } } }, null, 2),
-      );
-
+    it('find subcommand soft-fails the best-effort ContextId lookup', async () => {
+      // The soft-fail lives in shared scope resolution, so it must hold for
+      // `find` and not only for the default path-assembly command.
+      await seedUnreadableRun(testDir);
       const workDir = path.join(testDir, 'work');
-      await fs.mkdir(workDir);
+      await fs.mkdir(workDir, { recursive: true });
       await fs.writeFile(path.join(workDir, 'result.json'), '{}');
 
       const result = await runRdpath(
@@ -656,9 +639,9 @@ Active step.
         testDir,
       );
 
-      // Matches without context segment – no 'error:' on stderr.
+      // Matches without a context segment - no 'error:' on stderr.
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toContain('result.json');
+      expect(result.stdout.trim()).toBe(path.join(workDir, 'result.json'));
       expect(result.stderr).toBe('');
     });
   });

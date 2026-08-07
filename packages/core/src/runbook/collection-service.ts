@@ -342,8 +342,9 @@ export async function collectDelegationOutcomes(
 
   // The orchestrator's presented bearer and collect grant are now authorized.
   // Observe that holder before validation, no-op detection, or dispatch: each is
-  // later than the liveness proof. No SessionLock is held, and the total recorder
-  // cannot block or mask the collection outcome (RD-102).
+  // later than the liveness proof. The recorder commits its own short session
+  // transaction — no lock is held here and none is waited on — and it is total,
+  // so it cannot block or mask the collection outcome (RD-102).
   await recordPresenterLiveness(input);
 
   const stepName = input.stepName ?? input.targetState.step;
@@ -508,8 +509,20 @@ async function prepareCollectReEntryFrontier(
  * the children's: a parent cannot vouch for a child's liveness (#519 AC5).
  * Best-effort and total, so failure cannot mask the later collection (RD-102).
  *
- * Called outside any session-lock scope: `recordClaimSeen` self-acquires the
- * session lock, which is not reentrant.
+ * Called outside any open store transaction: `recordClaimSeen` opens its OWN
+ * session transaction (`mutateSession`), and SQLite transactions do not nest.
+ *
+ * The hazard this note originally recorded was real but no longer reachable in
+ * that shape. Under the deleted session file lock, re-entering the lock from
+ * inside its own scope blocked for the whole 5s acquisition deadline before
+ * throwing — a stall, not an error. Under `mutateSession` the equivalent
+ * violation cannot be written: transaction work is synchronous by type
+ * (`SyncWork`) and by runtime check (`assertSyncWorkResult`), so this `await`
+ * is unreachable from inside a transaction, and a fire-and-forget attempt
+ * fails immediately on `BEGIN IMMEDIATE` rather than waiting. The live
+ * constraint is therefore separation, not deadlock avoidance: the liveness
+ * write commits in its own transaction, so it is never rolled back with the
+ * collection and can never roll the collection back.
  *
  * @param input - The collect operation input carrying the caller's evidence.
  */

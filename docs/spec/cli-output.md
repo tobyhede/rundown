@@ -833,16 +833,18 @@ No stashed runbook to restore.
 ## prune
 
 Prune uses the same `Runbook` format as `ls`, with status values like "invalid"
-or "inactive".
+or "inactive". Ids are run ids (`rd_` + 32 hex) in both modes — prune reads them
+from the store as `RunId`s, and unlike `ls`, its text `ID` column is not
+truncated.
 
 ### `rundown prune --dry-run`
 
 **Text:**
 
 ```text
-ID        STATUS     RUNBOOK                    TITLE
-abc123    invalid    (invalid)
-def456    inactive   old-deploy.runbook.md      Old Deploy
+ID                                   STATUS    RUNBOOK                TITLE
+rd_0123456789abcdef0123456789abcdef  invalid   (invalid)
+rd_fedcba9876543210fedcba9876543210  inactive  old-deploy.runbook.md  [Old Deploy]
 ```
 
 **JSON:**
@@ -850,12 +852,12 @@ def456    inactive   old-deploy.runbook.md      Old Deploy
 ```json
 [
   {
-    "id": "abc123",
+    "id": "rd_0123456789abcdef0123456789abcdef",
     "status": "invalid",
     "runbook": "(invalid)"
   },
   {
-    "id": "def456",
+    "id": "rd_fedcba9876543210fedcba9876543210",
     "status": "inactive",
     "runbook": "old-deploy.runbook.md",
     "title": "Old Deploy"
@@ -878,12 +880,12 @@ Pruned 2 invalid state files.
 ```json
 [
   {
-    "id": "abc123",
+    "id": "rd_0123456789abcdef0123456789abcdef",
     "status": "invalid",
     "runbook": "(invalid)"
   },
   {
-    "id": "def456",
+    "id": "rd_fedcba9876543210fedcba9876543210",
     "status": "inactive",
     "runbook": "old-deploy.runbook.md",
     "title": "Old Deploy"

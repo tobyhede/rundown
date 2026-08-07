@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { getRunbookFromState } from '../../src/helpers/runbook-loader.js';
 import { assertRunId, type ArtifactRecord, type RunbookState } from '@rundown-org/core';
+import type { ResolvedStep } from '@rundown-org/parser';
 import { brandInitialTemplateVarsForTest, brandStoredOutputsForTest } from './brand-helpers.js';
 
 describe('getRunbookFromState', () => {
@@ -56,6 +57,71 @@ echo done
     expect(() => {
       getRunbookFromState(state as RunbookState, '/unused');
     }).toThrow('Persisted run corrupted-id is missing runbookSrc');
+  });
+
+  it('should throw on the first error-severity structural diagnostic', () => {
+    // Diagnostics come back as [warning, error, error]: step 1 self-GOTOs
+    // (warning), steps 2 and 3 target steps that do not exist (errors). The
+    // interleaving is deliberate — it pins that the reported message is the
+    // first *error*, not the first diagnostic and not a later error.
+    const runbookSrc = `# Structural Runbook
+
+## 1. Loop
+- PASS GOTO 1
+- FAIL CONTINUE
+
+## 2. Bad Target
+- PASS GOTO 99
+- FAIL CONTINUE
+
+## 3. Another Bad Target
+- PASS GOTO 98
+- FAIL COMPLETE
+`;
+    const state: Partial<RunbookState> = {
+      id: assertRunId('rd_66666666666666666666666666666666'),
+      runbook: { source: 'project', path: 'structural.runbook.md' },
+      runbookSrc,
+      templateVars: brandInitialTemplateVarsForTest({
+        ContextId: 'current-context',
+        WorkPath: '.rundown/work',
+      }),
+    };
+
+    const load = (): readonly ResolvedStep[] =>
+      getRunbookFromState(state as RunbookState, '/project');
+
+    expect(load).toThrow(
+      'Runbook structural.runbook.md has structural errors: Step 2: GOTO target step "99" does not exist.. Delete state and re-run the runbook.',
+    );
+    // Not the leading warning, and not the second error.
+    expect(load).not.toThrow(/GOTO self without RETRY/);
+    expect(load).not.toThrow(/"98"/);
+  });
+
+  it('should not throw when diagnostics are warning-severity only', () => {
+    // A self-GOTO without RETRY is a warning, not an error. Warnings must not
+    // reach the structural-error refusal — the run stays loadable.
+    const runbookSrc = `# Warning Runbook
+
+## 1. Loop
+- PASS GOTO 1
+- FAIL COMPLETE
+`;
+    const state: Partial<RunbookState> = {
+      id: assertRunId('rd_77777777777777777777777777777777'),
+      runbook: { source: 'project', path: 'warning.runbook.md' },
+      runbookSrc,
+      templateVars: brandInitialTemplateVarsForTest({
+        ContextId: 'current-context',
+        WorkPath: '.rundown/work',
+      }),
+    };
+
+    const steps = getRunbookFromState(state as RunbookState, '/project');
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].name).toBe('1');
   });
 
   it('should substitute templateVars when present in state', () => {

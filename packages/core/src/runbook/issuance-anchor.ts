@@ -65,7 +65,8 @@ export interface ResolveIssuanceAnchorOptions {
  *
  * This is the single source of truth for delegate anchor selection. The core
  * issuance seam resolves through it once, pins the selected run id, then
- * performs state-dependent validation against the DelegationLock-scoped reread.
+ * performs state-dependent validation against the aggregate capture the
+ * issuance mutation commits under, never against this advisory snapshot.
  *
  * @param reader - Read-side session dependency used to resolve runs and claims
  * @param options - Caller evidence and the optional explicit `--run` selector

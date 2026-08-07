@@ -42,10 +42,15 @@ export class PluginSessionLockTimeoutError extends FileLockTimeoutError {
  * atomic `open('wx')` creation, kill-signal stale detection (never age-based),
  * jittered retry bounded to 5 seconds.
  *
- * Lock path: `.claude/session/locks/state.lock` (realpath-resolved project
- * root, mirroring core's `SessionLock`, so symlinked spellings of the same
- * directory — e.g. macOS `/var/folders` vs `/private/var/folders` — contend on
- * one lock file).
+ * Lock path: `.claude/session/locks/state.lock`. The project root is
+ * realpath-resolved so symlinked spellings of the same directory — e.g. macOS
+ * `/var/folders` vs `/private/var/folders` — contend on one lock file, the same
+ * rule core's remaining domain locks follow.
+ *
+ * This lock guards the plugin's own `.claude/session` state and is unaffected by
+ * the single-store cutover: core's `SessionLock` was deleted when run and
+ * session authority moved into SQLite, but plugin session state is still
+ * file-backed and still needs mutual exclusion.
  */
 export class PluginSessionLock {
   private readonly lockDir: string;

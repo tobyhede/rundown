@@ -6,6 +6,7 @@ import {
   Errors,
   getWriter,
   IncompatibleSchemaError,
+  WalJournalModeUnavailableError,
 } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
@@ -53,6 +54,13 @@ function toRundownError(error: unknown): RundownError {
   // including read-only commands, since ensureSchema runs in openRunbookDriver.
   if (error instanceof IncompatibleSchemaError) {
     return Errors.incompatibleStateSchema(error.foundVersion, error.expectedVersion);
+  }
+
+  // A database that did not enter WAL mode — RD-306. Same reasoning as RD-305
+  // above: it fires while opening the store, so without this arm every command
+  // reports "Unknown error" for a condition with a specific, actionable cause.
+  if (error instanceof WalJournalModeUnavailableError) {
+    return Errors.walJournalModeUnavailable(error.effectiveMode);
   }
 
   // Generic error - wrap it

@@ -7,6 +7,7 @@
     "prebuild": "tsx scripts/build-snapshot.ts",
     "build:snapshot": "tsx scripts/build-snapshot.ts",
     "screenshot:home": "tsx scripts/screenshot-homepage.ts",
+    "check:types": "astro check",
     "dev": "astro dev",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
@@ -33,6 +34,8 @@
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@webcontainer/snapshot": "^0.1.0",
     "tsx": "^4.23.1"
   }

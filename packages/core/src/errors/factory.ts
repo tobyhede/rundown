@@ -46,6 +46,24 @@ export const Errors = {
         `.rundown/rundown.db and restart your runbooks from source`,
     }),
 
+  // The candidate causes are spelled into the MESSAGE, not left to the code's
+  // `description`: the description reaches an operator only through `--text
+  // --verbose`, and never appears in the JSON envelope that is the default
+  // output. Listing them without asserting one is the whole point — a rollback
+  // journal also comes from a read-only database file or a VFS with no WAL
+  // implementation, so naming a network filesystem as THE cause sends an
+  // operator on local disk looking in the wrong place.
+  walJournalModeUnavailable: (effectiveMode: string | undefined): RundownError =>
+    new RundownError('WAL_JOURNAL_MODE_UNAVAILABLE', {
+      effectiveMode,
+      message:
+        `effective mode: ${effectiveMode ?? 'unknown'}. Cross-process write ` +
+        `serialization is not in force on this database. Candidate causes: a ` +
+        `filesystem without shared memory (a network mount such as NFS or SMB is ` +
+        `the common one), a read-only database file or directory, or a SQLite VFS ` +
+        `that does not implement WAL`,
+    }),
+
   // Validation
   gotoTargetNotFound: (step: string, substep?: string): RundownError =>
     new RundownError('GOTO_TARGET_NOT_FOUND', { step, substep }),

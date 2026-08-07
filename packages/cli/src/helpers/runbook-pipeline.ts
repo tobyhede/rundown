@@ -1080,7 +1080,7 @@ async function launchRunbook(
       case 'default-stack': {
         // Push + run-control claim mint as one atomic session mutation: run-start
         // is never persisted in a pushed-but-unclaimed state, and it takes a
-        // single session-lock cycle instead of two (removing the double-cycle
+        // single session transaction instead of two (removing the double-cycle
         // contention that made run-start flaky under heavy parallel load).
         if (preparedRunControlClaim === undefined) {
           throw new Error('Default-stack activation is missing its prepared run-control claim');

@@ -1,5 +1,14 @@
 {
   "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    // Beyond `strict`. Without it, `{ recursive: someOptional }` is assignable
+    // to `{ recursive?: boolean }`, so passing an explicit `undefined` to
+    // WebContainer's `fs.rm` — which type-checks the option at runtime and
+    // rejects — type-checks clean. That exact defect shipped from this
+    // directory once already; this is the option that makes `astro check`
+    // catch it.
+    "exactOptionalPropertyTypes": true
+  },
   "include": [".astro/types.d.ts", "**/*"],
   "exclude": ["dist"]
 }

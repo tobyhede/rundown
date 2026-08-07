@@ -79,7 +79,26 @@ debt. The fix is to move it, not to rationalise its location.
 When multiple CLI processes may mutate a file-backed artifact such as the
 artifact manifest, use **file-based exclusive locks** with process-aware stale
 lock reclamation. Run and session authority lives in SQLite and uses database
-transactions and execution leases instead:
+transactions and execution leases instead.
+
+**The replacement is not equivalent, and the difference is a failure mode, not a
+detail.** A file lock _blocks_ a contender for up to 5s and then usually
+succeeds. Of the two mechanisms that replaced it, only one behaves that way:
+
+- **Transaction contention** (`mutateSession`, and every `BEGIN IMMEDIATE`
+  write) blocks like the lock did — `PRAGMA busy_timeout = 5000` inside SQLite
+  plus 10 application-level retries at 25ms × attempt in the native driver.
+- **The optimistic CAS** behind `RunbookStore.mutateState` — the per-run
+  read-modify-write that replaced the run-state lock — does not. It replays the
+  whole cycle at most **8 times with NO backoff**, so all 8 attempts can land
+  within a few milliseconds; a few-way concurrent writer then exhausts the
+  budget and the call returns `concurrent_modification`, which surfaces as a
+  command failure where the lock would have waited and won.
+
+Treat `concurrent_modification` as a reachable arm on any path that can be
+driven concurrently — handle it or retry it, and never document it as
+theoretical. `build` callbacks passed to `mutateState` run once per attempt and
+MUST therefore be free of external side effects.
 
 **Pattern:** Acquire the lock, then scope its release with `await using` so the
 lock is released deterministically on every exit path — including early `return`
@@ -109,8 +128,20 @@ Domain locks expose `scope()` / `held()` built on them.
   bare `finally` — that is the RD-102 masking defect.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. `CompletionLock` and `DelegationLock` remain temporary domain
-locks until their remaining workflows move to aggregate SQLite transactions.
+these primitives. `CompletionLock` and `DelegationLock` also survive, over six
+production call sites: `recordManualCompletion`, `recordChildCompletion`, and
+`drainResolvedCompletions` in `packages/core/src/runbook/completion-service.ts`,
+plus the inline-launch (`packages/cli/src/services/execution.ts`), run-start
+`afterInit` (`packages/cli/src/commands/run.ts`), and claim-and-launch
+(`packages/cli/src/helpers/runbook-pipeline.ts`) paths in the CLI.
+
+Their survival is a **tracked deviation from the single-store plan**, which
+called for deleting all four core domain locks once the delegate/collect/abort
+workflows became transactional — `SessionLock` and `RunStateLock` are gone,
+these two are not. Follow-up is tracked in #690, which also owns the
+`DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
+do not add new consumers of either lock, and do not read their survival as
+licence to put new run or session state behind a file lock.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.
@@ -400,14 +431,17 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   before every push.** Scoped `jest` runs are not a substitute: spelling
   (`cspell`) and typed lint (`jsdoc/require-throws` and friends) only run here,
   so a change can be green in every targeted suite and still fail the gate.
-- **`pnpm run verify:site` — `verify` does not cover `site/` at all.** It runs
-  no Playwright, and both Biome and cspell exclude the directory (`biome.json`'s
-  `"!site"`), so a site change can break the shipped demo with the gate fully
-  green — which is exactly how two regressions on the single-store branch
-  reached CI. **Touching `site/src` means running `pnpm run verify:site`**
-  (snapshot build, then Playwright) in addition to `verify`. It is separate
-  rather than folded in because the snapshot build plus browser run costs
-  minutes on every invocation, and most changes never touch `site/`. See
+- **`pnpm run verify:site` — `verify` type-checks `site/` but does not run its
+  behaviour.** `check:types:site` (`astro check`, ~5s) is in the `verify`
+  fan-out, and is the directory's _only_ gate there: Biome, cspell, and Prettier
+  all exclude `site`, and no Playwright runs. Two regressions on the
+  single-store branch reached CI through that hole, so `site/tsconfig.json`
+  enables `exactOptionalPropertyTypes` — plain `astro/tsconfigs/strict` does not
+  catch passing `recursive: undefined` to a strictly-typed `fs.rm`, which was
+  one of them. **Touching `site/src` still means running
+  `pnpm run verify:site`** (snapshot build, then Playwright) in addition to
+  `verify`; it stays separate because the snapshot build plus browser run costs
+  minutes and most changes never touch `site/`. See
   [site/CLAUDE.md](site/CLAUDE.md) for the dev-server foot-gun.
 - **Biome owns JS/TS/JSON/CSS; Prettier is Markdown-only** (`.prettierignore`
   line 1). **Never run `prettier` on TypeScript** — it reformats to a different

@@ -1,4 +1,5 @@
 import { WebContainer } from '@webcontainer/api';
+import { DB_FILES, LOCKS_DIR, RUNBOOKS_DIR, RUNS_DIR } from './rundown-paths';
 
 let webcontainerInstance: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
@@ -65,13 +66,12 @@ export async function mountRunbook(
   content: string
 ): Promise<void> {
   // Normalize separators, strip leading slashes, and guard against path traversal.
-  // Path layout mirrors packages/core/src/paths.ts (RUNBOOKS_DIR).
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
   const segments = normalized.split('/');
   if (!normalized || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
     throw new Error(`Invalid runbook path: ${path}`);
   }
-  const fullPath = `.rundown/runbooks/${normalized}`;
+  const fullPath = `${RUNBOOKS_DIR}/${normalized}`;
   // Create parent directories (handles nested paths like planning/write-plan.runbook.md)
   const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
   await container.fs.mkdir(dir, { recursive: true });
@@ -82,6 +82,12 @@ export async function mountRunbook(
  * Paths removed by {@link cleanRundownState}, in the order their failures are
  * reported. Unreleased JSON locations are inert and deliberately untouched.
  *
+ * Every path is derived from `./rundown-paths`, which is parity-checked against
+ * `packages/core/src/paths.ts` at compile time — so a core rename fails
+ * `astro check` rather than quietly leaving state behind. The database entry is
+ * `DB_FILES`, not a bare `DB_FILE`, because the WAL sidecars are state too: drop
+ * `-wal` and the next demo run boots on a replayable log of the previous one.
+ *
  * `.rundown/runs` no longer holds run authority — post-cutover it is purely the
  * per-run captured-output tree (RUNS_DIR in packages/core/src/paths.ts, torn
  * down per run by RunbookStateManager). Dropping the database without it would
@@ -89,11 +95,9 @@ export async function mountRunbook(
  * every reset adds more to browser storage.
  */
 const RUNDOWN_STATE_PATHS: ReadonlyArray<{ path: string; recursive?: boolean }> = [
-  { path: '.rundown/rundown.db' },
-  { path: '.rundown/rundown.db-wal' },
-  { path: '.rundown/rundown.db-shm' },
-  { path: '.rundown/runs', recursive: true },
-  { path: '.rundown/locks', recursive: true },
+  ...DB_FILES.map((path) => ({ path })),
+  { path: RUNS_DIR, recursive: true },
+  { path: LOCKS_DIR, recursive: true },
 ];
 
 /**

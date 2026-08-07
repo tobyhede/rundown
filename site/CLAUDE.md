@@ -5,6 +5,7 @@ Rundown marketing website - Astro site with interactive runbook demo.
 ## Commands
 
 ```bash
+pnpm run check:types:site               # astro check — typechecks .astro, .ts and the React islands
 pnpm run verify:site                    # Build the snapshot and run Playwright
 pnpm --filter site run build:snapshot  # Build the WebContainer snapshot
 pnpm --filter site build               # Build the site to dist/
@@ -12,11 +13,18 @@ pnpm --filter site build               # Build the site to dist/
 
 ## Verifying a site change
 
-**`pnpm run verify` does not cover this directory.** It runs no Playwright, and both Biome and cspell exclude `site` (`biome.json`'s `"!site"`), so a change here can break the shipped demo with the repo-wide gate fully green. Run this from the repo root as well, whenever you touch `site/src`:
+Two tiers, and they catch different things.
+
+**Static — `pnpm run check:types:site` (`astro check`), ~5s.** Part of the root `check:types`, so `pnpm run verify` runs it. It understands `.astro` files and the React islands, and the site tsconfig turns on `exactOptionalPropertyTypes` on top of `astro/tsconfigs/strict` — that option is not decoration: without it `{ recursive: someOptionalBoolean }` is assignable to `{ recursive?: boolean }`, which is exactly how an explicit `undefined` reached WebContainer's `fs.rm` (it type-checks the option at runtime and rejects) and shipped. Run it on every edit; it needs no snapshot, no server, and no browser.
+
+**Behavioural — `pnpm run verify:site`, minutes.** Builds the snapshot and runs Playwright. This is the only thing that exercises the demo end to end, and it is not part of `verify` because the cost lands on every contributor for a directory most changes never touch. Run it whenever you touch `site/src`.
 
 ```bash
-pnpm run verify:site   # builds the snapshot, then runs Playwright
+pnpm run check:types:site   # fast; also runs inside `pnpm run verify`
+pnpm run verify:site        # builds the snapshot, then runs Playwright
 ```
+
+**What still has no gate here:** Biome and cspell both exclude `site` (`biome.json`'s `"!site"`, `cspell.json`'s `ignorePaths`), and `.prettierignore` lists `site/**`. Formatting and spelling in this directory are unchecked — match the surrounding file by hand rather than running a formatter, which would reformat the whole tree.
 
 **Use `pnpm run verify:site` rather than calling Playwright directly.** The command builds the snapshot and manages the Astro server for the suite. If it reports that it is reusing a server already listening on port 4321, confirm that server belongs to this worktree or stop it before rerunning; otherwise you may test a different checkout's code.
 
@@ -81,6 +89,11 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 - When runbook executes `rd echo ...`, the CLI intercepts it and calls the echo logic directly
 - Bypasses spawn entirely for supported commands (currently: `echo`)
 - Unsupported commands fall back to spawn (works for top-level execution)
+
+**`.rundown/` paths are a checked mirror, not free-hand strings:**
+- `src/lib/rundown-paths.ts` holds every `.rundown/` path the site touches. The site cannot import `packages/core/src/paths.ts` — it is a Node module that imports `node:fs`, and this code runs in a browser — so the constants are copied.
+- `src/lib/rundown-paths.parity.ts` makes that copy load-bearing: `import type` only (erased at build, nothing from core reaches the bundle) plus a type-level equality assertion per constant, so a rename in core fails `astro check` naming the constant that drifted.
+- The `-wal`/`-shm` sidecars are **not** covered by the parity check — core inlines that pair in `runbook/storage/store-registry.ts` and `policy/schema.ts` and exports no constant for it. `DB_SIDECAR_SUFFIXES` / `DB_FILES` contain the risk structurally instead: `cleanRundownState` derives its database entries from the suffix list, so there is no per-sidecar line to delete. Deleting one by hand would leave the demo booting on the previous run's WAL. If core ever exports a sidecar constant, move the assertion into the parity module.
 
 **Key files:**
 - `src/lib/webcontainer.ts` - WebContainer setup and snapshot mounting

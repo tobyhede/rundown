@@ -7,11 +7,15 @@
  *
  * Persisted state carries no compatibility contract: a row without
  * `templateVars` is incompatible state, not a shape to reconstruct by
- * re-parsing the stored source. Such a row is refused here and the caller is
- * told to prune and re-run.
+ * re-parsing the stored source. That refusal is **not** enforced here — it
+ * belongs at the JSON boundary (`RunbookStateManager.load`), which rejects such
+ * a row before the value is ever typed as a `RunbookState`. By the time this
+ * module sees a state, `templateVars` is a required field that is present.
+ *
+ * The throw contract lives on {@link getRunbookFromState} and is not restated
+ * here, so the two cannot drift apart.
  *
  * @module
- * @throws {Error} if runbookSrc or templateVars is missing (unusable state)
  */
 
 import { parseRunbookDocument, type ResolvedStep } from '@rundown-org/parser';
@@ -33,11 +37,21 @@ import { buildRunnableRenderContext } from './render-context.js';
  * @param state - Runbook state containing runbookSrc and templateVars
  * @param cwd - Project directory used when resolving runbook bounds
  * @returns Parsed steps with all FOR bounds resolved
- * @throws {Error} if runbookSrc is missing (corrupted state)
- * @throws {Error} if templateVars is missing (incompatible state — prune and re-run)
- * @throws {Error} if the parsed runbook has structural errors
- * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
- *         (thrown by parseRunbookDocument)
+ * @throws {Error} if `runbookSrc` is missing (corrupted state)
+ * @throws {Error} if the parsed runbook has error-severity structural diagnostics;
+ *         the message reports the first such diagnostic
+ * @throws {Error} if the effective variables lack `ContextId` or `WorkPath`
+ *         (thrown by `buildRunnableRenderContext`)
+ * @throws {Error} if a FOR bound variable is defined but resolves to a
+ *         non-integer or out-of-range value (thrown by `resolveForBounds`)
+ * @throws {RunbookSyntaxError} if `runbookSrc` fails to parse as a runbook
+ *         document (thrown by `parseRunbookDocument`), or if loop-only controls
+ *         reference a prompted FOR step (thrown by `resolveForBounds`)
+ *
+ * There is deliberately no `templateVars` throw: the field is required on
+ * `RunbookState` and the refusal is enforced at the JSON boundary. Callers in
+ * other front ends must not skip their own validation on the strength of a
+ * guard this function does not have.
  *
  * @remarks
  * Unresolved `{{variable}}` placeholders are not warned about here: the

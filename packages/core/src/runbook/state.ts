@@ -213,17 +213,17 @@ export type RunbookStateUpdate = Partial<
  *
  * The single application of tagged merge/replace ops, artifact/completion trust
  * re-assertion, and the {@link CURRENT_SCHEMA_VERSION} stamp. Shared by
- * {@link RunbookStateManager}'s locked write path and by the actor
+ * {@link RunbookStateManager}'s guarded write path and by the actor
  * compute/commit seam, which derives the next state without persisting, so both
  * apply identical patch semantics.
  *
  * Two things are deliberately NOT identical between the two paths:
  * - `updatedAt` is stamped independently by each persistence layer, so the value
- *   returned by `update` and the value written by `saveUnlocked` differ. Compare
+ *   returned by `update` and the value the fenced seam commits differ. Compare
  *   states modulo `updatedAt`.
- * - The resolved-completion consumption patch is read from disk on the manager
- *   path and from the captured state on the fenced path — under a fence the
- *   captured state is the authority, so a concurrent disk write must not change
+ * - The resolved-completion consumption patch is read from the store on the
+ *   manager path and from the captured state on the fenced path — under a fence
+ *   the captured state is the authority, so a concurrent write must not change
  *   what the fenced mutation consumes.
  *
  * @param existing - The state to patch.
@@ -644,15 +644,16 @@ export class RunbookStateManager {
   }
 
   /**
-   * Update an existing runbook state with a patch computed from the locked
-   * current state.
+   * Update an existing runbook state with a patch computed from the current
+   * state captured by the guarded store cycle.
    *
    * Use this for read-modify-write operations that replace whole fields such
-   * as `substepStates` or `resolvedCompletions`. The callback runs while the
-   * per-run state lock is held, so concurrent writers cannot compute from the
-   * same stale snapshot and overwrite each other.
+   * as `substepStates` or `resolvedCompletions`. The callback runs against the
+   * state read at the start of the cycle and the write commits only if that
+   * state's version is unchanged, so a concurrent writer cannot overwrite this
+   * one; a version that moved reruns the callback against fresh state.
    *
-   * Returning `null` leaves the current state unchanged and releases the lock.
+   * Returning `null` leaves the current state unchanged and writes nothing.
    *
    * @param id - The runbook state ID to update
    * @param buildUpdates - Callback that derives a patch from current state
@@ -680,7 +681,7 @@ export class RunbookStateManager {
    * Like {@link updateWithState}, but returns `null` when the runbook does not
    * exist instead of throwing.
    *
-   * Use this for locked read-modify-write operations where a missing runbook is
+   * Use this for guarded read-modify-write operations where a missing runbook is
    * a legitimate "nothing to do" outcome rather than an error (for example,
    * consuming a resolved completion). The callback only runs when the runbook
    * exists, so it always receives a non-null {@link RunbookState}.
@@ -711,11 +712,12 @@ export class RunbookStateManager {
    * a typed value that flows out through the result instead of through a
    * captured closure variable.
    *
-   * Use this for locked read-modify-write operations that must also report
-   * something they computed from the locked current state (for example,
+   * Use this for guarded read-modify-write operations that must also report
+   * something they computed from the captured current state (for example,
    * consuming and returning a resolved completion). The patch and the reported
-   * value are derived in the same callback under the same lock, so the reported
-   * value is always consistent with the persisted patch.
+   * value are derived in the same callback against the same captured state, and
+   * the value is recaptured on every retry, so the reported value is always
+   * consistent with the patch that actually committed.
    *
    * When the runbook does not exist the callback never runs; the result is
    * `{ state: null, value: null }`.

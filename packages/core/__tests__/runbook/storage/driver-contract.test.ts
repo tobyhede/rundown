@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { runInNewContext } from 'node:vm';
 import type { SqlJsStatic } from 'sql.js';
 import { getErrorMessage, isError, isNodeError } from '../../../src/errors.js';
+import { Errors } from '../../../src/errors/factory.js';
 import {
   AsyncTransactionWorkError,
   UnrepresentableIntegerError,
@@ -17,6 +18,7 @@ import {
   NativeSqlDriver,
   openNativeDriver,
   isSqliteBusy,
+  WalJournalModeUnavailableError,
 } from '../../../src/runbook/storage/native-sqlite-driver.js';
 import {
   SqljsDriver,
@@ -857,9 +859,14 @@ describe('native adapter connection configuration', () => {
       expect(db.executed).not.toContain('BEGIN IMMEDIATE');
     });
 
-    it('names the effective mode and the remedy in the refusal', () => {
+    it('names the effective mode, the consequence, and every candidate cause', () => {
       // The message is the operator's ONLY clue about which fallback happened and
-      // what to do, so it is asserted whole rather than by keyword.
+      // what to do, so it is asserted whole rather than by keyword. It states the
+      // observed mode and the guarantee that is no longer in force, and it lists
+      // the causes WITHOUT asserting one: a rollback journal also comes from a
+      // read-only database file and from a VFS with no WAL implementation, so
+      // naming a network filesystem as the cause would send an operator whose
+      // project is on a local disk looking in the wrong place.
       const db = new RecordingDatabase(() => false, {
         journalModeRow: { journal_mode: 'delete' },
         databaseList: [fileBackedMain()],
@@ -867,10 +874,76 @@ describe('native adapter connection configuration', () => {
 
       expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow(
         'Database did not enter WAL journal mode (effective mode: delete). ' +
-          'WAL is what makes cross-process write serialization real; a rollback journal ' +
-          'silently voids it. Move the project directory off a network filesystem (NFS/SMB), ' +
-          'which cannot support WAL.',
+          'Only WAL serializes writes across processes, so that guarantee is not in ' +
+          'force on this connection. A rollback-journal fallback has more than one ' +
+          'cause: a filesystem without shared memory (a network mount such as NFS or ' +
+          'SMB is the common one), a read-only database file or directory, or a ' +
+          'SQLite VFS that does not implement WAL. Establish which applies before ' +
+          'moving the project directory.',
       );
+    });
+
+    it('refuses with a typed error carrying the effective mode', async () => {
+      // A bare Error reaches the CLI's error mapper as RD-999 / "Unknown error" on
+      // EVERY command, read-only ones included, since the store opens before any
+      // of them run. The typed class is what lets a front end classify the refusal
+      // and render a real code — the same shape IncompatibleSchemaError uses for
+      // RD-305 — and the mode rides as DATA so no consumer re-parses the message.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: [fileBackedMain()],
+      });
+
+      const err = await failureOf(() => new NativeSqlDriver(recordingConnection(db)));
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect((err as Error).name).toBe('WalJournalModeUnavailableError');
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBe('delete');
+    });
+
+    it('maps onto a registered error code rather than the unknown-error bucket', async () => {
+      // The point of the typed class is that a front end turns it into a CODED
+      // envelope; an unregistered refusal is indistinguishable from a crash to
+      // every consumer. This pins the taxonomy seam from the storage side — the
+      // mode the class carries is exactly what the factory accepts — so the CLI
+      // arm (packages/cli/src/helpers/wrapper.ts, alongside the RD-305 one) has a
+      // compile-checked contract to render and cannot silently drift back to
+      // RD-999.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: [fileBackedMain()],
+      });
+
+      const err = await failureOf(() => new NativeSqlDriver(recordingConnection(db)));
+      const coded = Errors.walJournalModeUnavailable(
+        (err as WalJournalModeUnavailableError).effectiveMode,
+      );
+
+      expect(coded.code).toBe('RD-306');
+      // The observed mode, the lost guarantee, and the candidate causes all
+      // survive into the ENVELOPE message. The code's `description` carries them
+      // too, but that reaches an operator only through `--text --verbose` and
+      // never appears in the JSON default — so the message is where they count.
+      expect(coded.message).toContain('effective mode: delete');
+      expect(coded.message).toContain('Cross-process write serialization is not in force');
+      expect(coded.message).toContain('read-only database file or directory');
+      expect(coded.message).toContain('VFS that does not implement WAL');
+      expect(coded.context.effectiveMode).toBe('delete');
+    });
+
+    it('carries no effective mode when the pragma answered nothing', async () => {
+      // `unknown` in the message RENDERS an absent answer; it is not a mode SQLite
+      // reported. The typed field keeps that distinction, so a consumer cannot
+      // mistake "the pragma returned no row" for a journal mode named `unknown`.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: undefined,
+        databaseList: IN_MEMORY_MAIN,
+      });
+
+      const err = await failureOf(() => new NativeSqlDriver(recordingConnection(db)));
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBeUndefined();
     });
 
     it('refuses a non-memory fallback even on a connection with no file behind it', () => {
@@ -1258,6 +1331,35 @@ describe('positive driver selection', () => {
     expect(getErrorMessage(cause)).toMatch(/unable to open database file/i);
     // The code is mirrored onto the refusal so a caller need not unwrap it.
     expect((err as NodeJS.ErrnoException).code).toBe('ERR_SQLITE_ERROR');
+  });
+
+  it('surfaces the WAL refusal itself rather than the native-unavailable wrapper', async () => {
+    // node:sqlite is present and the connection opened: only the journal mode is
+    // wrong. Wrapping this one in NativeSqliteUnavailableError would assert a
+    // diagnosis that is false ("node:sqlite is unavailable on this host") AND
+    // bury the typed class a front end classifies on one `cause` deep, dropping
+    // the refusal back to RD-999. Patching the prototype is what lets a REAL
+    // connection take the refusal path — no host reports a rollback journal for
+    // a genuine file-backed database (see the WAL refusal suite).
+    const prepareSpy = jest
+      .spyOn(DatabaseSync.prototype, 'prepare')
+      .mockReturnValue({ get: () => ({ journal_mode: 'delete' }) } as unknown as ReturnType<
+        DatabaseSync['prepare']
+      >);
+
+    try {
+      const err = await failureOf(() =>
+        openRunbookDriver(path.join(dir, 'wal-refused.db'), { runtime: 'native' }),
+      );
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect(err).not.toBeInstanceOf(NativeSqliteUnavailableError);
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBe('delete');
+      // The wrapper's framing must not survive on the message either.
+      expect(getErrorMessage(err)).not.toMatch(/node:sqlite/);
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 });
 

@@ -29,6 +29,17 @@ export {
 // Storage is otherwise internal; the incompatible-schema error is public so the
 // CLI can classify it by type and surface the RD-305 envelope.
 export { IncompatibleSchemaError } from './storage/schema.js';
+// The WAL refusal is public for exactly the same reason, and surfaces RD-306.
+// Both fire on EVERY command, read-only ones included, because opening the store
+// precedes all of them — so an unclassifiable throw here is an RD-999 / "Unknown
+// error" on `rundown status` as readily as on `rundown pass`.
+export { WalJournalModeUnavailableError } from './storage/native-sqlite-driver.js';
+// Every unreadable-database path ends here — a corrupt file, a directory where
+// the database should be, a host without a usable `node:sqlite`. Public so a
+// consumer classifying storage failures can use `instanceof` instead of matching
+// the class name as a string, which is what the plugin's `rdpath` guard had to
+// do while this stayed internal.
+export { NativeSqliteUnavailableError } from './storage/driver-factory.js';
 // The ownership-refusal result surface is public for the same reason: a CLI
 // front end must be able to narrow a session mutation's typed refusal.
 export type {

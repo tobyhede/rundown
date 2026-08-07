@@ -5,6 +5,12 @@ const Terminal = xtermPkg.Terminal || xtermPkg.default?.Terminal;
 import * as fitPkg from '@xterm/addon-fit';
 // @ts-ignore
 const FitAddon = fitPkg.FitAddon || fitPkg.default?.FitAddon;
+// The consts above are values (the interop dance picks the constructor off
+// whichever shape the bundler hands us), so they shadow the package's
+// same-named types. Alias the instance types so `useRef<…>` below refers to
+// the instance, not to `typeof Terminal`.
+import type { Terminal as XTerminal } from '@xterm/xterm';
+import type { FitAddon as XFitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import stripAnsi from 'strip-ansi';
 import {
@@ -151,8 +157,8 @@ export function RunbookRunner({
   const [runbookResult, setRunbookResult] = useState<string | null>(null);
 
   const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermInstance = useRef<Terminal | null>(null);
-  const fitAddonInstance = useRef<FitAddon | null>(null);
+  const xtermInstance = useRef<XTerminal | null>(null);
+  const fitAddonInstance = useRef<XFitAddon | null>(null);
 
   useEffect(() => {
     if (!terminalRef.current || xtermInstance.current) return;

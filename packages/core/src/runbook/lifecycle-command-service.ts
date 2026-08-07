@@ -1316,7 +1316,8 @@ export class RunbookLifecycleCommandService {
 
     // Exact bearer/grant authorization is the liveness proof. Observe it before
     // command policy can refuse for collection state and before any validation,
-    // no-op resolution, or persistence. No SessionLock is held here.
+    // no-op resolution, or persistence. The recorder commits its own short
+    // session transaction; no transaction is open across this call.
     if (input.callerEvidence.kind === 'claim_bearer') {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
@@ -2317,8 +2318,9 @@ export class RunbookLifecycleCommandService {
     // Target resolution runs transition policy after bearer/grant authorization.
     // An independently authorized presenter has been seen alive at this point,
     // regardless of whether policy refuses the transition or dispatch later
-    // fails. The recorder is total and self-locking, and no SessionLock is held
-    // on this path, so failure cannot block or mask the mutation (RD-102).
+    // fails. The recorder is total and commits its own session transaction, and
+    // no transaction is open across this call, so failure cannot block or mask
+    // the mutation (RD-102).
     if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
       await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
@@ -2753,8 +2755,9 @@ export class RunbookLifecycleCommandService {
     }
 
     // `resolveTerminalTarget` verified the bearer and its mutate-run grant.
-    // Observe that holder before dispatch; SessionLock is not held here and the
-    // total recorder cannot mask a later terminal failure (RD-102).
+    // Observe that holder before dispatch; the recorder commits its own session
+    // transaction with none open across this call, and it is total, so it cannot
+    // mask a later terminal failure (RD-102).
     if (input.callerEvidence.kind === 'claim_bearer') {
       await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
@@ -2913,7 +2916,8 @@ export class RunbookLifecycleCommandService {
     const presenterAuthorized = descendantAuthority || authority?.kind === 'verified';
     // Bearer/grant authorization is complete before command policy evaluates
     // collection state. Record now so an authorized policy refusal or no-op still
-    // observes the holder. No SessionLock is held; the total write is non-masking.
+    // observes the holder. It commits its own session transaction with none open
+    // across this call; the total write is non-masking.
     if (input.callerEvidence.kind === 'claim_bearer' && presenterAuthorized) {
       await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }

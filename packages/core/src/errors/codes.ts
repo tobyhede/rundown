@@ -124,6 +124,14 @@ export const ErrorCodes = {
       'The runbook database uses a schema version this build cannot read, and Rundown never migrates persisted state. Any in-flight runs are unrecoverable — delete `.rundown/rundown.db` and restart your runbooks from source.',
     docSlug: 'incompatible-state-schema',
   },
+  WAL_JOURNAL_MODE_UNAVAILABLE: {
+    code: 'RD-306',
+    category: ErrorCategory.STATE,
+    title: 'Runbook database is not in WAL journal mode',
+    description:
+      'The runbook database fell back to a rollback journal, and only WAL serializes writes across processes, so concurrent commands are no longer serialized. The fallback has more than one cause: a filesystem without shared memory (a network mount such as NFS or SMB is the common one), a read-only database file or directory, or a SQLite VFS that does not implement WAL. Establish which applies before moving the project directory.',
+    docSlug: 'wal-journal-mode-unavailable',
+  },
 
   // Validation Errors (4xx)
   GOTO_TARGET_NOT_FOUND: {
