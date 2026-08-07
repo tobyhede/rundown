@@ -54,6 +54,43 @@ test('parseArgs does not mistake the concurrency value for an override key', () 
   assert.deepEqual(parsed.keys, ['qs']);
 });
 
+test('parseArgs rejects a --concurrency value that would audit nothing', () => {
+  // mapWithConcurrency sizes its pool with Math.min(limit, items.length), so NaN,
+  // zero, or a negative starts ZERO runners: every pin goes unaudited and the report
+  // tail throws destructuring an unassigned slot — after the control resolve has
+  // already been paid for. A fractional value silently truncates. All must be
+  // rejected at parse time, before any resolution starts.
+  for (const argv of [
+    ['--concurrency'], // missing value
+    ['--concurrency', '0'],
+    ['--concurrency', '-1'],
+    ['--concurrency', 'abc'], // non-numeric
+    ['--concurrency', ''],
+    ['--concurrency', '2.5'], // fractional
+    ['--concurrency', '--print'], // the next flag is not a value
+  ]) {
+    assert.throws(
+      () => parseArgs(argv),
+      /--concurrency requires a positive integer/,
+      `${JSON.stringify(argv)} must be rejected`,
+    );
+  }
+});
+
+test('parseArgs accepts a valid --concurrency and defaults when the flag is absent', () => {
+  assert.equal(parseArgs(['--concurrency', '1']).concurrency, 1);
+  assert.equal(parseArgs(['--concurrency', '16', 'qs']).concurrency, 16);
+  // Absent flag must keep the default rather than inheriting the validation path.
+  assert.equal(parseArgs(['qs']).concurrency, DEFAULT_CONCURRENCY);
+  assert.equal(parseArgs(['--print']).concurrency, DEFAULT_CONCURRENCY);
+});
+
+test('DEFAULT_CONCURRENCY is itself a valid concurrency', () => {
+  // The default bypasses parseConcurrency, so nothing else would catch it drifting
+  // to a value that starts zero runners.
+  assert.ok(Number.isSafeInteger(DEFAULT_CONCURRENCY) && DEFAULT_CONCURRENCY >= 1);
+});
+
 test('parseFindings keys on package name, not name@version', () => {
   // The removed pin's version differs between the control and test runs by
   // construction. Including the version would make every pin look load-bearing.

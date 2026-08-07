@@ -76,15 +76,40 @@ export const DEFAULT_CONCURRENCY = 4;
 export const VERDICT_ORDER = { 'LOAD-BEARING': 0, PROTECTED: 1, ERROR: 2, INERT: 3 };
 
 /**
+ * Validate the value following `--concurrency`.
+ *
+ * An unchecked value is not a cosmetic problem. `mapWithConcurrency` sizes its
+ * runner pool with `Math.min(limit, items.length)`, so NaN (a missing or
+ * non-numeric value), zero, or a negative starts ZERO runners: every pin goes
+ * unaudited, the results array stays unassigned, and the report tail dies
+ * destructuring a hole — an opaque `TypeError` raised only AFTER the control
+ * resolve has been paid for. A fractional value silently truncates. Reject all of
+ * them up front instead.
+ *
+ * @param raw - the argv token following `--concurrency`, or undefined if absent
+ * @returns the validated concurrency
+ * @throws {Error} when the value is missing, non-numeric, fractional, or below 1
+ */
+function parseConcurrency(raw) {
+  const value = Number(raw);
+  if (raw === undefined || !Number.isSafeInteger(value) || value < 1) {
+    const got = raw === undefined ? '(missing)' : JSON.stringify(raw);
+    throw new Error(`--concurrency requires a positive integer, got ${got}`);
+  }
+  return value;
+}
+
+/**
  * Parse the command line.
  *
  * @param argv - arguments after the script name
  * @returns the parsed options and the explicitly selected override keys
+ * @throws {Error} when `--concurrency` is present without a positive integer value
  */
 export function parseArgs(argv) {
   const concurrencyFlag = argv.indexOf('--concurrency');
   const concurrency =
-    concurrencyFlag === -1 ? DEFAULT_CONCURRENCY : Number(argv[concurrencyFlag + 1]);
+    concurrencyFlag === -1 ? DEFAULT_CONCURRENCY : parseConcurrency(argv[concurrencyFlag + 1]);
   const keys = argv.filter(
     (arg, i) => !arg.startsWith('--') && !(concurrencyFlag !== -1 && i === concurrencyFlag + 1),
   );
@@ -345,7 +370,15 @@ export async function mapWithConcurrency(items, limit, worker) {
  * @returns process exit code
  */
 async function main() {
-  const { printOnly, concurrency, keys: selected } = parseArgs(process.argv.slice(2));
+  let options;
+  try {
+    options = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    // Reported before any resolution starts — a bad flag must not cost a control run.
+    process.stderr.write(`${err.message}\n`);
+    return 1;
+  }
+  const { printOnly, concurrency, keys: selected } = options;
 
   const policy = JSON.parse(await readRepoFile('override-policy.json')).overrides;
   const workspaceYaml = await readRepoFile('pnpm-workspace.yaml');
