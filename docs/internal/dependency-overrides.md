@@ -42,15 +42,92 @@ Every entry in `pnpm-workspace.yaml`'s `overrides:` is one of:
 - **Category A — the parent forbids the fixed version** (out-of-range force).
   The declaring package pins a range that excludes the patched version, so the
   override overrules it. Example: `yaml-language-server` hard-pins `yaml 2.7.1`;
-  the override forces `^2.8.3`. The three `js-yaml ^4.2.0` pins are Category A
-  and additionally need `patchedDependencies` (their consumers call the removed
-  3.x `safeLoad`/ `safeDump`).
+  the override forces `^2.8.3`. The `gray-matter` / `read-yaml-file` /
+  `@istanbuljs/load-nyc-config` `js-yaml ^4.3.1` pins are Category A and
+  additionally need `patchedDependencies` (their consumers call the removed 3.x
+  `safeLoad`/ `safeDump`).
 - **Category B — the fix is in-range but pnpm resolves a vulnerable version
   without the pin.** The parent's range already allows the fix, but resolution
   picks an older in-range copy and `pnpm update` won't budge a deep transitive.
-  The override nudges it to the patched version. Example: `hono ^4.12.27` (the
+  The override nudges it to the patched version. Example: `hono ^4.12.34` (the
   MCP SDK declares `^4.11.4`). Remove a Category B pin once the parent ships a
   release that resolves the fixed version on its own.
+
+## Raise the floor; don't duplicate a selector
+
+When a **new** advisory lands on a package that already has a pin, the failure
+mode is a **silent no-op**: the locked version still satisfies the existing
+floor, so pnpm has no reason to move it and the scanner keeps failing even
+though an override is nominally "in place". The fix is to raise that entry's
+floor to the new fixed version (in both `pnpm-workspace.yaml` and
+`override-policy.json`, which the gate cross-checks), append the new GHSA to the
+entry's `ghsa` list, and refresh `reviewBy`.
+
+Raise the **existing** key rather than adding a second key with the **same
+selector** — pnpm takes one pin per selector, so a duplicate is either ignored
+or shadows the other. This is not a rule against several keys for one package:
+different selector forms (`parent>child`, `pkg@selector`, bare `pkg`) are
+distinct keys with defined specificity, and `js-yaml` deliberately carries six
+`parent>child` keys (see the next section). Adding a key for a **new parent** is
+correct and required; adding a second key with a selector you already have is
+the mistake.
+
+The 2026-08-07 sweep is the worked example: seven entries across five packages —
+`fast-uri`, `hono`, `postcss`, and the three Category A `js-yaml` pins — had
+floors that had fallen below a newly-published fixed version, and three new
+`parent>js-yaml` keys were added for parents no existing key covered.
+
+**A raise is also a re-test.** Before raising, re-check whether the pin is still
+needed at all: upstream may have backported the fix to the major the parent
+declares, which retires the pin outright. The same sweep **removed**
+`brace-expansion` for exactly that reason — see the next-but-one section.
+
+## Scope a `js-yaml`-style pin per parent, not by version selector
+
+`parent>child` is a **subtree scope**; `child@<selector>` is a **version
+selector** that still applies tree-wide. They are not interchangeable, and the
+distinction is load-bearing for `js-yaml`.
+
+Six parents pull `js-yaml` here. Three (`gray-matter`, `read-yaml-file`,
+`@istanbuljs/load-nyc-config`) declare `^3.x` and are forced up (Category A);
+three (`astro`, `@astrojs/internal-helpers`, `@changesets/parse`) declare
+`^4.1.1` and are merely nudged (Category B). A single blanket
+`"js-yaml@4": "^4.3.1"` looks like a tidy shortcut and is a trap: the `@4`
+selector does not intersect a `^3.x` declaration, so the Category A trio falls
+back to `3.15.1`. That silently un-patches them — `patches/gray-matter@4.0.3`
+and `patches/read-yaml-file@1.1.0` rewrite `safeLoad`/`safeDump` to
+`load`/`dump`, which is the **safe** schema only on 4.x; on 3.x `load` is the
+full/unsafe loader. It also leaves a bogus `js-yaml@4` entry in the lockfile.
+Always key these per parent.
+
+## A backport can retire a pin — re-check the advisory, not just the pin
+
+A Category A justification ("no fixed release exists on the line the parent
+declares") is a claim about the **advisory at a moment in time**, and advisories
+are edited. When a maintainer backports a fix to an older major, OSV is updated
+in place and a pin that was genuinely load-bearing silently becomes redundant —
+and stays redundant, because nothing re-reads the justification.
+
+`brace-expansion` is the worked example, removed on 2026-08-07. It was added as
+a blanket `^5.0.8` Category A pin when the only fixed release really was on the
+5.x line, forcing minimatch@3's `^1.1.7` and minimatch@9's `^2.0.2` subtrees
+cross-major to v5. Upstream then backported every advisory (GHSA-mh99-v99m-4gvg
+was re-modified **after** the pin was added and now lists 1.1.17 / 2.1.3 / 3.0.3
+/ 5.0.8; GHSA-rgw5-rvv9-x895 lists 1.1.18 / 2.1.4 / 3.0.6 / 5.0.9), so every
+parent could reach a patched version inside its own declared range and no parent
+forbade anything.
+
+Leaving it was not merely untidy. A blanket cross-major force drags the new
+major's constraints into subtrees that never asked for them: v5 declares
+`engines: node 20 || >=22` where v1 and v2 declare none, and applies a
+`maxLength` bound, so a large legitimate brace expansion in an eslint/jest/
+stryker glob could throw or truncate where no advisory required it.
+
+The lesson generalises: **when an advisory is re-flagged or a pin is raised,
+re-read the advisory's fixed-version list before touching the floor.** If a
+backport has landed, remove the pin (run the removal test) rather than raising
+it. If a pin is still needed but only for some parents, prefer a scoped
+`parent>child` key over a blanket cross-major force.
 
 ## `override-policy.json` is the source of truth
 
