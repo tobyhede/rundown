@@ -72,6 +72,7 @@
     "check:toolchain": "node scripts/check-toolchain.mjs",
     "check:docs:xstate-version": "node scripts/check-xstate-doc-version.mjs",
     "check:docs:dated-immutable": "node scripts/check-dated-docs-immutable.mjs",
+    "audit:overrides": "node scripts/audit-overrides.mjs",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish",
