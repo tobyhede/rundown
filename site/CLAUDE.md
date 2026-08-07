@@ -5,9 +5,9 @@ Rundown marketing website - Astro site with interactive runbook demo.
 ## Commands
 
 ```bash
-npm run dev      # Start dev server (localhost:4321)
-npm run build    # Build to dist/
-npm run preview  # Preview production build
+pnpm run verify:site                    # Build the snapshot and run Playwright
+pnpm --filter site run build:snapshot  # Build the WebContainer snapshot
+pnpm --filter site build               # Build the site to dist/
 ```
 
 ## Verifying a site change
@@ -18,13 +18,7 @@ npm run preview  # Preview production build
 pnpm run verify:site   # builds the snapshot, then runs Playwright
 ```
 
-**Use `verify:site` rather than calling Playwright directly** — `pnpm --filter site test` on its own fails from a clean state, and the reason is not obvious:
-
-**Astro 7's `astro dev` daemonizes.** It prints `Dev server running at http://localhost:4321 (pid N)` and the foreground process exits 0 while the server keeps serving. Playwright's `webServer` runs `npm run dev` and treats its command exiting as the server dying, so it aborts with `Process from config.webServer exited early` before running a single test. This is not the "server already running" guard — it happens with nothing listening at all, and setting `CI=1` does not change it. `scripts/verify-site.sh` therefore starts the server itself, waits for it to answer, and lets Playwright reuse it (`reuseExistingServer` is on whenever `CI` is unset). It stops the server on exit only if it was the one that started it.
-
-The consequence for running the suite by hand: start the dev server first, then run `pnpm --filter site test`. It will reuse the running server. And confirm a stray server belongs to *this* worktree before reusing it — `lsof -a -p <pid> -d cwd -Fn` — or you will test a different checkout's code.
-
-**Use the pnpm forms.** This is a pnpm workspace, so the npm `-w` flag does not resolve: `npm run build:snapshot -w site` fails with `No workspaces found: --workspace=site`.
+**Use `pnpm run verify:site` rather than calling Playwright directly.** The command builds the snapshot and manages the Astro server for the suite. If it reports that it is reusing a server already listening on port 4321, confirm that server belongs to this worktree or stop it before rerunning; otherwise you may test a different checkout's code.
 
 `public/rundown-snapshot.bin` is not committed — it must exist on disk before `astro dev` or Playwright will work. CI builds it automatically.
 
@@ -45,7 +39,7 @@ The homepage IS the demo - an interactive runbook runner that lets visitors expe
 
 ## Tech Stack
 
-- Astro 6.x (static output)
+- Astro 7 (static output)
 - Tailwind CSS 4.x (@tailwindcss/vite)
 - WebContainer API (in-browser Node.js)
 - React + Xterm.js (terminal component)
@@ -76,7 +70,7 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 **Snapshot-based mounting:**
 - `public/rundown-snapshot.bin` contains pre-built CLI for fast boot
 - Avoids npm install in browser - mounts snapshot directly
-- Built via `npm run build:snapshot -w site` (or `npm run build -w site`)
+- Built via `pnpm --filter site run build:snapshot` (or `pnpm --filter site build`)
 - **Not committed to git** — must be built locally before running dev server or tests
 
 **Size budget and pruning (issue #639):** the snapshot is a single static file under Cloudflare Pages' 25 MiB per-file cap, kept small by `scripts/prune-sqljs.mjs` + `scripts/prune-non-runtime.mjs` and guarded by a 12 MiB build assertion in `scripts/snapshot-budget.mjs`. See [docs/internal/architecture.md § Site snapshot](../docs/internal/architecture.md#site-snapshot-size-budget-and-pruning) for the design.

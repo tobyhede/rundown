@@ -11,8 +11,7 @@
 # `webServer` treats its command exiting as the server dying and aborts with
 # "Process from config.webServer exited early" before running a single test — so
 # the obvious one-liner never works locally. We start the server ourselves, wait
-# for it to answer, and let Playwright reuse it (`reuseExistingServer` is on
-# whenever CI is unset).
+# for it to answer, and explicitly tell Playwright to reuse it.
 
 set -euo pipefail
 
@@ -55,4 +54,4 @@ else
   done
 fi
 
-pnpm --filter site test
+PLAYWRIGHT_REUSE_EXISTING_SERVER=1 pnpm --filter site test
