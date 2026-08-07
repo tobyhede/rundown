@@ -56,6 +56,14 @@ The sound test does two things the manual one doesn't:
    lockfile in many unrelated ways, so comparing against the committed state
    reports ordinary drift as this pin's regression.
 
+The comparison counts vulnerable **instances**, not just advisories. A scoped
+pin can introduce a second vulnerable copy of a package the control already
+flags — same advisory, same package name, one more copy — which a presence-only
+comparison reads as no change, and so reports as `INERT`. That is the one
+direction of error that talks a human into deleting a live control, so an
+increased instance count is a regression. A finding that merely moves to a
+different still-vulnerable version leaves the count unchanged and stays drift.
+
 The script reports `LOAD-BEARING`, `INERT`, `PROTECTED`, or `ERROR` per pin, and
 runs each in a throwaway directory, so it never touches your working tree.
 

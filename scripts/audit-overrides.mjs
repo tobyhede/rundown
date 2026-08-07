@@ -79,35 +79,59 @@ export const VERDICT_ORDER = { 'LOAD-BEARING': 0, PROTECTED: 1, ERROR: 2, INERT:
  * Parse the command line.
  *
  * @param argv - arguments after the script name
- * @returns the parsed options and the explicitly selected override keys
+ * @returns the parsed options and the explicitly selected override keys, plus an
+ *   `error` string when an option value is unusable
  */
 export function parseArgs(argv) {
   const concurrencyFlag = argv.indexOf('--concurrency');
-  const concurrency =
-    concurrencyFlag === -1 ? DEFAULT_CONCURRENCY : Number(argv[concurrencyFlag + 1]);
   const keys = argv.filter(
     (arg, i) => !arg.startsWith('--') && !(concurrencyFlag !== -1 && i === concurrencyFlag + 1),
   );
-  return { printOnly: argv.includes('--print'), concurrency, keys };
+  const parsed = { printOnly: argv.includes('--print'), concurrency: DEFAULT_CONCURRENCY, keys };
+  if (concurrencyFlag === -1) return parsed;
+
+  // Validate before the audit runs, not after. An unusable limit (missing value,
+  // NaN, 0, negative, fractional, Infinity) either starts no workers at all —
+  // leaving a sparse result array that only crashes during report formatting,
+  // AFTER the expensive control resolution has already been paid for — or fails
+  // inside Array.from. Both are a usage error reported far from its cause.
+  const raw = argv[concurrencyFlag + 1];
+  const concurrency = Number(raw);
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    const got = raw === undefined ? 'no value' : `"${raw}"`;
+    return { ...parsed, error: `--concurrency needs a positive integer, got ${got}` };
+  }
+  return { ...parsed, concurrency };
 }
 
 /**
- * Collapse an osv-scanner `--format=json` document to a comparable finding set.
+ * Collapse an osv-scanner `--format=json` document to a comparable finding map.
  *
  * Keyed on package NAME rather than name@version: the question the audit asks is
  * "which package is vulnerable to what", and the removed pin's version differs
- * between the control and test runs by construction — including the version
- * would make every pin look load-bearing.
+ * between the control and test runs by construction — keying on the version
+ * would make ordinary resolution drift (8.4.31 -> 8.4.30, both vulnerable to the
+ * same advisory) look like a regression, and every pin load-bearing.
+ *
+ * The versions are still carried, as the key's value, because collapsing to a
+ * bare name loses MULTIPLICITY — and a lost instance is a false `INERT`, the one
+ * direction of error that can talk a human into deleting a live security
+ * control. A scoped pin whose removal introduces a second vulnerable copy of an
+ * already-vulnerable package elsewhere in the tree produces an identical set of
+ * names, so `classify` compares instance counts, not just presence.
  *
  * @param scanJson - parsed osv-scanner JSON output
- * @returns a Set of `name:VULN-ID`
+ * @returns a Map of `name:VULN-ID` to the set of vulnerable versions carrying it
  */
 export function parseFindings(scanJson) {
-  const findings = new Set();
+  const findings = new Map();
   for (const result of scanJson.results ?? []) {
     for (const pkg of result.packages ?? []) {
       for (const vuln of pkg.vulnerabilities ?? []) {
-        findings.add(`${pkg.package.name}:${vuln.id}`);
+        const key = `${pkg.package.name}:${vuln.id}`;
+        const versions = findings.get(key) ?? new Set();
+        versions.add(pkg.package.version ?? 'unknown');
+        findings.set(key, versions);
       }
     }
   }
@@ -115,20 +139,50 @@ export function parseFindings(scanJson) {
 }
 
 /**
+ * Total vulnerable instances across a finding map — advisories counted once per
+ * distinct version, which is what a lockfile entry corresponds to.
+ *
+ * @param findings - a map from `parseFindings`
+ * @returns the number of vulnerable package instances
+ */
+export function countInstances(findings) {
+  let total = 0;
+  for (const versions of findings.values()) total += versions.size;
+  return total;
+}
+
+/**
  * Decide a verdict by comparing a pin-removed run against the control run.
  *
- * Only findings ABSENT from the control count. A fresh resolve legitimately
- * differs from the committed lockfile in many unrelated ways, so comparing
- * against zero would report unrelated drift as this pin's regression.
+ * A finding counts as this pin's regression when it is either ABSENT from the
+ * control, or present in the control at FEWER instances. A fresh resolve
+ * legitimately differs from the committed lockfile in many unrelated ways, so
+ * comparing against zero would report unrelated drift as this pin's regression;
+ * comparing only presence would miss a pin that adds a vulnerable copy of a
+ * package the control was already flagging.
+ *
+ * Counts, not identities, are compared. A control instance that merely moves to
+ * a different (still vulnerable) version is drift, and the count is unchanged.
  *
  * @param control - findings with every pin in place
  * @param test - findings with this pin removed
  * @returns the verdict and its supporting detail
  */
 export function classify(control, test) {
-  const regressions = [...test].filter((finding) => !control.has(finding)).sort();
+  const regressions = [];
+  for (const [finding, versions] of test) {
+    const controlVersions = control.get(finding);
+    const at = [...versions].sort().join(', ');
+    if (!controlVersions) {
+      regressions.push(`${finding} @ ${at}`);
+    } else if (versions.size > controlVersions.size) {
+      regressions.push(
+        `${finding} @ ${at} (${controlVersions.size} -> ${versions.size} vulnerable instances)`,
+      );
+    }
+  }
   return regressions.length
-    ? { verdict: 'LOAD-BEARING', detail: regressions.join(', ') }
+    ? { verdict: 'LOAD-BEARING', detail: regressions.sort().join(', ') }
     : { verdict: 'INERT', detail: 'resolution reaches a safe version without this pin' };
 }
 
@@ -325,8 +379,13 @@ async function resolveAndScan(workspaceYaml, manifests) {
  * @param limit - maximum concurrent tasks
  * @param worker - async function applied to each item
  * @returns the results, in input order
+ * @throws {RangeError} when the limit is not a positive integer — a limit of 0
+ *   or NaN starts no runners and returns a silently sparse result array
  */
 export async function mapWithConcurrency(items, limit, worker) {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError(`mapWithConcurrency needs a positive integer limit, got ${limit}`);
+  }
   const results = new Array(items.length);
   let next = 0;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -345,7 +404,16 @@ export async function mapWithConcurrency(items, limit, worker) {
  * @returns process exit code
  */
 async function main() {
-  const { printOnly, concurrency, keys: selected } = parseArgs(process.argv.slice(2));
+  const {
+    printOnly,
+    concurrency,
+    keys: selected,
+    error: usageError,
+  } = parseArgs(process.argv.slice(2));
+  if (usageError) {
+    process.stderr.write(`${usageError}\n`);
+    return 1;
+  }
 
   const policy = JSON.parse(await readRepoFile('override-policy.json')).overrides;
   const workspaceYaml = await readRepoFile('pnpm-workspace.yaml');
@@ -389,7 +457,8 @@ async function main() {
     return 1;
   }
   process.stdout.write(
-    `Control: ${control.findings.size} finding(s) with every pin in place.\n` +
+    `Control: ${control.findings.size} finding(s) across ` +
+      `${countInstances(control.findings)} vulnerable instance(s) with every pin in place.\n` +
       `Auditing ${testable.length} pin(s), ${concurrency} at a time...\n\n`,
   );
 
