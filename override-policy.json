@@ -10,28 +10,52 @@
       "reviewBy": "2026-12-01"
     },
     "gray-matter>js-yaml": {
-      "override": "^4.2.0",
+      "override": "^4.3.1",
       "category": "A",
-      "ghsa": ["GHSA-h67p-54hq-rp68"],
-      "reason": "js-yaml merge-key quadratic DoS, no patched 3.x. gray-matter declares ^3.x; paired with patchedDependencies gray-matter@4.0.3 (safeLoad/safeDump -> load/dump).",
+      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj"],
+      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0). gray-matter declares ^3.x; paired with patchedDependencies gray-matter@4.0.3 (safeLoad/safeDump -> load/dump). The patched 3.x (3.15.1) is not a viable target: load() is the safe schema only on 4.x, so a 3.x resolution would make the patched call the full/unsafe loader.",
       "added": "2026-06-16",
-      "reviewBy": "2026-12-01"
+      "reviewBy": "2026-11-01"
     },
     "read-yaml-file>js-yaml": {
-      "override": "^4.2.0",
+      "override": "^4.3.1",
       "category": "A",
-      "ghsa": ["GHSA-h67p-54hq-rp68"],
-      "reason": "js-yaml merge-key quadratic DoS, no patched 3.x. read-yaml-file declares ^3.x; paired with patchedDependencies read-yaml-file@1.1.0 (safeLoad/safeDump -> load/dump).",
+      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj"],
+      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0). read-yaml-file declares ^3.x; paired with patchedDependencies read-yaml-file@1.1.0 (safeLoad/safeDump -> load/dump). The patched 3.x (3.15.1) is not a viable target: load() is the safe schema only on 4.x, so a 3.x resolution would make the patched call the full/unsafe loader.",
       "added": "2026-06-16",
-      "reviewBy": "2026-12-01"
+      "reviewBy": "2026-11-01"
     },
     "@istanbuljs/load-nyc-config>js-yaml": {
-      "override": "^4.2.0",
+      "override": "^4.3.1",
       "category": "A",
-      "ghsa": ["GHSA-h67p-54hq-rp68"],
-      "reason": "js-yaml merge-key quadratic DoS, no patched 3.x. @istanbuljs/load-nyc-config declares ^3.x but already uses load(), so it needs only the override (no patch).",
+      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj"],
+      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0). @istanbuljs/load-nyc-config declares ^3.x but already uses load(), so it needs only the override (no patch) — and still needs 4.x, where load() is the safe schema.",
       "added": "2026-06-16",
-      "reviewBy": "2026-12-01"
+      "reviewBy": "2026-11-01"
+    },
+    "astro>js-yaml": {
+      "override": "^4.3.1",
+      "category": "B",
+      "ghsa": ["GHSA-5p4m-2wfm-xmqj"],
+      "reason": "js-yaml !!omap quadratic CPU DoS (vulnerable 4.x < 4.3.1). astro declares ^4.1.1, so the fix is in-range, but pnpm left the deep transitive on 4.3.0 until pinned. Scoped per parent, not a blanket `js-yaml@4` selector: that selector does not intersect the ^3.x parents in Category A and silently drops them to 3.15.1, un-patching them. Dev/build tooling (site). Drop when astro ships a release resolving js-yaml >= 4.3.1.",
+      "added": "2026-08-07",
+      "reviewBy": "2026-11-01"
+    },
+    "@astrojs/internal-helpers>js-yaml": {
+      "override": "^4.3.1",
+      "category": "B",
+      "ghsa": ["GHSA-5p4m-2wfm-xmqj"],
+      "reason": "js-yaml !!omap quadratic CPU DoS (vulnerable 4.x < 4.3.1). @astrojs/internal-helpers declares ^4.1.1, so the fix is in-range, but pnpm left the deep transitive on 4.3.0 until pinned. Scoped per parent for the same reason as astro>js-yaml. Dev/build tooling (site). Drop when the package ships a release resolving js-yaml >= 4.3.1.",
+      "added": "2026-08-07",
+      "reviewBy": "2026-11-01"
+    },
+    "@changesets/parse>js-yaml": {
+      "override": "^4.3.1",
+      "category": "B",
+      "ghsa": ["GHSA-5p4m-2wfm-xmqj"],
+      "reason": "js-yaml !!omap quadratic CPU DoS (vulnerable 4.x < 4.3.1). @changesets/parse declares ^4.1.1, so the fix is in-range, but pnpm left the deep transitive on 4.3.0 until pinned. Scoped per parent for the same reason as astro>js-yaml. Dev tooling (release automation). Drop when @changesets/parse ships a release resolving js-yaml >= 4.3.1.",
+      "added": "2026-08-07",
+      "reviewBy": "2026-11-01"
     },
     "qs": {
       "override": "^6.15.2",
@@ -42,12 +66,17 @@
       "reviewBy": "2026-10-01"
     },
     "hono": {
-      "override": "^4.12.27",
+      "override": "^4.12.34",
       "category": "B",
-      "ghsa": ["GHSA-w62v-xxxg-mg59", "GHSA-hvrm-45r6-mjfj", "GHSA-xgm2-5f3f-mvvc"],
-      "reason": "hono XSS/JSX context/gateway-drop. Reaches production via packages/mcp -> @modelcontextprotocol/sdk (declares ^4.11.4, so in-range) but pnpm will not bump the transitive without the pin. Drop when the SDK ships a release resolving hono >= 4.12.27.",
+      "ghsa": [
+        "GHSA-w62v-xxxg-mg59",
+        "GHSA-hvrm-45r6-mjfj",
+        "GHSA-xgm2-5f3f-mvvc",
+        "GHSA-8j4g-w8fx-2239"
+      ],
+      "reason": "hono XSS/JSX context/gateway-drop (fixed 4.12.27) plus a ReDoS in the built-in hono/cors middleware, which parses the attacker-controlled Access-Control-Request-Headers preflight header with a quadratic regex under the default configuration (GHSA-8j4g-w8fx-2239, fixed 4.12.34). Raised from ^4.12.27 on 2026-08-07: the old floor still admitted the vulnerable 4.12.31. Reaches production via packages/mcp -> @modelcontextprotocol/sdk (declares ^4.11.4, so in-range) but pnpm will not bump the transitive without the pin. Drop when the SDK ships a release resolving hono >= 4.12.34.",
       "added": "2026-07-23",
-      "reviewBy": "2026-10-01"
+      "reviewBy": "2026-11-01"
     },
     "express>body-parser": {
       "override": "^2.3.0",
@@ -58,20 +87,12 @@
       "reviewBy": "2026-10-01"
     },
     "postcss": {
-      "override": "^8.5.18",
+      "override": "^8.5.23",
       "category": "B",
-      "ghsa": ["GHSA-r28c-9q8g-f849"],
-      "reason": "postcss sourceMappingURL path-traversal / arbitrary .map file disclosure (vulnerable < 8.5.18). Transitive under vite (site) via @astrojs/react / @vitejs/plugin-react; vite declares postcss ^8, so the fix is in-range but pnpm will not bump the deep transitive without the pin. Dev/build tooling (site).",
+      "ghsa": ["GHSA-6g55-p6wh-862q", "GHSA-r28c-9q8g-f849", "GHSA-fxqj-rqcc-2cmp"],
+      "reason": "Three advisories in the same postcss sourceMappingURL family, all carried by this pin. GHSA-6g55-p6wh-862q (CVE-2026-45623, fixed 8.5.12): arbitrary .map file read via an attacker-controlled sourceMappingURL comment. GHSA-r28c-9q8g-f849 (fixed 8.5.18): path traversal in the same previous-source-map auto-loading. GHSA-fxqj-rqcc-2cmp (fixed 8.5.23) is the incomplete-fix follow-up to 6g55 specifically, NOT to r28c: 6g55's guard put the traversal/absolute-path rejection inside `if (cssFile)`, so it was skipped whenever PostCSS runs without the `from` option, leaving only the .map extension check. Raised from ^8.5.18 on 2026-08-07: the old floor still admitted the vulnerable 8.5.21. Transitive under vite (site) via @astrojs/react / @vitejs/plugin-react; vite declares postcss ^8, so the fix is in-range but pnpm will not bump the deep transitive without the pin. Dev/build tooling (site).",
       "added": "2026-07-25",
-      "reviewBy": "2026-10-01"
-    },
-    "brace-expansion": {
-      "override": "^5.0.8",
-      "category": "A",
-      "ghsa": ["GHSA-mh99-v99m-4gvg", "GHSA-3jxr-9vmj-r5cp"],
-      "reason": "brace-expansion unbounded-expansion OOM DoS (GHSA-mh99-v99m-4gvg) affects ALL versions < 5.0.8; the only fix is on the 5.x line. Supersedes the earlier 5.x-scoped pin (GHSA-3jxr-9vmj-r5cp) — the new advisory's affected range now also covers the 1.x (minimatch@3) and 2.x (minimatch@9/10) copies, so the blanket force past those ^1/^2 parents is required. API-safe: v5 keeps the same default expand() export minimatch consumes. Dev tooling (minimatch via eslint/jest/stryker).",
-      "added": "2026-07-25",
-      "reviewBy": "2026-10-01"
+      "reviewBy": "2026-11-01"
     },
     "npm-run-all2>shell-quote": {
       "override": "^1.9.0",
@@ -82,12 +103,20 @@
       "reviewBy": "2026-10-01"
     },
     "fast-uri": {
-      "override": "^3.1.4",
+      "override": "^3.1.5",
       "category": "B",
-      "ghsa": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx"],
-      "reason": "fast-uri host confusion via IDN/backslash. 3.1.4 fixes both on the 3.x line; ajv declares ^3.0.1, so in-range, but pnpm will not bump the transitive without the pin. Dev tooling (ajv via @astrojs/check, stryker).",
+      "ghsa": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx", "GHSA-7p8r-x3mc-p8w7"],
+      "reason": "fast-uri host confusion via IDN/backslash. 3.1.4 fixed the first two on the 3.x line; GHSA-7p8r-x3mc-p8w7 (fixed 3.1.5) covers the remaining backslash authority introducer — fast-uri requires a literal `//` to recognise an authority, while Node's WHATWG URL treats `\\` as interchangeable with `/` for special schemes, so the two parsers extract different hosts from the same input. Raised from ^3.1.4 on 2026-08-07: the old floor still admitted the vulnerable 3.1.4. ajv declares ^3.0.1, so in-range, but pnpm will not bump the transitive without the pin. Dev tooling (ajv via @astrojs/check, stryker).",
       "added": "2026-07-23",
-      "reviewBy": "2026-10-01"
+      "reviewBy": "2026-11-01"
+    },
+    "ip-address": {
+      "override": "^10.3.1",
+      "category": "B",
+      "ghsa": ["GHSA-22jq-vg5j-6vgg", "GHSA-4xrf-jv44-h6hh", "GHSA-mwp4-54f8-5fhr"],
+      "reason": "Three ip-address SSRF / trust-boundary bypasses, all in the special-use classification helpers: Address6 misclassifies IPv4-mapped (::ffff:0:0/96) and NAT64 (64:ff9b::/96) literals by their wrapper rather than the embedded IPv4 (GHSA-22jq-vg5j-6vgg, fixed 10.2.1); a CIDR suffix on the parsed input suppresses every isInSubnet-derived check (GHSA-4xrf-jv44-h6hh, fixed 10.2.2); and Address4 decodes a leading-zero octet as decimal where the WHATWG URL parser, inet_aton, and getaddrinfo decode it as octal (GHSA-mwp4-54f8-5fhr, fixed 10.3.1). Reaches production via packages/mcp -> @modelcontextprotocol/sdk -> express-rate-limit@8.5.2, which declares ^10.2.0, so all three fixes are in-range but resolution stayed on 10.2.0 without the pin. Drop when express-rate-limit ships a release resolving ip-address >= 10.3.1.",
+      "added": "2026-08-07",
+      "reviewBy": "2026-11-01"
     }
   }
 }
