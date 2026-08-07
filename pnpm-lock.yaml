@@ -5,20 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  yaml-language-server>yaml: ^2.8.3
   gray-matter>js-yaml: ^4.3.1
   read-yaml-file>js-yaml: ^4.3.1
   '@istanbuljs/load-nyc-config>js-yaml': ^4.3.1
   qs: ^6.15.2
-  hono: ^4.12.34
-  express>body-parser: ^2.3.0
-  postcss: ^8.5.23
-  npm-run-all2>shell-quote: ^1.9.0
-  fast-uri: ^3.1.5
-  ip-address: ^10.3.1
-  astro>js-yaml: ^4.3.1
-  '@astrojs/internal-helpers>js-yaml': ^4.3.1
-  '@changesets/parse>js-yaml': ^4.3.1
 
 patchedDependencies:
   gray-matter@4.0.3: 6adc716d73c5039bed71e7272aac81234a315b11237bda0800f5ed93e93372e4
@@ -1443,7 +1433,7 @@ packages:
     resolution: {integrity: sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4.12.34
+      hono: ^4
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -5447,6 +5437,11 @@ packages:
 
   yaml-language-server@1.23.0:
     resolution: {integrity: sha512-3qVyCOexLCWw06PQa5kRPwvMWMZ/eZeCRWUvgD6a0OkqL/4iCnxy2WumbWifa937Uo5xhyWJ0uxlU39ljhNh7A==}
+    hasBin: true
+
+  yaml@2.8.3:
+    resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
+    engines: {node: '>= 14.6'}
     hasBin: true
 
   yaml@2.9.0:
@@ -10909,7 +10904,9 @@ snapshots:
       vscode-languageserver-textdocument: 1.0.12
       vscode-languageserver-types: 3.18.0
       vscode-uri: 3.1.0
-      yaml: 2.9.0
+      yaml: 2.8.3
+
+  yaml@2.8.3: {}
 
   yaml@2.9.0: {}
 

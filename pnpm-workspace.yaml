@@ -28,96 +28,61 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 
-# Security overrides for transitive deps. Every entry is proven-necessary: removing
-# it either lets resolution pick a vulnerable version (OSV regression) or is
-# impossible because the parent forbids the fix. Redundant/stale pins were audited
-# out (2026-07-23) — a bare "the parent allows a fix" is NOT grounds for a pin; pnpm
-# cannot bump a deep transitive via `pnpm update`, so a scoped/blanket override is
-# its only lever, and each must be removed once the parent ships a release that
-# carries the fix (test: delete it, install, `osv-scanner` shows no regression).
-# override-policy.json carries the CVE/reason/review-date per entry and is enforced
-# by scripts/__tests__/pnpm-workspace-config.test.mjs. See
-# docs/internal/dependency-overrides.md. pnpm 11 reads overrides ONLY from this file.
-# A pin whose floor sits BELOW a later advisory's fixed version is a silent no-op:
-# the locked copy still satisfies the old floor, so pnpm never moves it and the
-# scanner keeps failing. Raise the existing floor rather than adding a second key
-# with the same selector (the 2026-08-07 sweep raised seven entries across five
-# packages: brace-expansion, fast-uri, hono, postcss, and js-yaml's three pins).
-# A raise is also the moment to re-test the pin: a maintainer may have backported
-# the fix to the parent's own major since it was added, which retires the pin
-# outright. The same sweep dropped brace-expansion for exactly that reason.
+# Security overrides for transitive deps. pnpm 11 reads overrides ONLY from this
+# file. Every entry needs a dated, CVE-annotated justification in
+# override-policy.json; scripts/__tests__/pnpm-workspace-config.test.mjs enforces
+# the 1:1 mapping. See docs/internal/dependency-overrides.md.
+#
+# An override exists to reach a fix the parent's declared range will not reach on
+# its own. "The parent merely allows a newer version" is NOT grounds for a pin —
+# that is lockfile staleness, and the fix is to refresh the lockfile.
+#
+# Test a pin for removal with `pnpm run audit:overrides`, never by hand. Deleting
+# a pin and running `pnpm install` proves nothing: pnpm does not downgrade an
+# already-satisfying locked version, so a Category B pin always scans clean
+# against an existing lockfile whether or not it is doing anything. The audit
+# resolves from scratch with no lockfile and diffs against a control run.
 #
 # Category A — parent forbids the fixed version (out-of-range force):
-#   js-yaml: merge-key quadratic DoS (GHSA-h67p-54hq-rp68, fixed 4.2.0) and !!omap
-#     quadratic DoS (GHSA-5p4m-2wfm-xmqj, fixed 4.3.1). Parents (gray-matter,
-#     read-yaml-file, @istanbuljs/load-nyc-config) all pin ^3.x. Both advisories do
-#     have a patched 3.x (3.15.1), but it is NOT a viable target: gray-matter and
-#     read-yaml-file are pnpm-patched to swap the removed safeLoad/safeDump for
-#     load/dump (patchedDependencies below), and `load` is the SAFE schema only on
-#     4.x — on 3.x it is the full/unsafe loader, so a 3.x resolution would trade a
-#     DoS for arbitrary type construction. Keep these keyed per parent: a
-#     version-scoped `js-yaml@4` selector does not intersect a ^3.x declaration, so
-#     it silently drops all three back to 3.15.1 and un-patches them.
-#   yaml: parser DoS (GHSA-48c2-rrv3-qjmp, patched 2.8.3) via yaml-language-server,
-#     which hard-pins yaml 2.7.1.
-#   (brace-expansion was pinned here and was REMOVED on 2026-08-07 — see below.)
-# Category B — fix is in-range but pnpm resolves a vulnerable version without the pin:
-#   qs (GHSA-q8mj-m7cp-5q26 → 6.15.2), hono (GHSA-w62v/hvrm/xgm2 → 4.12.27, raised
-#   to 4.12.34 for GHSA-8j4g-w8fx-2239, a ReDoS in the default-on hono/cors preflight
-#   parse of Access-Control-Request-Headers), body-parser (GHSA-v422-hmwv-36x6 →
-#   2.3.0), postcss (a three-advisory sourceMappingURL chain: GHSA-6g55-p6wh-862q →
-#   8.5.12, GHSA-r28c-9q8g-f849 → 8.5.18, and GHSA-fxqj-rqcc-2cmp → 8.5.23, which is
-#   the incomplete-fix follow-up to 6g55 specifically — 6g55's guard was nested under
-#   `if (cssFile)` and so skipped whenever `from` is unset; transitive under vite in
-#   site), npm-run-all2>shell-quote (GHSA-395f-4hp3-45gv → 1.9.0; scoped so
-#   cli/core keep their declared shell-quote ^1.10.0), fast-uri (GHSA-4c8g /
-#   GHSA-v2hh → 3.1.4, raised to 3.1.5 for GHSA-7p8r-x3mc-p8w7, host confusion via a
-#   backslash authority introducer that Node's WHATWG URL parses differently).
-#   ip-address (GHSA-22jq-vg5j-6vgg / GHSA-4xrf-jv44-h6hh / GHSA-mwp4-54f8-5fhr →
-#     10.3.1): three SSRF / trust-boundary bypasses — IPv4-mapped and NAT64 literals
-#     misclassified, a CIDR suffix suppressing special-use classification, and
-#     leading-zero octets decoded as decimal where resolvers read octal. Reaches
-#     production via packages/mcp → @modelcontextprotocol/sdk → express-rate-limit,
-#     which declares ^10.2.0, so the fix is in-range but resolution stayed on 10.2.0.
-#   astro / @astrojs/internal-helpers / @changesets/parse > js-yaml
-#     (GHSA-5p4m-2wfm-xmqj → 4.3.1): the !!omap quadratic DoS above, reached through
-#     three parents the Category A pins do not cover. They declare ^4.1.1, so the fix
-#     is in-range and these need no patch — only a scoped bump, kept per parent for
-#     the same reason the Category A trio is.
-# Removed 2026-08-07 — brace-expansion (was a blanket ^5.0.8/^5.0.9 Category A pin).
-#   Its premise ("the only fixed release is on the 5.x line") was true when added but
-#   is no longer: upstream backported every advisory to the older majors, and OSV was
-#   updated to match (GHSA-mh99-v99m-4gvg, re-modified 2026-07-31 — after the pin —
-#   now lists 1.1.17/2.1.3/3.0.3/5.0.8; GHSA-rgw5-rvv9-x895 lists 1.1.18/2.1.4/
-#   3.0.6/5.0.9). Every parent already accepts its own patched line (minimatch@3
-#   declares ^1.1.7, minimatch@9 ^2.0.2, minimatch@10 ^5.0.5), so no parent forbids
-#   anything and the removal test passes: delete, install, `osv-scanner` reports no
-#   issues with minimatch@3 on 1.1.18, minimatch@9 on 2.1.4, minimatch@10 on 5.0.9.
-#   Beyond being redundant the pin was harmful — forcing v1/v2 subtrees cross-major
-#   to v5 imposes v5's `engines: node 20 || >=22` (v1/v2 declare none) and its
-#   maxLength bound on minimatch@3 consumers, so a large legitimate brace expansion
-#   in an eslint/jest/stryker glob could throw or truncate where no advisory required
-#   it. If brace-expansion is ever re-flagged, check for a backport to the affected
-#   major FIRST — a scoped `parent>brace-expansion` pin beats a blanket cross-major.
+#   js-yaml (GHSA-h67p-54hq-rp68 → 4.2.0, GHSA-5p4m-2wfm-xmqj → 4.3.1). Parents
+#     gray-matter, read-yaml-file and @istanbuljs/load-nyc-config all declare
+#     ^3.x. A patched 3.x exists (3.15.1) and is NOT a viable target: gray-matter
+#     and read-yaml-file are pnpm-patched to swap the removed safeLoad/safeDump
+#     for load/dump, and `load` is the SAFE schema only on 4.x — on 3.x it is the
+#     full/unsafe loader, so a 3.x resolution would trade a DoS for arbitrary
+#     type construction while OSV reports clean. All three carry
+#     `scannerInvisible` in override-policy.json for that reason, and the audit
+#     refuses to test them for removal. Keep them keyed per parent: a
+#     version-scoped `js-yaml@4` selector does not intersect a ^3.x declaration,
+#     so it silently drops all three back to 3.15.1 and un-patches them.
+# Category B — fix is in-range but resolution picks a vulnerable version:
+#   qs (GHSA-q8mj-m7cp-5q26 → 6.15.2). The only pin still load-bearing under a
+#     from-scratch resolve, re-proven by the audit on 2026-08-07.
+#
+# Pruned 2026-08-07, after the lockfile refresh that made them inert — each
+# verified individually with `pnpm run audit:overrides`, which resolves without
+# the pin and finds no regression: yaml-language-server>yaml, hono,
+# express>body-parser, postcss, npm-run-all2>shell-quote, fast-uri, ip-address,
+# and the astro / @astrojs/internal-helpers / @changesets/parse js-yaml trio.
+# Every one was genuinely load-bearing when added. Upstream caught up, and it was
+# the stale lockfile — not the parents' ranges — holding the tree back.
+#
+# brace-expansion (removed 2026-08-07) is the cautionary tale. Its premise, "the
+# only fixed release is on the 5.x line", was true when written and later false:
+# upstream backported to 1.x/2.x and OSV was edited in place. The pin then forced
+# two subtrees cross-major into v5's `engines: node 20 || >=22` for no benefit.
+# When an advisory is re-flagged, re-read its fixed-version list BEFORE raising a
+# floor — a backport retires the pin instead of raising it.
+#
 # js-yaml 5.2.1 flow-collection DoS (GHSA-pm4m-ph32-ghv5) is fixed at the root by
 # bumping the direct dep to ^5.2.2 in cli/core/plugin — no override needed.
 overrides:
-  # Category A
-  "yaml-language-server>yaml": "^2.8.3"
+  # Category A — scannerInvisible; read override-policy.json before touching.
   "gray-matter>js-yaml": "^4.3.1"
   "read-yaml-file>js-yaml": "^4.3.1"
   "@istanbuljs/load-nyc-config>js-yaml": "^4.3.1"
   # Category B
   qs: "^6.15.2"
-  hono: "^4.12.34"
-  "express>body-parser": "^2.3.0"
-  postcss: "^8.5.23"
-  "npm-run-all2>shell-quote": "^1.9.0"
-  fast-uri: "^3.1.5"
-  "ip-address": "^10.3.1"
-  "astro>js-yaml": "^4.3.1"
-  "@astrojs/internal-helpers>js-yaml": "^4.3.1"
-  "@changesets/parse>js-yaml": "^4.3.1"
 
 patchedDependencies:
   gray-matter@4.0.3: patches/gray-matter@4.0.3.patch

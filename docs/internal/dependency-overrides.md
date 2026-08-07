@@ -81,21 +81,22 @@ Every entry in `pnpm-workspace.yaml`'s `overrides:` is one of:
 
 - **Category A — the parent forbids the fixed version** (out-of-range force).
   The declaring package pins a range that excludes the patched version, so the
-  override overrules it. Example: `yaml-language-server` hard-pins `yaml 2.7.1`;
-  the override forces `^2.8.3`. The `gray-matter` / `read-yaml-file` /
-  `@istanbuljs/load-nyc-config` `js-yaml ^4.3.1` pins are Category A. Two of the
-  three additionally need `patchedDependencies` — `gray-matter` and
-  `read-yaml-file` call the removed 3.x `safeLoad`/`safeDump`, so the patch
-  rewrites those calls to `load`/`dump`. `@istanbuljs/load-nyc-config` already
-  calls `load()` and needs only the override. All three are marked
-  `scannerInvisible`: on 3.x that `load()` is the full/unsafe loader, which OSV
-  does not flag.
+  override overrules it. The three surviving pins are all Category A: the
+  `gray-matter` / `read-yaml-file` / `@istanbuljs/load-nyc-config`
+  `js-yaml ^4.3.1` keys, whose parents all declare `^3.x`. Two of the three
+  additionally need `patchedDependencies` — `gray-matter` and `read-yaml-file`
+  call the removed 3.x `safeLoad`/`safeDump`, so the patch rewrites those calls
+  to `load`/`dump`. `@istanbuljs/load-nyc-config` already calls `load()` and
+  needs only the override. All three are marked `scannerInvisible`: on 3.x that
+  `load()` is the full/unsafe loader, which OSV does not flag.
 - **Category B — the fix is in-range but pnpm resolves a vulnerable version
   without the pin.** The parent's range already allows the fix, but resolution
   picks an older in-range copy and `pnpm update` won't budge a deep transitive.
-  The override nudges it to the patched version. Example: `hono ^4.12.34` (the
-  MCP SDK declares `^4.11.4`). Remove a Category B pin once the parent ships a
-  release that resolves the fixed version on its own.
+  The override nudges it to the patched version. `qs ^6.15.2` is the only one
+  left: some parent's range tops out at the vulnerable 6.15.1, so even a
+  from-scratch resolve lands there without the pin. Remove a Category B pin once
+  the parent ships a release that resolves the fixed version on its own — proven
+  with the audit, not by hand.
 
 ## Raise the floor; don't duplicate a selector
 
@@ -111,15 +112,18 @@ Raise the **existing** key rather than adding a second key with the **same
 selector** — pnpm takes one pin per selector, so a duplicate is either ignored
 or shadows the other. This is not a rule against several keys for one package:
 different selector forms (`parent>child`, `pkg@selector`, bare `pkg`) are
-distinct keys with defined specificity, and `js-yaml` deliberately carries six
-`parent>child` keys (see the next section). Adding a key for a **new parent** is
-correct and required; adding a second key with a selector you already have is
-the mistake.
+distinct keys with defined specificity, and `js-yaml` deliberately carries one
+`parent>child` key per affected parent (see the next section). Adding a key for
+a **new parent** is correct and required; adding a second key with a selector
+you already have is the mistake.
 
 The 2026-08-07 sweep is the worked example: seven entries across five packages —
 `fast-uri`, `hono`, `postcss`, and the three Category A `js-yaml` pins — had
 floors that had fallen below a newly-published fixed version, and three new
-`parent>js-yaml` keys were added for parents no existing key covered.
+`parent>js-yaml` keys were added for parents no existing key covered. (A later
+lockfile refresh the same day made most of those pins inert, and they were
+pruned — but the raise was the correct move at the time, and the failure mode it
+fixes is permanent.)
 
 **A raise is also a re-test.** Before raising, re-check whether the pin is still
 needed at all: upstream may have backported the fix to the major the parent
@@ -133,16 +137,17 @@ selector** that still applies tree-wide. They are not interchangeable, and the
 distinction is load-bearing for `js-yaml`.
 
 Six parents pull `js-yaml` here. Three (`gray-matter`, `read-yaml-file`,
-`@istanbuljs/load-nyc-config`) declare `^3.x` and are forced up (Category A);
-three (`astro`, `@astrojs/internal-helpers`, `@changesets/parse`) declare
-`^4.1.1` and are merely nudged (Category B). A single blanket
-`"js-yaml@4": "^4.3.1"` looks like a tidy shortcut and is a trap: the `@4`
-selector does not intersect a `^3.x` declaration, so the Category A trio falls
-back to `3.15.1`. That silently un-patches them — `patches/gray-matter@4.0.3`
-and `patches/read-yaml-file@1.1.0` rewrite `safeLoad`/`safeDump` to
-`load`/`dump`, which is the **safe** schema only on 4.x; on 3.x `load` is the
-full/unsafe loader. It also leaves a bogus `js-yaml@4` entry in the lockfile.
-Always key these per parent.
+`@istanbuljs/load-nyc-config`) declare `^3.x` and are forced up — these are the
+Category A pins that remain. The other three (`astro`,
+`@astrojs/internal-helpers`, `@changesets/parse`) declare `^4.1.1`; they were
+briefly pinned on 2026-08-07 and pruned once a refreshed lockfile reached 4.3.1
+on its own. A single blanket `"js-yaml@4": "^4.3.1"` looks like a tidy shortcut
+and is a trap: the `@4` selector does not intersect a `^3.x` declaration, so the
+Category A trio falls back to `3.15.1`. That silently un-patches them —
+`patches/gray-matter@4.0.3` and `patches/read-yaml-file@1.1.0` rewrite
+`safeLoad`/`safeDump` to `load`/`dump`, which is the **safe** schema only on
+4.x; on 3.x `load` is the full/unsafe loader. It also leaves a bogus `js-yaml@4`
+entry in the lockfile. Always key these per parent.
 
 ## A backport can retire a pin — re-check the advisory, not just the pin
 
@@ -172,6 +177,31 @@ re-read the advisory's fixed-version list before touching the floor.** If a
 backport has landed, remove the pin (run the removal test) rather than raising
 it. If a pin is still needed but only for some parents, prefer a scoped
 `parent>child` key over a blanket cross-major force.
+
+## Refresh the lockfile before reaching for a pin
+
+The 2026-08-07 prune is the other half of the `brace-expansion` lesson. A
+from-scratch lockfile resolve, then `pnpm run audit:overrides`, found that **10
+of 14 pins were inert** — resolution reached a safe version without them. Only
+`qs` was still load-bearing, plus the three `scannerInvisible` `js-yaml` pins
+the audit does not test.
+
+Every one of the ten was genuinely load-bearing when it was added. What changed
+is that upstream caught up and the lockfile did not. The pins were quietly doing
+the lockfile's job, and each carried a review date, a justification to keep
+accurate, and a chance to go stale.
+
+The same shape bit the `@hono/node-server` acceptance. The MCP SDK widened its
+range to `^1.19.9 || ^2.0.5`, which made the fix reachable — but bumping the SDK
+alone changed nothing, because the locked 1.19.14 still satisfied the widened
+range. Only a from-scratch resolve moved it to 2.1.0 and retired the ignore.
+
+So: **when a transitive finding appears, check whether a lockfile refresh fixes
+it before adding a pin.** A pin that duplicates what a refresh would do is a
+maintenance liability with no security benefit. Note that
+`rm pnpm-lock.yaml && pnpm install` does _not_ refresh — pnpm reconstructs the
+same lockfile from `node_modules`, and `--force` does not change that. The
+resolve has to happen with no `node_modules` present.
 
 ## `override-policy.json` is the source of truth
 
