@@ -42,11 +42,10 @@ import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js'
  * holds for every possible interleaving.
  *
  * SENSITIVITY WITNESS. A correct-but-serialized implementation would pass every
- * domain assertion while proving nothing, so the contention races additionally
- * assert `expectOverlap`: at least two children's actual mutation intervals
- * overlap. The interval begins after the staging barrier, so barrier waiting is
- * excluded. Fast operations that can finish before another worker is scheduled
- * retain the deterministic staging assertion instead.
+ * domain assertion while proving nothing, so every contention race additionally
+ * asserts `expectEveryWorkerStagedBeforeAnyMutation`: every child was ready to
+ * mutate before any child started. Unlike interval overlap after release, this
+ * property is established by protocol rather than scheduler luck.
  */
 
 const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts', import.meta.url));
@@ -265,18 +264,6 @@ function expectEveryWorkerStagedBeforeAnyMutation(results: readonly ChildResult[
 }
 
 /**
- * Assert that at least two actual service-mutation intervals overlap.
- *
- * @param results - Child outcomes collected from a staged race.
- */
-function expectOverlap(results: readonly ChildResult[]): void {
-  const overlapping = results.some((a, i) =>
-    results.some((b, j) => i !== j && a.t0 < b.t1 && b.t0 < a.t1),
-  );
-  expect(overlapping).toBe(true);
-}
-
-/**
  * Resolve when the child exits cleanly; reject on a non-zero exit. Attach BEFORE
  * releasing the worker so a fast exit is not missed (`exit` does not replay).
  *
@@ -354,7 +341,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     const results = await race(runIds.map((runId) => ({ kind: 'issueRunControlClaim', runId })));
     values(results);
-    expectOverlap(results);
+    expectEveryWorkerStagedBeforeAnyMutation(results);
 
     const session = await manager.loadSession();
     const controlled = Object.values(session.claims).map((c) => c.controlledRunId);
@@ -384,7 +371,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
       })),
     );
     const statuses = values(results).map((v) => (v as { status: string }).status);
-    expectOverlap(results);
+    expectEveryWorkerStagedBeforeAnyMutation(results);
 
     expect([...statuses].sort()).toEqual([
       'already-claimed',
@@ -405,7 +392,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     const results = await race(runIds.map((runId) => ({ kind: 'pushRunbook', runId })));
     values(results);
-    expectOverlap(results);
+    expectEveryWorkerStagedBeforeAnyMutation(results);
 
     const session = await manager.loadSession();
     expect([...session.defaultStack].sort()).toEqual([...runIds].sort());
@@ -427,7 +414,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
       { kind: 'recordClaimSeen', claimId },
       ...pushRunIds.map((runId) => ({ kind: 'pushRunbook' as const, runId })),
     ]);
-    expectOverlap(results);
+    expectEveryWorkerStagedBeforeAnyMutation(results);
     // `recordClaimSeen` is the first op, so its result is the first value.
     const [seen] = values(results);
     expect((seen as { kind: string }).kind).toBe('recorded');
