@@ -89,14 +89,29 @@ const KNOWN_FLAGS = new Set(['--print', '--concurrency']);
  *
  * @param argv - arguments after the script name
  * @returns the parsed options and the explicitly selected override keys, plus an
- *   `error` string when an option value is unusable or a flag is unsupported
+ *   `error` string when an option value is unusable, repeated, or a flag is unsupported
  */
 export function parseArgs(argv) {
-  const concurrencyFlag = argv.indexOf('--concurrency');
-  const keys = argv.filter(
-    (arg, i) => !arg.startsWith('--') && !(concurrencyFlag !== -1 && i === concurrencyFlag + 1),
-  );
+  // EVERY occurrence, not just the first: locating the flag with indexOf inspected one
+  // and let the rest through untouched, because `--concurrency` is a KNOWN flag and the
+  // unknown-flag guard below has no complaint about it. A repeat's value then fell
+  // outside the excluded value slot and into `keys`, and a TRAILING repeat left no value
+  // to exclude at all — so `--concurrency 2 --concurrency` parsed clean with an EMPTY
+  // selection, which means "audit every override" and starts the full multi-minute
+  // network run that the unknown-flag guard exists to prevent.
+  const concurrencyFlags = argv.flatMap((arg, i) => (arg === '--concurrency' ? [i] : []));
+  const concurrencyValues = new Set(concurrencyFlags.map((i) => i + 1));
+  const keys = argv.filter((arg, i) => !arg.startsWith('--') && !concurrencyValues.has(i));
   const parsed = { printOnly: argv.includes('--print'), concurrency: DEFAULT_CONCURRENCY, keys };
+
+  // Refuse a repeat rather than picking a winner, and refuse it BEFORE validating any
+  // value: two occurrences carry no fact about which limit was intended, so reporting one
+  // of them as the bad value invites a fix that leaves the ambiguity in place. Rejecting
+  // outright also makes the empty-selection hazard above unreachable by construction —
+  // no repeated flag, and no value belonging to one, can reach the audit unvalidated.
+  if (concurrencyFlags.length > 1) {
+    return { ...parsed, error: '--concurrency specified more than once — pass a single limit' };
+  }
 
   // Validate the concurrency value FIRST, so `--concurrency --print` is reported as
   // the missing value it is rather than as an unsupported flag. Validating at all is
@@ -104,7 +119,11 @@ export function parseArgs(argv) {
   // Infinity) from starting no workers and leaving a sparse result array that only
   // crashes during report formatting — AFTER the expensive control resolve is paid
   // for — or from failing inside Array.from.
-  if (concurrencyFlag !== -1) {
+  //
+  // Exactly zero or one occurrence survives the repeat check above, and index 0 is both a
+  // legitimate position and a falsy number, so presence is tested against undefined.
+  const [concurrencyFlag] = concurrencyFlags;
+  if (concurrencyFlag !== undefined) {
     const raw = argv[concurrencyFlag + 1];
     const concurrency = Number(raw);
     if (!Number.isInteger(concurrency) || concurrency < 1) {

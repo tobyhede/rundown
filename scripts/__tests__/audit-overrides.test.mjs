@@ -272,18 +272,86 @@ test('DEFAULT_CONCURRENCY is itself a valid concurrency', () => {
   assert.ok(Number.isInteger(DEFAULT_CONCURRENCY) && DEFAULT_CONCURRENCY >= 1);
 });
 
-test('a repeated --concurrency is still refused rather than half-applied', async () => {
-  // The second occurrence's value is not at firstFlag+1, so it falls through into the
-  // key list, where main() rejects it as an unknown override. That loudness predates
-  // the unknown-flag guard and must survive it — silently honouring the first value
-  // would run the audit at a concurrency the caller did not ask for.
-  const parsed = parseArgs(['--concurrency', '2', '--concurrency', '4']);
-  assert.deepEqual(parsed.keys, ['4']);
-  assert.ok(!('error' in parsed), 'the repeat is caught by main(), not by parseArgs');
+test('a repeated --concurrency never leaves an EMPTY "audit everything" selection', async () => {
+  // The headline regression. Locating the flag with indexOf found only the FIRST
+  // occurrence, so a TRAILING repeat had no value slot to exclude and contributed
+  // nothing to the key list — and the unknown-flag guard waved it through, because
+  // `--concurrency` IS a known flag. The result parsed clean with an empty selection,
+  // and an empty selection means "audit every override": exactly the silent
+  // multi-minute network run that guard exists to prevent, leaking back in through a
+  // flag the guard recognises.
+  const parsed = parseArgs(['--concurrency', '2', '--concurrency']);
+  assert.ok(
+    'error' in parsed,
+    `a trailing repeat parsed clean with keys ${JSON.stringify(parsed.keys)} — ` +
+      'an empty selection audits EVERY override over the network',
+  );
+  assert.match(parsed.error, /--concurrency specified more than once/);
 
+  const { code, stdout, stderr } = await runAudit(['--concurrency', '2', '--concurrency']);
+  assert.equal(code, 1);
+  assert.match(stderr, /--concurrency specified more than once/);
+  assert.doesNotMatch(stdout, /Resolving control/, 'nothing may resolve before the argv is sound');
+  assert.doesNotMatch(stderr, /osv-scanner/, 'the run must stop at argv, before the scanner check');
+});
+
+test('parseArgs inspects EVERY --concurrency occurrence, not just the first', () => {
+  // Each shape below escaped inspection in a different way: the trailing repeat vanished
+  // entirely, the `--print` form was swallowed as the repeat's phantom value, and a
+  // value-bearing repeat leaked its number into the key list — where main() caught it as
+  // a stray override name rather than validating it as the limit it was meant to be.
+  // Rejecting the repeat outright makes all of them one case: two occurrences carry no
+  // fact about which limit was intended, and for a command whose default action is
+  // "audit everything over the network", ambiguity has to stop the run.
+  for (const argv of [
+    ['--concurrency', '2', '--concurrency'],
+    ['--concurrency', '2', '--concurrency', '--print'],
+    ['--concurrency', '2', '--concurrency', '4'],
+    ['--concurrency', '2', '--concurrency', 'abc'],
+    ['--concurrency', '2', '--concurrency', '4', '--concurrency', '8'],
+    ['--concurrency', '2', 'qs', '--concurrency', '4'],
+    ['--concurrency', '--concurrency'],
+  ]) {
+    const parsed = parseArgs(argv);
+    assert.match(
+      parsed.error ?? '',
+      /--concurrency specified more than once/,
+      `${JSON.stringify(argv)} is ambiguous and must be refused`,
+    );
+    // No value belonging to any occurrence may survive as an override key: a stray "4"
+    // is only caught because it happens not to name a real pin, and "2" — a plausible
+    // override name is one policy edit away — would be a selection nobody asked for.
+    for (const [i, arg] of argv.entries()) {
+      if (argv[i - 1] !== '--concurrency' || arg.startsWith('--')) continue;
+      assert.ok(
+        !parsed.keys.includes(arg),
+        `"${arg}" is a --concurrency value and must never leak into the override selection`,
+      );
+    }
+  }
+});
+
+test('a duplicate --concurrency outranks a bad value on the first occurrence', () => {
+  // Deliberate precedence. With two occurrences there is no fact of the matter about
+  // which value the caller meant, so naming one of them as "the" bad value invites a fix
+  // that leaves the ambiguity in place. Report the ambiguity; the value complaint is
+  // still waiting once a single flag survives.
+  const parsed = parseArgs(['--concurrency', 'abc', '--concurrency', '4']);
+  assert.match(parsed.error ?? '', /--concurrency specified more than once/);
+  assert.doesNotMatch(parsed.error ?? '', /needs a positive integer/);
+  assert.match(parseArgs(['--concurrency', 'abc']).error ?? '', /needs a positive integer/);
+});
+
+test('a repeated --concurrency is refused before any resolution starts', async () => {
+  // The value-bearing form, end to end. It used to fail as `unknown override "4"` — loud,
+  // but accidental: the number was being caught as a stray key rather than validated as a
+  // limit, which is why the sibling forms that leave no stray key were not caught at all.
+  // parseArgs now refuses the repeat itself, and the run must still stop before the
+  // control resolve.
   const { code, stderr, stdout } = await runAudit(['--concurrency', '2', '--concurrency', '4']);
   assert.equal(code, 1);
-  assert.match(stderr, /unknown override "4"/);
+  assert.match(stderr, /--concurrency specified more than once/);
+  assert.doesNotMatch(stderr, /unknown override/, 'the repeat is caught at parse time');
   assert.doesNotMatch(stdout, /Resolving control/, 'nothing may resolve before the argv is sound');
 });
 
