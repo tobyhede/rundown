@@ -49,6 +49,10 @@ describe('retry idempotency', () => {
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
+    // Reset alongside the workspace: the claim is suite-scoped, so a test that
+    // never calls a setup helper would otherwise drive the fresh workspace with
+    // the previous test's claim. Empty fails loudly instead.
+    claimId = '';
   });
 
   afterEach(async () => {
@@ -56,10 +60,10 @@ describe('retry idempotency', () => {
   });
 
   /**
-   * Stand up a parent parked on a DELEGATE substep `1.1`, with the auto-issued
-   * frontier bearer aborted so `--retry` starts from a clean single delegation.
+   * Stand up a parent parked on a DELEGATE substep `1.1`, running prompted so a
+   * single auto-issued delegation is the only one `--retry` can find.
    *
-   * @returns The bearer currently recorded at `1.1`.
+   * @returns The latest frontier bearer recorded at `1.1`.
    */
   async function setup(): Promise<string> {
     const childContent = createRunbook({
@@ -241,6 +245,9 @@ describe('retry idempotency', () => {
     const t2 = await delegateJson(['--retry', '--step', '1.1']);
 
     const beforeEntry = (await getActiveState(workspace))?.activeEntry;
+    // Required, not defaulted: `?? 0` below would degrade the re-entry
+    // assertion to "greater than zero", which any entry satisfies.
+    if (typeof beforeEntry !== 'number') throw new Error('expected a numeric activeEntry');
 
     // Navigate away and back, so the walk crosses two distinct leaves and the
     // frame is re-entered from outside it. A GOTO onto the substep the cursor
@@ -256,7 +263,7 @@ describe('retry idempotency', () => {
       expect(moved.exitCode).toBe(0);
     }
     const reentered = await getActiveState(workspace);
-    expect(reentered?.activeEntry).toBeGreaterThan(beforeEntry ?? 0);
+    expect(reentered?.activeEntry).toBeGreaterThan(beforeEntry);
     // The replacement survived the re-entry, so `current` is still the row the
     // echo would return — only its stale `parentEntry` rules it out.
     const surviving = (reentered?.substepStates ?? []).find((row) => row.id === '1');
@@ -408,7 +415,9 @@ describe('retry idempotency', () => {
     // The response carries the CURRENT bearer — the machine's re-issued one —
     // which is the only way the caller can name it to force a real rotation.
     expect(echoed.token).toBe(machineToken);
-    expect(echoed.parent_run_id ?? echoed.parentRunId).toBe(parentRunId);
+    // `parent_run_id` exactly: a `?? parentRunId` fallback here would keep
+    // passing if the emitter or schema renamed the field.
+    expect(echoed.parent_run_id).toBe(parentRunId);
     // The echo is a pure read: nothing about the run changed.
     expect(await getActiveState(workspace)).toEqual(before);
 

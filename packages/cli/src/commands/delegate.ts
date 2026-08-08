@@ -615,9 +615,6 @@ const DELEGATION_ECHO_LABELS = {
   'retry-already-applied': 'UNCHANGED  ',
 } as const;
 
-/** Action discriminant of an idempotent `delegate` echo. */
-type DelegationEchoAction = keyof typeof DELEGATION_ECHO_LABELS;
-
 /**
  * Emit an idempotent `delegate` echo in JSON or text form.
  *
@@ -625,8 +622,8 @@ type DelegationEchoAction = keyof typeof DELEGATION_ECHO_LABELS;
  * path, the targeted `--step` path, and `--retry`. Single-sourcing it is what
  * keeps the JSON envelope and the text rendering from drifting between them —
  * and what makes the one field that legitimately differs (`token_hash`, which
- * only the retry echo carries) an explicit optional rather than an accident of
- * which copy was edited last.
+ * only the retry echo carries) a property of the action rather than an accident
+ * of which copy was edited last.
  *
  * @param output - OutputEmitter to render through.
  * @param opts - Echo fields.
@@ -634,21 +631,27 @@ type DelegationEchoAction = keyof typeof DELEGATION_ECHO_LABELS;
  * @param opts.stepId - Qualified step id of the echoed substep.
  * @param opts.runbookRef - Child runbook reference for the live delegation.
  * @param opts.token - Recoverable plaintext delegation token to echo.
- * @param opts.tokenHash - Verifier for the echoed bearer; omitted by the plain echo.
+ * @param opts.tokenHash - Verifier for the echoed bearer; required by the retry echo and
+ *   unrepresentable on the plain one.
  * @param opts.parentRunId - Parent run id that owns the delegation.
  * @param opts.text - When true, render human-readable text instead of JSON.
  */
 function emitDelegationEcho(
   output: OutputEmitter,
   opts: {
-    action: DelegationEchoAction;
     stepId: string;
     runbookRef: string;
     token: string;
-    tokenHash?: string;
     parentRunId: string;
     text?: boolean;
-  },
+  } & (
+    | // Mirrors the two schema arms. `already-delegated` is `.strict()` there, so
+    // it rejects a `token_hash` at runtime; pairing the action with `never` here
+    // makes the same guarantee at compile time, where a drifting caller is
+    // cheaper to catch.
+    { action: 'already-delegated'; tokenHash?: never }
+    | { action: 'retry-already-applied'; tokenHash: string }
+  ),
 ): void {
   if (!opts.text) {
     output.json({

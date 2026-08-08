@@ -399,10 +399,12 @@ describe('entry projection ordering: machine credential issuance agrees with com
     await drive('pass');
 
     const committed = await loadCommitted();
-    const byId = new Map(
-      (committed.substepStates ?? [])
-        .filter((ss) => ss.frameKey === FRAME_2 && ss.delegation !== undefined)
-        .map((ss) => [ss.id, ss.delegation!]),
+    const byId = new Map<string, StepDelegation>(
+      (committed.substepStates ?? []).flatMap((ss) =>
+        ss.frameKey === FRAME_2 && ss.delegation !== undefined
+          ? [[ss.id, ss.delegation] as const]
+          : [],
+      ),
     );
 
     expect([...byId.keys()].sort()).toEqual(['1', '2']);
