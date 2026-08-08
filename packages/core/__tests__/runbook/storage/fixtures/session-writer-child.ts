@@ -15,36 +15,48 @@
 // The child is TypeScript and is launched with `node --import tsx` so it executes
 // `src/runbook/session-service.ts` itself.
 //
-// Protocol (barrier-synchronized, no sleeps):
+// Protocol (two-stage barrier, no elapsed-time ordering):
 //   1. Construct the service and WARM the store (open the driver, ensure schema,
 //      read the session) so post-barrier work is the mutation and nothing else.
 //   2. Write `readyFile` — "I am warm and parked at the barrier".
-//   3. Spin on `goFile` until the parent releases every child together.
-//   4. Run exactly one session mutation.
-//   5. Write `resultFile` as JSON: `{ ok: true, value }` or `{ ok: false, error }`.
+//   3. Yield on `goFile` until the parent releases every child together.
+//   4. Stamp the staging entry, write `enteredFile`, and yield on
+//      `mutationGoFile` until every sibling has entered.
+//   5. The designated holder enters its real SQLite transaction and waits there;
+//      contenders enter and publish their real manager-mutation call before
+//      blocking on that transaction. The parent then releases the holder.
+//   6. Run exactly one session mutation.
+//   7. Write `resultFile` as JSON with the measured timestamps and outcome.
 //
 // Invoked as:
-//   node --import tsx session-writer-child.ts <cwd> <readyFile> <goFile> <resultFile> <opJson>
+//   node --import tsx session-writer-child.ts \
+//     <cwd> <readyFile> <goFile> <enteredFile> <mutationGoFile> \
+//     <mutationStartedFile> <transactionHeldFile> <transactionReleaseFile> \
+//     <resultFile> <opJson>
 
 import { existsSync, writeFileSync } from 'node:fs';
-import { RunbookStateManager } from '../../../../src/runbook/state.js';
+import { RunbookStateManager, type SessionData } from '../../../../src/runbook/state.js';
 import { SessionService } from '../../../../src/runbook/session-service.js';
 import { closeRunbookStores } from '../../../../src/runbook/storage/store-registry.js';
+import type {
+  SessionMutationResult,
+  SessionMutationTxn,
+} from '../../../../src/runbook/storage/runbook-store.js';
+import type { SyncWork } from '../../../../src/runbook/storage/sql-driver.js';
 import { assertClaimId } from '../../../../src/runbook/claim-id.js';
-import { assertRunId } from '../../../../src/runbook/run-id.js';
+import { assertRunId, type RunId } from '../../../../src/runbook/run-id.js';
 import { getErrorMessage } from '../../../../src/errors.js';
 import { unwrapSessionMutation } from '../../../../src/testing/session-fixtures.js';
 import type { ChildOp, ChildResult } from './child-protocol.js';
 
 /** Upper bound on any barrier wait, so a lost signal fails loudly, not silently. */
 const BARRIER_TIMEOUT_MS = 60_000;
+const SYNCHRONOUS_WAIT = new Int32Array(new SharedArrayBuffer(4));
 
 /**
- * Wait for a barrier file, YIELDING between polls.
- *
- * For ordering barriers only — barriers where the child must simply wait its
- * turn. Never use this for the release barrier below, whose tight spin is what
- * makes the children enter their mutations together.
+ * Wait for a barrier file, YIELDING between polls. The two-stage protocol makes
+ * concurrency independent of how closely the scheduler wakes the children, so
+ * both release barriers can yield without weakening the witness.
  *
  * @param file - Barrier file the parent writes to release this child.
  * @throws {Error} When the barrier is not signalled within the timeout.
@@ -57,8 +69,95 @@ async function awaitBarrier(file: string): Promise<void> {
   }
 }
 
-const [cwd, readyFile, goFile, resultFile, opJson] = process.argv.slice(2);
+/**
+ * Wait for a barrier while deliberately keeping the current synchronous
+ * transaction callback open. `Atomics.wait` yields the OS thread between file
+ * checks without introducing elapsed-time ordering.
+ *
+ * @param file - Barrier file the parent writes to release the transaction.
+ * @throws {Error} When the barrier is not signalled within the timeout.
+ */
+function awaitBarrierSync(file: string): void {
+  const deadline = Date.now() + BARRIER_TIMEOUT_MS;
+  while (!existsSync(file)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for barrier ${file}`);
+    Atomics.wait(SYNCHRONOUS_WAIT, 0, 0, 10);
+  }
+}
+
+const [
+  cwd,
+  readyFile,
+  goFile,
+  enteredFile,
+  mutationGoFile,
+  mutationStartedFile,
+  transactionHeldFile,
+  transactionReleaseFile,
+  resultFile,
+  opJson,
+] = process.argv.slice(2);
 const op = JSON.parse(opJson) as ChildOp;
+
+/** Test-only gate that pauses the designated holder inside a real transaction. */
+interface TransactionGate {
+  readonly heldFile: string;
+  readonly releaseFile: string;
+}
+
+/**
+ * State manager preserving the real store path while exposing one transaction
+ * entry point to the cross-process test protocol.
+ */
+class HarnessRunbookStateManager extends RunbookStateManager {
+  private mutationStarted = false;
+  private transactionHeldAt: number | null = null;
+
+  constructor(
+    cwd: string,
+    private readonly mutationStartedFile: string,
+    private readonly transactionGate?: TransactionGate,
+  ) {
+    super(cwd);
+  }
+
+  /** Timestamp recorded inside the holder transaction, or null for contenders. */
+  get heldAt(): number | null {
+    return this.transactionHeldAt;
+  }
+
+  private signalMutationStarted(): void {
+    if (this.mutationStarted) return;
+    this.mutationStarted = true;
+    writeFileSync(this.mutationStartedFile, String(process.pid));
+  }
+
+  private gatedWork<T>(
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): (ctx: SessionMutationTxn) => SyncWork<T> {
+    return (ctx) => {
+      if (this.transactionGate && this.transactionHeldAt === null) {
+        this.transactionHeldAt = performance.timeOrigin + performance.now();
+        writeFileSync(this.transactionGate.heldFile, String(process.pid));
+        awaitBarrierSync(this.transactionGate.releaseFile);
+      }
+      return work(ctx);
+    };
+  }
+
+  override mutateSession<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
+    this.signalMutationStarted();
+    return super.mutateSession(this.gatedWork(work));
+  }
+
+  override mutateSessionGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): Promise<SessionMutationResult<T>> {
+    this.signalMutationStarted();
+    return super.mutateSessionGuarded(runIds, this.gatedWork(work));
+  }
+}
 
 /**
  * Perform the child's single session mutation through the real service.
@@ -96,11 +195,9 @@ async function run(service: SessionService): Promise<unknown> {
       // the guard runs inside `manager.update` below.
       return service.runGuardedParentAdvance(parentRunId, async (guard) => {
         writeFileSync(op.callbackReadyFile, String(process.pid));
-        // Ordering barrier, not a release barrier: this child is alone here and
-        // nothing measures its overlap with a sibling, so it yields between polls
-        // rather than spinning. An unyielding spin here would burn a core for the
-        // whole window in which the parent commits its racing claim, starving the
-        // sibling workers whose overlap IS measured (see expectOverlap).
+        // This child is alone here. Yielding avoids burning a core for the whole
+        // window in which the parent commits its racing claim and keeps unrelated
+        // staged cohorts responsive under full-suite load.
         await awaitBarrier(op.callbackGoFile);
         await manager.update(
           parentRunId,
@@ -138,7 +235,11 @@ async function run(service: SessionService): Promise<unknown> {
   }
 }
 
-const manager = new RunbookStateManager(cwd);
+const transactionGate =
+  transactionHeldFile && transactionReleaseFile
+    ? { heldFile: transactionHeldFile, releaseFile: transactionReleaseFile }
+    : undefined;
+const manager = new HarnessRunbookStateManager(cwd, mutationStartedFile, transactionGate);
 const service = new SessionService(manager);
 
 // Warm the driver: opens the connection and ensures the schema, so the only work
@@ -148,34 +249,44 @@ await manager.loadSession();
 
 writeFileSync(readyFile, String(process.pid));
 
-// Busy-wait on the release barrier. Deliberately a tight spin rather than a polled
-// sleep: the whole point is that every child enters its mutation within the same few
-// milliseconds, and a sleep interval would quantize (and thereby stagger) them —
-// which is precisely what `expectOverlap` exists to detect. So the spin stays tight;
-// only a deadline is added, so a lost `go` signal fails with a diagnosis instead of
-// hanging until the suite-level timeout with no explanation.
-const releaseDeadline = Date.now() + BARRIER_TIMEOUT_MS;
-while (!existsSync(goFile)) {
-  if (Date.now() >= releaseDeadline) {
-    throw new Error(`timed out waiting for release barrier ${goFile}`);
-  }
-}
+// The first barrier may yield: the second stage prevents every mutation until all
+// warmed children have arrived, so scheduler jitter here cannot serialize the
+// cohort or weaken the sensitivity witness.
+await awaitBarrier(goFile);
 
-// Stamp the mutation window with an EPOCH clock on BOTH arms. `performance`'s
+// Publish entry and wait at the yielding second-stage barrier. `tEntered` is
+// useful for diagnosing the protocol, but it is deliberately outside the
+// measured mutation interval: otherwise the witness would pass merely because
+// every child is waiting at this barrier.
+const tEntered = performance.timeOrigin + performance.now();
+writeFileSync(enteredFile, String(process.pid));
+await awaitBarrier(mutationGoFile);
+
+// Start measuring only after the release barrier. This keeps the overlap witness
+// about the actual service mutation rather than the artificial barrier wait.
+const t0 = performance.timeOrigin + performance.now();
+
+// Stamp the return with an EPOCH clock on BOTH arms. `performance`'s
 // timeOrigin+now is comparable across processes (unlike `process.hrtime`, whose
 // zero is "an arbitrary time in the past" and only accidentally machine-global);
-// the parent uses these to witness that at least two children's windows actually
-// overlapped. A child that legitimately throws must still report t0/t1 — a
-// missing timestamp would turn a real signal into a `BigInt(undefined)`-style
-// crash in the witness.
-const t0 = performance.timeOrigin + performance.now();
+// the parent uses these stamps to witness overlap in the actual mutation. A child
+// that legitimately throws must still report all timestamps, or a real error-path
+// signal would disappear from the witness.
 try {
   const value = await run(service);
   const t1 = performance.timeOrigin + performance.now();
   // Annotated, not inferred: this literal IS the wire format the parent parses as
   // ChildResult, so it must be checked against that type rather than merely
   // resembling it.
-  const result: ChildResult = { ok: true, value, t0, t1, pid: process.pid };
+  const result: ChildResult = {
+    ok: true,
+    value,
+    t0,
+    tEntered,
+    tTransactionHeld: manager.heldAt,
+    t1,
+    pid: process.pid,
+  };
   writeFileSync(resultFile, JSON.stringify(result));
 } catch (error: unknown) {
   const t1 = performance.timeOrigin + performance.now();
@@ -183,6 +294,8 @@ try {
     ok: false,
     error: getErrorMessage(error),
     t0,
+    tEntered,
+    tTransactionHeld: manager.heldAt,
     t1,
     pid: process.pid,
   };
