@@ -75,33 +75,72 @@ export const DEFAULT_CONCURRENCY = 4;
 /** Verdict ordering for the report — the actionable rows come first. */
 export const VERDICT_ORDER = { 'LOAD-BEARING': 0, PROTECTED: 1, ERROR: 2, INERT: 3 };
 
+/** Every flag this script accepts. Anything else spelled `--…` is a typo. */
+const KNOWN_FLAGS = new Set(['--print', '--concurrency']);
+
 /**
  * Parse the command line.
  *
+ * Unrecognised `--…` tokens are rejected rather than dropped. A silently ignored
+ * flag is the worst possible outcome for this command: `--dry-run` reads as a
+ * request for a preview, and filtering it out leaves an EMPTY selection — which
+ * means "audit every override", so the typo starts the full multi-minute network
+ * run it was trying to avoid.
+ *
  * @param argv - arguments after the script name
  * @returns the parsed options and the explicitly selected override keys, plus an
- *   `error` string when an option value is unusable
+ *   `error` string when an option value is unusable, repeated, or a flag is unsupported
  */
 export function parseArgs(argv) {
-  const concurrencyFlag = argv.indexOf('--concurrency');
-  const keys = argv.filter(
-    (arg, i) => !arg.startsWith('--') && !(concurrencyFlag !== -1 && i === concurrencyFlag + 1),
-  );
+  // EVERY occurrence, not just the first: locating the flag with indexOf inspected one
+  // and let the rest through untouched, because `--concurrency` is a KNOWN flag and the
+  // unknown-flag guard below has no complaint about it. A repeat's value then fell
+  // outside the excluded value slot and into `keys`, and a TRAILING repeat left no value
+  // to exclude at all — so `--concurrency 2 --concurrency` parsed clean with an EMPTY
+  // selection, which means "audit every override" and starts the full multi-minute
+  // network run that the unknown-flag guard exists to prevent.
+  const concurrencyFlags = argv.flatMap((arg, i) => (arg === '--concurrency' ? [i] : []));
+  const concurrencyValues = new Set(concurrencyFlags.map((i) => i + 1));
+  const keys = argv.filter((arg, i) => !arg.startsWith('--') && !concurrencyValues.has(i));
   const parsed = { printOnly: argv.includes('--print'), concurrency: DEFAULT_CONCURRENCY, keys };
-  if (concurrencyFlag === -1) return parsed;
 
-  // Validate before the audit runs, not after. An unusable limit (missing value,
-  // NaN, 0, negative, fractional, Infinity) either starts no workers at all —
-  // leaving a sparse result array that only crashes during report formatting,
-  // AFTER the expensive control resolution has already been paid for — or fails
-  // inside Array.from. Both are a usage error reported far from its cause.
-  const raw = argv[concurrencyFlag + 1];
-  const concurrency = Number(raw);
-  if (!Number.isInteger(concurrency) || concurrency < 1) {
-    const got = raw === undefined ? 'no value' : `"${raw}"`;
-    return { ...parsed, error: `--concurrency needs a positive integer, got ${got}` };
+  // Refuse a repeat rather than picking a winner, and refuse it BEFORE validating any
+  // value: two occurrences carry no fact about which limit was intended, so reporting one
+  // of them as the bad value invites a fix that leaves the ambiguity in place. Rejecting
+  // outright also makes the empty-selection hazard above unreachable by construction —
+  // no repeated flag, and no value belonging to one, can reach the audit unvalidated.
+  if (concurrencyFlags.length > 1) {
+    return { ...parsed, error: '--concurrency specified more than once — pass a single limit' };
   }
-  return { ...parsed, concurrency };
+
+  // Validate the concurrency value FIRST, so `--concurrency --print` is reported as
+  // the missing value it is rather than as an unsupported flag. Validating at all is
+  // what keeps an unusable limit (missing value, NaN, 0, negative, fractional,
+  // Infinity) from starting no workers and leaving a sparse result array that only
+  // crashes during report formatting — AFTER the expensive control resolve is paid
+  // for — or from failing inside Array.from.
+  //
+  // Exactly zero or one occurrence survives the repeat check above, and index 0 is both a
+  // legitimate position and a falsy number, so presence is tested against undefined.
+  const [concurrencyFlag] = concurrencyFlags;
+  if (concurrencyFlag !== undefined) {
+    const raw = argv[concurrencyFlag + 1];
+    const concurrency = Number(raw);
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      const got = raw === undefined ? 'no value' : `"${raw}"`;
+      return { ...parsed, error: `--concurrency needs a positive integer, got ${got}` };
+    }
+    parsed.concurrency = concurrency;
+  }
+
+  // Every remaining `--…` token is a flag in its own right: a valid concurrency value
+  // is a positive integer, and a `--`-prefixed one already returned above.
+  const unknown = argv.find((arg) => arg.startsWith('--') && !KNOWN_FLAGS.has(arg));
+  if (unknown !== undefined) {
+    const supported = [...KNOWN_FLAGS].join(', ');
+    return { ...parsed, error: `unknown flag "${unknown}" — supported flags: ${supported}` };
+  }
+  return parsed;
 }
 
 /**
@@ -229,6 +268,11 @@ function run(cmd, args, cwd) {
  * no YAML dependency available, and pinning a small security-sensitive set of
  * keys does not need one.
  *
+ * Single and double quotes are accepted alike, because YAML treats them alike. A
+ * quoting style this parser did not unquote would leave the quotes on the glob, and
+ * `"'packages/*'".split('*')[0]` is `'packages/` — a directory that cannot exist, so
+ * the scratch workspace build dies in `readdir` far from the cause.
+ *
  * @param yaml - the full pnpm-workspace.yaml text
  * @param blockName - the top-level key whose sequence to extract
  * @returns the sequence items, unquoted
@@ -243,7 +287,9 @@ export function extractListBlock(yaml, blockName) {
     const line = lines[i];
     if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
     if (!/^\s/.test(line)) break;
-    const match = line.match(/^\s+-\s*("?)(.+?)\1\s*$/);
+    // The backreference pairs the closing quote with the opening one, so an unquoted
+    // item keeps any quotes of its own rather than being half-stripped.
+    const match = line.match(/^\s+-\s*(["']?)(.+?)\1\s*$/);
     if (match) items.push(match[2].trim());
   }
   return items;
@@ -282,6 +328,10 @@ async function workspaceManifestPaths() {
  * a throwaway directory, but a mangled workspace file would change resolution and
  * silently invalidate the result.
  *
+ * Matches single-quoted, double-quoted, and bare keys alike, because YAML treats
+ * them alike — a quoting style this parser did not accept would fail the audit with
+ * "not found" on a pin that is plainly present in the file.
+ *
  * @param yaml - the full pnpm-workspace.yaml text
  * @param key - the override key to drop
  * @returns the text with that key's line removed
@@ -295,7 +345,9 @@ export function removeOverrideLine(yaml, key) {
   for (let i = start + 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() !== '' && !/^\s/.test(line)) break;
-    const match = line.match(/^\s+("?)([^":]+)\1\s*:/);
+    // Quote-agnostic (YAML treats both alike), but still paired via the backreference:
+    // a mismatched `"key'` is malformed and must not be treated as a hit.
+    const match = line.match(/^\s+(["']?)([^"':]+)\1\s*:/);
     if (match && match[2].trim() === key) {
       return [...lines.slice(0, i), ...lines.slice(i + 1)].join('\n');
     }
@@ -399,6 +451,38 @@ export async function mapWithConcurrency(items, limit, worker) {
 }
 
 /**
+ * Render the verdict table plus the advisory footer.
+ *
+ * Split out of `main` so the all-protected short-circuit — which never resolves
+ * anything — prints the identical report rather than growing a second copy of the
+ * sort/pad block that would drift away from this one.
+ *
+ * @param verdicts - one row per audited or protected override
+ * @returns the report text, empty when there is nothing to report
+ */
+export function formatVerdictReport(verdicts) {
+  // `Math.max(...[])` is -Infinity, which silently collapses the key column. An empty
+  // selection has nothing to say, so say nothing.
+  if (!verdicts.length) return '';
+
+  const width = Math.max(...verdicts.map((v) => v.key.length));
+  const rows = [...verdicts]
+    .sort(
+      (a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict] || a.key.localeCompare(b.key),
+    )
+    .map(({ key, verdict, detail }) => `${key.padEnd(width)}  ${verdict.padEnd(13)}  ${detail}\n`)
+    .join('');
+
+  const inert = verdicts.filter((v) => v.verdict === 'INERT').length;
+  if (!inert) return rows;
+  return (
+    `${rows}\n${inert} pin(s) look inert. Read each entry's "reason" in override-policy.json ` +
+    `before dropping it — an INERT verdict means the scanner sees nothing, not that the ` +
+    `justification is void.\n`
+  );
+}
+
+/**
  * Entry point: audit each override and print a verdict table.
  *
  * @returns process exit code
@@ -432,10 +516,15 @@ async function main() {
 
   if (printOnly) {
     process.stdout.write(
-      `Would run ${testable.length + 1} fresh resolutions (1 control + ${testable.length} pins), ` +
-        `${concurrency} at a time.\n\n` +
-        `Control : all overrides present, no lockfile\n` +
-        testable.map((k) => `Test    : without "${k}"`).join('\n') +
+      // The plan has to describe the run that will actually happen. With nothing
+      // testable the short-circuit below resolves nothing, so promising "1 control"
+      // would send a reader looking for network work that never starts.
+      (testable.length
+        ? `Would run ${testable.length + 1} fresh resolutions (1 control + ${testable.length} pins), ` +
+          `${concurrency} at a time.\n\n` +
+          `Control : all overrides present, no lockfile\n` +
+          testable.map((k) => `Test    : without "${k}"`).join('\n')
+        : 'Would run 0 fresh resolutions — every selected override is scannerInvisible.') +
         (protectedKeys.length
           ? `\n\nSkipped (scannerInvisible — keep regardless of scan result):\n` +
             protectedKeys.map((k) => `  ${k}`).join('\n')
@@ -445,48 +534,44 @@ async function main() {
     return 0;
   }
 
-  if ((await run('osv-scanner', ['--version'], repoRoot)).code !== 0) {
-    process.stderr.write('osv-scanner not found on PATH — install it to run this audit\n');
-    return 1;
-  }
+  const verdicts = [];
 
-  process.stdout.write('Resolving control (all overrides, no lockfile)...\n');
-  const control = await resolveAndScan(workspaceYaml, manifests);
-  if (control.error) {
-    process.stderr.write(`control run failed:\n${control.error}\n`);
-    return 1;
-  }
-  process.stdout.write(
-    `Control: ${control.findings.size} finding(s) across ` +
-      `${countInstances(control.findings)} vulnerable instance(s) with every pin in place.\n` +
-      `Auditing ${testable.length} pin(s), ${concurrency} at a time...\n\n`,
-  );
+  // A selection of nothing but protected pins has no question for the scanner to
+  // answer: `testable` is empty, so the control run would be compared against nobody.
+  // Skipping it turns minutes of network work into an instant report, and stops the
+  // command demanding a tool whose output could not change the outcome.
+  if (testable.length) {
+    if ((await run('osv-scanner', ['--version'], repoRoot)).code !== 0) {
+      process.stderr.write('osv-scanner not found on PATH — install it to run this audit\n');
+      return 1;
+    }
 
-  const verdicts = await mapWithConcurrency(testable, concurrency, async (key) => {
-    const result = await resolveAndScan(removeOverrideLine(workspaceYaml, key), manifests);
-    if (result.error) return { key, verdict: 'ERROR', detail: result.error };
-    return { key, ...classify(control.findings, result.findings) };
-  });
+    process.stdout.write('Resolving control (all overrides, no lockfile)...\n');
+    const control = await resolveAndScan(workspaceYaml, manifests);
+    if (control.error) {
+      process.stderr.write(`control run failed:\n${control.error}\n`);
+      return 1;
+    }
+    process.stdout.write(
+      `Control: ${control.findings.size} finding(s) across ` +
+        `${countInstances(control.findings)} vulnerable instance(s) with every pin in place.\n` +
+        `Auditing ${testable.length} pin(s), ${concurrency} at a time...\n\n`,
+    );
+
+    verdicts.push(
+      ...(await mapWithConcurrency(testable, concurrency, async (key) => {
+        const result = await resolveAndScan(removeOverrideLine(workspaceYaml, key), manifests);
+        if (result.error) return { key, verdict: 'ERROR', detail: result.error };
+        return { key, ...classify(control.findings, result.findings) };
+      })),
+    );
+  }
 
   for (const key of protectedKeys) {
     verdicts.push({ key, verdict: 'PROTECTED', detail: policy[key].scannerInvisible });
   }
 
-  const width = Math.max(...verdicts.map((v) => v.key.length));
-  for (const { key, verdict, detail } of verdicts.sort(
-    (a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict] || a.key.localeCompare(b.key),
-  )) {
-    process.stdout.write(`${key.padEnd(width)}  ${verdict.padEnd(13)}  ${detail}\n`);
-  }
-
-  const inert = verdicts.filter((v) => v.verdict === 'INERT');
-  if (inert.length) {
-    process.stdout.write(
-      `\n${inert.length} pin(s) look inert. Read each entry's "reason" in override-policy.json ` +
-        `before dropping it — an INERT verdict means the scanner sees nothing, not that the ` +
-        `justification is void.\n`,
-    );
-  }
+  process.stdout.write(formatVerdictReport(verdicts));
   return 0;
 }
 
