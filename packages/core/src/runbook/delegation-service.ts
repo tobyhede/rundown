@@ -504,6 +504,24 @@ export function createDelegation(
   //    validation so it covers all three issuance paths uniformly: manual
   //    `rd delegate`, auto-fan-out on entry to a delegating step, and the
   //    retry-hook re-issuance path that flows through `retryDelegation`.
+  //
+  //    THREE OTHER SITES LEAN ON THIS INVARIANT rather than enforcing their own
+  //    condition, because it makes the state they would have to handle
+  //    impossible to construct. Narrowing or removing this guard weakens all
+  //    three, and no test will fail — that is precisely why they are listed
+  //    here rather than left to be rediscovered:
+  //      - `resolveTransitionTarget`'s `skipOpenClaims` exemption
+  //        (`command-target-resolver.ts`) skips the parent open-claim read for a
+  //        delegated-child bearer, sound only because such a run can have no
+  //        delegated children of its own.
+  //      - `guardOpenChildren` (`lifecycle-command-service.ts`) exempts that
+  //        same bearer from the in-transaction open-children guard, for the same
+  //        reason. Lifting this prohibition without revisiting it reintroduces
+  //        #700 one level down.
+  //      - `transitionDelegationRuntime` (`lifecycle-command-service.ts`) keeps
+  //        a structural rather than behavioural grant check, which cannot be
+  //        exploited only because the sole bearer holding `mutate-run` without
+  //        `delegate-from-run` is a delegated child's.
   if (state.parentLinkage?.kind === 'delegation') {
     return {
       status: 'parent_is_delegated',
