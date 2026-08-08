@@ -217,29 +217,61 @@ Defaults:
 
 ### 6.2 Actions
 
-| Action                 | Valid context              | Rule                                            |
-| ---------------------- | -------------------------- | ----------------------------------------------- |
-| `CONTINUE`             | Step                       | Proceed to next step.                           |
-| `CONTINUE`             | `FOR` iteration            | Exit loop without accumulating current result.  |
-| `DEFER`                | Substep, `FOR` iteration   | Propagate result to parent aggregation.         |
-| `STOP [message]`       | Any                        | Terminate as failure.                           |
-| `COMPLETE [message]`   | Any                        | Terminate as success.                           |
-| `GOTO target`          | Any                        | Jump to step or substep target.                 |
-| `GOTO target AT value` | `FOR` target               | Jump to a specific iteration of a `FOR` target. |
-| `RETRY N action`       | Any                        | Retry `N` times, then perform fallback action.  |
-| `NEXT`                 | `FOR` substep or iteration | Advance without accumulating current result.    |
-| `BREAK`                | `FOR` substep or iteration | Exit loop without accumulating current result.  |
+| Action                 | Valid context              | Rule                                                                                      |
+| ---------------------- | -------------------------- | ----------------------------------------------------------------------------------------- |
+| `CONTINUE`             | Step                       | Proceed to next step.                                                                     |
+| `CONTINUE`             | `FOR` iteration            | Exit loop without accumulating current result.                                            |
+| `DEFER`                | Substep, `FOR` iteration   | Propagate result to parent aggregation.                                                   |
+| `STOP [message]`       | Any                        | Terminate as failure.                                                                     |
+| `COMPLETE [message]`   | Any                        | Terminate as success.                                                                     |
+| `GOTO target`          | Any                        | Jump to step or substep target. Bounded when the target is the containing execution unit. |
+| `GOTO target AT value` | `FOR` target               | Jump to a specific iteration of a `FOR` target.                                           |
+| `RETRY N action`       | Any                        | Retry `N` times, then perform fallback action.                                            |
+| `NEXT`                 | `FOR` substep or iteration | Advance without accumulating current result.                                              |
+| `BREAK`                | `FOR` substep or iteration | Exit loop without accumulating current result.                                            |
 
 `NEXT` and `BREAK` are invalid outside `FOR`. `DEFER` is invalid at top-level
 step scope. Standalone `- DEFER` expands to `- PASS DEFER` and `- FAIL DEFER`.
 `RETRY` requires both count and fallback; nested `RETRY` fallback is invalid.
-`NEXT` is invalid as a `GOTO` target. `GOTO` to the containing step without `AT`
-can loop indefinitely; use `RETRY` for bounded re-execution.
+`NEXT` is invalid as a `GOTO` target.
 
 When `GOTO target` targets a `FOR` step and omits `AT`, execution enters the
 target at the loop's start value: `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`,
 and so on. `GOTO target AT {{Index}}` re-enters the target at the current
 iteration value.
+
+### 6.3 Self-targeting `GOTO`
+
+A `GOTO` whose target is the execution unit it is authored on — the containing
+step, or the containing substep — is **bounded re-execution**, not an infinite
+loop:
+
+```
+GOTO <self>  ==  GOTO <self>, 10000 times, then STOP
+```
+
+The bound is the same ceiling a `FOR` clause may declare (10000). The count is
+consumed once per pass; on the pass after the last one the jump is refused and
+the run terminates as a failure exactly as an authored `STOP` does, carrying a
+message naming the exhausted bound. The bound applies to the `GOTO` action
+however it is dispatched — authored in a transition, or sent by `rundown goto`
+naming the unit the cursor already occupies.
+
+Both `GOTO <self>` and `RETRY N action` are bounded re-execution of the same
+unit. They differ in who chooses the terms:
+
+|               | `GOTO <self>`                                                  | `RETRY N action`                                |
+| ------------- | -------------------------------------------------------------- | ----------------------------------------------- |
+| Count         | System maximum (10000), not author-settable                    | Author-specified `N`                            |
+| On exhaustion | Always `STOP`                                                  | The author's fallback `action`                  |
+| Intent        | An unbounded-looking retry that Rundown refuses to run forever | A deliberate, sized retry with a chosen way out |
+
+Prefer `RETRY N action` whenever the number of attempts and what happens after
+them are part of the runbook's intent. Reach for `GOTO <self>` only when the
+loop is genuinely open-ended and stopping is the acceptable end state.
+
+A `GOTO` cycle spanning two or more units (step `1` jumping to step `2`, step
+`2` jumping back to step `1`) is not self-targeting and carries no such bound.
 
 ## 7. Delegation
 
@@ -829,6 +861,8 @@ above. In particular:
     declarations, valid wildcard declarations, duplicate aliases, invalid keys,
     misplaced directives, frontmatter misuse, and expression-form step/substep
     `OUTPUTS`.
+30. `GOTO` to the containing execution unit is bounded at 10000 passes and then
+    terminates the run as `STOP`.
 
 ## 12. Compatibility
 

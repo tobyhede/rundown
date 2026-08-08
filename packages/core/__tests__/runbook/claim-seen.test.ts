@@ -304,13 +304,12 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
-      lifecycleService,
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       loadSteps: () => seamSteps,
       resolveChildRunbook: async () => undefined,
-      findDelegationByToken: async () => undefined,
+      findDelegationsByTokenHash: async () => ({ current: undefined, superseding: [] }),
     });
     const state = await manager.create({ source: 'project', path: 'seam.md' }, mockRunbook, {
       runbookPath: 'seam.md',
@@ -417,13 +416,12 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
-      lifecycleService,
       completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
       actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       loadSteps: () => seamSteps,
       resolveChildRunbook: async () => undefined,
-      findDelegationByToken: async () => undefined,
+      findDelegationsByTokenHash: async () => ({ current: undefined, superseding: [] }),
     });
     const { claimId, claim } = unwrapSessionMutation(
       await sessionService.issueRunControlClaim(runId),

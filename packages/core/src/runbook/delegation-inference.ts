@@ -826,3 +826,354 @@ export function inferAllDelegateSubsteps(
 
   return results;
 }
+
+/**
+ * Why a retry replacement is treated as consumed.
+ *
+ * Each value names committed evidence that the superseded bearer's replacement
+ * was presented — never an inference about whether it was observed.
+ */
+export type RetryReplacementConsumedReason = 'claimed' | 'cancelled' | 'entry_superseded';
+
+/**
+ * A delegation that records the named bearer as superseded, tagged with the
+ * coordinate it was found at.
+ *
+ * The coordinate is not decoration. `resolveRetryIssuance` judges a replacement
+ * against ONE frame's entry counter and the caller echoes the survivor under ONE
+ * run id and step label, so a row collected from anywhere else would be judged
+ * and reported under an identity that is not its own. Carrying
+ * `(runId, substepId, frameKey)` per row is what makes that mismatch decidable
+ * instead of invisible — a bare `StepDelegation` has already lost it.
+ */
+export interface RetrySupersessionRow {
+  /** Run whose state carried the row. */
+  readonly runId: RunId;
+  /** Substep id the row occupies. */
+  readonly substepId: string;
+  /** Frame key the row is scoped to. */
+  readonly frameKey: FrameKey;
+  /** The superseding delegation itself. */
+  readonly delegation: StepDelegation;
+}
+
+/**
+ * Everything {@link resolveRetryIssuance} decides from, captured inside the
+ * deciding transaction.
+ *
+ * Discriminated on `locator` so the token-only fields cannot be read on the
+ * step/active path, and vice versa.
+ */
+export type RetryIssuanceCapture =
+  | {
+      /** The retry named a bearer token. */
+      readonly locator: 'token';
+      /** Hash of the bearer the caller named. */
+      readonly identityTokenHash: DelegationTokenHash;
+      /** The delegation currently recorded at the resolved `(substepId, frameKey)`. */
+      readonly current: StepDelegation | undefined;
+      /**
+       * Every captured row whose credential records `identityTokenHash` as
+       * superseded, wherever it was found.
+       *
+       * Rows outside the retry's own coordinate are INCLUDED rather than
+       * filtered out: they are counted for ambiguity and then refused by
+       * identity. Filtering them at collection time would drop the count and
+       * silently resolve the survivor.
+       */
+      readonly supersededBy: readonly RetrySupersessionRow[];
+      /** Run the retry resolved to — the only run a replacement may come from. */
+      readonly ownRunId: RunId;
+      /** Substep id the retry resolved to. */
+      readonly ownSubstepId: string;
+      /** Frame key the retry resolved to, and whose entry `frameEntry` reports. */
+      readonly ownFrameKey: FrameKey;
+      /** `inferFrameEntryFromState(capturedState, frameKey)` for the resolved frame. */
+      readonly frameEntry: number;
+    }
+  | {
+      /** The retry named a step, or inferred the active substep. */
+      readonly locator: 'step';
+      /** The delegation currently recorded at the resolved `(substepId, frameKey)`. */
+      readonly current: StepDelegation | undefined;
+      /** `inferFrameEntryFromState(capturedState, frameKey)` for the resolved frame. */
+      readonly frameEntry: number;
+    };
+
+/**
+ * Whether the named retry should rotate, echo, or refuse.
+ *
+ * - `rotatable` — mint a replacement (the caller's existing retry path).
+ * - `already-replaced` — a replacement exists with no committed evidence it was
+ *   used; echo it and write nothing.
+ * - `replacement-consumed` — the replacement shows committed evidence of use.
+ * - `identity-unmatched` — the named bearer identifies neither the current
+ *   attempt nor one it superseded *at this coordinate*.
+ * - `ambiguous` — more than one attempt records the bearer as superseded.
+ */
+export type RetryIssuanceResolution =
+  | { readonly kind: 'rotatable' }
+  | { readonly kind: 'already-replaced'; readonly delegation: StepDelegation }
+  | { readonly kind: 'replacement-consumed'; readonly reason: RetryReplacementConsumedReason }
+  | { readonly kind: 'identity-unmatched' }
+  | { readonly kind: 'ambiguous' };
+
+/**
+ * Everything {@link buildRetryIssuanceCapture} needs from the deciding
+ * transaction, in the form the seam already has it.
+ */
+export interface RetryIssuanceCaptureInput {
+  /** The bearer the caller named, or `undefined` for a step/active retry. */
+  readonly token: string | undefined;
+  /** The captured parent state — the only in-transaction authority. */
+  readonly capturedState: Pick<RunbookState, 'id'> & {
+    readonly substepStates?: readonly SubstepState[];
+  };
+  /** Supersession-index rows from the pre-transaction disk scan. */
+  readonly scannedSuperseding: readonly SupersessionScanRow[];
+  /** The delegation recorded at the resolved cursor in the captured state. */
+  readonly current: StepDelegation | undefined;
+  /** Substep id the retry resolved to. */
+  readonly substepId: string;
+  /** Frame key the retry resolved to. */
+  readonly frameKey: FrameKey;
+  /** Committed entry for `frameKey` in the captured state. */
+  readonly frameEntry: number;
+}
+
+/**
+ * The shape {@link buildRetryIssuanceCapture} reads from a supersession-index
+ * scan result.
+ *
+ * Structural rather than the scan service's own type, so this module keeps its
+ * "pure, no I/O, no storage dependencies" contract.
+ */
+export interface SupersessionScanRow {
+  /** State the row was found in; only its id is read. */
+  readonly parentState: Pick<RunbookState, 'id'>;
+  /** Owner step id the scan derived. */
+  readonly stepId: string;
+  /** Substep id, when the row is on a substep. */
+  readonly substepId?: string;
+  /** Frame key the row is scoped to. */
+  readonly frameKey: FrameKey;
+  /** The superseding delegation. */
+  readonly delegation: StepDelegation;
+}
+
+/**
+ * Assemble the locator-discriminated capture {@link resolveRetryIssuance}
+ * decides from.
+ *
+ * `supersededBy` is derived primarily from the CAPTURED state: the disk scan ran
+ * before the transaction took its capture, so only captured rows carry
+ * in-transaction authority. The scan contributes exactly the rows it found in
+ * OTHER runs — which the captured parent cannot contain, and which are the only
+ * way cross-run ambiguity becomes visible at all.
+ *
+ * The two collections are concatenated, never merged: they are disjoint by
+ * construction (captured rows come only from `capturedState`, scanned rows only
+ * from runs that are not `capturedState.id`), and de-duplicating by `tokenHash`
+ * would collapse two corrupted rows sharing a replacement verifier into one,
+ * dropping `supersededBy.length` to 1 and skipping the RD-828 refusal that
+ * exists to catch exactly that state.
+ *
+ * Rows are NOT filtered to the resolved cursor. A displaced row still counts
+ * toward ambiguity and is then refused by identity in
+ * {@link resolveRetryIssuance}; filtering here would drop the count and let the
+ * resolver silently resolve whichever row survived.
+ *
+ * @param input - The captured transaction inputs.
+ * @param hashToken - Hashes the named bearer (injected so this module keeps no
+ *   dependency on the token implementation).
+ * @returns The capture, discriminated on whether a bearer was named.
+ */
+export function buildRetryIssuanceCapture(
+  input: RetryIssuanceCaptureInput,
+  hashToken: (token: string) => DelegationTokenHash,
+): RetryIssuanceCapture {
+  const { token, capturedState, current, frameEntry } = input;
+  if (token === undefined) {
+    return { locator: 'step', current, frameEntry };
+  }
+
+  const identityTokenHash = hashToken(token);
+  const captured: RetrySupersessionRow[] = [];
+  for (const row of capturedState.substepStates ?? []) {
+    const delegation = row.delegation;
+    if (delegation?.credential.supersedesTokenHash !== identityTokenHash) continue;
+    captured.push({
+      runId: capturedState.id,
+      substepId: row.id,
+      frameKey: row.frameKey,
+      delegation,
+    });
+  }
+  const foreign: RetrySupersessionRow[] = input.scannedSuperseding
+    .filter(
+      (row) =>
+        row.parentState.id !== capturedState.id &&
+        row.delegation.credential.supersedesTokenHash === identityTokenHash,
+    )
+    .map((row) => ({
+      runId: row.parentState.id,
+      substepId: row.substepId ?? row.stepId,
+      frameKey: row.frameKey,
+      delegation: row.delegation,
+    }));
+
+  return {
+    locator: 'token',
+    identityTokenHash,
+    current,
+    supersededBy: [...captured, ...foreign],
+    ownRunId: capturedState.id,
+    ownSubstepId: input.substepId,
+    ownFrameKey: input.frameKey,
+    frameEntry,
+  };
+}
+
+/**
+ * Whether a replacement row shows committed evidence of use, and if so which.
+ *
+ * The three negative conjuncts of `unobservedReplacement` in the ratified
+ * predicate, as a discriminated result rather than a boolean. Both retry paths
+ * need the same rule but not the same shape: the step path collapses it to
+ * "echo or rotate", while the token path must name WHICH evidence it found to
+ * attribute an RD-826 `reason`. Encoding it once and narrowing at each call site
+ * is what stops the two from drifting into different rules.
+ *
+ * The entry check is not defensive: a delegation row is keyed `(id, frameKey)`
+ * with no entry component and `resetReopenedSubsteps` preserves `delegation`
+ * across frame re-entry, so without it a replay after a GOTO would echo a bearer
+ * `classifyDelegationLiveness` has already closed as `cursor-advanced` — an
+ * unclaimable token, strictly worse than rotating.
+ *
+ * @param delegation - The replacement row being judged.
+ * @param frameEntry - The entry committed state reports for the row's frame.
+ * @returns `unobserved`, or `consumed` with the evidence that closed it.
+ */
+function classifyReplacementUse(
+  delegation: StepDelegation,
+  frameEntry: number,
+):
+  | { readonly kind: 'unobserved' }
+  | { readonly kind: 'consumed'; readonly reason: RetryReplacementConsumedReason } {
+  if (delegation.childRunId !== null) return { kind: 'consumed', reason: 'claimed' };
+  if (delegation.cancelledAt !== null) return { kind: 'consumed', reason: 'cancelled' };
+  if (delegation.credential.parentEntry !== frameEntry) {
+    return { kind: 'consumed', reason: 'entry_superseded' };
+  }
+  return { kind: 'unobserved' };
+}
+
+/**
+ * `unobservedReplacement(state, frameKey, D)` — no committed evidence that the
+ * bearer `D` replaced was ever presented.
+ *
+ * All four conjuncts are required; the last three are
+ * {@link classifyReplacementUse}. The first is stated here and not there because
+ * only the step path needs it: `current` on that path is whatever row sits at
+ * the cursor, which need not supersede anything (row 10). Every row the token
+ * path judges is drawn from `supersededBy`, which
+ * {@link buildRetryIssuanceCapture} builds by requiring
+ * `supersedesTokenHash === identityTokenHash`, so there the conjunct holds by
+ * construction.
+ *
+ * @param delegation - The replacement row being judged.
+ * @param frameEntry - The entry committed state reports for the row's frame.
+ * @returns True when the replacement shows no committed evidence of use.
+ */
+function unobservedReplacement(delegation: StepDelegation, frameEntry: number): boolean {
+  return (
+    delegation.credential.supersedesTokenHash !== undefined &&
+    classifyReplacementUse(delegation, frameEntry).kind === 'unobserved'
+  );
+}
+
+/**
+ * Decide whether a `delegate --retry` should rotate, echo a committed
+ * replacement, or refuse.
+ *
+ * Implements the ratified 15-row decision table
+ * (`docs/superpowers/plans/2026-08-03-608-pr12-review-remediation-addendum.md`
+ * § "Retry idempotency contract"). Pure: no I/O, never throws. The caller
+ * narrows on the returned variant rather than re-checking any predicate.
+ *
+ * Rows the caller owns and this resolver deliberately does not: "not located"
+ * (`token-not-found`) is decided at the scan boundary before a capture exists,
+ * and "live linked child" (RD-823) is refused by the child-liveness guard that
+ * runs immediately before this call — both reach here, if at all, as
+ * `rotatable`.
+ *
+ * Ambiguity, by contrast, is decided **here** and nowhere else. The caller
+ * scans the supersession index unconditionally and passes the result in
+ * `supersededBy` without inspecting its length, so a caller that also matched a
+ * current row cannot mask it.
+ *
+ * @param capture - The locator-discriminated capture taken inside the transaction.
+ * @returns The discriminated resolution.
+ */
+export function resolveRetryIssuance(capture: RetryIssuanceCapture): RetryIssuanceResolution {
+  if (capture.locator === 'step') {
+    const current = capture.current;
+    if (current === undefined) return { kind: 'rotatable' };
+    // Row 10 ("Hs undefined -> rotatable") needs no branch of its own: it is
+    // the first conjunct of `unobservedReplacement`. Restating it here would
+    // make the two mask each other, leaving neither reachable by a test.
+    return unobservedReplacement(current, capture.frameEntry)
+      ? { kind: 'already-replaced', delegation: current }
+      : { kind: 'rotatable' };
+  }
+
+  // Ambiguity outranks every other token-locator row: with more than one
+  // superseding attempt there is no single replacement to echo or judge, so the
+  // contract refuses rather than picking one.
+  if (capture.supersededBy.length > 1) return { kind: 'ambiguous' };
+
+  const current = capture.current;
+  if (current === undefined) return { kind: 'rotatable' };
+  if (current.tokenHash === capture.identityTokenHash) return { kind: 'rotatable' };
+
+  // `.at(0)`, not `[0]`: an index read is typed as always-present under this
+  // tsconfig, which would make the guard below read as dead code while an empty
+  // `supersededBy` still yields `undefined` at runtime. Row 7 ("matches neither
+  // Hc nor Hs") is exactly that case, so the type has to admit it.
+  const replacement = capture.supersededBy.at(0);
+  if (replacement === undefined) return { kind: 'identity-unmatched' };
+  // Identity before judgement. Everything below reads the replacement against
+  // THIS coordinate — `frameEntry` is one frame's counter, and the caller
+  // reports the survivor under this run id and this cursor's step label. A row
+  // found anywhere else would be judged against a counter that is not its own
+  // and echoed under an identity that is not its own, so it is refused here
+  // rather than resolved.
+  //
+  // Placed AFTER the ambiguity count and BEFORE the consumed judge, and both
+  // orderings matter. Ambiguity outranks it because two rows are irreconcilable
+  // whatever their coordinates. The consumed judge does not, because RD-826
+  // attributes committed evidence of use to this cursor — attributing another
+  // row's claim here would be a false report, not a conservative one.
+  //
+  // `retryDelegation` writes the replacement at the same
+  // `(state, substepId, frameKey)` as the bearer it supersedes, so no code path
+  // in this package can produce a displaced row. This refuses the states only
+  // corruption or hand-editing can reach, per the no-migration rule: reject,
+  // never silently adapt.
+  if (
+    replacement.runId !== capture.ownRunId ||
+    replacement.substepId !== capture.ownSubstepId ||
+    replacement.frameKey !== capture.ownFrameKey
+  ) {
+    return { kind: 'identity-unmatched' };
+  }
+  const delegation = replacement.delegation;
+  // Same rule the step path applies through `unobservedReplacement`; this path
+  // narrows on the reason instead of collapsing to a boolean, because RD-826
+  // reports WHICH evidence closed the replacement.
+  const use = classifyReplacementUse(delegation, capture.frameEntry);
+  if (use.kind === 'consumed') {
+    return { kind: 'replacement-consumed', reason: use.reason };
+  }
+  return { kind: 'already-replaced', delegation };
+}

@@ -514,7 +514,6 @@ async function startParent(markdown: string): Promise<StartedParent> {
   const seam = new RunbookLifecycleCommandService({
     sessionService,
     actorService,
-    lifecycleService,
     completionService,
     actorMutationRunner: createEffectfulActorMutationRunner(dir),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
@@ -523,8 +522,8 @@ async function startParent(markdown: string): Promise<StartedParent> {
       path: name,
       ref: { source: 'project', path: name },
     }),
-    findDelegationByToken: async (token) =>
-      (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+    findDelegationsByTokenHash: (tokenHash) =>
+      new DelegationScanService(manager).scanByTokenHash(tokenHash),
   });
   return { runId, claimId, seam };
 }

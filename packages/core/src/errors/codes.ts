@@ -453,11 +453,30 @@ export const ErrorCodes = {
       'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator. The durable claim latch refuses a claim once the parent advances, ends, resets, or reissues the token.',
     docSlug: 'delegation-superseded',
   },
-  // RD-826..RD-828 are reserved by the PR 12 review-remediation addendum for the
-  // retry idempotency contract (DELEGATION_REPLACEMENT_CONSUMED,
-  // DELEGATION_RETRY_IDENTITY_UNMATCHED, DELEGATION_SUPERSESSION_AMBIGUOUS).
-  // That phase is blocked, so the next frontier code takes RD-829 rather than
-  // claiming a reserved number.
+  DELEGATION_REPLACEMENT_CONSUMED: {
+    code: 'RD-826',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation replacement consumed',
+    description:
+      'The named bearer was already replaced, and the replacement shows committed evidence of use — it was claimed, cancelled, or its frame entry advanced. Retrying it would mint a third bearer over work already in progress. Target the current delegation instead, or abort it and re-delegate.',
+    docSlug: 'delegation-replacement-consumed',
+  },
+  DELEGATION_RETRY_IDENTITY_UNMATCHED: {
+    code: 'RD-827',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation retry identity unmatched',
+    description:
+      'The named bearer identifies neither the delegation currently recorded at the target nor one that it superseded. The retry is refused rather than re-minted against an identity the parent does not recognise.',
+    docSlug: 'delegation-retry-identity-unmatched',
+  },
+  DELEGATION_SUPERSESSION_AMBIGUOUS: {
+    code: 'RD-828',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation supersession ambiguous',
+    description:
+      'More than one delegation attempt records this bearer as superseded, so there is no single replacement to echo or judge. Unreachable by construction; it is refused, never resolved. Prune invalid runbook state and restart execution.',
+    docSlug: 'delegation-supersession-ambiguous',
+  },
   DELEGATION_FRONTIER_CONSUME_FAILED: {
     code: 'RD-829',
     category: ErrorCategory.DELEGATION,
@@ -470,6 +489,33 @@ export const ErrorCodes = {
       `no credential failed verification. Retry the operation — the next attempt ` +
       `re-projects and re-consumes the same frontier.`,
     docSlug: 'delegation-frontier-consume-failed',
+  },
+  INLINE_CHILD_FRAME_SUPERSEDED: {
+    code: 'RD-830',
+    category: ErrorCategory.DELEGATION,
+    title: 'Inline child superseded by frame re-entry',
+    description:
+      `The inline child recorded at this frame was launched at an earlier entry, ` +
+      `and the parent has since re-entered the frame. A re-entered frame never ` +
+      `adopts the previous entry's child — the same judgement delegation makes ` +
+      `when it closes a child cursor-advanced (RD-826). Reachable from an ` +
+      `ordinary gesture rather than corrupt state: a self-targeting GOTO or RETRY ` +
+      `advances the frame's entry counter. Finish, stop, or prune the superseded ` +
+      `child run, after which the same re-entry launches a fresh child under the ` +
+      `current entry.`,
+    docSlug: 'inline-child-frame-superseded',
+  },
+  INLINE_CHILD_LINKAGE_MISMATCH: {
+    code: 'RD-831',
+    category: ErrorCategory.DELEGATION,
+    title: 'Inline child linkage mismatch',
+    description:
+      `The persisted inline child names a different parent run, step, substep, or ` +
+      `frame than the launch intent describes. Distinct from RD-830: that is a ` +
+      `superseded generation of the same linkage, reachable by an ordinary ` +
+      `re-entry, whereas this is inconsistent state. Prune the child run and ` +
+      `restart execution rather than adopting a child the parent does not claim.`,
+    docSlug: 'inline-child-linkage-mismatch',
   },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,

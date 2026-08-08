@@ -2109,11 +2109,12 @@ describe('RunbookCompletionService', () => {
     }
 
     it('writes NOTHING: the persisted run is byte-identical after a full prepared drain', async () => {
-      // The whole point of the twin. Its three substitutions each replace a write
-      // or a re-read with a pure counterpart — `ensureActiveEntry` becomes
-      // `deriveActiveEntry`, every store read becomes its in-state twin, and
-      // `sendAndSync` becomes `prepareActorMutation` — so a caller can commit the
-      // result against the version it captured.
+      // The whole point of the twin. Its substitutions each replace a write or a
+      // re-read with a pure counterpart — the active-entry projection is gone
+      // entirely (#680: the machine is the single writer), every store read
+      // becomes its in-state twin, and `sendAndSync` becomes
+      // `prepareActorMutation` — so a caller can commit the result against the
+      // version it captured.
       const current = await seedReported([
         ['1', 'pass'],
         ['2', 'pass'],
@@ -2243,13 +2244,14 @@ describe('RunbookCompletionService', () => {
       expect(prepared.state.id).toBe(runbookId);
     });
 
-    it('carries the chained activeEntry/frameEntryCounts projection forward without a store write', async () => {
-      // `ensureActiveEntry` persists its projection and re-reads per iteration;
-      // `deriveActiveEntry` does not, so the projection has to survive on the
-      // CHAINED state instead. Start from a cursor carrying no frame identity at
-      // all: if the projection were dropped between iterations the second apply
-      // would re-derive from scratch, and if it were persisted the store would
-      // show it.
+    it('carries the machine-written frame coordinate forward without a store write', async () => {
+      // #680 made the machine the single writer of frame entry, so the drain
+      // projects nothing of its own: it reads the coordinate off the captured
+      // cursor, falling back to `deriveActiveFrame` when the cursor carries none.
+      // Start from a cursor with no frame identity at all. The first apply
+      // therefore runs on a bare cursor, and the SECOND sees the coordinate the
+      // machine stamped during the first — carried on the CHAINED state, not
+      // re-read from a store this pass never writes.
       const current = await seedReported(
         [
           ['1', 'pass'],
@@ -2266,15 +2268,19 @@ describe('RunbookCompletionService', () => {
         capturedState: current,
       });
 
+      // Both rows still applied, so the fallback derivation resolved the very
+      // frame the completion rows are keyed to.
       expect(prepared.applied).toHaveLength(2);
-      // Every applied record's `stateBefore` already carries the projection —
-      // including the SECOND one, whose input is the previous iteration's derived
-      // state rather than anything the store returned.
-      for (const entry of prepared.applied) {
-        expect(entry.stateBefore.activeFrameKey).toBe(buildFrameKey('1'));
-        expect(entry.stateBefore.activeEntry).toBe(1);
-        expect(entry.stateBefore.frameEntryCounts).toEqual({ [buildFrameKey('1')]: 1 });
-      }
+      const [first, second] = prepared.applied;
+      // The drain synthesizes nothing: the first apply runs on the bare cursor.
+      expect(first.stateBefore.activeFrameKey).toBeUndefined();
+      expect(first.stateBefore.activeEntry).toBeUndefined();
+      expect(first.stateBefore.frameEntryCounts).toBeUndefined();
+      // The machine wrote the coordinate during that first apply, and the second
+      // apply reads it off the chained state rather than re-deriving it.
+      expect(second.stateBefore.activeFrameKey).toBe(buildFrameKey('1'));
+      expect(second.stateBefore.activeEntry).toBe(1);
+      expect(second.stateBefore.frameEntryCounts).toEqual({ [buildFrameKey('1')]: 1 });
       // ...and the arm's own state carries it out to the commit.
       expect(prepared.state.activeFrameKey).toBe(buildFrameKey('1'));
       expect(prepared.state.activeEntry).toBe(1);

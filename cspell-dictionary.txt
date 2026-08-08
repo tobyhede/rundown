@@ -132,6 +132,7 @@ lockfile
 materialise
 materialised
 materialising
+macrostep
 mdast
 misattributes
 miscomputation
@@ -361,6 +362,7 @@ unparseable
 unsynchronized
 precheck
 frontends
+recognise
 recognises
 recognised
 unrecognised

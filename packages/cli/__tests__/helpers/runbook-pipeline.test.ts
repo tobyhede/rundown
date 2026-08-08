@@ -637,23 +637,7 @@ function mockParseResult(
 }
 
 function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  type LifecycleState = Record<string, unknown> & {
-    step?: string;
-    activeEntry?: unknown;
-    activeFrameKey?: unknown;
-  };
   return {
-    ensureActiveEntry: mockFn<
-      (id: string, prev: unknown, state: LifecycleState | undefined) => Promise<unknown>
-    >().mockImplementation(async (_id, _prev, state) => ({
-      state: {
-        ...(state ?? {}),
-        activeEntry: state?.activeEntry ?? 1,
-        activeFrameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
-      },
-      frameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
-      entry: state?.activeEntry ?? 1,
-    })),
     buildTargetFrameKey: mockFn<(step: string, iteration?: number) => string>().mockImplementation(
       (step, iteration) => `${step}|${iteration != null ? String(iteration) : ''}`,
     ),
@@ -2109,14 +2093,6 @@ describe('startRunbook', () => {
     const mockPushRunbookWithRunControlClaim = mockFn<
       SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }));
-    const mockEnsureActiveEntry = mockFn<
-      ExecutionLifecycleService['ensureActiveEntry']
-    >().mockResolvedValue({
-      state: createdState,
-      frameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
-      entry: 1,
-    });
-
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
     const ctx = makeRunPipelineContext({
@@ -2131,7 +2107,6 @@ describe('startRunbook', () => {
         prepareRunControlClaim: () => preparedClaimFor(preparedRunId),
         pushRunbookWithPreparedRunControlClaim: mockPushRunbookWithRunControlClaim,
       },
-      lifecycleService: { ensureActiveEntry: mockEnsureActiveEntry },
     });
 
     const prepared: RunnableRunbook = {
@@ -2177,7 +2152,6 @@ describe('startRunbook', () => {
       MOCK_RUN_ID,
       expect.objectContaining({ claimId: TEST_CLAIM_ID }),
     );
-    expect(mockEnsureActiveEntry).not.toHaveBeenCalled();
     expect(mockInitializeSubsteps).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
     const createBridgedEmitterMock = createBridgedEmitter as jest.MockedFunction<

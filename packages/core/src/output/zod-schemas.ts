@@ -1472,6 +1472,14 @@ export const DelegateResponseSchema = z
       .describe('Existing delegation cancelled and re-minted'),
     z
       .object({
+        action: z.literal('retry-already-applied').describe('Action type'),
+        ...DelegateResponseBase,
+        /** Hash of the bearer being echoed */
+        token_hash: z.string().describe('Token hash'),
+      })
+      .describe('Retry already applied; the current bearer is echoed and nothing was written'),
+    z
+      .object({
         action: z.literal('already-delegated').describe('Action type'),
         ...DelegateResponseBase,
       })

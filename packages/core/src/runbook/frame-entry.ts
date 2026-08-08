@@ -4,16 +4,59 @@ import type { RunbookState } from './types.js';
 /**
  * The exact persisted fields {@link inferFrameEntryFromState} reads.
  *
- * Named so a caller that has to carry the coordinates across a boundary — the
- * XState machine mirrors them into `RunbookContext` at actor bootstrap — carries
- * all three together. `activeEntry` is meaningless without the
- * `activeFrameKey` that says which frame it belongs to: pairing it with a
- * different frame silently attributes one frame's entry to another.
+ * Deliberately as loose as `RunbookState` itself: this is what a *reader*
+ * accepts, and persisted state genuinely arrives with each field independently
+ * present or absent. Every branch of the inference already covers that. What
+ * the machine *carries* is the stricter {@link FrameEntryCoordinates}.
  */
-export type FrameEntryCoordinates = Pick<
+export type FrameEntryReadModel = Pick<
   RunbookState,
   'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'
 >;
+
+/**
+ * Frame-entry coordinates for a frame that has been entered.
+ *
+ * `activeEntry` is meaningless without the `activeFrameKey` that says which
+ * frame it belongs to — pairing it with a different frame silently attributes
+ * one frame's entry to another — so the two are required together.
+ */
+export interface ActiveFrameEntryCoordinates {
+  /** Frame the cursor currently occupies. */
+  readonly activeFrameKey: FrameKey;
+  /** Entry ordinal of {@link ActiveFrameEntryCoordinates.activeFrameKey}. */
+  readonly activeEntry: number;
+  /** Highest entry ordinal recorded for each frame the run has entered. */
+  readonly frameEntryCounts?: Readonly<Record<FrameKey, number>>;
+}
+
+/**
+ * Frame-entry coordinates before any frame has been entered.
+ *
+ * Both halves of the pair are absent together. `frameEntryCounts` may still
+ * carry history: a run rehydrated from persisted state knows what each frame
+ * reached without yet naming a current one.
+ */
+export interface BootstrapFrameEntryCoordinates {
+  /** Never set: a bootstrap coordinate names no current frame. */
+  readonly activeFrameKey?: undefined;
+  /** Never set: there is no frame for an entry ordinal to belong to. */
+  readonly activeEntry?: undefined;
+  /** Highest entry ordinal recorded for each frame the run has entered. */
+  readonly frameEntryCounts?: Readonly<Record<FrameKey, number>>;
+}
+
+/**
+ * Frame-entry coordinates as the machine carries them.
+ *
+ * Named so a caller that has to carry the coordinates across a boundary — the
+ * XState machine mirrors them into `RunbookContext` at actor bootstrap — carries
+ * all three together. The union makes the pairing structural rather than a
+ * documented convention: `{ activeEntry: 5 }` with no frame key does not
+ * typecheck, so {@link advanceFrameEntry} does not have to defend that hole at
+ * runtime and its bootstrap branch is a single narrowing check.
+ */
+export type FrameEntryCoordinates = ActiveFrameEntryCoordinates | BootstrapFrameEntryCoordinates;
 
 /**
  * Infer the current entry number for a runbook frame.
@@ -26,8 +69,52 @@ export type FrameEntryCoordinates = Pick<
  * @param frameKey - Frame whose current entry should be inferred.
  * @returns The frame's active or recorded entry, defaulting to `1`.
  */
-export function inferFrameEntryFromState(state: FrameEntryCoordinates, frameKey: FrameKey): number {
+export function inferFrameEntryFromState(state: FrameEntryReadModel, frameKey: FrameKey): number {
   return state.activeFrameKey === frameKey && state.activeEntry !== undefined
     ? state.activeEntry
     : (state.frameEntryCounts?.[frameKey] ?? 1);
+}
+
+/**
+ * Advance the frame-entry coordinates for one state entry.
+ *
+ * The single owner of the entry bump rule. Semantics are preserved verbatim
+ * from the projection this replaces (`deriveActiveEntryProjection`): the entry
+ * ordinal is run-global and monotonic, not per-frame-local, so entering a fresh
+ * frame from entry 5 yields 6 rather than 1. `classifyDelegationLiveness` and
+ * completion-key scoping are calibrated against that form — do not "fix" it to
+ * a per-frame counter.
+ *
+ * - No frame entered yet (bootstrap): the entry is the frame's recorded count,
+ *   or `1` when it has none. One narrowing check, not two — the union pairs
+ *   `activeFrameKey` and `activeEntry`, so neither can be absent alone.
+ * - Frame switch, or a re-entry the transition declared: one past the greater of
+ *   the frame's recorded count and the previous active entry.
+ * - Otherwise the active entry carries through unchanged.
+ *
+ * In every case the frame's recorded count is raised to the resulting entry and
+ * never lowered.
+ *
+ * @param coordinates - The coordinates before this state entry.
+ * @param frameKey - The frame being entered, from `frameKeyForCursor`.
+ * @param reentered - Whether the transition declared this a GOTO/RETRY re-entry.
+ * @returns New coordinates naming `frameKey` as active; the input is never mutated.
+ */
+export function advanceFrameEntry(
+  coordinates: FrameEntryCoordinates,
+  frameKey: FrameKey,
+  reentered: boolean,
+): ActiveFrameEntryCoordinates {
+  const frameEntryCounts: Record<FrameKey, number> = { ...(coordinates.frameEntryCounts ?? {}) };
+  const known = frameEntryCounts[frameKey] ?? 0;
+  let entry: number;
+  if (coordinates.activeFrameKey === undefined) {
+    entry = known > 0 ? known : 1;
+  } else if (reentered || frameKey !== coordinates.activeFrameKey) {
+    entry = Math.max(known, coordinates.activeEntry) + 1;
+  } else {
+    entry = coordinates.activeEntry >= 1 ? coordinates.activeEntry : known > 0 ? known : 1;
+  }
+  frameEntryCounts[frameKey] = Math.max(known, entry);
+  return { activeFrameKey: frameKey, activeEntry: entry, frameEntryCounts };
 }

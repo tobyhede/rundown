@@ -202,6 +202,34 @@ export const Errors = {
       message: `child run ${childRunId} is still linked; run "rundown abort <token> --claim-id <claim_id> --force" before retrying`,
     }),
 
+  delegationReplacementConsumed: (
+    step: string,
+    reason: 'claimed' | 'cancelled' | 'entry_superseded',
+  ): RundownError =>
+    new RundownError('DELEGATION_REPLACEMENT_CONSUMED', {
+      step,
+      // `reason` is a closed discriminant naming which remedy applies, so it
+      // rides as a structured key and not only inside the sentence. Like
+      // `claimSeenUnreadable`'s `childId` below, it is OUTSIDE
+      // `formatMessage`'s fixed key list, so it reaches the agent through
+      // `context` (the CLI envelope's `details.context`) and leaves the
+      // rendered message unchanged — `message` still names it in prose.
+      reason,
+      message: `the replacement for this bearer shows committed evidence of use (${reason})`,
+    }),
+
+  delegationRetryIdentityUnmatched: (step: string): RundownError =>
+    new RundownError('DELEGATION_RETRY_IDENTITY_UNMATCHED', {
+      step,
+      message: 'the named bearer matches neither the current delegation nor one it superseded',
+    }),
+
+  delegationSupersessionAmbiguous: (step: string): RundownError =>
+    new RundownError('DELEGATION_SUPERSESSION_AMBIGUOUS', {
+      step,
+      message: 'more than one delegation attempt records this bearer as superseded',
+    }),
+
   claimSeenUnreadable: (claimKey: string, lastSeenAt: string): RundownError =>
     new RundownError('CLAIM_SEEN_UNREADABLE', {
       // These keys are NOT arbitrary — `RundownError.formatMessage` renders a

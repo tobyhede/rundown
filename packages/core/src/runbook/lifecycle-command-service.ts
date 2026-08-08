@@ -30,13 +30,21 @@ import {
   type DelegationRuntimeCapabilities,
   type DelegationTokenDeriver,
 } from './delegation-credential.js';
-import type { TokenScanResult } from './delegation-scan.js';
-import { hashDelegationToken } from './delegation-token.js';
+import type { DelegationTokenScan, TokenScanResult } from './delegation-scan.js';
 import {
+  hashDelegationToken,
+  truncateDelegationToken,
+  type DelegationCredentialDescriptor,
+  type DelegationTokenHash,
+} from './delegation-token.js';
+import {
+  buildRetryIssuanceCapture,
   resolveDelegationIssuance,
+  resolveRetryIssuance,
   type DelegationIssuanceResolution,
   type RequestedRunbookArg,
 } from './delegation-inference.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -53,7 +61,6 @@ import {
   type UnknownRunRefusal,
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
-import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import {
   type IssuanceAnchorResolution,
@@ -86,6 +93,8 @@ import {
   replaceSubstepStateEntry,
 } from './targeting.js';
 import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
+import type { RunbookContext } from './compiler.js';
+import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { PreparedActorMutation } from './effectful-mutation-executor.js';
@@ -105,8 +114,6 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly sessionService: SessionService;
   /** Actor service used to dispatch top-level PASS/FAIL through the state machine. */
   readonly actorService: RunbookActorService;
-  /** Lifecycle service used to ensure the active frame entry before/after a transition. */
-  readonly lifecycleService: ExecutionLifecycleService;
   /** Completion service used to record and drain resolved substep completions. */
   readonly completionService: RunbookCompletionService;
   /** Core-owned execution fence for actor-derived lifecycle mutations. */
@@ -144,14 +151,15 @@ export interface RunbookLifecycleCommandServiceDependencies {
    */
   readonly resolveChildRunbook: ResolveChildRunbook;
   /**
-   * Locate a delegation across runs by its plain-text token.
+   * Locate a delegation bearer across runs, by verifier.
    *
-   * CLI-bound; wraps `DelegationScanService.findByToken` (which returns
-   * `TokenScanResult | null`), coercing `null → undefined`. Used by the retry
-   * `token` locator, whose target run is the scan result's parent — not the
-   * active run.
+   * CLI-bound; wraps `DelegationScanService.scanByTokenHash`. One dependency
+   * rather than two because the seam's two questions about a bearer — which row
+   * still carries it, and which rows record it as superseded — are always asked
+   * together about the same hash, and answering them from one state listing is
+   * what keeps the retry locator to a single full scan.
    */
-  readonly findDelegationByToken: FindDelegationByToken;
+  readonly findDelegationsByTokenHash: FindDelegationsByTokenHash;
 }
 
 /**
@@ -168,12 +176,20 @@ export type ResolveChildRunbook = (
 ) => Promise<{ readonly path: string; readonly ref: RunbookRef } | undefined>;
 
 /**
- * Cross-run token lookup, CLI-bound (wraps `DelegationScanService.findByToken`).
+ * Cross-run bearer lookup, CLI-bound (wraps `DelegationScanService.scanByTokenHash`).
  *
- * @param token - The plain-text delegation token.
- * @returns The scan result, or `undefined` when no run owns the token.
+ * Takes the verifier rather than the raw bearer: the seam hashes the token once
+ * to identify the retry and passes that hash on, instead of handing the token
+ * back for the scan to hash a second time. It also keeps the plain-text bearer
+ * off one more callable boundary.
+ *
+ * @param tokenHash - Verifier of the delegation bearer being located.
+ * @returns The row still carrying the bearer (or `undefined`), plus every row
+ *   recording it as superseded.
  */
-export type FindDelegationByToken = (token: string) => Promise<TokenScanResult | undefined>;
+export type FindDelegationsByTokenHash = (
+  tokenHash: DelegationTokenHash,
+) => Promise<DelegationTokenScan>;
 
 /**
  * How a retry locates its target delegation.
@@ -311,7 +327,32 @@ export type DelegationIssuanceOutcome =
       readonly tokenHash: string;
       readonly parentRunId: RunId;
     }
-  | { readonly kind: 'token-not-found'; readonly token: string }
+  | {
+      /**
+       * The retry was already applied: a replacement exists with no committed
+       * evidence its bearer was used. The response echoes that bearer so the
+       * caller can rotate deliberately by naming it. Nothing was written.
+       */
+      readonly kind: 'retry-already-applied';
+      readonly stepLabel: string;
+      readonly runbookPath: string;
+      readonly token: string;
+      readonly tokenHash: string;
+      readonly parentRunId: RunId;
+    }
+  | {
+      /**
+       * Refusal: no delegation matches the named bearer, on either the current
+       * `tokenHash` index or the supersession index.
+       *
+       * Carries a pre-truncated `tokenHint`, never the raw bearer. The hint is
+       * built at this boundary by {@link truncateDelegationToken}, so the leak
+       * is unrepresentable on this outcome rather than merely unrendered —
+       * matching what `Errors.tokenNotFound` already does for `rundown abort`.
+       */
+      readonly kind: 'token-not-found';
+      readonly tokenHint: string;
+    }
   | { readonly kind: 'no-active-runbook' }
   | UnknownRunRefusal
   | {
@@ -422,47 +463,49 @@ type EchoedDelegationToken =
   | { readonly kind: 'unverifiable'; readonly error: RundownError };
 
 /**
- * Reconstruct and verify the bearer token for an already-issued delegation
- * before the seam echoes it.
+ * Reconstruct and verify a bearer before any seam discloses it.
  *
- * An echo is a credential disclosure, so it is gated on the same invariant
+ * An echo is a credential disclosure, so it is gated on the invariant
  * `projectDelegateFrontier` enforces at the observation boundary: the token
  * reconstructed from the persisted descriptor MUST hash to the verifier the
  * parent recorded at issuance. Without that check the seam would hand back
  * whatever the descriptor happens to derive to, which is a forged or corrupted
  * record's own choosing.
  *
- * Derivation itself can fail — a rotated issuing claim can no longer reproduce a
- * credential minted by its predecessor, and the deriver throws for that. That
- * throw must not escape as an untyped error from a command seam whose contract
- * is typed data, so it collapses into the same refusal as a mismatch. Neither
- * arm carries the reconstructed token, so a caller cannot leak a bearer it was
+ * Derivation itself can fail — a rotated issuing claim cannot reproduce its
+ * predecessor's credential — and that throw must not escape a seam whose
+ * contract is typed data, so it collapses into the same refusal. Neither arm
+ * carries the reconstructed token, so a caller cannot leak a bearer it was
  * refused.
  *
- * @param echo - The `already-issued` resolution the seam matched.
+ * @param credential - The persisted, non-secret credential descriptor.
+ * @param tokenHash - The verifier recorded alongside it.
+ * @param subject - Step or substep label used in the refusal message.
  * @param deriveToken - Verified runtime deriver bound to the presenting claim.
  * @returns The verified bearer, or the typed refusal to return in its place.
  */
-function verifyEchoedDelegationToken(
-  echo: Extract<DelegationIssuanceResolution, { readonly kind: 'already-issued' }>,
+function verifyDerivedBearer(
+  credential: DelegationCredentialDescriptor,
+  tokenHash: DelegationTokenHash,
+  subject: string,
   deriveToken: DelegationTokenDeriver,
 ): EchoedDelegationToken {
   let token: string;
   try {
-    token = deriveToken(echo.credential);
+    token = deriveToken(credential);
   } catch {
     return {
       kind: 'unverifiable',
       error: Errors.delegationInvariantViolated(
-        `the presented claim cannot reconstruct the in-flight delegation credential for ${echo.stepId}`,
+        `the presented claim cannot reconstruct the in-flight delegation credential for ${subject}`,
       ),
     };
   }
-  if (hashDelegationToken(token) !== echo.tokenHash) {
+  if (hashDelegationToken(token) !== tokenHash) {
     return {
       kind: 'unverifiable',
       error: Errors.delegationInvariantViolated(
-        `reconstructed delegation credential for ${echo.stepId} does not match its persisted verifier`,
+        `reconstructed delegation credential for ${subject} does not match its persisted verifier`,
       ),
     };
   }
@@ -473,6 +516,20 @@ function verifyEchoedDelegationToken(
   // token unreachable without passing verification.
   // Stryker disable next-line StringLiteral: equivalent — the 'verified' discriminant is never read
   return { kind: 'verified', token };
+}
+
+/**
+ * Verify the bearer an already-issued fresh delegation would echo.
+ *
+ * @param echo - The `already-issued` resolution the seam matched.
+ * @param deriveToken - Verified runtime deriver bound to the presenting claim.
+ * @returns The verified bearer, or the typed refusal to return in its place.
+ */
+function verifyEchoedDelegationToken(
+  echo: Extract<DelegationIssuanceResolution, { readonly kind: 'already-issued' }>,
+  deriveToken: DelegationTokenDeriver,
+): EchoedDelegationToken {
+  return verifyDerivedBearer(echo.credential, echo.tokenHash, echo.stepId, deriveToken);
 }
 
 /**
@@ -1534,37 +1591,61 @@ export class RunbookLifecycleCommandService {
 
     let targetRunId: RunId;
     let cursor: RetryCursor | undefined;
+    let supersedingScan: readonly TokenScanResult[] = [];
 
     if (locator.kind === 'token') {
-      const scan = await this.#deps.findDelegationByToken(locator.token);
-      if (!scan) return { kind: 'token-not-found', token: locator.token };
+      // Both halves come from ONE scan. `current` matches `tokenHash` only, so a
+      // replayed retry naming a bearer that has since been rotated away resolves
+      // to nothing there.
+      //
+      // The supersession index is populated UNCONDITIONALLY — not as a fallback
+      // when `current` misses. Skipping it on a hit would make "more than one
+      // attempt records this bearer as superseded" invisible in exactly the case
+      // where a current row also matches, which is the corrupted state the
+      // refusal exists for. Collecting always is the fail-closed choice, and it
+      // is what lets `resolveRetryIssuance` remain the single place the priority
+      // between ambiguity and a matching current row is expressed. Answering
+      // both from one listing also removes the window in which the two lookups
+      // observed different disk states. This seam decides nothing from the
+      // result but *where* the target run is.
+      const { current: scan, superseding } = await this.#deps.findDelegationsByTokenHash(
+        hashDelegationToken(locator.token),
+      );
+      supersedingScan = superseding;
+      // `.at(0)` for the same reason as `resolveRetryIssuance`'s `replacement`:
+      // an index read is typed as always-present, so the guard below would read
+      // as dead code even though an empty scan yields `undefined` and must fall
+      // through to `token-not-found`.
+      const located = scan ?? supersedingScan.at(0);
+      if (!located)
+        return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
       // Fail-closed: an explicit `--run` that names a different run than the
       // token's owner is refused, never silently discarded. The message echoes
       // only the caller-supplied id — never the token's actual owning run
       // (accident barrier).
-      if (input.targetRunId !== undefined && scan.parentState.id !== input.targetRunId) {
+      if (input.targetRunId !== undefined && located.parentState.id !== input.targetRunId) {
         return {
           kind: 'run_target_mismatch',
           runId: input.targetRunId,
           message: `Run ${input.targetRunId} does not own the supplied delegation token.`,
         };
       }
-      targetRunId = scan.parentState.id;
-      const substepId = scan.substepId ?? scan.stepId;
+      targetRunId = located.parentState.id;
+      const substepId = located.substepId ?? located.stepId;
       // The canonical contextSnapshot.at surfaces FOR-iteration retries as e.g.
       // "1.2.1". `buildContextSnapshot` derives `at` unconditionally, so a
       // persisted snapshot always carries it; its absence means the snapshot is
       // from an incompatible/older persisted shape. Fail closed per the
       // no-migration rule (reject; never reconstruct the label from legacy
       // `substep`/`stepId` fields) — mirroring the downstream staleness gate.
-      const snapshot = scan.delegation.contextSnapshot;
+      const snapshot = located.delegation.contextSnapshot;
       if (snapshot.at === undefined) {
         return {
           kind: 'error',
-          error: Errors.delegationSnapshotStale(substepId, scan.stepId),
+          error: Errors.delegationSnapshotStale(substepId, located.stepId),
         };
       }
-      cursor = { substepId, frameKey: scan.frameKey, stepLabel: snapshot.at };
+      cursor = { substepId, frameKey: located.frameKey, stepLabel: snapshot.at };
     } else {
       const anchored = await this.#resolveIssuanceAnchor(input);
       if (anchored.kind !== 'ok') {
@@ -1590,7 +1671,8 @@ export class RunbookLifecycleCommandService {
 
     const freshState = await this.#deps.loadRun(targetRunId);
     if (!freshState) {
-      if (locator.kind === 'token') return { kind: 'token-not-found', token: locator.token };
+      if (locator.kind === 'token')
+        return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
       return locator.kind === 'active'
         ? { kind: 'retry_target_required' }
         : { kind: 'no-active-runbook' };
@@ -1828,6 +1910,90 @@ export class RunbookLifecycleCommandService {
             };
           }
         }
+        // Retry idempotency (#681). Placed exactly here on purpose: after the
+        // linked-child guards, whose refusals outrank a committed-result echo,
+        // and BEFORE `resolveOverrides`, which is deliberately deferred so a bad
+        // `--input-file` cannot mask a higher-priority precondition. This mirrors
+        // the fresh path, where `resolveDelegationIssuance` decides
+        // echo-versus-issue in `beforeEffect` and the machine runs only on the
+        // issuable branch.
+        //
+        // Both halves are pure and live in `delegation-inference.ts`:
+        // `buildRetryIssuanceCapture` owns how superseding rows are collected
+        // and tagged with the coordinate they came from, and
+        // `resolveRetryIssuance` owns the decision. This seam supplies the
+        // captured state and the resolved cursor, and narrows on the result.
+        const retryResolution = resolveRetryIssuance(
+          buildRetryIssuanceCapture(
+            {
+              token: locator.kind === 'token' ? locator.token : undefined,
+              capturedState: parent.state,
+              scannedSuperseding: supersedingScan,
+              current: exactSubstep?.delegation,
+              substepId: exactCursor.substepId,
+              frameKey: exactCursor.frameKey,
+              frameEntry: inferFrameEntryFromState(parent.state, exactCursor.frameKey),
+            },
+            hashDelegationToken,
+          ),
+        );
+        switch (retryResolution.kind) {
+          case 'ambiguous':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationSupersessionAmbiguous(exactCursor.substepId),
+              },
+            };
+          case 'identity-unmatched':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationRetryIdentityUnmatched(exactCursor.substepId),
+              },
+            };
+          case 'replacement-consumed':
+            return {
+              kind: 'return',
+              value: {
+                kind: 'error',
+                error: Errors.delegationReplacementConsumed(
+                  exactCursor.substepId,
+                  retryResolution.reason,
+                ),
+              },
+            };
+          case 'already-replaced': {
+            const echoed = verifyDerivedBearer(
+              retryResolution.delegation.credential,
+              retryResolution.delegation.tokenHash,
+              exactCursor.substepId,
+              deriveToken,
+            );
+            if (echoed.kind === 'unverifiable') {
+              return { kind: 'return', value: { kind: 'error', error: echoed.error } };
+            }
+            return {
+              kind: 'return',
+              value: {
+                kind: 'retry-already-applied',
+                stepLabel: exactCursor.stepLabel,
+                runbookPath: retryResolution.delegation.childRunbookPath,
+                token: echoed.token,
+                tokenHash: retryResolution.delegation.tokenHash,
+                parentRunId: parent.state.id,
+              },
+            };
+          }
+          case 'rotatable':
+            break;
+          default: {
+            const _exhaustive: never = retryResolution;
+            throw new Error(`Unhandled retry resolution: ${JSON.stringify(_exhaustive)}`);
+          }
+        }
         const overrides = await input.resolveOverrides?.();
         const prepared = await this.#deps.actorService.prepareManualDelegationMutation(
           parent.state,
@@ -1929,12 +2095,14 @@ export class RunbookLifecycleCommandService {
    * @returns Domain, policy, transaction, or committed abort outcome.
    */
   async abortDelegation(input: DelegationAbortInput): Promise<DelegationAbortOutcome> {
-    const scan = await this.#deps.findDelegationByToken(input.token);
+    // Hashed once, here: the lookup takes the verifier, so the abort no longer
+    // hashes the same bearer a second time to compare it below.
+    const tokenHash = hashDelegationToken(input.token);
+    const { current: scan } = await this.#deps.findDelegationsByTokenHash(tokenHash);
     if (!scan) return { kind: 'token_not_found' };
     const parentRunId = scan.parentState.id;
     const substepId = scan.substepId ?? scan.stepId;
     const frameKey = scan.frameKey;
-    const tokenHash = hashDelegationToken(input.token);
     const scannedChildRunId = scan.delegation.childRunId;
 
     const authority = await this.#resolveMutationActorContext({
@@ -2622,7 +2790,7 @@ export class RunbookLifecycleCommandService {
         : {}),
       makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, input.steps),
       compute: async (capturedState) => {
-        previousState = this.#deps.lifecycleService.deriveActiveEntry(capturedState).state;
+        previousState = capturedState;
         const prepared = await this.#deps.actorService.prepareActorMutation(
           capturedState.id,
           previousState,
@@ -2630,14 +2798,7 @@ export class RunbookLifecycleCommandService {
           { type: 'GOTO', target: input.target },
           { issueDelegationCredential: input.issueDelegationCredential },
         );
-        // Projected WITHOUT scoring this GOTO as a transition. The execution
-        // loop this hands off to derives the same metadata with no previous
-        // state, so scoring it here would count one navigation as a frame
-        // re-entry and bump `activeEntry` a second time. That entry is what an
-        // inline launch intent pins its `parentEntry` to, so an extra bump
-        // makes a recovered intent stop matching its own child's linkage.
-        const projected = this.#deps.lifecycleService.deriveActiveEntry(prepared.nextState);
-        return { ...prepared, previousState, nextState: projected.state };
+        return { ...prepared, previousState };
       },
     });
     if (result.kind !== 'committed') return result;
@@ -3316,7 +3477,8 @@ export class RunbookLifecycleCommandService {
     // A bare transition means "advance the thing currently in front of the
     // operator". When that thing is an already-running inline child, resume
     // it instead of recording a completion against its parent substep.
-    if (await this.#reactivateRunningInlineChild(state)) {
+    const reactivation = await this.#reactivateRunningInlineChild(state);
+    if (reactivation) {
       return {
         kind: 'applied',
         runId: state.id,
@@ -3324,7 +3486,7 @@ export class RunbookLifecycleCommandService {
         terminalReleaseMode,
         status: 'continue',
         events: [],
-        loop: { kind: 'none' },
+        loop: reactivation,
       };
     }
     return this.#driveSubstepFenced(
@@ -3347,7 +3509,7 @@ export class RunbookLifecycleCommandService {
     explicitTarget?: ExplicitTransitionTarget,
     issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, actorMutationRunner, completionService, lifecycleService } = this.#deps;
+    const { actorService, actorMutationRunner, completionService } = this.#deps;
     let preparedOutcome:
       | {
           readonly events: readonly TransitionObservationEvent[];
@@ -3372,7 +3534,7 @@ export class RunbookLifecycleCommandService {
         },
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
         compute: async (capturedState) => {
-          const initial = lifecycleService.deriveActiveEntry(capturedState).state;
+          const initial = capturedState;
           const cursor =
             explicitTarget === undefined
               ? activeCursor(initial)
@@ -3408,8 +3570,6 @@ export class RunbookLifecycleCommandService {
           for (;;) {
             const currentStep = this.#findStep(steps, state.step);
             if (!resolvedStepHasSubsteps(currentStep) || !state.substep) break;
-            const projected = lifecycleService.deriveActiveEntry(state).state;
-            state = projected;
             const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
             const entry = state.activeEntry ?? 1;
             const completions = state.resolvedCompletions ?? {};
@@ -3434,7 +3594,7 @@ export class RunbookLifecycleCommandService {
               },
               { issueDelegationCredential },
             );
-            const next = lifecycleService.deriveActiveEntry(prepared.nextState, state, true).state;
+            const next = prepared.nextState;
             const observation = deriveTransitionObservation({
               steps,
               currentStep,
@@ -3557,7 +3717,7 @@ export class RunbookLifecycleCommandService {
     guardOpenChildren: boolean,
     issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
-    const { actorService, lifecycleService, actorMutationRunner } = this.#deps;
+    const { actorService, actorMutationRunner } = this.#deps;
     // Exhaustive map from command to engine event. A `never` fallthrough makes a
     // future `TransitionCommandName` member a compile error here rather than a
     // silent collapse to FAIL (see CLAUDE.md § No silent mapping).
@@ -3594,7 +3754,7 @@ export class RunbookLifecycleCommandService {
         },
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, transitionSteps),
         compute: async (capturedState) => {
-          previousState = lifecycleService.deriveActiveEntry(capturedState).state;
+          previousState = capturedState;
           const prepared = await actorService.prepareActorMutation(
             capturedState.id,
             previousState,
@@ -3602,12 +3762,7 @@ export class RunbookLifecycleCommandService {
             { type: eventType },
             { issueDelegationCredential },
           );
-          const projected = lifecycleService.deriveActiveEntry(
-            prepared.nextState,
-            previousState,
-            true,
-          );
-          return { ...prepared, previousState, nextState: projected.state };
+          return { ...prepared, previousState };
         },
       });
 
@@ -3771,15 +3926,32 @@ export class RunbookLifecycleCommandService {
     return isRunId(childRunId) ? childRunId : undefined;
   }
 
+  // Does the parent still carry the one-shot launch intent that named this
+  // child? Only an interrupted launch does: the launcher records `startedAt` and
+  // consumes the intent in the same continuation, so a launch that ran to
+  // completion leaves neither behind. That makes the surviving intent the exact
+  // discriminant for "this launch is unfinished", and it is the same value the
+  // launch seam re-projects, so the two agree by construction rather than by a
+  // second rule about what "interrupted" means.
+  #hasUnconsumedInlineLaunchIntent(parentState: RunbookState, childRunId: RunId): boolean {
+    const context = (parentState.snapshot as { readonly context?: Partial<RunbookContext> } | null)
+      ?.context;
+    const intent = context?.inlineLaunchIntent;
+    return isInlineLaunchIntentWithoutParentEntry(intent) && intent.childRunId === childRunId;
+  }
+
   // Resume the active substep's running inline child when its linkage matches the
   // parent cursor, pushing it onto the session if it is not already active.
-  // Returns true when the child was reactivated (caller must skip recording).
-  async #reactivateRunningInlineChild(parentState: RunbookState): Promise<boolean> {
+  // Returns the seam's loop directive for the parent, or `undefined` when there
+  // was no child to reactivate (caller then records the completion as usual).
+  async #reactivateRunningInlineChild(
+    parentState: RunbookState,
+  ): Promise<LifecycleLoopDirective | undefined> {
     const childRunId = this.#findRunningInlineChildRunId(parentState);
-    if (!childRunId) return false;
+    if (!childRunId) return undefined;
 
     const childState = await this.#deps.loadRun(childRunId);
-    if (childState?.lifecycle !== 'running') return false;
+    if (childState?.lifecycle !== 'running') return undefined;
     const linkage = childState.parentLinkage;
     const parentFrame = deriveActiveFrame(parentState);
     const parentFrameKey = parentState.activeFrameKey ?? parentFrame.frameKey;
@@ -3792,14 +3964,23 @@ export class RunbookLifecycleCommandService {
       linkage.parentFrameKey !== parentFrameKey ||
       linkage.parentEntry !== parentEntry
     ) {
-      return false;
+      return undefined;
     }
 
     const active = await this.#deps.sessionService.getActive();
     if (active?.id !== childRunId) {
       await this.#deps.sessionService.pushRunbook(childRunId);
     }
-    return true;
+    // An unfinished launch needs the parent's own loop to finish it: recording
+    // `startedAt`, consuming the intent and re-establishing the child's
+    // run-control authority are Category-A continuation work the launch seam
+    // owns, and nothing else reaches it. A launch that already finished has
+    // none of that left to do, so running the loop there would only re-enter an
+    // execution unit the parent never left — re-announcing the step and
+    // re-running any command it carries.
+    return this.#hasUnconsumedInlineLaunchIntent(parentState, childRunId)
+      ? { kind: 'run', prompted: Boolean(parentState.prompted) }
+      : { kind: 'none' };
   }
 
   // Per-run step memo shared by both aggregate terminal paths. The map is what

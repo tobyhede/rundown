@@ -1815,19 +1815,6 @@ describe('claimAndLaunch', () => {
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|5' },
-          frameKey: '1|5',
-          entry: 1,
-        }),
-      },
     });
 
     // cspell:disable-next-line
@@ -1949,19 +1936,6 @@ describe('claimAndLaunch', () => {
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|0' },
-          frameKey: '1|0',
-          entry: 1,
-        }),
-      },
     });
 
     // cspell:disable-next-line
@@ -2069,19 +2043,6 @@ describe('claimAndLaunch', () => {
         claimAndInitialLink: mockClaimAndInitialLink,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
-      },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|0' },
-          frameKey: '1|0',
-          entry: 1,
-        }),
       },
     });
 
@@ -2226,19 +2187,6 @@ describe('claimAndLaunch', () => {
           findClaimForDelegation:
             mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
         },
-        lifecycleService: {
-          ensureActiveEntry: mockFn<
-            () => Promise<{
-              state: { activeEntry: number; activeFrameKey: string };
-              frameKey: string;
-              entry: number;
-            }>
-          >().mockResolvedValue({
-            state: { activeEntry: 1, activeFrameKey: '1|0' },
-            frameKey: '1|0',
-            entry: 1,
-          }),
-        },
       });
 
       // cspell:disable-next-line
@@ -2357,19 +2305,6 @@ describe('claimAndLaunch', () => {
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|0' },
-          frameKey: '1|0',
-          entry: 1,
-        }),
-      },
     });
 
     // cspell:disable-next-line
@@ -2483,19 +2418,6 @@ describe('claimAndLaunch', () => {
         releaseRunbook: mockReleaseRunbook,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
-      },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|0' },
-          frameKey: '1|0',
-          entry: 1,
-        }),
       },
     });
 
@@ -2851,19 +2773,6 @@ describe('claimAndLaunch', () => {
         claimAndInitialLink: mockClaimAndInitialLink,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
-      },
-      lifecycleService: {
-        ensureActiveEntry: mockFn<
-          () => Promise<{
-            state: { activeEntry: number; activeFrameKey: string };
-            frameKey: string;
-            entry: number;
-          }>
-        >().mockResolvedValue({
-          state: { activeEntry: 1, activeFrameKey: '1|0' },
-          frameKey: '1|0',
-          entry: 1,
-        }),
       },
     });
 

@@ -79,8 +79,8 @@ export type ResolvedCompletionsOp =
 
 /**
  * Op shape accepted for `RunbookState.frameEntryCounts`. Replace-only — the only
- * caller (`ensureActiveEntry`) constructs the full updated map externally
- * before passing it through.
+ * caller (`deriveActorStatePatch`) mirrors the machine's own map out of context
+ * whole, rather than merging field-by-field.
  */
 export type FrameEntryCountsOp = ReplaceOp<Readonly<Record<FrameKey, number>>>;
 

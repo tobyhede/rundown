@@ -86,8 +86,6 @@ export function makeRunPipelineContext(
       ...overrides.sessionService,
     } as unknown as SessionService,
     lifecycleService: {
-      ensureActiveEntry:
-        mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined),
       ...overrides.lifecycleService,
     } as unknown as ExecutionLifecycleService,
     cwd: overrides.cwd ?? '/test',

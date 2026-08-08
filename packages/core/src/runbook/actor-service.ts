@@ -60,10 +60,14 @@ import {
   type RunbookContext,
 } from './compiler.js';
 import type { RecoveryActor } from './execution-recovery-service.js';
-import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
-import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
+import {
+  deriveActiveFrame,
+  deriveOpenFrames,
+  frameKeyForCursor,
+  type FrameKey,
+} from './targeting.js';
 import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -512,21 +516,32 @@ export function extractEnteredArtifacts(
 const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
 
 /**
- * Project the persisted frame-entry coordinates for the machine context mirror.
+ * Project the persisted frame-entry coordinates to seed `initial.context`.
+ *
+ * The machine owns frame entry, so this is a bootstrap seed and nothing more:
+ * it is read only by {@link compileMachineFromState}, and only matters for a
+ * run whose snapshot does not exist yet. Once a snapshot exists, the snapshot's
+ * own context is authoritative and is never overlaid from `RunbookState`.
  *
  * All three fields travel together: `activeEntry` is only interpretable against
  * the `activeFrameKey` it was recorded for, and `frameEntryCounts` supplies the
- * answer for every other frame.
+ * answer for every other frame. Persisted state carries them independently, so
+ * this is where the pair is established: a half-recorded state (a frame key with
+ * no entry, or an entry with no frame key) projects to the bootstrap variant,
+ * which is what both consumers already did with it — `advanceFrameEntry`
+ * bootstrapped, and `inferFrameEntryFromState`'s active-frame branch requires
+ * `activeEntry` to be present — so nothing is lost by dropping the orphaned half.
  *
  * @param state - Persisted runbook state.
- * @returns The coordinates {@link inferFrameEntryFromState} consumes.
+ * @returns The coordinates the machine carries; `frameEntryCounts` is preserved
+ *   in both variants.
  */
 function frameEntryCoordinatesOf(state: RunbookState): FrameEntryCoordinates {
-  return {
-    activeFrameKey: state.activeFrameKey,
-    activeEntry: state.activeEntry,
-    frameEntryCounts: state.frameEntryCounts,
-  };
+  const frameEntryCounts = state.frameEntryCounts;
+  const { activeFrameKey, activeEntry } = state;
+  return activeFrameKey !== undefined && activeEntry !== undefined
+    ? { activeFrameKey, activeEntry, frameEntryCounts }
+    : { frameEntryCounts };
 }
 
 /**
@@ -571,10 +586,11 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       substep: state.substep ?? baseSnapshot.context.substep,
-      // Frame-entry coordinates advance through RunbookState (via
-      // ExecutionLifecycleService), never through the machine, so the persisted
-      // values are authoritative over anything a stale snapshot carries.
-      frameEntry: frameEntryCoordinatesOf(state),
+      // No `frameEntry` overlay. The machine is the sole writer of frame entry,
+      // so the persisted snapshot's own context is authoritative; overlaying
+      // RunbookState on top of it would re-introduce a second writer at the
+      // hydration boundary.
+      //
       // The XState snapshot envelope is opaque and does not re-mint
       // non-enumerable trust brands during RunbookState parsing. Use the
       // parsed RunbookState variables as the authoritative post-load source.
@@ -760,9 +776,21 @@ function deriveActorStatePatch(
   // mirror the top-level `activeFrameKey` would not reflect the current
   // frame and the next CLI interaction or resume would target the wrong
   // frame's substeps.
-  const activeFrame = realForStack?.[realForStack.length - 1];
-  const derivedFrameKey = buildFrameKey(stepName, activeFrame ? activeFrame.iteration : undefined);
+  const derivedFrameKey = frameKeyForCursor(stepName, realForStack);
   const activeFrameKeyPatch = { activeFrameKey: derivedFrameKey };
+  // Frame entry is machine-owned: the leaf `syncFrameEntry` entry action is the
+  // sole writer, and this mirrors its result into persisted state. `activeFrameKey`
+  // above stays cursor-derived rather than mirrored, and an invariant test pins
+  // that the two agree — a cheap standing check on the unified frame-key
+  // derivation.
+  const contextFrameEntry = snapshot.context?.frameEntry;
+  const frameEntryPatch =
+    contextFrameEntry?.activeEntry === undefined
+      ? {}
+      : {
+          activeEntry: contextFrameEntry.activeEntry,
+          frameEntryCounts: replace({ ...(contextFrameEntry.frameEntryCounts ?? {}) }),
+        };
   return {
     step: stepName, // string
     substep,
@@ -777,6 +805,7 @@ function deriveActorStatePatch(
     ...lastResultPatch(lastResultSync, { terminal: false }),
     ...substepStatesPatch,
     ...activeFrameKeyPatch,
+    ...frameEntryPatch,
     ...consumePatch,
   };
 }
@@ -1466,9 +1495,7 @@ export class RunbookActorService {
     if (!actor) return null;
     try {
       const { state: synced } = await this.persistAfterMachineEffects(id, actor, steps);
-      const lifecycle = new ExecutionLifecycleService(this.manager);
-      const { state: withActiveEntry } = await lifecycle.ensureActiveEntry(id, undefined, synced);
-      return await this.initializeActiveSubsteps(id, withActiveEntry, steps);
+      return await this.initializeActiveSubsteps(id, synced, steps);
     } finally {
       this.stopActor(actor);
     }

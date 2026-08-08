@@ -220,3 +220,59 @@ describe('ErrorCodes', () => {
     expect(uniqueSlugs.size).toBe(slugs.length);
   });
 });
+
+describe('retry idempotency error codes', () => {
+  it('registers RD-826/827/828 in the DELEGATION category', () => {
+    expect(ErrorCodes.DELEGATION_REPLACEMENT_CONSUMED.code).toBe('RD-826');
+    expect(ErrorCodes.DELEGATION_RETRY_IDENTITY_UNMATCHED.code).toBe('RD-827');
+    expect(ErrorCodes.DELEGATION_SUPERSESSION_AMBIGUOUS.code).toBe('RD-828');
+    for (const key of [
+      'DELEGATION_REPLACEMENT_CONSUMED',
+      'DELEGATION_RETRY_IDENTITY_UNMATCHED',
+      'DELEGATION_SUPERSESSION_AMBIGUOUS',
+    ] as const) {
+      expect(ErrorCodes[key].category).toBe(ErrorCategory.DELEGATION);
+    }
+  });
+
+  it('leaves RD-829 where it is — the three numbers were reserved for these', () => {
+    expect(ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code).toBe('RD-829');
+  });
+
+  it('never carries a bearer token in a refusal envelope', () => {
+    // No factory here accepts a raw token, so the redaction class is closed by
+    // construction rather than by careful call sites.
+    const errors = [
+      Errors.delegationReplacementConsumed('2.1', 'claimed'),
+      Errors.delegationRetryIdentityUnmatched('2.1'),
+      Errors.delegationSupersessionAmbiguous('2.1'),
+    ];
+    for (const error of errors) {
+      expect(JSON.stringify(error.toJSON())).not.toContain('rdtk_');
+      expect(error.message).toContain('2.1');
+    }
+  });
+
+  it('names the consumption reason in the message', () => {
+    expect(Errors.delegationReplacementConsumed('2.1', 'entry_superseded').message).toContain(
+      'entry_superseded',
+    );
+    expect(Errors.delegationReplacementConsumed('2.1', 'cancelled').message).toContain('cancelled');
+  });
+
+  it('keeps the consumption reason machine-readable, not only interpolated into prose', () => {
+    // `RetryReplacementConsumedReason` is a closed discriminant that tells an
+    // agent WHICH remedy applies — re-target the current bearer (claimed),
+    // re-delegate (cancelled), or re-enter the frame (entry_superseded).
+    // Interpolating it into a sentence and nothing else forces the agent to
+    // parse prose. `reason` is outside `formatMessage`'s fixed key list, so it
+    // rides in `context` (rendered as `details.context` in the CLI envelope)
+    // without changing the message.
+    for (const reason of ['claimed', 'cancelled', 'entry_superseded'] as const) {
+      const error = Errors.delegationReplacementConsumed('2.1', reason);
+      expect((error.toJSON() as { context: Record<string, unknown> }).context.reason).toBe(reason);
+      // Still prose-visible: the structured key is an addition, not a move.
+      expect(error.message).toContain(reason);
+    }
+  });
+});

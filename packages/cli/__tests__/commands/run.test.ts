@@ -319,11 +319,11 @@ Bundled task.
     });
 
     it('bumps the active entry exactly once per command-driven step advance', async () => {
-      // The fenced command commit projects active-entry metadata itself, and
-      // `observeAndOrchestrate` then calls `ensureActiveEntry` over the SAME
-      // transition. Both treat it as a frame switch, so a second bump would
-      // double-count entries and push each new frame's completion scope past the
-      // entry the machine actually recorded against it.
+      // End-to-end pin on the single-writer model (#680): the machine bumps the
+      // entry once, as an entry action on the leaf it advances into, and
+      // `deriveActorStatePatch` mirrors that one value into committed state. A
+      // second bump would push each new frame's completion scope past the entry
+      // the machine actually recorded against it.
       const runbook = createRunbook({
         title: 'Entry Bump',
         steps: [

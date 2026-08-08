@@ -2,7 +2,7 @@
 //
 // Shared construction of a `RunbookLifecycleCommandService` for the CLI front
 // ends that drive pass/fail (`runSeamTransition`) and complete/stop
-// (`runSeamTerminal`). Both wire the identical five core services and, because
+// (`runSeamTerminal`). Both wire the identical core services and, because
 // neither front end issues delegations, a shared throwing guard for child
 // resolution. Single-sourcing that here keeps the "this front
 // end never issues delegations" contract in one place and off each command's
@@ -48,23 +48,24 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-  // Single-source the "this front end never issues delegations" contract: one
-  // guard, referenced by both issuance-only dependencies, so the invariant
-  // cannot drift between them (and every call site trips the identical error).
+  // The "this front end never issues delegations" contract, as one named guard
+  // rather than an inline throw, so the invariant reads as a decision and every
+  // call site trips the identical error. Token scanning is deliberately NOT
+  // guarded: it is read-only, and `abort` drives its refusals through this same
+  // seam.
   const refuseIssuance = (): never => {
     throw new Error('non-delegating lifecycle seam does not issue delegations');
   };
   const seam = new RunbookLifecycleCommandService({
     sessionService,
     actorService,
-    lifecycleService,
     completionService,
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     loadSteps: (state) => getRunbookFromState(state, cwd),
     resolveChildRunbook: refuseIssuance,
-    findDelegationByToken: async (token) =>
-      (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+    findDelegationsByTokenHash: (tokenHash) =>
+      new DelegationScanService(manager).scanByTokenHash(tokenHash),
   });
   return { manager, sessionService, seam };
 }

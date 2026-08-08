@@ -252,50 +252,15 @@ Child prompt.
     expect(passChild.stdout).not.toContain('/placeholder/input.txt');
   });
 
-  it('recovers an existing inline child before consuming the parent intent', async () => {
-    await writeFile(
-      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
-      `---
-name: parent
-required:
-  - PlanPath
-inputs:
-  - PlanPath
----
-# Parent
-
-## 1. Start
-- PASS CONTINUE
-
-Ready.
-
-## 2. Write
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-
-## 3. Review
-- PASS COMPLETE
-
-Reviewing {{PlanPath}}.
-`,
-    );
-    const childRunbook = `---
-name: child
-outputs:
-  - PlanPath "{{WorkPath}}/plan.md"
----
-# Child
-
-## 1. Create
-- PASS COMPLETE
-
-Child prompt.
-`;
-    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
-    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
-
+  // Stage the state a process that died mid-inline-launch leaves behind: the
+  // child run exists, but the parent never recorded `startedAt` and never
+  // consumed the launch intent, and the session stack was never advanced onto
+  // the child. Written through the persisted-state fixture seam (state lives in
+  // SQLite — a `writeFile` into `.rundown/runs/` is read by nothing).
+  async function stageInterruptedInlineLaunch(): Promise<{
+    readonly parentRunId: string;
+    readonly childRunId: string;
+  }> {
     const start = await runCliInProcess(
       'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
       workspace,
@@ -311,7 +276,6 @@ Child prompt.
     expect(passParentStep.exitCode).toBe(0);
 
     const parentState = await readRunbookState(workspace, parentRunId);
-    expect(parentState).not.toBeNull();
     if (!parentState) throw new Error('expected parent runbook state');
     const inlineState = parentState.substepStates?.find((entry) => entry.inline)?.inline;
     if (!inlineState) throw new Error('expected inline metadata');
@@ -325,56 +289,239 @@ Child prompt.
       ...(sessionBeforeRewind.stashed ? { stashed: sessionBeforeRewind.stashed } : {}),
     });
 
-    const snapshot = parentState.snapshot as {
-      context?: Record<string, unknown>;
-      [key: string]: unknown;
-    };
+    // `parentEntry` is deliberately absent: it is not a persisted field of the
+    // intent. Core re-derives it from the parent's live frame coordinates when
+    // it projects the intent, which is precisely why a frame re-entry produces a
+    // higher entry than the child recorded.
     const restoredIntent = {
       parentRunId,
       parentStepId: '1',
       parentStep: '2',
       parentFrameKey: '2|',
-      parentEntry: 1,
       childRunId,
       childRunbookPath: inlineState.childRunbookPath,
       childRunbookRef: inlineState.childRunbookRef,
       contextSnapshot: inlineState.contextSnapshot,
     };
-    const mutatedParent = {
-      ...parentState,
-      substepStates: parentState.substepStates.map((entry) =>
-        entry.inline?.childRunId === childRunId
-          ? { ...entry, inline: { ...entry.inline, startedAt: null } }
-          : entry,
-      ),
-      snapshot: {
-        ...snapshot,
-        context: {
-          ...(snapshot.context ?? {}),
-          inlineLaunchIntent: restoredIntent,
+    await patchPersistedRunState(workspace.cwd, parentRunId, (current) => {
+      const snapshot = current.snapshot as {
+        context?: Record<string, unknown>;
+        [key: string]: unknown;
+      };
+      return {
+        ...current,
+        substepStates: (
+          current.substepStates as { inline?: { childRunId?: string } }[] | undefined
+        )?.map((entry) =>
+          entry.inline?.childRunId === childRunId
+            ? { ...entry, inline: { ...entry.inline, startedAt: null } }
+            : entry,
+        ),
+        snapshot: {
+          ...snapshot,
+          context: { ...(snapshot.context ?? {}), inlineLaunchIntent: restoredIntent },
         },
-      },
-    };
-    await patchPersistedRunState(workspace.cwd, parentRunId, mutatedParent);
+      };
+    });
 
-    const recover = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    return { parentRunId, childRunId };
+  }
+
+  // Crash recovery is a RESUME, not a frame re-entry. The gesture is the bare
+  // transition core already routes through its inline-child reactivation seam
+  // (`#reactivateRunningInlineChild`): it resumes the child launched at the
+  // parent's CURRENT frame entry and, like `classifyDelegationLiveness`, refuses
+  // one stamped at any other entry. Spelling this as `rundown goto <step>`
+  // instead — as this test once did — advances the frame entry, which by the
+  // ratified rule makes the existing child a superseded-generation child that
+  // must not be adopted (see the refusal test below).
+  it('resumes an existing inline child through a bare transition after an interrupted launch', async () => {
+    await writeInlineParentAndChild();
+    const { parentRunId, childRunId } = await stageInterruptedInlineLaunch();
+
+    const recover = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(recover.exitCode).toBe(0);
+
+    // The SAME child is resumed — the interrupted launch is finished, not
+    // duplicated by a second child run for the same substep.
     expect((await readSession(workspace)).active).toBe(childRunId);
+    const resumedParent = await readRunbookState(workspace, parentRunId);
+    expect(resumedParent?.substepStates?.filter((entry) => entry.inline)).toEqual([
+      expect.objectContaining({
+        id: '1',
+        status: 'running',
+        inline: expect.objectContaining({ childRunId }),
+      }),
+    ]);
+    // The parent's frame entry is untouched by the resume, so the child's
+    // recorded linkage still names the live entry.
+    const childState = await readRunbookState(workspace, childRunId);
+    expect(childState?.parentLinkage).toEqual(
+      expect.objectContaining({ kind: 'inline', parentEntry: resumedParent?.activeEntry }),
+    );
 
-    const repairedParent = await readRunbookState(workspace, parentRunId);
-    const repairedInline = repairedParent?.substepStates?.find(
-      (entry) => entry.inline?.childRunId === childRunId,
-    )?.inline;
-    expect(repairedInline?.startedAt).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
-
-    const repairedContext = repairedParent?.snapshot as {
-      readonly context?: { readonly inlineLaunchIntent?: unknown };
-    };
-    expect(repairedContext.context?.inlineLaunchIntent).toBeUndefined();
-
+    // And the resumed child still composes: its result flows back into the
+    // parent, which advances to its next step.
     const passChild = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(passChild.exitCode).toBe(0);
     expect(passChild.stdout).toContain('Reviewing');
+  });
+
+  // The resume does not merely re-activate the child: it FINISHES the launch the
+  // dead process abandoned. Recording `startedAt`, consuming the one-shot intent
+  // and re-establishing the child's own run-control authority all live in
+  // `launchInlineChildFromIntent`'s existing-child branch, which nothing reaches
+  // unless the parent's own execution loop runs. Leaving the reactivation seam
+  // at `loop: { kind: 'none' }` left that branch — and with it
+  // `SessionService.adoptRunControlClaim` — unreachable from every CLI gesture:
+  // the run stayed half-launched and the resumed child held no authority.
+  it('finishes the interrupted launch and re-arms the resumed child on a bare transition', async () => {
+    await writeInlineParentAndChild();
+    const { parentRunId, childRunId } = await stageInterruptedInlineLaunch();
+
+    const resume = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(resume.exitCode).toBe(0);
+
+    // The child is announced with authority of its OWN. The prior bearer died
+    // with the launching process, so the adoption supersedes it, and
+    // `runbook_started.claim_id` is the single sanctioned channel for the
+    // replacement — without it an orchestrator cannot address the run it is
+    // about to watch.
+    const resumeEvents = flattenEvents(parseConcatenatedJson(resume.stdout));
+    const started = resumeEvents.find(
+      (event) => event.type === 'runbook_started' && event.runbookId === childRunId,
+    );
+    expect(started).toBeDefined();
+    expect(started?.claim_id).toEqual(expect.stringMatching(/^rdclm_/));
+
+    // The interrupted launch is finished, not merely resumed: the parent
+    // recorded the start it never got to record, and consumed its one-shot
+    // intent so a later entry cannot replay the launch.
+    const parentAfter = await readRunbookState(workspace, parentRunId);
+    const inlineAfter = parentAfter?.substepStates?.find((entry) => entry.inline)?.inline;
+    expect(inlineAfter?.childRunId).toBe(childRunId);
+    expect(inlineAfter?.startedAt).toEqual(expect.any(String));
+    expect(
+      (parentAfter?.snapshot as { context?: { inlineLaunchIntent?: unknown } } | undefined)?.context
+        ?.inlineLaunchIntent,
+    ).toBeUndefined();
+
+    // The adopted claim is real authority, not a label: it drives the child.
+    const driveChild = await runCliInProcess(
+      ['pass', '--claim-id', String(started?.claim_id)],
+      workspace,
+    );
+    expect(driveChild.exitCode).toBe(0);
+    expect(flattenEvents(parseConcatenatedJson(driveChild.stdout))).not.toContainEqual(
+      expect.objectContaining({ code: 'ACTOR_CONTEXT_REQUIRED' }),
+    );
+  });
+
+  // The counterpart constraint. A reactivation whose launch already finished has
+  // nothing left to do, so it must NOT run the parent's loop: doing so re-enters
+  // the parent's execution unit behind the operator's back — re-announcing a
+  // step it never left and, on a substep that also carries a command, running
+  // that command a second time.
+  it('does not re-enter the parent execution unit when the launch already finished', async () => {
+    await writeInlineParentAndChild();
+
+    const start = await runCliInProcess(
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    const compose = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(compose.exitCode).toBe(0);
+    const parentState = await readRunbookState(workspace, parentRunId);
+    const childRunId = parentState?.substepStates?.find((entry) => entry.inline)?.inline
+      ?.childRunId;
+    if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
+
+    // Rewind the session so the next bare transition targets the parent, whose
+    // launch is complete: `startedAt` recorded and the intent already consumed.
+    const sessionBeforeRewind = await readSession(workspace);
+    await writeSession(workspace, {
+      defaultStack: [parentRunId],
+      claims: sessionBeforeRewind.claims,
+      ...(sessionBeforeRewind.stashed ? { stashed: sessionBeforeRewind.stashed } : {}),
+    });
+
+    const reactivate = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(reactivate.exitCode).toBe(0);
+    expect((await readSession(workspace)).active).toBe(childRunId);
+
+    const events = flattenEvents(parseConcatenatedJson(reactivate.stdout));
+    expect(
+      events.filter((event) => event.type === 'step_entered' && event.runbookId === parentRunId),
+    ).toEqual([]);
+  });
+
+  // The ratified rule: a self-targeting GOTO is a genuine frame re-entry, so it
+  // advances the frame entry, and an inline child stamped at the previous entry
+  // is stale — exactly as `classifyDelegationLiveness` closes a delegated child
+  // `cursor-advanced` when the parent's entry no longer matches the one captured
+  // at delegation time. Adopting it silently would run the previous generation's
+  // child against a fresh visit to the frame.
+  it('refuses to adopt an inline child launched at a superseded frame entry', async () => {
+    await writeInlineParentAndChild();
+    const { parentRunId, childRunId } = await stageInterruptedInlineLaunch();
+
+    const entryBeforeReentry = (await readRunbookState(workspace, parentRunId))?.activeEntry;
+    expect(typeof entryBeforeReentry).toBe('number');
+
+    const reenter = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    expect(reenter.exitCode).toBe(1);
+
+    const events = flattenEvents(parseConcatenatedJson(reenter.stdout));
+    // Its own code and its own wording: this is a superseded generation, not the
+    // inconsistent-state condition `INLINE_CHILD_LINKAGE_MISMATCH` names.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'error_occurred',
+        code: 'INLINE_CHILD_FRAME_SUPERSEDED',
+        message: expect.stringContaining(childRunId),
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ code: 'INLINE_CHILD_LINKAGE_MISMATCH' }),
+    );
+    // Diagnosable: both entries and the remedy are named, so an operator can
+    // tell a superseded child from a corrupt linkage without reading source.
+    const refusal = events.find((event) => event.code === 'INLINE_CHILD_FRAME_SUPERSEDED');
+    expect(refusal?.message).toEqual(
+      expect.stringContaining(`entry ${String(entryBeforeReentry)} of frame 2|`),
+    );
+    expect(refusal?.message).toMatch(/Finish, stop, or prune/);
+
+    // Refused, not adopted: the stale child was never activated.
+    expect((await readSession(workspace)).active).toBe(parentRunId);
+
+    // The refusal is actionable, not a dead end: prune the superseded child and
+    // the same re-entry launches a fresh one under the current entry.
+    const prune = await runCliInProcess(['prune', '--inactive'], workspace);
+    expect(prune.exitCode).toBe(0);
+
+    const relaunch = await runCliInProcess(
+      await withRunTarget(['goto', '2'], workspace),
+      workspace,
+    );
+    expect(relaunch.exitCode).toBe(0);
+    const relaunchedParent = await readRunbookState(workspace, parentRunId);
+    const relaunchedChildId = relaunchedParent?.substepStates?.find((entry) => entry.inline)?.inline
+      ?.childRunId;
+    expect(relaunchedChildId).toBeDefined();
+    expect((await readSession(workspace)).active).toBe(relaunchedChildId);
+    const relaunchedChild = await readRunbookState(workspace, relaunchedChildId!);
+    expect(relaunchedChild?.parentLinkage).toEqual(
+      expect.objectContaining({
+        kind: 'inline',
+        parentEntry: relaunchedParent?.activeEntry,
+      }),
+    );
+    expect(relaunchedParent?.activeEntry).not.toBe(entryBeforeReentry);
   });
 
   it('does not let a run-targeted pass skip a recovered unstarted inline child substep', async () => {
@@ -899,13 +1046,21 @@ Do the delegated work.
   // `actor_context_required` and stopped a run that would have proceeded had the
   // first process not died. Forwarding the composing parent's runtime is NOT the
   // remedy — it belongs to another run, and `delegationRuntimeFor` rightly
-  // rejects it — so the child's OWN authority is re-established on resume.
+  // rejects it — so the child's OWN authority is what must be re-established.
   //
   // The fixture parks the child in prompted mode: it exists, is initialized, and
   // has executed nothing — the shape of a child created before the launching
-  // process died. Clearing its prompted flag lets the resumed loop advance it
-  // into the DELEGATE step the fresh launch never reached.
-  it('re-establishes run-control authority for a resumed inline child that reaches a DELEGATE step', async () => {
+  // process died. Clearing its prompted flag lets the resumed child advance into
+  // the DELEGATE step the fresh launch never reached.
+  //
+  // The resume is driven by the bare-transition reactivation seam, NOT by
+  // `rundown goto <step>`: a self-targeting GOTO advances the frame entry, which
+  // makes the existing child a superseded generation the ratified rule forbids
+  // adopting. Re-arming the child's own authority is then a separate, explicit
+  // act on the child — `SessionService.adoptRunControlClaim` is the in-product
+  // form of it, and its refusal-when-a-credential-was-already-issued guard is
+  // pinned in `__tests__/services/execution-loop.test.ts`.
+  it('lets a resumed inline child re-armed with its own authority reach a DELEGATE step', async () => {
     await writeFile(
       join(workspace.runbooksDir(), 'parent.runbook.md'),
       `# Parent
@@ -985,8 +1140,7 @@ Do the delegated work.
     await patchPersistedRunState(workspace.cwd, childRunId, { prompted: false });
 
     // Rewind the session stack to the parent, as a process that died before the
-    // child's loop ran would have left it. Driving the parent back into its
-    // inline step is what re-enters the launch seam and finds the existing child.
+    // child's loop ran would have left it.
     const sessionBeforeRewind = await readSession(workspace);
     await writeSession(workspace, {
       defaultStack: [parentRunId],
@@ -994,15 +1148,34 @@ Do the delegated work.
       ...(sessionBeforeRewind.stashed ? { stashed: sessionBeforeRewind.stashed } : {}),
     });
 
-    const resume = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
-    // Every assertion below is about a resume that succeeded. Without this, a
-    // refusal that stopped the run would still satisfy them all provided it
-    // streamed a frontier event on its way out.
+    // A bare transition on the parent resumes the child at the parent's LIVE
+    // frame entry. It neither advances that entry nor re-runs the launch, so the
+    // child's recorded linkage still names the frame it was launched into.
+    const resume = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(resume.exitCode).toBe(0);
-    const resumeEvents = flattenEvents(parseConcatenatedJson(resume.stdout));
+    expect((await readSession(workspace)).active).toBe(childRunId);
+    const resumedParent = await readRunbookState(workspace, parentRunId);
+    const resumedLinkage = (await readRunbookState(workspace, childRunId))?.parentLinkage;
+    expect(resumedLinkage).toEqual(
+      expect.objectContaining({ kind: 'inline', parentEntry: resumedParent?.activeEntry }),
+    );
 
-    // The resumed child ran its command step and advanced into its DELEGATE step
-    // under authority it re-established for itself.
+    // The resumed child's original bearer died with the process that launched
+    // it, so it holds no authority of its own: driving it bare is refused rather
+    // than silently borrowing the composing parent's.
+    const bare = await runCliInProcess(['pass'], workspace);
+    expect(bare.exitCode).toBe(1);
+    expect(flattenEvents(parseConcatenatedJson(bare.stdout))).toContainEqual(
+      expect.objectContaining({ code: 'ACTOR_CONTEXT_REQUIRED' }),
+    );
+
+    // Re-armed with run-control authority of its OWN — which is sound precisely
+    // because the parked child issued no credential the replacement could not
+    // reproduce — it runs its command step and advances into the DELEGATE step,
+    // issuing the frontier a resumed child used to be refused.
+    const advance = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(advance.exitCode).toBe(0);
+    const resumeEvents = flattenEvents(parseConcatenatedJson(advance.stdout));
     expect(resumeEvents).not.toContainEqual(
       expect.objectContaining({ code: 'ACTOR_CONTEXT_REQUIRED' }),
     );

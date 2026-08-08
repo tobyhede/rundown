@@ -1288,12 +1288,13 @@ export class RunbookCompletionService {
    * the persisted loop into a pure one, and each replaces a write or a re-read
    * with its existing pure counterpart:
    *
-   * - {@link ExecutionLifecycleService.ensureActiveEntry} (which persists the
-   *   active-entry projection) becomes
-   *   {@link ExecutionLifecycleService.deriveActiveEntry}, whose projection is
-   *   carried forward on the chained state instead of written. This also side-
-   *   steps the unfenced read-modify-write `ensureActiveEntry` performs: the
-   *   projection is derived from — and committed against — the captured version.
+   * - The active-entry projection is gone entirely: the machine is the single
+   *   writer of frame entry (#680), so the frame coordinate is read off the
+   *   captured state (`activeFrameKey` / `activeEntry`, falling back to
+   *   {@link deriveActiveFrame}) rather than projected and persisted here. That
+   *   also side-steps the unfenced read-modify-write the old `ensureActiveEntry`
+   *   performed: the coordinate is read from — and committed against — the
+   *   captured version.
    * - Every store read of `resolvedCompletions` becomes the in-state twin, so
    *   the pass classifies against the exact captured version rather than
    *   whatever the store holds by the time each iteration runs.
@@ -1336,9 +1337,7 @@ export class RunbookCompletionService {
       if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
         return { status: 'continue', state, unresolved: 0, applied };
       }
-      const ensured = this.lifecycleService.deriveActiveEntry(state);
-      state = ensured.state;
-      const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
+      const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
       const requestedFrame = args.frameOverride;
       if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
         // Same two cases the persisted drain distinguishes: an INITIAL mismatch
@@ -1365,7 +1364,7 @@ export class RunbookCompletionService {
         };
       }
 
-      const entry = state.activeEntry ?? ensured.entry;
+      const entry = state.activeEntry ?? 1;
       const activeTargetFrame = activeFrame(activeFrameKey, entry);
       const resolved = listResolvedCompletionsInState(state, activeTargetFrame);
       const resolvedBySubstep = new Map(
@@ -1388,7 +1387,7 @@ export class RunbookCompletionService {
         return { status: 'continue', state, unresolved, applied };
       }
 
-      const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
+      const validated = this.resolveAgainstCurrentCursor(state, current.completion, { entry });
       if (!(currentCursorValidatedBrand in validated)) {
         return { ...validated, state, unresolved, applied };
       }
@@ -1480,13 +1479,7 @@ export class RunbookCompletionService {
       if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
         return { status: 'continue', state, unresolved: 0, applied };
       }
-      const ensured = await this.lifecycleService.ensureActiveEntry(
-        args.runbookId,
-        undefined,
-        state,
-      );
-      state = ensured.state;
-      const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
+      const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
       const requestedFrame = args.frameOverride;
       if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
         // The cursor has moved off the override frame. Two cases:
@@ -1521,7 +1514,7 @@ export class RunbookCompletionService {
         };
       }
 
-      const entry = state.activeEntry ?? ensured.entry;
+      const entry = state.activeEntry ?? 1;
       const activeTargetFrame = activeFrame(activeFrameKey, entry);
       const resolved = await this.lifecycleService.listResolvedCompletions(
         args.runbookId,
@@ -1547,7 +1540,7 @@ export class RunbookCompletionService {
         return { status: 'continue', state, unresolved, applied };
       }
 
-      const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
+      const validated = this.resolveAgainstCurrentCursor(state, current.completion, { entry });
       if (!(currentCursorValidatedBrand in validated)) return { ...validated, unresolved, applied };
 
       const result = await this.actorService.sendAndSync(

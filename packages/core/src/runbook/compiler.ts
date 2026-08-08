@@ -27,6 +27,7 @@ import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
+import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import type { NakedOutput, OutputScope, PreparedChannel } from './output-channels.js';
 import {
   artifactResolveActor,
@@ -76,13 +77,24 @@ import {
   type OutputVars,
 } from './output-evaluator.js';
 import type { MachineExecutionObserver } from '../events/execution-observation.js';
-import { buildFrameKey, deriveExecutionAt, findSubstepState, type FrameKey } from './targeting.js';
+import {
+  buildFrameKey,
+  deriveExecutionAt,
+  findSubstepState,
+  frameKeyForCursor,
+  getActiveForContext,
+  type FrameKey,
+} from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
-import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
+import {
+  advanceFrameEntry,
+  inferFrameEntryFromState,
+  type FrameEntryCoordinates,
+} from './frame-entry.js';
 import { generateRunId } from './state.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
@@ -736,6 +748,22 @@ function buildArtifactRuntimeScope(
 // Typed constants for empty array values that need explicit types
 // (bare `[]` infers as `never[]`, not the required array type).
 const EMPTY_FOR_STACK: RunbookContext['forStack'] = Object.freeze([]);
+// ACCEPTED EQUIVALENT MUTANTS: `ObjectLiteral -> {}` on both constants below.
+// `syncFrameEntry` consumes the marker by presence alone (`frameReentry !==
+// undefined`) — the bump is identical for GOTO and RETRY — so emptying either
+// literal cannot change behaviour and no test can kill it. `cause` is carried
+// for diagnosis: it is the only record of WHY a transition declared a re-entry,
+// readable from an inspected mid-macrostep snapshot. It is deliberately not a
+// dispatch discriminant; if a future arm needs to branch on it, that arm is
+// what makes these mutants killable.
+/** One-shot marker declaring a GOTO-driven frame re-entry (consumed by `syncFrameEntry`). */
+const FRAME_REENTRY_GOTO: NonNullable<RunbookContext['frameReentry']> = Object.freeze({
+  cause: 'GOTO' as const,
+});
+/** One-shot marker declaring a RETRY-driven frame re-entry (consumed by `syncFrameEntry`). */
+const FRAME_REENTRY_RETRY: NonNullable<RunbookContext['frameReentry']> = Object.freeze({
+  cause: 'RETRY' as const,
+});
 const EMPTY_RESULTS = Object.freeze([]) as unknown as NonNullable<
   RunbookContext['iterationResults']
 >;
@@ -791,6 +819,21 @@ export function isCompoundLeafValue(value: unknown): value is LeafSubstate {
 export interface RunbookContext {
   /** Current retry count for the active step */
   retryCount: number;
+  /**
+   * Passes a self-targeting `GOTO` has taken on the current execution unit.
+   *
+   * Separate from {@link RunbookContext.retryCount} on purpose. `retryCount` is
+   * the author's `RETRY <count> <action>` budget, spent by RETRY and read by the
+   * RETRY guard; this is the machine's own `MAX_SELF_GOTO_PASSES` bound on
+   * `GOTO <self>`. Sharing one counter made each construct spend the other's
+   * budget — two self-GOTO passes exhausted an authored `RETRY 2` before its
+   * first failure. Incremented only where a `GOTO` re-enters its own unit
+   * ({@link gotoReentersOwnUnit} / `isGotoToSelf`), and zeroed wherever
+   * `retryCount` is: every transition that leaves the unit or reopens it from
+   * the top starts a fresh loop budget. RETRY leaves it untouched — a retry
+   * re-enters the same unit without taking a loop pass.
+   */
+  selfGotoCount: number;
   /** Retry count for parent-step aggregation retries (separate from substep retryCount). */
   parentRetryCount: number;
   /** Retry count for iteration-level retries within FOR loops (separate from retryCount and parentRetryCount). */
@@ -843,23 +886,33 @@ export interface RunbookContext {
    */
   readonly substepStates?: readonly SubstepState[];
   /**
-   * Mirror of the persisted frame-entry coordinates, in the exact shape
-   * {@link inferFrameEntryFromState} consumes. Populated at actor bootstrap
-   * alongside `substepStates`; plain data, never written by a transition.
+   * Authoritative frame-entry coordinates, in the shape
+   * {@link inferFrameEntryFromState} consumes.
    *
-   * Machine-owned delegation issuance stamps `parentEntry` into a credential
-   * coordinate that is HMAC derivation input, so it must resolve the entry
-   * through the same shared helper the manual path uses — which needs the
-   * frame history this mirror carries.
+   * The machine is the sole writer: {@link advanceFrameEntry} runs as an entry
+   * action on every step/substep leaf state, and `deriveActorStatePatch`
+   * persists the result. It is seeded at bootstrap only for a run that has no
+   * snapshot yet.
    *
-   * The `activeFrameKey` inside it is the frame the *persisted* state named at
-   * bootstrap. It is **not** the machine's live cursor frame: derive that from
-   * `step` + `forStack` (see `runRetryHook`). Reading it as the live frame is
-   * the stale-bootstrap bug that comment warns about; its only legitimate use
-   * is telling {@link inferFrameEntryFromState} which frame `activeEntry`
-   * belongs to.
+   * Plain data — it serialises into the persisted snapshot cleanly and carries
+   * no function references or process-runtime values.
    */
   readonly frameEntry?: FrameEntryCoordinates;
+  /**
+   * One-shot declaration that the transition now running is a frame re-entry.
+   *
+   * Written by every GOTO/RETRY transition assign, consumed and cleared by the
+   * first leaf `syncFrameEntry` that follows. The split exists because a
+   * transition knows *that* it re-enters but not yet *which* frame — the FOR
+   * iteration is only current after the leaf's `initForStack` runs — and
+   * because one transition can drive several state entries
+   * (`__parent-entry::` routing), which a one-shot marker survives and a
+   * `lastAction` read does not.
+   *
+   * Never present in a settled snapshot: every transition that sets it is
+   * followed in the same macrostep by the leaf entry that consumes it.
+   */
+  readonly frameReentry?: { readonly cause: 'GOTO' | 'RETRY' };
   /** Non-secret frontier intents awaiting authorized credential delivery. */
   readonly delegateFrontier?: ReadonlyArray<PersistedDelegateFrontierEntry>;
   /** One-shot machine-owned intent for launching a non-DELEGATE child runbook inline. */
@@ -1060,6 +1113,144 @@ function routeThroughParentArtifactsIfNeeded(
     return target;
   }
   return parentEntryStateId(stepName, substepId);
+}
+
+/**
+ * Declare `reenter: true` when a transition's routed target IS its own source.
+ *
+ * XState v5 defaults `reenter` to `false`. For a transition whose effective
+ * targets are all the source itself, `getTransitionDomain` returns the source,
+ * and `computeEntrySet` then adds a target only when
+ * `source !== target || source !== domain || reenter` — none of which hold. The
+ * source's `entry` array is therefore skipped. Its *descendants* are still
+ * exited (every active node strictly below the domain leaves) and re-entered
+ * (`addDescendantStatesToEnter` walks the target's `initial` chain
+ * unconditionally), which is why a self-targeting GOTO/RETRY re-fires the
+ * leaf's `__resolve-artifacts` / `__issue-delegations` children while silently
+ * skipping the leaf's own entry actions.
+ *
+ * That asymmetry is wrong for frame entry. A GOTO or RETRY that lands on the
+ * leaf the cursor already occupies is a genuine frame re-entry: it bumps
+ * `retryCount`, rewrites `lastAction`, resets the frame's substep rows and sets
+ * the one-shot `frameReentry` marker. `syncFrameEntry` is the sole consumer of
+ * that marker, so skipping it both loses the bump and leaks the marker onto the
+ * next state entry — which then bumps a within-frame advance that entered no
+ * new frame. Marking the transition external makes the source re-enter, so the
+ * entry actions run exactly once in the same macrostep that set the marker.
+ *
+ * Applied only on a true self-target: for a distinct target the transition
+ * domain is already the least common ancestor, the target is entered either
+ * way, and `reenter` would be inert.
+ *
+ * @param target - The routed target state id.
+ * @param sourceStateId - The state id the transition is declared on.
+ * @returns `{ reenter: true }` for a self-target, otherwise an empty object to
+ *   spread, leaving XState's default in place.
+ */
+function selfTargetReentry(target: string, sourceStateId: string): { readonly reenter?: true } {
+  return target === sourceStateId ? { reenter: true } : {};
+}
+
+/**
+ * How many times a `GOTO` may re-enter the execution unit it is authored on
+ * before the run is stopped.
+ *
+ * `GOTO <self>` is bounded re-execution, not an infinite loop:
+ * `GOTO SELF == GOTO SELF, MAX_SELF_GOTO_PASSES times, then STOP`. The value is
+ * `MAX_FOR_BOUND`, the same ceiling a `FOR` clause may declare, so a self-loop
+ * and a fully unrolled loop share one notion of how many passes Rundown will
+ * run. Unlike `RETRY <count> <action>`, the count is not author-chosen and the
+ * exhausted action is always `STOP`.
+ */
+export const MAX_SELF_GOTO_PASSES = MAX_FOR_BOUND;
+
+/**
+ * Does the unit-scoped loop counter still admit another self-targeting `GOTO`?
+ *
+ * Mirrors the shape of the RETRY guard (`context.retryCount < transition.retry`)
+ * exactly, including its start-at-zero arithmetic, but reads the loop's OWN
+ * counter: `selfGotoCount` is `0` on first entry and every self-GOTO increments
+ * it, so the predicate admits passes `1..MAX_SELF_GOTO_PASSES` and refuses the
+ * one after. Reading `retryCount` here would make the two constructs spend each
+ * other's budget — see {@link RunbookContext.selfGotoCount}.
+ *
+ * @param args - XState guard arguments.
+ * @param args.context - Live machine context carrying the loop counter.
+ * @returns true while the bound has budget left.
+ */
+function withinSelfGotoBound({ context }: { context: RunbookContext }): boolean {
+  return context.selfGotoCount < MAX_SELF_GOTO_PASSES;
+}
+
+/**
+ * Human-readable name for the execution unit a self-targeting `GOTO` re-enters.
+ *
+ * @param stepName - The step the transition is declared on.
+ * @param substepId - The substep, when the unit is one.
+ * @returns `"1"` for a step, `"1.2"` for a substep.
+ */
+function executionUnitLabel(stepName: string, substepId: string | undefined): string {
+  return substepId === undefined ? stepName : `${stepName}.${substepId}`;
+}
+
+/**
+ * Build the transition a self-targeting `GOTO` takes once its bound is spent.
+ *
+ * Routes through {@link buildTerminalTransition} — the builder the `STOP`
+ * action itself compiles to — so exhaustion terminates as a failure through the
+ * existing STOP dispatch rather than a parallel terminal path. The message
+ * names the bound so the stop is diagnosable from `lastMessage` alone.
+ *
+ * @param stepName - The step the transition is declared on.
+ * @param substepId - The substep, when the unit is one.
+ * @returns A transition to the STOPPED final state.
+ */
+function buildSelfGotoExhaustedTransition(
+  stepName: string,
+  substepId: string | undefined,
+): RunbookTransitionObject {
+  const unit = executionUnitLabel(stepName, substepId);
+  return buildTerminalTransition(
+    'STOPPED',
+    'STOP',
+    `GOTO ${unit} re-entered its own execution unit ${String(MAX_SELF_GOTO_PASSES)} times without leaving it. ` +
+      'Use RETRY <count> <action> to bound re-execution with an author-chosen count and fallback action.',
+  );
+}
+
+/**
+ * Does this `GOTO` target the very execution unit it is authored on?
+ *
+ * The single source of truth for the self-target rule. The bound's guard reads
+ * the counter that only a self-targeting `GOTO` increments, so the two must
+ * agree by construction — a second, drifting copy of this rule would either
+ * bound a loop that never counts or leave a counting loop unbounded.
+ *
+ * Substep-bearing targets are compared on step name plus resolved substep, not
+ * on the routed state id: a target routed through `__parent-entry::` still
+ * re-enters the same unit, it merely takes the parent's ARTIFACTS hop on the
+ * way. Substep-free targets have no such hop, so the state ids compare directly.
+ *
+ * @param target - The parsed GOTO target.
+ * @param stepName - The step the transition is declared on.
+ * @param substepId - The substep the transition is declared on, when any.
+ * @param steps - All parsed runbook steps.
+ * @returns true when the jump lands back on its own source unit.
+ */
+function gotoReentersOwnUnit(
+  target: StepId,
+  stepName: string,
+  substepId: string | undefined,
+  steps: readonly ResolvedStep[],
+): boolean {
+  const targetStep = steps.find((step) => step.name === target.step);
+  if (!targetStep) return false;
+  if (resolvedStepHasSubsteps(targetStep)) {
+    return (
+      targetStep.name === stepName && (target.substep ?? targetStep.substeps[0]?.id) === substepId
+    );
+  }
+  return formatStateId(targetStep.name, target.substep) === formatStateId(stepName, substepId);
 }
 
 /**
@@ -1479,7 +1670,11 @@ function buildSubstepGotoResetAssignValue(
     if (!resolvedSubstepId) return substepStates;
 
     const top = peekForStack(context.forStack);
-    const currentIteration = top && !top.implicit ? top.iteration : undefined;
+    // The cursor's own frame, through the single derivation — the rows being
+    // reset are keyed by it, so a locally rewritten rule here would reset a
+    // frame the rest of the system does not believe the cursor occupies.
+    const currentFrameKey = frameKeyForCursor(currentStepName, context.forStack);
+    const currentIteration = getActiveForContext(context.forStack, currentStepName)?.iteration;
     // A same-step substep GOTO is an intra-loop re-entry: initForStack preserves
     // the active FOR frame and discards event.target.at. Mirror that here so the
     // reset scopes to the frame the transition actually lands on, rather than a
@@ -1491,7 +1686,6 @@ function buildSubstepGotoResetAssignValue(
         : isGotoEvent && typeof event.target.at === 'number'
           ? event.target.at
           : currentIteration;
-    const currentFrameKey = buildFrameKey(currentStepName, currentIteration);
     const targetFrameKey = buildFrameKey(targetStepName, targetIteration);
     if (targetFrameKey !== currentFrameKey) return substepStates;
 
@@ -1531,10 +1725,17 @@ function buildSimpleGotoAssign(options: {
     parentRetryCount: options.preserveParentRetryCount
       ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
       : 0,
-    retryCount: options.isGotoToSelf
-      ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
+    // RESET SITE / INCREMENT SITE (simple GOTO target). Every GOTO reopens its
+    // target unit from the top, so the author's RETRY budget starts fresh —
+    // including on a self-target, which is a re-execution of the unit, not a
+    // continuation of the attempt that failed. The loop's own counter takes the
+    // opposite treatment: it advances on a self-target and zeroes on any other.
+    retryCount: 0,
+    selfGotoCount: options.isGotoToSelf
+      ? ({ context }: { context: RunbookContext }) => context.selfGotoCount + 1
       : 0,
     retryMax: undefined,
+    frameReentry: FRAME_REENTRY_GOTO,
     substep: options.resolvedSubstepId,
     ...(resetSubstepStates
       ? {
@@ -1680,13 +1881,15 @@ function buildParentExitAssign(
   steps: readonly ResolvedStep[],
 ): ReturnType<typeof runbookSetup.assign> {
   const baseAssign = {
+    // RESET SITE: parent-aggregation exit leaves the unit entirely.
     retryCount: 0,
+    selfGotoCount: 0,
     parentRetryCount: 0,
     iterationRetryCount: 0,
     substep: extractSubstepFromStateId(exitTarget),
   } satisfies Pick<
     RunbookContext,
-    'retryCount' | 'parentRetryCount' | 'iterationRetryCount' | 'substep'
+    'retryCount' | 'selfGotoCount' | 'parentRetryCount' | 'iterationRetryCount' | 'substep'
   >;
 
   switch (parentAction.type) {
@@ -1710,6 +1913,7 @@ function buildParentExitAssign(
           substepCompletedCount: 0,
           deferredResults: EMPTY_RESULTS,
           lastAction: makeAggregationLastAction(buildGotoLastAction(parentAction.target)),
+          frameReentry: FRAME_REENTRY_GOTO,
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
@@ -1726,6 +1930,7 @@ function buildParentExitAssign(
             }
           : {}),
         lastAction: makeAggregationLastAction(buildGotoLastAction(parentAction.target)),
+        frameReentry: FRAME_REENTRY_GOTO,
       });
     }
     case 'STOP':
@@ -1850,16 +2055,34 @@ function buildParentStateConfig(
         // RETRY_ERROR lastAction before the priority-0 guard could fire).
         target: formatStateId(stepName),
         actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
+          // `runRetryHook` runs as a TRANSITION action, so the leaf
+          // `syncFrameEntry` that follows cannot make the entry current for it.
+          // Advance here, hand the hook the advanced coordinates, and do NOT set
+          // `frameReentry` — the entry action would otherwise score this bump a
+          // second time.
+          const frameEntry = advanceFrameEntry(
+            context.frameEntry ?? {},
+            frameKeyForCursor(parentStep.name, context.forStack),
+            true,
+          );
           // Run the retry hook: iterate every delegated substep in the active
           // frame, re-issue their delegations, collect new tokens into a
           // frontier. Uniform re-delegation (docs/spec/language.md §4.2, §5). Never throws.
-          const hook = runRetryHook(context, parentStep, steps, issueDelegationCredential);
+          const hook = runRetryHook(
+            { ...context, frameEntry },
+            parentStep,
+            steps,
+            issueDelegationCredential,
+          );
           if (hook.status === 'error') {
             // RETRY_ERROR variant: structurally distinct LastAction type. The
             // priority-0 always entry routes to STOPPED on this discriminant
             // — no counter increments, no frontier population, no substep
             // reset. Aggregation origin mirrors the sibling RETRY emission:
             // both sit on the parent-aggregation retry path.
+            //
+            // RETRY_ERROR routes to STOPPED and re-enters no frame, so the
+            // advance is discarded with the rest of the retry.
             return {
               lastAction: makeAggregationLastAction({
                 type: 'RETRY_ERROR' as const,
@@ -1870,6 +2093,7 @@ function buildParentStateConfig(
             };
           }
           return {
+            frameEntry,
             // Aggregation origin marks this RETRY as aggregation-driven (spec §3.5).
             lastAction: makeAggregationLastAction({ type: 'RETRY' as const }),
             parentRetryCount: context.parentRetryCount + 1,
@@ -1972,12 +2196,29 @@ function buildParentStateConfig(
           // priority-0 RETRY_ERROR guard could fire.
           target: formatStateId(stepName),
           actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
+            // `runRetryHook` runs as a TRANSITION action, so the leaf
+            // `syncFrameEntry` that follows cannot make the entry current for
+            // it. Advance here, hand the hook the advanced coordinates, and do
+            // NOT set `frameReentry` — the entry action would otherwise score
+            // this bump a second time. This site does not reset `forStack`, so
+            // the frame key is the current iteration's and the advance is a
+            // same-frame re-entry.
+            const frameEntry = advanceFrameEntry(
+              context.frameEntry ?? {},
+              frameKeyForCursor(parentStep.name, context.forStack),
+              true,
+            );
             // Run the retry hook: iterate every delegated substep in the
             // current iteration frame, re-issue their delegations, collect new
             // tokens into a frontier. Uniform re-delegation within the frame
             // (docs/spec/language.md §4.2, §5). activeFrameKey scopes the hook to this
             // iteration — other iterations' substep states remain untouched.
-            const hook = runRetryHook(context, parentStep, steps, issueDelegationCredential);
+            const hook = runRetryHook(
+              { ...context, frameEntry },
+              parentStep,
+              steps,
+              issueDelegationCredential,
+            );
             if (hook.status === 'error') {
               // RETRY_ERROR variant: structurally distinct LastAction type.
               // The sibling priority-0 always entry on the parent state
@@ -1995,6 +2236,7 @@ function buildParentStateConfig(
               };
             }
             return {
+              frameEntry,
               iterationRetryCount: context.iterationRetryCount + 1,
               // Counter contract on FOR-iteration retry (see docs/internal/architecture.md §Retry Counters):
               //   iterationRetryCount — machine-invariant counter used by the iteration
@@ -2058,7 +2300,10 @@ function buildParentStateConfig(
             context.iterationResults ?? [],
           substepCompletedCount: 0,
           deferredResults: EMPTY_RESULTS,
+          // RESET SITE: the next FOR iteration is a new frame, so both the
+          // author's retry budget and the loop budget start fresh.
           retryCount: 0,
+          selfGotoCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
         }),
@@ -2209,7 +2454,10 @@ function buildParentStateConfig(
           },
           substepCompletedCount: 0,
           deferredResults: EMPTY_RESULTS,
+          // RESET SITE: the next FOR iteration is a new frame, so both the
+          // author's retry budget and the loop budget start fresh.
           retryCount: 0,
+          selfGotoCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
         }),
@@ -2285,7 +2533,10 @@ function buildParentStateConfig(
             context.iterationResults ?? [],
           substepCompletedCount: 0,
           deferredResults: EMPTY_RESULTS,
+          // RESET SITE: the next FOR iteration is a new frame, so both the
+          // author's retry budget and the loop budget start fresh.
           retryCount: 0,
+          selfGotoCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
         }),
@@ -2325,7 +2576,9 @@ function buildParentStateConfig(
             return [{ ...top, iteration: nextIteration(top), currentValue: undefined }];
           },
           substepCompletedCount: 0,
+          // RESET SITE: sequential loop-back to the next FOR iteration.
           retryCount: 0,
+          selfGotoCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
         }),
@@ -2350,7 +2603,9 @@ function buildParentStateConfig(
         target: nextTarget,
         actions: runbookSetup.assign({
           forStack: EMPTY_FOR_STACK,
+          // RESET SITE: sequential FOR exit leaves the loop and the unit.
           retryCount: 0,
+          selfGotoCount: 0,
           parentRetryCount: 0,
           iterationRetryCount: 0,
           substep: extractSubstepFromStateId(nextTarget),
@@ -2430,14 +2685,39 @@ function buildParentStateConfig(
     const passLastMessage =
       passAction.type === 'STOP' || passAction.type === 'COMPLETE' ? passAction.message : undefined;
 
+    // Declare re-entry when the configured action is a GOTO, exactly as every
+    // other GOTO-assigning site does. These branches build their own `assign`
+    // rather than routing through `buildSimpleGotoAssign`, so without this the
+    // marker is never set and a parent whose PASS/FAIL action GOTOs its own step
+    // re-enters its frame — substep rows reset, `__issue-delegations` re-fired —
+    // while `advanceFrameEntry` sees no frame switch and no marker, and carries
+    // the old entry through unchanged. Only GOTO can land back in the frame the
+    // exit left; CONTINUE/NEXT/BREAK move on and STOP/COMPLETE are terminal, and
+    // the marker is redundant (not harmful) whenever the target frame differs,
+    // because `advanceFrameEntry` treats a declared re-entry and a frame switch
+    // as the same arm.
+    //
+    // Applied by ROUTING TARGET, not by recorded `lastAction`: the control-exit
+    // branch below preserves BREAK/NEXT as its `lastAction` while still routing
+    // to the PASS action's target, so it re-enters on a self-GOTO exactly like
+    // its siblings. That branch needs the marker in one narrow shape — a loop
+    // that exits on its FIRST iteration, where `forStack: EMPTY_FOR_STACK` plus
+    // the target leaf's `initForStack` rebuild the very frame key the exit
+    // abandoned. Any later iteration rebuilds at `forClause.start`, a different
+    // frame, and the switch supplies the bump on its own.
+    const passFrameReentry = passAction.type === 'GOTO' ? { frameReentry: FRAME_REENTRY_GOTO } : {};
+    const failFrameReentry = failAction.type === 'GOTO' ? { frameReentry: FRAME_REENTRY_GOTO } : {};
+
     const commonAssign = {
       forStack: EMPTY_FOR_STACK,
+      // RESET SITE: unconditional parent exit leaves the unit.
       retryCount: 0,
+      selfGotoCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
     } satisfies Pick<
       RunbookContext,
-      'forStack' | 'retryCount' | 'parentRetryCount' | 'iterationRetryCount'
+      'forStack' | 'retryCount' | 'selfGotoCount' | 'parentRetryCount' | 'iterationRetryCount'
     >;
 
     if (hasFor) {
@@ -2461,6 +2741,9 @@ function buildParentStateConfig(
           ...commonAssign,
           substep: extractSubstepFromStateId(parentPassTarget),
           lastMessage: undefined,
+          // The routing target is the PASS action's, so a self-GOTO re-enters
+          // here too — even though `lastAction` stays the BREAK/NEXT that left.
+          ...passFrameReentry,
         }),
       });
       // Normal PASS routing: no failed iterations and no BREAK/NEXT → parent's PASS action target.
@@ -2474,6 +2757,7 @@ function buildParentStateConfig(
           substep: extractSubstepFromStateId(parentPassTarget),
           lastAction: passLastAction,
           lastMessage: passLastMessage,
+          ...passFrameReentry,
         }),
       });
       // FAIL routing: any failed iteration → parent's FAIL action target.
@@ -2485,6 +2769,7 @@ function buildParentStateConfig(
           substep: extractSubstepFromStateId(parentFailTarget),
           lastAction: failLastAction,
           lastMessage: failLastMessage,
+          ...failFrameReentry,
         }),
       });
     } else {
@@ -2510,6 +2795,7 @@ function buildParentStateConfig(
           deferredResults: undefined,
           lastAction: passLastAction,
           lastMessage: passLastMessage,
+          ...passFrameReentry,
         }),
       });
       // FAIL routing: any failed deferred substep → parent's FAIL action target.
@@ -2523,6 +2809,7 @@ function buildParentStateConfig(
           deferredResults: undefined,
           lastAction: failLastAction,
           lastMessage: failLastMessage,
+          ...failFrameReentry,
         }),
       });
     }
@@ -2651,9 +2938,11 @@ function buildRecoveryReconcileTransitions(
         interruptedEpoch: undefined,
         interruptedReason: undefined,
         interruptedStepId: undefined,
+        // RESET SITE: a reconcile is a canonical GOTO, and every canonical GOTO
+        // zeroes the retry budget, the loop budget, the iteration budget and the
+        // displayed max — one that kept them would reopen the unit pre-spent.
         retryCount: 0,
-        // Every canonical GOTO zeroes the iteration budget and the displayed max;
-        // a reconcile that kept them would reopen the iteration pre-spent.
+        selfGotoCount: 0,
         iterationRetryCount: 0,
         retryMax: undefined,
         substep: first.substepId,
@@ -2661,6 +2950,7 @@ function buildRecoveryReconcileTransitions(
         deferredResults: EMPTY_RESULTS,
         ...targetPatch,
         lastAction: buildGotoLastActionFromEvent(first.substepId),
+        frameReentry: FRAME_REENTRY_GOTO,
       }),
     };
   });
@@ -2794,6 +3084,7 @@ function buildRetryStateConfig(
           lastAction: makeDirectLastAction({ type: 'RETRY' as const }),
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
+          frameReentry: FRAME_REENTRY_RETRY,
         }),
       },
       ...(rawEntries as RunbookAlwaysEntry[]),
@@ -3121,9 +3412,10 @@ function buildGotoTransition(
       formatStateId(targetStepObj.name, resolvedSubstepId),
       steps,
     );
-    const isGotoToSelf = targetStepObj.name === stepName && resolvedSubstepId === substepId;
+    const isGotoToSelf = gotoReentersOwnUnit(target, stepName, substepId, steps);
     return {
       target: targetStateId,
+      ...selfTargetReentry(targetStateId, formatStateId(stepName, substepId)),
       actions: runbookSetup.assign({
         forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] =>
           initForStack(context.forStack, targetStepObj.name, forClause, target.at, isImplicit),
@@ -3139,12 +3431,16 @@ function buildGotoTransition(
             !isImplicit || !!targetStepObj.aggregation,
           ),
         lastAction: makeDirectLastAction(buildGotoLastAction(target)),
+        frameReentry: FRAME_REENTRY_GOTO,
         parentRetryCount:
           targetStepObj.name === stepName
             ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
             : 0,
-        retryCount: isGotoToSelf
-          ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
+        // RESET SITE / INCREMENT SITE (substep-bearing GOTO target). Same
+        // contract as the simple-target site in `buildSimpleGotoAssign`.
+        retryCount: 0,
+        selfGotoCount: isGotoToSelf
+          ? ({ context }: { context: RunbookContext }) => context.selfGotoCount + 1
           : 0,
         retryMax: undefined,
         iterationRetryCount: 0,
@@ -3175,7 +3471,7 @@ function buildGotoTransition(
     steps,
   );
   const currentStateId = formatStateId(stepName, substepId);
-  const isGotoToSelf = computedTarget === currentStateId;
+  const isGotoToSelf = gotoReentersOwnUnit(target, stepName, substepId, steps);
 
   // Detect intra-loop GOTO: target is within same FOR step
   const currentStep = steps.find((s) => s.name === stepName);
@@ -3183,6 +3479,7 @@ function buildGotoTransition(
 
   return {
     target: computedTarget,
+    ...selfTargetReentry(computedTarget, currentStateId),
     actions: buildSimpleGotoAssign({
       lastAction: makeDirectLastAction(buildGotoLastAction(target)),
       resolvedSubstepId,
@@ -3298,41 +3595,27 @@ function buildActionTransition(
       ? (currentStep.substeps.find((substep) => substep.id === substepId)?.outputs ?? [])
       : (currentStep?.outputs ?? []);
 
-  const extra: RunbookAction[] = [];
-  if (unitOutputs.length > 0) {
-    extra.push(
-      actionRef(
-        'storeStepOutputs',
-        withEvaluationOptions(
-          {
-            outputs: unitOutputs,
-            stepName,
-            substepId,
-          },
-          evaluationOptions,
-        ),
-      ),
-    );
-  }
-
-  // When a substep bypasses the parent aggregation state by transitioning directly
-  // to a terminal state or a different step, the parent's `always` transitions never
-  // run and `decorateParentTransition` is unreachable. Inject parent OUTPUTS here so
-  // they fire regardless of which exit path the substep takes.
-  if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
-    const parentOutputs = currentStep.outputs;
-    const target = typeof transition.target === 'string' ? transition.target : undefined;
-    const exitsParent =
-      target !== undefined &&
-      target !== formatStateId(stepName) &&
-      !target.startsWith(`${formatStateId(stepName)}::`);
-    if (exitsParent && parentOutputs && parentOutputs.length > 0) {
+  /**
+   * Attach this unit's OUTPUTS (and, on a parent-bypassing exit, the parent's)
+   * to one built transition.
+   *
+   * Per-transition rather than computed once because a bounded self-GOTO emits
+   * two: the jump stays inside the parent, the exhausted STOP leaves it, so the
+   * parent-bypass branch resolves differently for each and each must carry the
+   * OUTPUTS an authored transition to the same target would.
+   *
+   * @param built - The transition to decorate.
+   * @returns The transition with OUTPUTS actions prepended.
+   */
+  const decorateWithOutputs = (built: RunbookTransitionObject): RunbookTransitionObject => {
+    const extra: RunbookAction[] = [];
+    if (unitOutputs.length > 0) {
       extra.push(
         actionRef(
           'storeStepOutputs',
           withEvaluationOptions(
             {
-              outputs: parentOutputs,
+              outputs: unitOutputs,
               stepName,
               substepId,
             },
@@ -3341,9 +3624,50 @@ function buildActionTransition(
         ),
       );
     }
+
+    // When a substep bypasses the parent aggregation state by transitioning directly
+    // to a terminal state or a different step, the parent's `always` transitions never
+    // run and `decorateParentTransition` is unreachable. Inject parent OUTPUTS here so
+    // they fire regardless of which exit path the substep takes.
+    if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
+      const parentOutputs = currentStep.outputs;
+      const target = typeof built.target === 'string' ? built.target : undefined;
+      const exitsParent =
+        target !== undefined &&
+        target !== formatStateId(stepName) &&
+        !target.startsWith(`${formatStateId(stepName)}::`);
+      if (exitsParent && parentOutputs && parentOutputs.length > 0) {
+        extra.push(
+          actionRef(
+            'storeStepOutputs',
+            withEvaluationOptions(
+              {
+                outputs: parentOutputs,
+                stepName,
+                substepId,
+              },
+              evaluationOptions,
+            ),
+          ),
+        );
+      }
+    }
+
+    return prependActions(built, extra);
+  };
+
+  // A GOTO that lands back on its own unit is bounded re-execution. The bound
+  // is a guarded pair, exactly as `buildRetryStateConfig` builds RETRY: XState
+  // takes the first array entry whose guard passes, so the jump is unreachable
+  // once the counter is spent and the STOP is unreachable until it is.
+  if (action.type === 'GOTO' && gotoReentersOwnUnit(action.target, stepName, substepId, steps)) {
+    return [
+      { ...decorateWithOutputs(transition), guard: withinSelfGotoBound },
+      decorateWithOutputs(buildSelfGotoExhaustedTransition(stepName, substepId)),
+    ];
   }
 
-  return prependActions(transition, extra);
+  return decorateWithOutputs(transition);
 }
 
 /**
@@ -3868,17 +4192,35 @@ export function compileRunbookToMachine(
     ],
     onError: forResolutionFailureTransition,
   });
+  /**
+   * Build the entry action that makes `context.frameEntry` current for a leaf.
+   *
+   * Appended AFTER the leaf's existing entry actions so it runs after
+   * `initForStack` has made the FOR iteration current — that is what makes a
+   * loop-back register as a frame switch with no extra wiring. It runs before
+   * the leaf's initial child's `invoke` input factory is read, so
+   * `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
+   *
+   * @param stepName - The step this leaf belongs to.
+   * @returns The XState assign action.
+   */
+  const buildSyncFrameEntry = (stepName: string): ReturnType<typeof runbookSetup.assign> =>
+    runbookSetup.assign({
+      frameEntry: ({ context }: { context: RunbookContext }): FrameEntryCoordinates =>
+        advanceFrameEntry(
+          context.frameEntry ?? {},
+          frameKeyForCursor(stepName, context.forStack),
+          context.frameReentry !== undefined,
+        ),
+      frameReentry: undefined,
+    });
   const buildDelegationIssueInvokeBlock = (
     stepName: string,
     substepId: string | undefined,
   ): NonNullable<RunbookStateConfig['invoke']> => ({
     src: 'delegationIssueActor' as const,
     input: ({ context }: { context: RunbookContext }) => {
-      const activeFor = peekForStack(context.forStack);
-      const frameKey = buildFrameKey(
-        stepName,
-        activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
-      );
+      const frameKey = frameKeyForCursor(stepName, context.forStack);
       const runIdValue = context.templateVars.RunId;
       return {
         state: {
@@ -3965,11 +4307,11 @@ export function compileRunbookToMachine(
       if (!substepId) {
         throw new Error('inlineLaunchIntentActor invoked without substep id');
       }
-      const activeFor = peekForStack(context.forStack);
-      const frameKey = buildFrameKey(
-        stepName,
-        activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
-      );
+      // Same derivation as the sibling `buildDelegationIssueInvokeBlock` and as
+      // the leaf's own `syncFrameEntry`: a launch intent and a delegation
+      // issued from one leaf entry must name the same frame, and the entry
+      // ordinal they are compared against is keyed on this helper's answer.
+      const frameKey = frameKeyForCursor(stepName, context.forStack);
       return {
         state: {
           id: context.templateVars.RunId,
@@ -4204,6 +4546,7 @@ export function compileRunbookToMachine(
     const leafEntryActions = [
       ...currentEntryActions,
       ...(shouldClearLeafEntryArtifacts ? [clearCurrentEntryArtifacts] : []),
+      buildSyncFrameEntry(config.stepName),
     ];
     const owningStep = steps.find((step) => step.name === config.stepName);
     const needsIteration = owningStep !== undefined && leafNeedsIterationResolution(owningStep);
@@ -4255,8 +4598,13 @@ export function compileRunbookToMachine(
       },
     ];
 
+    // RETRY re-enters this very leaf whenever the step declares no parent
+    // ARTIFACTS to route through, so it needs the same external-transition
+    // treatment as a self-targeting GOTO.
+    const retryTarget = routeThroughParentArtifactsIfNeeded(config.id, steps);
+
     // Build per-state GOTO transitions
-    const buildGotoTransitionsForState = gotoTargets.map((target) => {
+    const buildGotoTransitionsForState = gotoTargets.flatMap((target) => {
       // Compute isGotoToSelf at build time since target and config are known
       const isGotoToSelf = target.id === config.id;
 
@@ -4265,23 +4613,39 @@ export function compileRunbookToMachine(
       const targetStepForReset = steps.find((step) => step.name === target.stepName);
       const routedTarget = routeThroughParentArtifactsIfNeeded(target.id, steps);
 
-      return {
-        guard: ({ event }: { event: RunbookEvent }) => {
-          if (event.type !== 'GOTO') return false;
+      /**
+       * Does the dispatched GOTO event name this build-time target?
+       *
+       * Named so the bounded self-target can reuse the identical predicate for
+       * both of its entries — the jump and the exhausted STOP must select on
+       * exactly the same event, or the STOP would shadow an unrelated target.
+       *
+       * @param event - The event being offered to this transition.
+       * @returns true when the event's target resolves to this state.
+       */
+      const namesThisTarget = (event: RunbookEvent): boolean => {
+        if (event.type !== 'GOTO') return false;
 
-          const targetStep = event.target.step;
+        const targetStep = event.target.step;
 
-          // If target is just a step name, it matches the first state of that step
-          if (!event.target.substep) {
-            // Find first state for this step
-            const firstStateForStep = allStates.find((s) => s.stepName === targetStep);
-            return target.id === firstStateForStep?.id;
-          }
+        // If target is just a step name, it matches the first state of that step
+        if (!event.target.substep) {
+          // Find first state for this step
+          const firstStateForStep = allStates.find((s) => s.stepName === targetStep);
+          return target.id === firstStateForStep?.id;
+        }
 
-          // Exact match for step and substep
-          return targetStep === target.stepName && event.target.substep === target.substepId;
-        },
+        // Exact match for step and substep
+        return targetStep === target.stepName && event.target.substep === target.substepId;
+      };
+
+      const jump = {
+        guard: isGotoToSelf
+          ? ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+              namesThisTarget(event) && withinSelfGotoBound({ context })
+          : ({ event }: { event: RunbookEvent }) => namesThisTarget(event),
         target: routedTarget,
+        ...selfTargetReentry(routedTarget, config.id),
         actions: forStepForTarget
           ? runbookSetup.assign({
               forStack: ({
@@ -4312,12 +4676,16 @@ export function compileRunbookToMachine(
                   !forStepForTarget.implicit || !!forStepForTarget.step.aggregation,
                 ),
               lastAction: buildGotoLastActionFromEvent(target.substepId),
+              frameReentry: FRAME_REENTRY_GOTO,
               parentRetryCount:
                 target.stepName === config.stepName
                   ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
                   : 0,
-              retryCount: isGotoToSelf
-                ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
+              // RESET SITE / INCREMENT SITE (dispatched GOTO event naming a FOR
+              // substep). Same contract as the two authored-GOTO sites.
+              retryCount: 0,
+              selfGotoCount: isGotoToSelf
+                ? ({ context }: { context: RunbookContext }) => context.selfGotoCount + 1
                 : 0,
               retryMax: undefined,
               iterationRetryCount: 0,
@@ -4360,6 +4728,19 @@ export function compileRunbookToMachine(
                   : undefined,
             }),
       };
+
+      if (!isGotoToSelf) return [jump];
+
+      // A dispatched GOTO naming this very state is the same bounded
+      // re-execution an authored `GOTO <self>` compiles to, so it carries the
+      // same bound: the limit belongs to the action, not to who dispatched it.
+      return [
+        jump,
+        {
+          guard: ({ event }: { event: RunbookEvent }) => namesThisTarget(event),
+          ...buildSelfGotoExhaustedTransition(config.stepName, config.substepId),
+        },
+      ];
     });
 
     return runbookSetup.createStateConfig({
@@ -4389,8 +4770,10 @@ export function compileRunbookToMachine(
             lastMessage: undefined,
             retryCount: ({ context }) => context.retryCount + 1,
             retryMax: retryMaxFromTransitions,
+            frameReentry: FRAME_REENTRY_RETRY,
           }),
-          target: routeThroughParentArtifactsIfNeeded(config.id, steps),
+          target: retryTarget,
+          ...selfTargetReentry(retryTarget, config.id),
         },
         GOTO: buildGotoTransitionsForState,
       } as NonNullable<RunbookStateConfig['on']>,
@@ -4718,6 +5101,7 @@ export function compileRunbookToMachine(
     },
     context: {
       retryCount: 0,
+      selfGotoCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
       retryMax: undefined,

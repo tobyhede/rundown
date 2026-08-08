@@ -225,6 +225,132 @@ The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
 consumes (see [§ CLI ↔ Core Event Boundary](#cli--core-event-boundary)).
 
+### Frame entry ownership
+
+The XState machine is the single writer of frame entry.
+`RunbookContext.frameEntry` holds
+`{ activeFrameKey, activeEntry, frameEntryCounts }` and is advanced by
+`syncFrameEntry`, an `assign` appended after the existing entry actions on every
+step/substep **leaf** state. `deriveActorStatePatch` mirrors the result into
+`RunbookState.activeEntry` / `frameEntryCounts`.
+
+Two ordering facts make the placement correct:
+
+- **After `initForStack`.** FOR-stack initialisation lives in the same
+  entry-action slot, so appending puts the sync after the iteration is current.
+  A FOR loop-back therefore reads as a frame switch with no extra wiring.
+- **Before the leaf's invoked children.** A compound state's `entry` assign runs
+  before its initial child's `invoke` input factory is read, so
+  `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
+
+`syncFrameEntry` is **not** attached to `step::N::__parent-entry::M`: each is a
+same-frame artifact pass-through that routes on to the real leaf, and bumping
+there would double-count.
+
+The bump rule lives in `advanceFrameEntry` (`frame-entry.ts`) and the frame-key
+derivation in `frameKeyForCursor` (`targeting.ts`), the single derivation. Every
+cursor-keyed site routes through it: `deriveActiveFrame`,
+`deriveActorStatePatch`, `syncFrameEntry`, `buildDelegationIssueInvokeBlock`,
+`buildInlineLaunchInvokeBlock`, `buildSubstepGotoResetAssignValue`, the two
+inline `advanceFrameEntry` calls on the `runRetryHook` transitions, and
+`runRetryHook`'s own `activeFrameKey`. The rule it replaced filtered `implicit`
+but never compared `stepId`; the two answers coincide for every stack
+`initForStack` can build today, so the guard is a construction rather than a
+live repair, and `targeting.test.ts` pins both the consumers and the absence of
+any fourth rewrite. The entry ordinal is run-global and monotonic —
+`max(frameEntryCounts[target] ?? 0, previousActiveEntry) + 1` — not
+per-frame-local; `classifyDelegationLiveness` and completion-key scoping depend
+on that form.
+
+**Re-entry is declared, not inferred.** Every transition that writes a `GOTO` or
+`RETRY` `lastAction` also writes the one-shot `context.frameReentry` marker,
+which the first following `syncFrameEntry` consumes and clears. The split is
+deliberate: a transition knows _that_ it re-enters but not yet _which_ frame
+(the FOR iteration is only current after the leaf's `initForStack` runs), and
+one transition can drive several state entries — `__parent-entry::` routing is
+two — which a one-shot marker survives and a `lastAction` read does not.
+`RETRY_ERROR` sets no marker; it routes to `STOPPED` and enters no frame.
+
+**Self-targeting transitions declare `reenter: true`.** A GOTO onto the leaf the
+cursor already occupies, and a RETRY on a step with no parent `ARTIFACTS` to
+route through, both target their own source. XState v5 defaults `reenter` to
+`false`, and for such a transition `getTransitionDomain` returns the source, so
+`computeEntrySet` never adds it and the source's `entry` array does not run —
+while `addDescendantStatesToEnter` still re-enters the leaf's children. Left
+alone that skips `syncFrameEntry` on a genuine re-entry (the transition resets
+the frame's substep rows, increments `retryCount` and re-fires
+`__issue-delegations`) and leaks the one-shot marker onto the _next_ state
+entry, which then bumps a within-frame advance. `selfTargetReentry` in
+`compiler.ts` attaches `reenter: true` wherever the routed target equals the
+source id, and only there — for a distinct target the domain is already the
+least common ancestor and the flag would be inert. The parent-aggregation retry
+also self-targets and is deliberately excluded: it carries no entry actions and
+relies on the assign settling before a sibling priority-0 `always` routes
+onward.
+
+**A self-targeting `GOTO` is bounded in the machine.** `GOTO <self>` is bounded
+re-execution, not an infinite loop:
+`GOTO SELF == GOTO SELF, MAX_SELF_GOTO_PASSES times, then STOP`, where
+`MAX_SELF_GOTO_PASSES` is `MAX_FOR_BOUND` — a self-loop and a fully unrolled
+`FOR` share one notion of how many passes Rundown will run. The shape is the
+RETRY shape (`buildRetryStateConfig`): a first, guarded transition carries the
+jump while `context.retryCount < MAX_SELF_GOTO_PASSES`, and a lower-priority
+sibling carries the exhausted case. XState takes the first array entry whose
+guard passes, so the jump is unreachable once the counter is spent and the STOP
+is unreachable until it is. The exhausted entry is built by
+`buildTerminalTransition('STOPPED', 'STOP', …)` — the builder the `STOP` action
+itself compiles to — so exhaustion terminates through the existing STOP dispatch
+rather than a parallel terminal path, and carries a `lastMessage` naming the
+bound. `gotoReentersOwnUnit` is the single source of truth for "is this a
+self-target": the guard reads the counter that only a self-targeting `GOTO`
+increments, so a second copy of the rule would either bound a loop that never
+counts or leave a counting loop unbounded. The bound applies to all three sites
+that increment on a self-GOTO — the authored action on a substep-bearing target,
+the authored action on a simple target, and the dispatched `GOTO` event on a
+leaf — because the limit belongs to the action, not to who dispatched it.
+
+**The loop counter is its own counter.** `context.selfGotoCount` counts
+self-GOTO passes; `context.retryCount` is the author's `RETRY <count> <action>`
+budget. They were one field, and each construct then spent the other's budget:
+two self-GOTO passes exhausted an authored `RETRY 2` before its first failure,
+and an authored retry ate into the loop bound. Both are unit-scoped, so
+`selfGotoCount` is zeroed at exactly the sites that zero `retryCount` — every
+`GOTO` (including a self-target, which reopens the unit from the top and so
+restores the author's full retry budget), every parent exit, every FOR loop-back
+and exit, the recovery reconcile, and the initial context. RETRY leaves it
+untouched in both directions: a retry re-enters the same unit without taking a
+loop pass. `compiler.test.ts` ("loop-counter reset sites") drives one test per
+site; `self-goto-counter.source-text.test.ts` asserts the pairing structurally
+so a site added later cannot ship unpaired.
+
+**Entry ordinals are not FOR bounds.** `RunbookState.activeEntry` and every
+value in `frameEntryCounts` are run-global monotonic ordinals. They were capped
+at `MAX_FOR_BOUND` — the largest iteration count one `FOR` clause may declare —
+which made this bound unobservable through persisted state: the ordinal starts
+at 1 and bumps once per pass, so the last admitted pass reaches 10001, one past
+the cap. `update` does not validate its write, so the run committed state its
+own next read refused (`RunbookStateManager.load` threw
+`InvalidRunbookStateError`; `RunbookStore.loadRun` and the next `update` let a
+raw `ZodError` escape) and the run wedged until pruned. `schemas.ts` now
+validates all three entry ordinals — `activeEntry`, `frameEntryCounts`, and
+`ResolvedCompletion.targetEntry` — as safe integers with no domain ceiling;
+`targetIteration`, which really is a `FOR` iteration index, keeps
+`MAX_FOR_BOUND`.
+
+**The two `runRetryHook` sites are the exception.** `runRetryHook` is invoked
+from a transition `assign`, and transition actions run before the target's entry
+actions, so `syncFrameEntry` cannot serve it. Both sites call
+`advanceFrameEntry` inline, hand the hook the advanced coordinates, and
+deliberately set no marker — the entry action that follows is then a no-op for
+that frame. On a FOR parent the frame they advance is the **bare step frame**,
+not the iteration frame: the loop has exhausted by the time the parent
+aggregation resolves, so `frameKeyForCursor` finds no active FOR context. That
+is the same derivation `runRetryHook` performs on the coordinates it receives,
+so the two agree by construction. The parent-aggregation site then assigns
+`forStack: EMPTY_FOR_STACK`, and the leaf `initForStack` that follows rebuilds
+the loop at `forClause.start` — a second, genuinely different frame, scored once
+by the entry action.
+
 ### Delegated Command Infrastructure Terminals
 
 Command execution is a machine-owned Category C side effect. The command actor
@@ -310,6 +436,13 @@ into `compileRunbookToMachine` and threaded into every per-state `invoke.input`
 closure. FOR iteration resolution additionally receives the unflattened initial
 template-variable seed through the same compile-time closure so file-backed
 `JsonArrayStream` sources never need to live in persisted XState context.
+
+`context.frameEntry` is the canonical event-time-bound dependency: machine-owned
+delegation issuance reads it inside `buildDelegationIssueInvokeBlock`'s `input`
+factory at fire time, after the leaf's `syncFrameEntry` entry action has made it
+current (see [§ Frame entry ownership](#frame-entry-ownership)). It is plain
+data and serialises into the persisted snapshot; no function reference or
+process-runtime value travels with it.
 
 ### Manual delegation preparation machine
 
@@ -522,6 +655,22 @@ it.
    (`#reactivateRunningInlineChild`), not in the CLI. The explicit `--step` /
    `--index` path never reactivates — it is a deliberate completion against a
    named substep.
+
+   The seam also decides whether the reactivation needs the parent's execution
+   loop, and returns that as the loop directive. An **interrupted** launch does:
+   the launcher records `startedAt`, consumes the one-shot launch intent and
+   re-establishes the child's run-control authority
+   (`SessionService.adoptRunControlClaim`) in one continuation, and a process
+   that died mid-launch leaves all three undone. Only the launch seam
+   (`launchInlineChildFromIntent`'s existing-child branch) performs them, and
+   only the parent's own loop reaches it, so the seam returns
+   `loop: { kind: 'run' }` there. A launch that already **finished** returns
+   `loop: { kind: 'none' }` — running the loop would re-enter an execution unit
+   the parent never left, re-announcing the step and re-running any command it
+   carries. The discriminant is the surviving intent itself
+   (`#hasUnconsumedInlineLaunchIntent`), which is the same value
+   `observeExecutionUnitEntry` re-projects, so the seam's decision and the
+   loop's behaviour agree by construction.
 
 The seam returns transition-observation events plus a loop-continuation
 directive (`LifecycleLoopDirective`) as **data**. It does not spawn processes or
@@ -743,8 +892,9 @@ the `DELEGATE_FRONTIER_CONSUMED` sync did not. It is retryable — the frontier 
 still persisted and no observations were surfaced — whereas
 `frontier_projection_refused` is not fixed by repetition, since the same
 authority refuses identically. Two codes because the remediations invert; RD-826
-through RD-828 are reserved for the retry idempotency contract, so the frontier
-code takes RD-829.
+through RD-828 belong to the retry idempotency contract
+(`DELEGATION_REPLACEMENT_CONSUMED`, `DELEGATION_RETRY_IDENTITY_UNMATCHED`,
+`DELEGATION_SUPERSESSION_AMBIGUOUS`), so the frontier code takes RD-829.
 
 RD-829's producer set narrowed when collect became transactional: it is now
 reachable only from the execution loop, which still commits its consume

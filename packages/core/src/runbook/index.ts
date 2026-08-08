@@ -288,7 +288,7 @@ export {
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
   type ExplicitDelegationTarget,
-  type FindDelegationByToken,
+  type FindDelegationsByTokenHash,
   type DelegationAbortOutcome,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
@@ -497,7 +497,11 @@ export {
   UnsafeFileError,
   type UnsafeFileReason,
 } from './safe-fs.js';
-export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
+export {
+  DelegationScanService,
+  type DelegationTokenScan,
+  type TokenScanResult,
+} from './delegation-scan.js';
 export {
   reconstituteContextVars,
   buildContextSnapshot,

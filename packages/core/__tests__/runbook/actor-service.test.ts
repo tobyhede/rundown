@@ -24,9 +24,11 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import {
   compileRunbookToMachine,
+  MAX_SELF_GOTO_PASSES,
   PENDING_MACHINE_EFFECT_TAG,
   RECOVERY_REQUIRED_STATE_NAME,
 } from '../../src/runbook/compiler.js';
+import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
@@ -223,17 +225,20 @@ npm test
       actor.stop();
     });
 
-    it('overlays persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
+    it('does not overlay persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
       const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
       const first = await actorService.createActor(created.id, mockSteps);
       if (!first) throw new Error('expected an actor');
       const snapshot = first.getPersistedSnapshot();
+      const seeded = first.getSnapshot().context.frameEntry;
       first.stop();
 
-      // Frame entries advance through RunbookState, never through the machine,
-      // so the persisted values must win over anything the snapshot carries.
+      // The machine is the sole writer of frame entry, so once a snapshot
+      // exists its own context is authoritative. Overlaying RunbookState on top
+      // of it at the hydration boundary would re-introduce a second writer, so
+      // a divergent persisted value must NOT win.
       const frameKey = buildFrameKey('1');
       await manager.update(created.id, {
         snapshot,
@@ -244,11 +249,8 @@ npm test
 
       const actor = await actorService.createActor(created.id, mockSteps);
       if (!actor) throw new Error('expected an actor');
-      expect(actor.getSnapshot().context.frameEntry).toEqual({
-        activeFrameKey: frameKey,
-        activeEntry: 4,
-        frameEntryCounts: { [frameKey]: 4 },
-      });
+      expect(actor.getSnapshot().context.frameEntry).toEqual(seeded);
+      expect(actor.getSnapshot().context.frameEntry?.activeEntry).not.toBe(4);
       actor.stop();
     });
   });
@@ -4137,6 +4139,150 @@ echo ok
         recovery.stop();
         harness.service.stopActor(harness.actor);
         await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('frame-entry persistence', () => {
+    const FRAME_1 = buildFrameKey('1');
+    const FRAME_2 = buildFrameKey('2');
+    const twoStepStructure = createRunbook(`## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Second
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+    /** Create a run and bootstrap it, returning its id and the seeded state. */
+    async function bootstrap(): Promise<{ id: string; state: RunbookState }> {
+      const created = await manager.create(
+        { source: 'project', path: 'frame-entry.md' },
+        { title: 'Frame entry', description: 'Frame entry', steps: twoStepStructure },
+        { runbookPath: 'frame-entry.md', frontmatterOutputs: [] },
+      );
+      const state = await actorService.initializeState(created.id, twoStepStructure);
+      if (!state) throw new Error('bootstrap failed');
+      return { id: created.id, state };
+    }
+
+    it('seeds the coordinates at bootstrap with no ensureActiveEntry call', async () => {
+      const { state } = await bootstrap();
+      expect(state.activeEntry).toBe(1);
+      expect(state.frameEntryCounts).toEqual({ [FRAME_1]: 1 });
+    });
+
+    it('persists activeEntry and frameEntryCounts from machine context', async () => {
+      const { id, state } = await bootstrap();
+      const prepared = await actorService.prepareActorMutation(id, state, twoStepStructure, {
+        type: 'PASS',
+      });
+      expect(prepared.nextState.activeEntry).toBe(2);
+      expect(prepared.nextState.frameEntryCounts).toEqual({ [FRAME_1]: 1, [FRAME_2]: 2 });
+    });
+
+    it('keeps the cursor-derived activeFrameKey in agreement with context.frameEntry', async () => {
+      // `deriveActorStatePatch` deliberately keeps deriving `activeFrameKey`
+      // from the cursor rather than mirroring `context.frameEntry.activeFrameKey`.
+      // This is the standing check that the unified frame-key derivation holds.
+      const { id, state } = await bootstrap();
+      const prepared = await actorService.prepareActorMutation(id, state, twoStepStructure, {
+        type: 'PASS',
+      });
+      const context = (prepared.snapshot as { context: RunbookContext }).context;
+      expect(prepared.nextState.activeFrameKey).toBe(context.frameEntry?.activeFrameKey);
+    });
+
+    it('writes no frame-entry patch on a terminal snapshot', async () => {
+      const { id, state } = await bootstrap();
+      const prepared = await actorService.prepareActorMutation(id, state, twoStepStructure, {
+        type: 'FAIL',
+      });
+      expect(prepared.nextState.lifecycle).toBe('stopped');
+      expect(prepared.nextState.activeEntry).toBe(state.activeEntry);
+    });
+
+    it('does not re-run the entry action when an actor is rehydrated', async () => {
+      const { id, state } = await bootstrap();
+      const again = await actorService.initializeState(id, twoStepStructure);
+      expect(again?.activeEntry).toBe(state.activeEntry);
+      expect(again?.frameEntryCounts).toEqual(state.frameEntryCounts);
+    });
+
+    it('writes no frame-entry patch when the snapshot carries no context at all', async () => {
+      // `PersistedRunbookSnapshot.context` is optional, so this shape is
+      // representable and the patch must read through it rather than assume it.
+      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await manager.update(created.id, {
+        activeEntry: 5,
+        frameEntryCounts: replace({ [FRAME_1]: 5 }),
+      });
+      const actor = {
+        getPersistedSnapshot: () => ({ value: 'step::1' }),
+      } as unknown as AnyActorRef;
+
+      const { state } = await actorService.updateFromActor(created.id, actor, mockSteps);
+
+      // Untouched: the patch omitted both fields rather than clearing them.
+      expect(state.activeEntry).toBe(5);
+      expect(state.frameEntryCounts).toEqual({ [FRAME_1]: 5 });
+    });
+
+    it('keeps a run readable across the self-GOTO bound and through its STOP', async () => {
+      // The machine bound is only worth having if a run can be observed
+      // reaching it. Every pass bumps the run-global entry ordinal, so the last
+      // admitted pass lands past the FOR ceiling — while that ceiling also
+      // capped the persisted ordinal, the run committed state its own next read
+      // refused, and the STOP could never be reached, let alone read back.
+      const selfGotoSteps = createRunbook(`## 1. Loop
+- PASS CONTINUE
+- FAIL GOTO 1
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const created = await manager.create(
+        { source: 'project', path: 'self-goto.md' },
+        { title: 'Self goto', description: 'Self goto', steps: selfGotoSteps },
+        { runbookPath: 'self-goto.md', frontmatterOutputs: [] },
+      );
+      await actorService.initializeState(created.id, selfGotoSteps);
+
+      const actor = await actorService.createActor(created.id, selfGotoSteps);
+      if (!actor) throw new Error('expected an actor');
+      try {
+        for (let pass = 0; pass < MAX_SELF_GOTO_PASSES; pass += 1) {
+          actor.send({ type: 'FAIL' });
+        }
+        // Still looping, and one past the ceiling the FOR bound used to impose.
+        expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+        expect(actor.getSnapshot().context.frameEntry?.activeEntry).toBe(MAX_FOR_BOUND + 1);
+
+        const { state: mid } = await actorService.updateFromActor(created.id, actor, selfGotoSteps);
+        expect(mid.activeEntry).toBe(MAX_FOR_BOUND + 1);
+        const reloaded = await manager.load(created.id);
+        expect(reloaded?.activeEntry).toBe(MAX_FOR_BOUND + 1);
+        expect(reloaded?.frameEntryCounts).toEqual({ [FRAME_1]: MAX_FOR_BOUND + 1 });
+
+        // The pass past the bound is the STOP, and it persists and reads back.
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+
+        const { state: stopped } = await actorService.updateFromActor(
+          created.id,
+          actor,
+          selfGotoSteps,
+        );
+        expect(stopped.lifecycle).toBe('stopped');
+        const finalState = await manager.load(created.id);
+        expect(finalState?.lifecycle).toBe('stopped');
+        expect(finalState?.activeEntry).toBe(MAX_FOR_BOUND + 1);
+      } finally {
+        actor.stop();
       }
     });
   });

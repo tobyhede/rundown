@@ -362,9 +362,29 @@ to local substep execution. The stopped reason is `inline_launch_failed` for
 ordinary launch failures such as unresolved or ambiguous child runbooks, and
 `inline_launch_forbidden` when an inline launch is attempted inside a claimed
 delegated child scope. The corresponding JSON error/action output uses codes
-such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`, or
-`INLINE_LAUNCH_FORBIDDEN`; consumers should treat these as terminal workflow
-failures for the active runbook.
+such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`,
+`INLINE_CHILD_FRAME_SUPERSEDED`, or `INLINE_LAUNCH_FORBIDDEN`; consumers should
+treat these as terminal workflow failures for the active runbook.
+
+The two linkage refusals are registered error codes —
+`INLINE_CHILD_FRAME_SUPERSEDED` is **RD-830** and
+`INLINE_CHILD_LINKAGE_MISMATCH` is **RD-831** — so each carries a title,
+remediation description, and doc slug in the registry, and the emitting switch
+is typed against `ErrorCodeKey` rather than against bare strings. The emitted
+`code` value remains the symbolic name, which is what consumers match on.
+`INLINE_CHILD_LAUNCH_FAILED` and `INLINE_LAUNCH_FORBIDDEN` are not yet
+registered.
+
+`INLINE_CHILD_FRAME_SUPERSEDED` is the one refusal in that set an ordinary
+gesture reaches. A self-targeting `GOTO` or `RETRY` re-enters the parent's frame
+and advances its entry counter, so an inline child launched at an earlier entry
+belongs to an earlier visit and is never adopted by the new one — the same
+judgement delegation makes when it closes a child `cursor-advanced`. The message
+names both entries and the frame; the remedy is to finish, stop, or prune the
+superseded child run, after which the same re-entry launches a fresh child under
+the current entry. `INLINE_CHILD_LINKAGE_MISMATCH` is a different condition: the
+persisted child names a different parent run, step, substep, or frame, which is
+inconsistent state rather than a superseded generation.
 
 ### `STEP_ENTERED` with artifacts
 
@@ -1457,6 +1477,108 @@ Code: RUN_TARGET_MISMATCH
   "kind": "error",
   "error": "Run rd_9e725b142d81dabcefb9e04919568fcd does not own the supplied delegation token.",
   "code": "RUN_TARGET_MISMATCH",
+  "command": "delegate"
+}
+```
+
+### Retry already applied
+
+`rundown delegate --retry` when the retry has already been applied and the
+replacement shows no committed evidence its bearer was used. Nothing is written
+and the exit code is 0 — this is a successful idempotent replay, not a refusal.
+The current bearer is echoed so the caller can rotate deliberately by naming it.
+
+**Text:**
+
+```text
+ALREADY    step 2.1 -> child.runbook.md
+Token:     rdtk_...
+
+RD_CLAIM_TOKEN=rdtk_...
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "delegate",
+  "action": "retry-already-applied",
+  "step": "2.1",
+  "runbook": "child.runbook.md",
+  "token": "rdtk_...",
+  "token_hash": "sha256:...",
+  "parent_run_id": "rd_..."
+}
+```
+
+### Delegation replacement consumed
+
+`rundown delegate --retry <token>` where the named bearer was already replaced
+and the replacement shows committed evidence of use — claimed by a child,
+aborted, or its frame entry advanced. Minting a third bearer over work already
+in progress is refused. No envelope carries a full token.
+
+**Text:**
+
+```text
+Error: the replacement for this bearer shows committed evidence of use (claimed)
+Code: RD-826
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "the replacement for this bearer shows committed evidence of use (claimed)",
+  "code": "RD-826",
+  "command": "delegate"
+}
+```
+
+### Delegation retry identity unmatched
+
+`rundown delegate --retry <token>` where the named bearer identifies neither the
+delegation currently recorded at the target nor one that it superseded.
+
+**Text:**
+
+```text
+Error: the named bearer matches neither the current delegation nor one it superseded
+Code: RD-827
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "the named bearer matches neither the current delegation nor one it superseded",
+  "code": "RD-827",
+  "command": "delegate"
+}
+```
+
+### Delegation supersession ambiguous
+
+More than one delegation attempt records the named bearer as superseded, so
+there is no single replacement to echo or judge. Unreachable by construction: it
+is refused, never resolved.
+
+**Text:**
+
+```text
+Error: more than one delegation attempt records this bearer as superseded
+Code: RD-828
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "more than one delegation attempt records this bearer as superseded",
+  "code": "RD-828",
   "command": "delegate"
 }
 ```

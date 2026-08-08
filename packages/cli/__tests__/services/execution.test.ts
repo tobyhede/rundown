@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
+  classifyInlineChildLinkage,
   isValidResult,
   getStepRetryMax,
   buildStepVariables,
@@ -7,10 +8,15 @@ import {
 } from '../../src/services/execution.js';
 import { expandLoopVariables } from '../../src/services/template-renderer.js';
 import {
+  assertRunId,
   createJsonArrayStream,
   isRunbookComplete,
   isRunbookStopped,
+  type DelegationTokenHash,
+  type FrameKey,
   type ForContext,
+  type InlineLinkage,
+  type ParentLinkage,
   type TemplateVarValue,
   type RunbookState,
 } from '@rundown-org/core';
@@ -71,6 +77,80 @@ describe('execution service', () => {
     it('returns false for other strings', () => {
       expect(isValidResult('other')).toBe(false);
       expect(isValidResult('')).toBe(false);
+    });
+  });
+
+  describe('classifyInlineChildLinkage', () => {
+    const parentRunId = assertRunId(`rd_${'a'.repeat(32)}`);
+    const otherParentRunId = assertRunId(`rd_${'b'.repeat(32)}`);
+    const current: InlineLinkage = {
+      kind: 'inline',
+      parentRunId,
+      parentStepId: '1',
+      parentStep: '2',
+      parentFrameKey: '2|' as FrameKey,
+      parentEntry: 3,
+    };
+
+    it('matches a child recorded at the same coordinates and the same frame entry', () => {
+      expect(classifyInlineChildLinkage({ ...current }, current)).toEqual({ kind: 'matched' });
+    });
+
+    it('reports a superseded entry when only the frame entry differs', () => {
+      // The ratified staleness rule: a frame re-entry advances the entry, and a
+      // child stamped at the previous entry belongs to that previous entry —
+      // exactly what `classifyDelegationLiveness` closes `cursor-advanced` for a
+      // delegated child. Reported as its own kind so the refusal can say so.
+      expect(classifyInlineChildLinkage({ ...current, parentEntry: 2 }, current)).toEqual({
+        kind: 'superseded-entry',
+        recordedEntry: 2,
+        currentEntry: 3,
+      });
+    });
+
+    it('reports a superseded entry for a child stamped ahead of the current entry', () => {
+      // Direction is not the discriminator — divergence is. A child claiming a
+      // higher entry than the frame has reached is no more adoptable than a
+      // stale one, and calling it a coordinate conflict would misdiagnose it.
+      expect(classifyInlineChildLinkage({ ...current, parentEntry: 9 }, current)).toEqual({
+        kind: 'superseded-entry',
+        recordedEntry: 9,
+        currentEntry: 3,
+      });
+    });
+
+    it.each<readonly [string, ParentLinkage]>([
+      ['a different parent run', { ...current, parentRunId: otherParentRunId }],
+      ['a different substep id', { ...current, parentStepId: '2' }],
+      ['a different parent step', { ...current, parentStep: '3' }],
+      ['a different frame key', { ...current, parentFrameKey: '2#1|' as FrameKey }],
+      [
+        'a delegation linkage',
+        {
+          ...current,
+          kind: 'delegation',
+          tokenHash: 'sha256:deadbeef' as DelegationTokenHash,
+        },
+      ],
+    ])('reports a conflicting parent for %s', (_label, recorded) => {
+      expect(classifyInlineChildLinkage(recorded, current)).toEqual({ kind: 'conflicting-parent' });
+    });
+
+    it('reports a conflicting parent when the child records no linkage at all', () => {
+      expect(classifyInlineChildLinkage(undefined, current)).toEqual({
+        kind: 'conflicting-parent',
+      });
+    });
+
+    it('prefers the coordinate conflict when the entry also differs', () => {
+      // A child naming another parent is not "stale" — the remedy differs, so
+      // the coordinate check must win rather than being masked by the entry one.
+      expect(
+        classifyInlineChildLinkage(
+          { ...current, parentRunId: otherParentRunId, parentEntry: 2 },
+          current,
+        ),
+      ).toEqual({ kind: 'conflicting-parent' });
     });
   });
 

@@ -234,7 +234,6 @@ function evidenceFor(claimId: string): CallerEvidence {
 const lifecycleSeam = new RunbookLifecycleCommandService({
   sessionService,
   actorService,
-  lifecycleService,
   completionService,
   actorMutationRunner,
   loadRun: async (id) => (await manager.load(id)) ?? undefined,
@@ -243,8 +242,8 @@ const lifecycleSeam = new RunbookLifecycleCommandService({
     path: name,
     ref: { source: 'project', path: name },
   }),
-  findDelegationByToken: async (token) =>
-    (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+  findDelegationsByTokenHash: (tokenHash) =>
+    new DelegationScanService(manager).scanByTokenHash(tokenHash),
 });
 
 // The collect target of these races never carries INLINE linkage, so a call here

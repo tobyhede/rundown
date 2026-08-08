@@ -99,13 +99,12 @@ describe('guarded drain composition (real store, real predicate)', () => {
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
-      lifecycleService,
       completionService,
       actorMutationRunner: createEffectfulActorMutationRunner(tmp),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       loadSteps: () => steps,
       resolveChildRunbook: async () => undefined,
-      findDelegationByToken: async () => undefined,
+      findDelegationsByTokenHash: async () => ({ current: undefined, superseding: [] }),
     });
   });
 
