@@ -62,6 +62,11 @@ const PARENT_RETRY_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 1, action: { type: 'STOP' } },
 };
+/** A parent whose PASS action sends the cursor back into its own step. */
+const PARENT_SELF_GOTO_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
 
 const runId = assertRunId('rd_22222222222222222222222222222222');
 const FRAME_1 = buildFrameKey('1');
@@ -214,6 +219,21 @@ describe('one mutation, one entry bump', () => {
     return state;
   }
 
+  /**
+   * Read the committed `activeEntry`, requiring it to be present.
+   *
+   * A `?? 0` fallback here would let a baseline that is missing entirely pass a
+   * `+1` assertion, which is the one thing this suite exists to catch.
+   *
+   * @returns The committed entry ordinal.
+   * @throws {Error} When the committed state carries no entry.
+   */
+  async function committedEntry(): Promise<number> {
+    const entry = (await loadCommitted()).activeEntry;
+    if (typeof entry !== 'number') throw new Error('committed state carries no activeEntry');
+    return entry;
+  }
+
   it('__parent-entry:: artifact routing: a GOTO into an artifact-declaring parent bumps by exactly 1', async () => {
     // Step 2 declares ARTIFACTS and has substeps, so the GOTO routes
     // step::2::__parent-entry::1 -> step::2::1 — two state entries, one frame.
@@ -234,10 +254,10 @@ describe('one mutation, one entry bump', () => {
     ] satisfies readonly ResolvedStep[];
     await activate(baseState());
 
-    const before = (await loadCommitted()).activeEntry;
+    const before = await committedEntry();
     await goto({ step: '2', substep: '1' });
 
-    expect((await loadCommitted()).activeEntry).toBe((before ?? 0) + 1);
+    expect(await committedEntry()).toBe(before + 1);
   });
 
   it('aggregation RETRY into firstSubstepStateId bumps by exactly 1', async () => {
@@ -255,10 +275,10 @@ describe('one mutation, one entry bump', () => {
     await activate(baseState());
 
     await drive('pass'); // into frame 2
-    const before = (await loadCommitted()).activeEntry;
+    const before = await committedEntry();
     await drive('fail'); // ALL aggregation fails -> parent retry -> first substep
 
-    expect((await loadCommitted()).activeEntry).toBe((before ?? 0) + 1);
+    expect(await committedEntry()).toBe(before + 1);
   });
 
   it('FOR loop-back bumps by exactly 1 per iteration', async () => {
@@ -283,7 +303,7 @@ describe('one mutation, one entry bump', () => {
 
     const seen: number[] = [];
     for (let i = 0; i < 3; i += 1) {
-      seen.push((await loadCommitted()).activeEntry ?? 0);
+      seen.push(await committedEntry());
       await drive('pass');
     }
 
@@ -315,12 +335,12 @@ describe('one mutation, one entry bump', () => {
     ] satisfies readonly ResolvedStep[];
     await activate(baseState({ activeFrameKey: buildFrameKey('1', 1) }));
 
-    const before = (await loadCommitted()).activeEntry;
+    const before = await committedEntry();
     await drive('fail');
 
     const after = await loadCommitted();
     expect(after.step).toBe('2');
-    expect(after.activeEntry).toBe((before ?? 0) + 1);
+    expect(after.activeEntry).toBe(before + 1);
   });
 
   it('aggregation RETRY on a FOR parent bumps the retried frame and the rebuilt frame once each', async () => {
@@ -370,7 +390,8 @@ describe('one mutation, one entry bump', () => {
     const abandonedIteration = before.activeFrameKey;
     if (!abandonedIteration) throw new Error('expected an active frame');
     expect(abandonedIteration).toBe(buildFrameKey('1', 2));
-    const beforeEntry = before.activeEntry ?? 0;
+    const beforeEntry = before.activeEntry;
+    if (typeof beforeEntry !== 'number') throw new Error('expected a committed activeEntry');
 
     await drive('fail'); // iteration 2 fails -> parent ALL fails -> parent retry
 
@@ -394,5 +415,45 @@ describe('one mutation, one entry bump', () => {
     // Two frames entered, two bumps — never three. And the iteration the loop
     // abandoned is left exactly where it was.
     expect(after.frameEntryCounts?.[abandonedIteration]).toBe(beforeEntry);
+  });
+
+  it('a parent-exit GOTO back into its own step bumps by exactly 1', async () => {
+    // The unconditional parent-exit `always` branches build their own `assign`
+    // instead of routing through `buildSimpleGotoAssign`, so they are the one
+    // family of GOTO transitions that has to declare re-entry for itself. A
+    // non-FOR parent whose PASS action targets its own step lands back in the
+    // frame it just left, so there is no frame switch for `advanceFrameEntry` to
+    // notice: without the marker the re-entered frame keeps the entry the
+    // previous pass used, and every credential that pass issued still reads as
+    // live in a frame that has since reset its substep rows and re-fired
+    // `__issue-delegations`.
+    steps = [
+      { kind: 'base', name: '1', description: 'Plain step', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'substeps',
+        name: '2',
+        description: 'Parent that GOTOs its own step on PASS',
+        transitions: PARENT_SELF_GOTO_TRANSITIONS,
+        substeps: [
+          { id: '1', description: 'First', transitions: DEFER_TRANSITIONS },
+          { id: '2', description: 'Second', transitions: DEFER_TRANSITIONS },
+        ],
+      },
+    ] satisfies readonly ResolvedStep[];
+    await activate(baseState());
+
+    await drive('pass'); // step 1 CONTINUE -> frame 2, substep 1
+    const before = await committedEntry();
+    expect((await loadCommitted()).activeFrameKey).toBe(buildFrameKey('2'));
+
+    await drive('pass'); // 2.1 DEFER -> sibling 2.2: same frame, no bump
+    expect(await committedEntry()).toBe(before);
+
+    await drive('pass'); // 2.2 DEFER -> parent exit -> PASS GOTO 2 -> re-entry
+    const after = await loadCommitted();
+    expect(after.substep).toBe('1');
+    expect(after.activeFrameKey).toBe(buildFrameKey('2'));
+    expect(after.activeEntry).toBe(before + 1);
+    expect(after.frameEntryCounts?.[buildFrameKey('2')]).toBe(before + 1);
   });
 });

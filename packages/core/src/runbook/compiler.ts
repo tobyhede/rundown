@@ -2685,6 +2685,20 @@ function buildParentStateConfig(
     const passLastMessage =
       passAction.type === 'STOP' || passAction.type === 'COMPLETE' ? passAction.message : undefined;
 
+    // Declare re-entry when the configured action is a GOTO, exactly as every
+    // other GOTO-assigning site does. These branches build their own `assign`
+    // rather than routing through `buildSimpleGotoAssign`, so without this the
+    // marker is never set and a parent whose PASS/FAIL action GOTOs its own step
+    // re-enters its frame — substep rows reset, `__issue-delegations` re-fired —
+    // while `advanceFrameEntry` sees no frame switch and no marker, and carries
+    // the old entry through unchanged. Only GOTO can land back in the frame the
+    // exit left; CONTINUE/NEXT/BREAK move on and STOP/COMPLETE are terminal, and
+    // the marker is redundant (not harmful) whenever the target frame differs,
+    // because `advanceFrameEntry` treats a declared re-entry and a frame switch
+    // as the same arm.
+    const passFrameReentry = passAction.type === 'GOTO' ? { frameReentry: FRAME_REENTRY_GOTO } : {};
+    const failFrameReentry = failAction.type === 'GOTO' ? { frameReentry: FRAME_REENTRY_GOTO } : {};
+
     const commonAssign = {
       forStack: EMPTY_FOR_STACK,
       // RESET SITE: unconditional parent exit leaves the unit.
@@ -2731,6 +2745,7 @@ function buildParentStateConfig(
           substep: extractSubstepFromStateId(parentPassTarget),
           lastAction: passLastAction,
           lastMessage: passLastMessage,
+          ...passFrameReentry,
         }),
       });
       // FAIL routing: any failed iteration → parent's FAIL action target.
@@ -2742,6 +2757,7 @@ function buildParentStateConfig(
           substep: extractSubstepFromStateId(parentFailTarget),
           lastAction: failLastAction,
           lastMessage: failLastMessage,
+          ...failFrameReentry,
         }),
       });
     } else {
@@ -2767,6 +2783,7 @@ function buildParentStateConfig(
           deferredResults: undefined,
           lastAction: passLastAction,
           lastMessage: passLastMessage,
+          ...passFrameReentry,
         }),
       });
       // FAIL routing: any failed deferred substep → parent's FAIL action target.
@@ -2780,6 +2797,7 @@ function buildParentStateConfig(
           deferredResults: undefined,
           lastAction: failLastAction,
           lastMessage: failLastMessage,
+          ...failFrameReentry,
         }),
       });
     }
