@@ -2696,6 +2696,15 @@ function buildParentStateConfig(
     // the marker is redundant (not harmful) whenever the target frame differs,
     // because `advanceFrameEntry` treats a declared re-entry and a frame switch
     // as the same arm.
+    //
+    // Applied by ROUTING TARGET, not by recorded `lastAction`: the control-exit
+    // branch below preserves BREAK/NEXT as its `lastAction` while still routing
+    // to the PASS action's target, so it re-enters on a self-GOTO exactly like
+    // its siblings. That branch needs the marker in one narrow shape — a loop
+    // that exits on its FIRST iteration, where `forStack: EMPTY_FOR_STACK` plus
+    // the target leaf's `initForStack` rebuild the very frame key the exit
+    // abandoned. Any later iteration rebuilds at `forClause.start`, a different
+    // frame, and the switch supplies the bump on its own.
     const passFrameReentry = passAction.type === 'GOTO' ? { frameReentry: FRAME_REENTRY_GOTO } : {};
     const failFrameReentry = failAction.type === 'GOTO' ? { frameReentry: FRAME_REENTRY_GOTO } : {};
 
@@ -2732,6 +2741,9 @@ function buildParentStateConfig(
           ...commonAssign,
           substep: extractSubstepFromStateId(parentPassTarget),
           lastMessage: undefined,
+          // The routing target is the PASS action's, so a self-GOTO re-enters
+          // here too — even though `lastAction` stays the BREAK/NEXT that left.
+          ...passFrameReentry,
         }),
       });
       // Normal PASS routing: no failed iterations and no BREAK/NEXT → parent's PASS action target.

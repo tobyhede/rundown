@@ -67,6 +67,11 @@ const PARENT_SELF_GOTO_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
 };
+/** The same self-GOTO parent, for a fixture whose loop is step `1`. */
+const PARENT_SELF_GOTO_TRANSITIONS_STEP_1: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
 
 const runId = assertRunId('rd_22222222222222222222222222222222');
 const FRAME_1 = buildFrameKey('1');
@@ -455,5 +460,43 @@ describe('one mutation, one entry bump', () => {
     expect(after.activeFrameKey).toBe(buildFrameKey('2'));
     expect(after.activeEntry).toBe(before + 1);
     expect(after.frameEntryCounts?.[buildFrameKey('2')]).toBe(before + 1);
+  });
+
+  it('a first-iteration BREAK into a self-GOTO FOR parent bumps by exactly 1', async () => {
+    // The control-exit branch routes to the PASS target like its two siblings,
+    // so it needs the same re-entry marker — but only this shape exposes it. An
+    // exit from any later iteration rebuilds the loop at `forClause.start`, a
+    // different frame from the one it abandoned, so the frame switch supplies
+    // the bump on its own. BREAK on the FIRST iteration abandons `1|1` and
+    // rebuilds `1|1`: same frame, and the entry stalls without the marker.
+    steps = [
+      {
+        kind: 'for',
+        name: '1',
+        description: 'Loop that breaks immediately',
+        forClause: {
+          start: 1,
+          end: 3,
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
+          },
+        },
+        // No parent aggregation: that is what routes the exit through the
+        // unconditional Case C branches rather than the aggregating ones.
+        transitions: PARENT_SELF_GOTO_TRANSITIONS_STEP_1,
+        substeps: [{ id: '1', description: 'Body', transitions: DEFER_TRANSITIONS }],
+      },
+      { kind: 'base', name: '2', description: 'After the loop', transitions: CONTINUE_TRANSITIONS },
+    ] satisfies readonly ResolvedStep[];
+    await activate(baseState({ activeFrameKey: buildFrameKey('1', 1) }));
+
+    const before = await committedEntry();
+    await drive('fail'); // body fails -> BREAK -> control exit -> PASS GOTO 1
+
+    const after = await loadCommitted();
+    expect(after.step).toBe('1');
+    expect(after.activeFrameKey).toBe(buildFrameKey('1', 1));
+    expect(after.activeEntry).toBe(before + 1);
   });
 });
