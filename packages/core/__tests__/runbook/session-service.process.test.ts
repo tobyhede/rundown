@@ -51,10 +51,22 @@ import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js'
  * check-then-install inside the measured window.
  *
  * SENSITIVITY WITNESS. A correct-but-serialized implementation would pass every
- * domain assertion while proving nothing, so every contention race asserts both
+ * domain assertion while proving nothing, so every MUTATION race asserts both
  * deterministic staging and actual `t0`/`t1` service-mutation overlap. The holder
  * protocol establishes that overlap by file-observed causality rather than
  * scheduler luck.
+ *
+ * THE COLD START IS THE ONE COHORT THAT CANNOT USE THAT PROTOCOL, structurally
+ * rather than by preference. The holder signals `transaction-held-*` from inside
+ * `mutateSession` / `mutateSessionGuarded`; `coldStartSession` is a `loadSession`
+ * READ, which opens no session write transaction, so the gate can never fire: the
+ * holder finishes and exits, and the parent's wait fails on the file it never
+ * wrote. It therefore runs with `witnessActualOverlap: false` and keeps the
+ * deterministic staging witness.
+ * Asserting `t0`/`t1` overlap there instead would be scheduler luck, not
+ * causality: the release barrier polls at 10ms and the cold window is ~7ms, so a
+ * merely-simultaneous release cannot be relied on to produce overlapping
+ * intervals — which is exactly the flake the holder protocol exists to avoid.
  */
 
 const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts', import.meta.url));
@@ -449,11 +461,18 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // Three contenders rather than two: two terminals is the product moment, and a
     // third costs one process while widening the odds that a genuine install
     // collision (rather than a merely simultaneous open) occurs.
-    const results = await race([
-      { kind: 'coldStartSession' },
-      { kind: 'coldStartSession' },
-      { kind: 'coldStartSession' },
-    ]);
+    //
+    // `witnessActualOverlap: false` is structural, not a relaxation. The holder
+    // protocol signals `transaction-held-*` from inside the gated
+    // `mutateSession` / `mutateSessionGuarded` callback, and `coldStartSession`
+    // is a `loadSession` READ that opens no session write transaction — so the
+    // gate never fires, the holder finishes and exits, and the parent's wait dies
+    // on `worker exited before writing transaction-held-1`. The staging witness
+    // below is the deterministic one this cohort can hold.
+    const results = await race(
+      [{ kind: 'coldStartSession' }, { kind: 'coldStartSession' }, { kind: 'coldStartSession' }],
+      { witnessActualOverlap: false },
+    );
     // Every child got a usable, empty session. `values` throws on any child that
     // reported a failure, which is where a double install ("table runs already
     // exists"), an escaped SQLITE_BUSY, or a refused WAL conversion lands.
@@ -462,7 +481,13 @@ describe('cross-process session write contention (transaction replaces SessionLo
       { defaultStack: [], claims: {} },
       { defaultStack: [], claims: {} },
     ]);
-    expectOverlap(results);
+    // Every child was parked at the staging barrier before ANY child touched the
+    // store, so the raced window really does contain all three cold opens rather
+    // than one child's install followed by two reads of what it built.
+    expectEveryWorkerStagedBeforeAnyMutation(results);
+    // ...and no child entered the holder gate, which is what makes the cohort's
+    // measured window the cold open itself and not a session transaction.
+    expect(results.every(({ tTransactionHeld }) => tTransactionHeld === null)).toBe(true);
 
     const opened = await openRunbookStore(dir, { runtime: 'native' });
     const integrity = await opened.driver.read((tx) =>
