@@ -19,29 +19,39 @@
 //   1. Construct the service and WARM the store (open the driver, ensure schema,
 //      read the session) so post-barrier work is the mutation and nothing else.
 //   2. Write `readyFile` — "I am warm and parked at the barrier".
-//   3. Spin on `goFile` until the parent releases every child together.
+//   3. Yield on `goFile` until the parent releases every child together.
 //   4. Stamp the staging entry, write `enteredFile`, and yield on
 //      `mutationGoFile` until every sibling has entered.
-//   5. Run exactly one session mutation.
-//   6. Write `resultFile` as JSON: `{ ok: true, value, t0, tEntered, t1, pid }`
-//      or `{ ok: false, error, t0, tEntered, t1, pid }`.
+//   5. The designated holder enters its real SQLite transaction and waits there;
+//      contenders enter and publish their real manager-mutation call before
+//      blocking on that transaction. The parent then releases the holder.
+//   6. Run exactly one session mutation.
+//   7. Write `resultFile` as JSON with the measured timestamps and outcome.
 //
 // Invoked as:
 //   node --import tsx session-writer-child.ts \
-//     <cwd> <readyFile> <goFile> <enteredFile> <mutationGoFile> <resultFile> <opJson>
+//     <cwd> <readyFile> <goFile> <enteredFile> <mutationGoFile> \
+//     <mutationStartedFile> <transactionHeldFile> <transactionReleaseFile> \
+//     <resultFile> <opJson>
 
 import { existsSync, writeFileSync } from 'node:fs';
-import { RunbookStateManager } from '../../../../src/runbook/state.js';
+import { RunbookStateManager, type SessionData } from '../../../../src/runbook/state.js';
 import { SessionService } from '../../../../src/runbook/session-service.js';
 import { closeRunbookStores } from '../../../../src/runbook/storage/store-registry.js';
+import type {
+  SessionMutationResult,
+  SessionMutationTxn,
+} from '../../../../src/runbook/storage/runbook-store.js';
+import type { SyncWork } from '../../../../src/runbook/storage/sql-driver.js';
 import { assertClaimId } from '../../../../src/runbook/claim-id.js';
-import { assertRunId } from '../../../../src/runbook/run-id.js';
+import { assertRunId, type RunId } from '../../../../src/runbook/run-id.js';
 import { getErrorMessage } from '../../../../src/errors.js';
 import { unwrapSessionMutation } from '../../../../src/testing/session-fixtures.js';
 import type { ChildOp, ChildResult } from './child-protocol.js';
 
 /** Upper bound on any barrier wait, so a lost signal fails loudly, not silently. */
 const BARRIER_TIMEOUT_MS = 60_000;
+const SYNCHRONOUS_WAIT = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * Wait for a barrier file, YIELDING between polls. The two-stage protocol makes
@@ -59,9 +69,95 @@ async function awaitBarrier(file: string): Promise<void> {
   }
 }
 
-const [cwd, readyFile, goFile, enteredFile, mutationGoFile, resultFile, opJson] =
-  process.argv.slice(2);
+/**
+ * Wait for a barrier while deliberately keeping the current synchronous
+ * transaction callback open. `Atomics.wait` yields the OS thread between file
+ * checks without introducing elapsed-time ordering.
+ *
+ * @param file - Barrier file the parent writes to release the transaction.
+ * @throws {Error} When the barrier is not signalled within the timeout.
+ */
+function awaitBarrierSync(file: string): void {
+  const deadline = Date.now() + BARRIER_TIMEOUT_MS;
+  while (!existsSync(file)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for barrier ${file}`);
+    Atomics.wait(SYNCHRONOUS_WAIT, 0, 0, 10);
+  }
+}
+
+const [
+  cwd,
+  readyFile,
+  goFile,
+  enteredFile,
+  mutationGoFile,
+  mutationStartedFile,
+  transactionHeldFile,
+  transactionReleaseFile,
+  resultFile,
+  opJson,
+] = process.argv.slice(2);
 const op = JSON.parse(opJson) as ChildOp;
+
+/** Test-only gate that pauses the designated holder inside a real transaction. */
+interface TransactionGate {
+  readonly heldFile: string;
+  readonly releaseFile: string;
+}
+
+/**
+ * State manager preserving the real store path while exposing one transaction
+ * entry point to the cross-process test protocol.
+ */
+class HarnessRunbookStateManager extends RunbookStateManager {
+  private mutationStarted = false;
+  private transactionHeldAt: number | null = null;
+
+  constructor(
+    cwd: string,
+    private readonly mutationStartedFile: string,
+    private readonly transactionGate?: TransactionGate,
+  ) {
+    super(cwd);
+  }
+
+  /** Timestamp recorded inside the holder transaction, or null for contenders. */
+  get heldAt(): number | null {
+    return this.transactionHeldAt;
+  }
+
+  private signalMutationStarted(): void {
+    if (this.mutationStarted) return;
+    this.mutationStarted = true;
+    writeFileSync(this.mutationStartedFile, String(process.pid));
+  }
+
+  private gatedWork<T>(
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): (ctx: SessionMutationTxn) => SyncWork<T> {
+    return (ctx) => {
+      if (this.transactionGate && this.transactionHeldAt === null) {
+        this.transactionHeldAt = performance.timeOrigin + performance.now();
+        writeFileSync(this.transactionGate.heldFile, String(process.pid));
+        awaitBarrierSync(this.transactionGate.releaseFile);
+      }
+      return work(ctx);
+    };
+  }
+
+  override mutateSession<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
+    this.signalMutationStarted();
+    return super.mutateSession(this.gatedWork(work));
+  }
+
+  override mutateSessionGuarded<T>(
+    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
+    work: (ctx: SessionMutationTxn) => SyncWork<T>,
+  ): Promise<SessionMutationResult<T>> {
+    this.signalMutationStarted();
+    return super.mutateSessionGuarded(runIds, this.gatedWork(work));
+  }
+}
 
 /**
  * Perform the child's single session mutation through the real service.
@@ -139,7 +235,11 @@ async function run(service: SessionService): Promise<unknown> {
   }
 }
 
-const manager = new RunbookStateManager(cwd);
+const transactionGate =
+  transactionHeldFile && transactionReleaseFile
+    ? { heldFile: transactionHeldFile, releaseFile: transactionReleaseFile }
+    : undefined;
+const manager = new HarnessRunbookStateManager(cwd, mutationStartedFile, transactionGate);
 const service = new SessionService(manager);
 
 // Warm the driver: opens the connection and ensures the schema, so the only work
@@ -178,7 +278,15 @@ try {
   // Annotated, not inferred: this literal IS the wire format the parent parses as
   // ChildResult, so it must be checked against that type rather than merely
   // resembling it.
-  const result: ChildResult = { ok: true, value, t0, tEntered, t1, pid: process.pid };
+  const result: ChildResult = {
+    ok: true,
+    value,
+    t0,
+    tEntered,
+    tTransactionHeld: manager.heldAt,
+    t1,
+    pid: process.pid,
+  };
   writeFileSync(resultFile, JSON.stringify(result));
 } catch (error: unknown) {
   const t1 = performance.timeOrigin + performance.now();
@@ -187,6 +295,7 @@ try {
     error: getErrorMessage(error),
     t0,
     tEntered,
+    tTransactionHeld: manager.heldAt,
     t1,
     pid: process.pid,
   };

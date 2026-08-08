@@ -38,9 +38,10 @@ export type ChildOp =
 /**
  * A child's reported outcome, as written to its result file. `t0`/`t1` bracket
  * the actual mutation after the second-stage release, `tEntered` records when
- * the child entered that staging barrier, and `pid` names the writer. The epoch
- * timestamps carry on BOTH arms so the concurrency witness can read them without
- * narrowing on `ok`.
+ * the child entered that staging barrier, `tTransactionHeld` records when the
+ * designated holder entered its real transaction (null for contenders), and
+ * `pid` names the writer. The epoch timestamps carry on BOTH arms so the
+ * concurrency witness can read them without narrowing on `ok`.
  */
 export type ChildResult =
   | {
@@ -48,6 +49,7 @@ export type ChildResult =
       readonly value: unknown;
       readonly t0: number;
       readonly tEntered: number;
+      readonly tTransactionHeld: number | null;
       readonly t1: number;
       readonly pid: number;
     }
@@ -56,6 +58,7 @@ export type ChildResult =
       readonly error: string;
       readonly t0: number;
       readonly tEntered: number;
+      readonly tTransactionHeld: number | null;
       readonly t1: number;
       readonly pid: number;
     };
