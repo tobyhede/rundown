@@ -85,6 +85,9 @@ export function printStepSeparator(stepNum: string, writer: OutputWriter = getWr
 export function printMetadata(meta: RunbookMetadata, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`File:     ${meta.file}`);
   writer.writeLine(`State:    ${colorizeStatus(meta.state)}`);
+  if (meta.runId) {
+    writer.writeLine(`Run:      ${meta.runId}`);
+  }
   if (meta.prompted) {
     writer.writeLine(`Prompt:   ${success('Yes')}`);
   }

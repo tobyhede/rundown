@@ -36,6 +36,7 @@ import {
   warning,
   info,
   dim,
+  DB_FILE,
 } from '@rundown-org/core';
 import { formatTable } from '../../helpers/table-formatter.js';
 import type { OutputRenderer, RendererOptions } from './types.js';
@@ -46,6 +47,8 @@ interface StatusDetailData {
   stashed?: boolean;
   file?: string;
   state?: string;
+  /** Run id this status describes; `state` is the same constant for every run. */
+  runId?: string;
   prompted?: boolean;
   position?: {
     current: string;
@@ -234,6 +237,7 @@ export class TextRenderer implements OutputRenderer {
       stashed,
       file,
       state,
+      runId,
       prompted,
       position,
       step,
@@ -253,7 +257,7 @@ export class TextRenderer implements OutputRenderer {
     if (!active && stashed && position) {
       if (file || state) {
         printMetadata(
-          { file: file ?? 'unknown', state: state ?? 'unknown', prompted },
+          { file: file ?? 'unknown', state: state ?? 'unknown', runId, prompted },
           this.writer,
         );
       }
@@ -264,7 +268,10 @@ export class TextRenderer implements OutputRenderer {
 
     // Active runbook
     if (file || state) {
-      printMetadata({ file: file ?? 'unknown', state: state ?? 'unknown', prompted }, this.writer);
+      printMetadata(
+        { file: file ?? 'unknown', state: state ?? 'unknown', runId, prompted },
+        this.writer,
+      );
     }
 
     // Print action block if lastAction exists
@@ -706,7 +713,8 @@ export class TextRenderer implements OutputRenderer {
     printMetadata(
       {
         file: runbook.path,
-        state: payload.statePath,
+        state: DB_FILE,
+        runId: event.runbookId,
         prompted: payload.prompted,
       },
       this.writer,

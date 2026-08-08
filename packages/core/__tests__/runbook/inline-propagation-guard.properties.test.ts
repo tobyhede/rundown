@@ -39,7 +39,10 @@ import {
   type RunId,
 } from '../../src/runbook/index.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 // ---------------------------------------------------------------------------
 // Graph model + arbitraries
@@ -112,6 +115,7 @@ function makeState(
     parentEntry: 1,
   };
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',

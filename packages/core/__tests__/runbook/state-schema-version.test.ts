@@ -6,7 +6,11 @@ import { RunbookStateSchema } from '../../src/schemas.js';
 import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/index.js';
 import { CURRENT_SCHEMA_VERSION, applyRunbookStateUpdate } from '../../src/runbook/state.js';
 import type { RunbookState } from '../../src/runbook/types.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
+  brandStoredOutputsForTest,
+} from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 import { writeRawRunJson } from '../../src/testing/session-fixtures.js';
 
@@ -23,9 +27,23 @@ const BASE_SCHEMA_STATE = {
   steps: [],
   startedAt: '2026-04-19T00:00:00.000Z',
   updatedAt: '2026-04-19T00:00:00.000Z',
+  templateVars: {},
 };
 
 describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
+  it('rejects state without templateVars — persistable state always carries it', () => {
+    const { templateVars: _omit, ...withoutTemplateVars } = BASE_SCHEMA_STATE;
+
+    const result = RunbookStateSchema.safeParse({
+      ...withoutTemplateVars,
+      variables: {},
+      lifecycle: 'running',
+      schemaVersion: 1,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it('accepts state with schemaVersion 1 and lifecycle field', () => {
     const parsed = RunbookStateSchema.parse({
       ...BASE_SCHEMA_STATE,
@@ -194,6 +212,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     steps: [],
     startedAt: '2026-04-19T00:00:00.000Z',
     updatedAt: '2026-04-19T00:00:00.000Z',
+    templateVars: {},
     lifecycle: 'running',
     schemaVersion: 1,
   };
@@ -275,6 +294,27 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
+  it('rejects current-schema state missing templateVars instead of reconstructing it', async () => {
+    // A v1 row without templateVars is incompatible state, not a shape to
+    // rebuild by re-parsing runbookSrc. The recovery path is prune and restart.
+    const id = 'rd_cccccccccccccccccccccccccccccccc';
+    const { templateVars: _omit, ...withoutTemplateVars } = VALID_V1_STATE;
+    await seedRawRunState(tmpDir, {
+      ...withoutTemplateVars,
+      id,
+      runbook: { source: 'project', path: 'x.md' },
+    });
+
+    // One load, three assertions against the same rejection: re-invoking would
+    // assert about three separate calls, so a refusal that only held on the
+    // first would still pass.
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(load).rejects.toThrow(/missing templateVars/);
+    await expect(load).rejects.toThrow(/prune/i);
+  });
+
   it('rejects state with future schemaVersion', async () => {
     const id = 'rd_ffffffffffffffffffffffffffffffff';
     await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, schemaVersion: 2 });
@@ -338,13 +378,14 @@ describe('applyRunbookStateUpdate — stamps, never migrates', () => {
   // Fully typed rather than cast: `schemaVersion` is optional on RunbookState, so
   // the "carries none" case below is expressible without escaping the type. A
   // blanket `as unknown as RunbookState` would also suppress the compile error a
-  // future RunbookState field ought to raise here. Only the two branded fields
-  // (`id`, `variables`) need helpers, and those exist for tests.
+  // future RunbookState field ought to raise here. Only the three branded fields
+  // (`id`, `variables`, `templateVars`) need helpers, and those exist for tests.
   const derivable: RunbookState = {
     ...BASE_SCHEMA_STATE,
     id: brandRunIdForTest(BASE_SCHEMA_STATE.id),
     runbook: { source: 'project', path: 'x.md' },
     variables: brandStoredOutputsForTest({}),
+    templateVars: brandInitialTemplateVarsForTest({}),
     lifecycle: 'running',
   };
 

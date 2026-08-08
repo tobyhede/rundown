@@ -27,7 +27,10 @@ import type {
   ExecutionObservationEffect,
   StepEntryMetadata,
 } from '../../src/events/execution-observation.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 import { makeResolvedStepWithSubsteps, makeSubstep } from '../helpers/step-factories.js';
 
 // This suite drives `re-entry-frontier.ts` directly rather than through
@@ -106,6 +109,7 @@ const steps: readonly ResolvedStep[] = [
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 're-entry-test.md' },
     runbookPath: 're-entry-test.md',

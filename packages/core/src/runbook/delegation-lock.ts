@@ -36,9 +36,9 @@ export class DelegationLockTimeoutError extends FileLockTimeoutError {
 /**
  * Minimal acquire/release contract for consumers that serialize delegation
  * mutations, so tests can inject a deterministic fake lock without a real
- * filesystem mutex. Mirrors the `RunStateLockLike` DI precedent: callers wrap
- * the held lock with `heldLock` + `await using` themselves (never releasing
- * from a bare `finally` — the RD-102 masking defect).
+ * filesystem mutex. Shares its narrow-DI shape with `CompletionLockLike`:
+ * callers wrap the held lock with `heldLock` + `await using` themselves (never
+ * releasing from a bare `finally` — the RD-102 masking defect).
  */
 export interface DelegationLockLike {
   /**

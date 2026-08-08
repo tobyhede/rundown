@@ -26,7 +26,7 @@ import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import { isNodeError } from '../../errors.js';
-import { DB_FILE, dbPath } from '../../paths.js';
+import { DB_FILE, DB_SIDECAR_SUFFIXES, dbPath } from '../../paths.js';
 import type { SqlDriver } from './sql-driver.js';
 import { openRunbookDriver, type OpenRunbookDriverOptions } from './driver-factory.js';
 import { RunbookStore } from './runbook-store.js';
@@ -90,7 +90,7 @@ const closingStores = new Set<ClosingStore>();
  */
 async function hardenDatabaseFileMode(target: string): Promise<void> {
   await Promise.all(
-    [target, `${target}-wal`, `${target}-shm`].map(async (file) => {
+    [target, ...DB_SIDECAR_SUFFIXES.map((suffix) => `${target}${suffix}`)].map(async (file) => {
       try {
         await fs.chmod(file, 0o600);
       } catch (err) {

@@ -26,6 +26,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import {
   brandEffectiveVarsForTest,
+  brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
@@ -85,6 +86,7 @@ describe('RunbookCompletionService', () => {
       substep: '1',
       retryCount: 0,
       variables: brandStoredOutputsForTest({}),
+      templateVars: brandInitialTemplateVarsForTest({}),
       steps: [],
       resolvedCompletions: {},
       frameEntryCounts: { [buildFrameKey('1')]: 1 },

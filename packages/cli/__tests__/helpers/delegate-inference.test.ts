@@ -2,6 +2,7 @@
  * This suite deliberately pins the behavior of deprecated inference helpers
  * (superseded by resolveDelegationIssuance) that stay on the published API
  * surface until a major release. */
+import { brandInitialTemplateVarsForTest } from './brand-helpers.js';
 import { describe, it, expect } from '@jest/globals';
 import type {
   ResolvedStep,
@@ -61,6 +62,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   } = overrides;
   const runbook = overrideRunbook ?? { source: 'project' as const, path: 'test.runbook.md' };
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: brandRunIdForTest(`rd_${'a'.repeat(32)}`),
     runbook,
     runbookPath: overrideRunbookPath ?? runbook.path,

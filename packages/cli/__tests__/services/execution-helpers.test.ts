@@ -7,6 +7,7 @@
 // Both helpers are pure (no I/O), so they are tested directly without mocking
 // the full execution loop.
 
+import { brandInitialTemplateVarsForTest } from '../helpers/brand-helpers.js';
 import { describe, it, expect } from '@jest/globals';
 import { deriveOutputScope, extractUnitOutputs } from '../../src/services/execution.js';
 import type { RunbookState, ForContext } from '@rundown-org/core';
@@ -18,6 +19,7 @@ import type { ResolvedStep, OutputDeclaration, Substep } from '@rundown-org/pars
 
 function makeState(step: string, forStack: readonly ForContext[] = []): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: 'test-run' as RunbookState['id'],
     runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/test.md',

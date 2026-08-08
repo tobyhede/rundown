@@ -23,7 +23,10 @@ import {
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 // RunId fixtures must be 32 lowercase hex chars (`/^rd_[a-f0-9]{32}$/`);
 // `assertRunId` rejects any char outside a-f0-9, so do not use g-z here.
@@ -38,6 +41,7 @@ const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 function baseState(id = runIdA): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'p.md' },
     runbookPath: 'p.md',

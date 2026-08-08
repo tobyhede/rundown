@@ -20,7 +20,10 @@ import {
 } from '../../src/runbook/targeting.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 import {
   makeBaseStep,
   makeCommandStep,
@@ -68,6 +71,7 @@ function stepsWithInlineRunbookListSubstep(): readonly ResolvedStep[] {
 
 function plainState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 'exposure-test.md' },
     runbookPath: 'exposure-test.md',

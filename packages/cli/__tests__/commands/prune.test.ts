@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   assertClaimId,
   assertDelegationTokenHash,
@@ -99,6 +99,26 @@ describe('prune command', () => {
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output).toEqual([]);
+    });
+
+    it('leaves unreleased JSON state byte-identical', async () => {
+      const inertFiles = [
+        join(workspace.cwd, '.rundown', 'session.json'),
+        join(workspace.cwd, '.rundown', 'runs', 'rd_legacy.json'),
+        join(workspace.cwd, '.claude', 'rundown', 'session.json'),
+      ];
+      const bytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
+      for (const file of inertFiles) {
+        await mkdir(dirname(file), { recursive: true });
+        await writeFile(file, bytes);
+      }
+
+      const result = await runCliInProcess('prune --all', workspace);
+
+      expect(result.exitCode).toBe(0);
+      for (const file of inertFiles) {
+        await expect(readFile(file)).resolves.toEqual(bytes);
+      }
     });
   });
 

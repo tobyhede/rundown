@@ -18,6 +18,8 @@
 // Protocol (two-stage barrier, no elapsed-time ordering):
 //   1. Construct the service and WARM the store (open the driver, ensure schema,
 //      read the session) so post-barrier work is the mutation and nothing else.
+//      `coldStartSession` is the one op that skips this: its subject is the open
+//      itself, so it must cross the barrier before touching the store.
 //   2. Write `readyFile` — "I am warm and parked at the barrier".
 //   3. Yield on `goFile` until the parent releases every child together.
 //   4. Stamp the staging entry, write `enteredFile`, and yield on
@@ -167,6 +169,11 @@ class HarnessRunbookStateManager extends RunbookStateManager {
  */
 async function run(service: SessionService): Promise<unknown> {
   switch (op.kind) {
+    // The store is opened lazily on first use, so on the cold path this single
+    // call is `mkdir .rundown` + `new DatabaseSync` on a missing file + the
+    // WAL conversion + `ensureSchema` + the read, all inside the measured window.
+    case 'coldStartSession':
+      return manager.loadSession();
     // The four ownership-guarded mutations are unwrapped here so the wire carries
     // the DOMAIN result the parent asserts on, not the storage envelope around it.
     // No child in this fixture holds an execution lease, so a refusal would be a
@@ -245,7 +252,18 @@ const service = new SessionService(manager);
 // Warm the driver: opens the connection and ensures the schema, so the only work
 // left after the barrier is the mutation itself. Without this, process/driver
 // startup would dominate and the children would not actually overlap.
-await manager.loadSession();
+//
+// `coldStartSession` is the deliberate exception, and the reason this is a
+// condition rather than an unconditional call. Its subject is the creation of the
+// database — the one window in the store's life where concurrent writers install
+// the schema instead of mutating it — so warming here would run that creation
+// BEFORE the barrier and leave the released children racing to re-read a database
+// that already exists. Module loading and service construction still happen
+// pre-barrier on both paths, so the barrier still removes process-startup jitter;
+// only the first store touch moves after it.
+if (op.kind !== 'coldStartSession') {
+  await manager.loadSession();
+}
 
 writeFileSync(readyFile, String(process.pid));
 

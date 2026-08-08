@@ -20,7 +20,10 @@ import {
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const childRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
@@ -32,6 +35,7 @@ const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: parentRunId,
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',

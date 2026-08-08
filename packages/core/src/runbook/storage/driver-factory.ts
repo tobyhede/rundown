@@ -14,7 +14,11 @@
 
 import { getErrorMessage, isNodeError } from '../../errors.js';
 import { ensureSchema } from './schema.js';
-import { openNativeDriver, type NativeDriverOptions } from './native-sqlite-driver.js';
+import {
+  openNativeDriver,
+  WalJournalModeUnavailableError,
+  type NativeDriverOptions,
+} from './native-sqlite-driver.js';
 import { openSqljsDriver, type SqljsDriverOptions } from './sqljs-driver.js';
 import type { SqlDriver } from './sql-driver.js';
 
@@ -177,6 +181,9 @@ export interface OpenRunbookDriverOptions {
  * @returns An opened driver with schema version ensured.
  * @throws {NativeSqliteUnavailableError} When the native driver cannot open on a
  *   multi-process host.
+ * @throws {import('./native-sqlite-driver.js').WalJournalModeUnavailableError}
+ *   When the native connection opened but did not enter WAL journal mode. Raised
+ *   unwrapped: it is a distinct diagnosis from native SQLite being unavailable.
  * @throws {SqljsUnavailableError} When the selected sql.js adapter cannot open.
  * @throws {import('./schema.js').IncompatibleSchemaError} When the database
  *   carries an unusable schema version.
@@ -225,6 +232,10 @@ async function disposeQuietly(driver: SqlDriver): Promise<void> {
  * @param dbPath - Path to the database file.
  * @param options - Adapter options.
  * @returns An opened driver.
+ * @throws {SqljsUnavailableError} When the sql.js adapter cannot open.
+ * @throws {NativeSqliteUnavailableError} When the native adapter cannot open.
+ * @throws {import('./native-sqlite-driver.js').WalJournalModeUnavailableError}
+ *   Unwrapped, when the native connection opened outside WAL journal mode.
  */
 async function openDriver(
   runtime: StorageRuntime,
@@ -241,6 +252,14 @@ async function openDriver(
   try {
     return openNativeDriver(dbPath, options.native);
   } catch (err) {
+    // The WAL refusal is not a native-SQLite availability failure: node:sqlite
+    // loaded and the connection opened, and only the effective journal mode is
+    // wrong. Wrapping it would state a diagnosis that is false and would bury the
+    // typed class a front end classifies on one `cause` deep — which is how a
+    // specific, actionable refusal degrades into RD-999 / "Unknown error".
+    if (err instanceof WalJournalModeUnavailableError) {
+      throw err;
+    }
     throw new NativeSqliteUnavailableError(err);
   }
 }

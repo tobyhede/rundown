@@ -36,7 +36,7 @@ import {
 } from './effective-vars.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
-import { runsDir as _runsDir, assertSafeId, LEGACY_SESSION_FILE } from '../paths.js';
+import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import {
   guardOptions,
@@ -122,7 +122,7 @@ function assertTrustedResolvedCompletions(
 }
 
 /**
- * Thrown when a persisted state file uses the deprecated dynamic-step snapshot
+ * Thrown when persisted state uses the deprecated dynamic-step snapshot
  * shape (`GOTO_NEXT` last action or `instance` field), which the current
  * runtime rejects per the no-migration rule.
  *
@@ -142,7 +142,7 @@ export class LegacySnapshotError extends Error {
 }
 
 /**
- * Thrown when a persisted state file does not match the current schema contract.
+ * Thrown when persisted state does not match the current schema contract.
  */
 export class InvalidRunbookStateError extends Error {
   /**
@@ -154,6 +154,71 @@ export class InvalidRunbookStateError extends Error {
     super(message);
     this.name = 'InvalidRunbookStateError';
   }
+}
+
+/**
+ * Thrown when a guarded run-state read-modify-write spent its optimistic
+ * compare-and-swap budget without landing.
+ *
+ * This is the throwing face of {@link StateMutationResult}'s
+ * `concurrent_modification` arm. The CAS that replaced the per-run file lock
+ * replays at most 8 times with no backoff, so a few-way concurrent writer can
+ * exhaust the budget where the lock would have waited and won — CLAUDE.md
+ * therefore requires callers to handle or retry it, which is only implementable
+ * against a type. A bare `Error` forced message matching and reached the CLI as
+ * RD-999 "Unknown error".
+ *
+ * Distinct from every other 3xx state condition in that it is **transient**:
+ * nothing was written, the persisted state is intact, and the same command
+ * retried unchanged is expected to succeed. {@link retryable} states that at the
+ * type level so a consumer branches on a property rather than on the class name.
+ */
+export class ConcurrentStateModificationError extends Error {
+  /**
+   * The run whose state write was lost.
+   *
+   * A caller retrying a batch needs to know which run to replay, and the run id
+   * is not recoverable from the message without parsing it.
+   */
+  readonly runId: string;
+
+  /**
+   * Always `true`, as a literal type.
+   *
+   * The discriminant that separates this from the refusals that share its
+   * throwing seam (`missing`, `execution_in_progress`), where retrying is
+   * pointless. A caller narrows on this rather than re-deriving "is this the
+   * retryable one?" from the class.
+   */
+  readonly retryable = true as const;
+
+  /**
+   * Create a new ConcurrentStateModificationError.
+   *
+   * @param runId - The run whose state write was lost.
+   * @param message - The store's description of the lost cycle.
+   */
+  constructor(runId: string, message: string) {
+    super(message);
+    this.name = 'ConcurrentStateModificationError';
+    this.runId = runId;
+  }
+}
+
+/**
+ * Narrow an unknown thrown value to {@link ConcurrentStateModificationError}.
+ *
+ * Provided so a consumer that catches from a different realm — or that only has
+ * the value typed as `unknown` — can classify the retryable outcome without an
+ * `instanceof` against an import it would otherwise not need.
+ *
+ * @param error - The caught value.
+ * @returns True when `error` is a {@link ConcurrentStateModificationError}, narrowing it.
+ */
+export function isConcurrentStateModificationError(
+  error: unknown,
+): error is ConcurrentStateModificationError {
+  return error instanceof ConcurrentStateModificationError;
 }
 
 /**
@@ -213,17 +278,17 @@ export type RunbookStateUpdate = Partial<
  *
  * The single application of tagged merge/replace ops, artifact/completion trust
  * re-assertion, and the {@link CURRENT_SCHEMA_VERSION} stamp. Shared by
- * {@link RunbookStateManager}'s locked write path and by the actor
+ * {@link RunbookStateManager}'s guarded write path and by the actor
  * compute/commit seam, which derives the next state without persisting, so both
  * apply identical patch semantics.
  *
  * Two things are deliberately NOT identical between the two paths:
  * - `updatedAt` is stamped independently by each persistence layer, so the value
- *   returned by `update` and the value written by `saveUnlocked` differ. Compare
+ *   returned by `update` and the value the fenced seam commits differ. Compare
  *   states modulo `updatedAt`.
- * - The resolved-completion consumption patch is read from disk on the manager
- *   path and from the captured state on the fenced path — under a fence the
- *   captured state is the authority, so a concurrent disk write must not change
+ * - The resolved-completion consumption patch is read from the store on the
+ *   manager path and from the captured state on the fenced path — under a fence
+ *   the captured state is the authority, so a concurrent write must not change
  *   what the fenced mutation consumes.
  *
  * @param existing - The state to patch.
@@ -335,15 +400,10 @@ export interface RunbookStateManagerOptions {
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
- * State is persisted to `.rundown/runs/` as JSON files.
+ * State is persisted in the project's shared SQLite store.
  * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
-  /**
-   * Module-level guard so the legacy-state warning is emitted at most once
-   * per process regardless of how many RunbookStateManager instances exist.
-   */
-  private static legacyWarningEmitted = false;
   private readonly _cwd: string;
   private readonly storeOptions: OpenRunbookDriverOptions;
 
@@ -409,10 +469,19 @@ export class RunbookStateManager {
   /**
    * Unwrap a committed mutation, mapping refusals to the manager's error contract.
    *
+   * The `concurrent_modification` arm is separated from the rest because it is
+   * the only transient one: nothing was written, and retrying is the correct
+   * response. It gets a dedicated type so callers can act on that (and so the
+   * CLI reports RD-308 rather than collapsing it into RD-999) instead of
+   * matching the store's message text.
+   *
    * @param result - The store mutation outcome.
    * @param id - Runbook id, for the error message.
    * @returns The committed (or unchanged) state.
-   * @throws {Error} When the run is missing, owned by an execution, or contended.
+   * @throws {ConcurrentStateModificationError} When the optimistic CAS budget was
+   *   spent because another writer committed first. Transient and retryable.
+   * @throws {Error} When the run is missing or owned by a live execution. Neither
+   *   is retryable.
    */
   private requireCommitted(result: StateMutationResult, id: string): RunbookState {
     switch (result.kind) {
@@ -421,29 +490,23 @@ export class RunbookStateManager {
         return result.value;
       case 'missing':
         throw new Error(`Runbook ${id} not found`);
+      case 'concurrent_modification':
+        throw new ConcurrentStateModificationError(result.runId, result.message);
       default:
         throw new Error(result.message);
     }
   }
 
-  /** Emit a process-wide one-time warning when legacy `.claude/rundown/` state is detected. */
-  private async warnIfLegacyStateExists(): Promise<void> {
-    if (RunbookStateManager.legacyWarningEmitted) return;
-    try {
-      await fs.access(path.join(this.cwd, LEGACY_SESSION_FILE));
-      RunbookStateManager.legacyWarningEmitted = true;
-      process.stderr.write(
-        '[rundown] Warning: State from a previous installation was found at .claude/rundown/.\n' +
-          '  State is now stored in .rundown/. Complete or abort any in-flight runbooks\n' +
-          '  from the old location, then remove the .claude/rundown/ directory.\n',
-      );
-    } catch {
-      // No legacy state — normal startup.
-    }
-  }
-
   /**
-   * Create a new runbook state and persist it to disk.
+   * Create a new runbook state and insert it as a row in the project's store.
+   *
+   * The state is committed through {@link save}, which inserts the run row into
+   * the shared SQLite database. No per-run directory is created here: the
+   * filesystem-backed `.rundown/runs/<id>/outputs/` tree holds captured command
+   * output only, and is created on demand by the capture path.
+   *
+   * `templateVars` is always written — `{}` when the caller supplies none — because
+   * {@link load} refuses a persisted row without it.
    *
    * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
@@ -478,10 +541,10 @@ export class RunbookStateManager {
       updatedAt: now,
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
-      templateVars:
-        options.templateVars === undefined
-          ? undefined
-          : brandInitialTemplateVars(options.templateVars),
+      // Always written, `{}` when the caller supplies none: `load` refuses a
+      // persisted row without templateVars rather than reconstructing it, so a
+      // run created without one would be unreadable the moment it is saved.
+      templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
       frontmatterOutputs: options.frontmatterOutputs ?? [],
       lifecycle: 'running',
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -492,12 +555,22 @@ export class RunbookStateManager {
   }
 
   /**
-   * Load a runbook state from disk by ID.
+   * Read a runbook state back from the project's store by ID.
+   *
+   * Reassembles the run's `state_json` from its row and validates it. Returns
+   * `null` when a traversal-safe id has no matching record, which also covers a
+   * safe id that cannot name a run at all. A traversal-unsafe id never reaches
+   * the store: {@link RunbookStateManager.toRunId} rejects it first. Anything
+   * else is invalid persisted state and is refused rather than adapted: there is
+   * no migration path, and the caller's recovery is always to finish, stop,
+   * prune, or restart the run.
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
-   * @returns The loaded RunbookState, or null if file not found
-   * @throws {InvalidRunbookStateError} If the persisted row exists but its `state_json`
-   *   is unparseable, fails schema validation, or has an incompatible schemaVersion
+   * @returns The loaded RunbookState, or null when a traversal-safe `id` has no record
+   * @throws {Error} If `id` is traversal-unsafe — rejected before any store access
+   * @throws {InvalidRunbookStateError} If the record exists but its `state_json`
+   *   is unparseable, fails schema validation, has an incompatible schemaVersion,
+   *   or is missing `templateVars`
    * @throws {LegacySnapshotError} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
@@ -550,6 +623,18 @@ export class RunbookStateManager {
       );
     }
 
+    // A current-schema row without templateVars is incompatible state. Readers
+    // substitute `runbookSrc` against it on every resume; re-parsing the stored
+    // source to stand in for it would be a silent migration. Named explicitly
+    // rather than left to the schema parse below so the refusal says which field
+    // is missing and what to do about it.
+    if (obj.templateVars === undefined) {
+      throw new InvalidRunbookStateError(
+        `Invalid runbook state for "${id}": missing templateVars. ` +
+          `Prune this run and re-run the runbook.`,
+      );
+    }
+
     const result = makeRunbookStateSchema(this.cwd).safeParse(raw);
     if (!result.success) {
       throw new InvalidRunbookStateError(
@@ -562,12 +647,19 @@ export class RunbookStateManager {
   }
 
   /**
-   * Save a runbook state to disk.
+   * Write a runbook state to the project's store.
    *
-   * Creates the state directory if it does not exist and writes the state
-   * as a JSON file, automatically updating the `updatedAt` timestamp.
+   * Inserts the run row when no record for `state.id` exists yet and otherwise
+   * commits a wholesale replacement of the existing one, stamping the current
+   * schema version and a fresh `updatedAt` either way. Per-run captured output
+   * under `.rundown/runs/<id>/outputs/` is separate filesystem state and is not
+   * touched here.
    *
    * @param state - The runbook state to persist
+   * @throws {Error} When the run exists but the replacement cannot be committed
+   *   because a live execution owns it.
+   * @throws {ConcurrentStateModificationError} When another writer committed to
+   *   the same run first and the optimistic CAS budget was spent. Retryable.
    */
   async save(state: RunbookState): Promise<void> {
     const store = await this.store();
@@ -630,15 +722,16 @@ export class RunbookStateManager {
   }
 
   /**
-   * Update an existing runbook state with a patch computed from the locked
-   * current state.
+   * Update an existing runbook state with a patch computed from the current
+   * state captured by the guarded store cycle.
    *
    * Use this for read-modify-write operations that replace whole fields such
-   * as `substepStates` or `resolvedCompletions`. The callback runs while the
-   * per-run state lock is held, so concurrent writers cannot compute from the
-   * same stale snapshot and overwrite each other.
+   * as `substepStates` or `resolvedCompletions`. The callback runs against the
+   * state read at the start of the cycle and the write commits only if that
+   * state's version is unchanged, so a concurrent writer cannot overwrite this
+   * one; a version that moved reruns the callback against fresh state.
    *
-   * Returning `null` leaves the current state unchanged and releases the lock.
+   * Returning `null` leaves the current state unchanged and writes nothing.
    *
    * @param id - The runbook state ID to update
    * @param buildUpdates - Callback that derives a patch from current state
@@ -666,7 +759,7 @@ export class RunbookStateManager {
    * Like {@link updateWithState}, but returns `null` when the runbook does not
    * exist instead of throwing.
    *
-   * Use this for locked read-modify-write operations where a missing runbook is
+   * Use this for guarded read-modify-write operations where a missing runbook is
    * a legitimate "nothing to do" outcome rather than an error (for example,
    * consuming a resolved completion). The callback only runs when the runbook
    * exists, so it always receives a non-null {@link RunbookState}.
@@ -697,11 +790,12 @@ export class RunbookStateManager {
    * a typed value that flows out through the result instead of through a
    * captured closure variable.
    *
-   * Use this for locked read-modify-write operations that must also report
-   * something they computed from the locked current state (for example,
+   * Use this for guarded read-modify-write operations that must also report
+   * something they computed from the captured current state (for example,
    * consuming and returning a resolved completion). The patch and the reported
-   * value are derived in the same callback under the same lock, so the reported
-   * value is always consistent with the persisted patch.
+   * value are derived in the same callback against the same captured state, and
+   * the value is recaptured on every retry, so the reported value is always
+   * consistent with the patch that actually committed.
    *
    * When the runbook does not exist the callback never runs; the result is
    * `{ state: null, value: null }`.
@@ -755,8 +849,10 @@ export class RunbookStateManager {
    * @param options.guard - Parent-advance guard forwarded to the store; when
    *   present the write refuses if the run still has a live delegated child.
    * @returns The resulting state, or null when missing and tolerated.
-   * @throws {Error} When the run is missing (and not tolerated), owned by an
-   *   execution, or lost to a concurrent writer.
+   * @throws {Error} When the run is missing (and not tolerated) or owned by an
+   *   execution.
+   * @throws {ConcurrentStateModificationError} When the cycle lost to a
+   *   concurrent writer and the CAS budget was spent. Retryable.
    * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
    *   live delegated child blocks the advance.
    */
@@ -864,31 +960,18 @@ export class RunbookStateManager {
   }
 
   /**
-   * Load the session data from disk.
+   * Load session data from the shared SQLite store.
    *
-   * @returns The parsed session data, or a default empty session if the file doesn't exist
-   * @throws {Error} When the persisted session is incompatible with the current
-   *   model and must NOT be adapted. Rundown never migrates persisted runbook
-   *   state, so each of these is a rejection with an explicit user recovery path,
-   *   never a hydration or a shim:
-   *   - A legacy per-agent ownership shape (`ownedRunbooks`, `stashedRunbookOwnership`,
-   *     or `stacks`) — recover by finishing or pruning active runbooks and restarting.
-   *   - A claim record predating the required `ClaimRecord.lastSeenAt` (#519) —
-   *     same recovery. Checked before schema validation purely to route this cause to
-   *     the finish/prune/restart path rather than Zod's delete-the-file message.
-   *   - A session failing `SessionDataSchema` — recover by deleting
-   *     `.rundown/session.json` and restarting active runbooks.
-   * @throws {SyntaxError} When the session file is not parseable JSON.
+   * @returns Validated session data, or the default empty session when the
+   *   database has no session rows.
+   * @throws {Error} When the reconstructed session is incompatible with the
+   *   current schema.
    */
   async loadSession(): Promise<SessionData> {
     const store = await this.store();
     const session = await store.loadSession();
-    if (session.defaultStack.length === 0 && Object.keys(session.claims).length === 0) {
-      await this.warnIfLegacyStateExists();
-    }
-    // The store reconstructs the session from typed columns, so the legacy-shape
-    // guards that policed hand-edited session.json have no analogue here: an
-    // incompatible database is rejected by schema version at open, not per read.
+    // The store reconstructs the session from typed columns. An incompatible
+    // database is rejected by schema version at open, not adapted per read.
     const result = SessionDataSchema.safeParse(session);
     if (!result.success) {
       throw new Error(

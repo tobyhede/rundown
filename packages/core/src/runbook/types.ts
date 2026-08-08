@@ -1079,8 +1079,20 @@ export interface RunbookState {
   /** Runbook source content (raw markdown with {{placeholders}}), frozen at run time */
   readonly runbookSrc?: string;
 
-  /** Template variables used for AST-level substitution, frozen at run time */
-  readonly templateVars?: InitialTemplateVars;
+  /**
+   * Template variables used for AST-level substitution, frozen at run time.
+   *
+   * Required, so `RunbookStateManager.save` cannot be handed a state that
+   * `load` would then refuse. `create` always writes it (`{}` at minimum) and
+   * `load` rejects a persisted row without it, because readers substitute
+   * `runbookSrc` against it on every resume and there is no sanctioned way to
+   * reconstruct it.
+   *
+   * Fixtures that deliberately persist an invalid row do not need a relaxed
+   * variant of this type: they seed through `seedRawRunState`, which takes
+   * `Record<string, unknown>` and bypasses the type entirely.
+   */
+  readonly templateVars: InitialTemplateVars;
 
   /**
    * Frontmatter `outputs:` declarations parsed from the runbook source at startup.

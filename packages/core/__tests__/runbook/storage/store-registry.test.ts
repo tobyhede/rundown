@@ -10,6 +10,9 @@ import {
   closeRunbookStore,
   runbookStoreKey,
 } from '../../../src/runbook/storage/store-registry.js';
+import { RunbookStateManager } from '../../../src/runbook/state.js';
+import type { Runbook } from '../../../src/runbook/types.js';
+import { makeBaseStep } from '../../helpers/step-factories.js';
 
 const roots: string[] = [];
 const pendingDisposalReleases = new Set<() => void>();
@@ -94,6 +97,57 @@ describe('runbook store registry', () => {
       getRunbookStore(cwd, { runtime: 'native' }),
     ]);
     expect(a).toBe(b);
+  });
+
+  it('ignores unreleased JSON state and leaves it byte-identical across writes and reopen', async () => {
+    const cwd = await newRoot();
+    const inertFiles = [
+      path.join(cwd, '.rundown', 'session.json'),
+      path.join(cwd, '.rundown', 'runs', 'rd_legacy.json'),
+      path.join(cwd, '.claude', 'rundown', 'session.json'),
+    ];
+    const invalidBytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
+    for (const file of inertFiles) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, invalidBytes);
+    }
+    const output = path.join(cwd, '.rundown', 'runs', 'rd_legacy', 'outputs', '1', 'VALUE');
+    await fs.mkdir(path.dirname(output), { recursive: true });
+    await fs.writeFile(output, 'captured output');
+    const warning = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    const [first, concurrent] = await Promise.all([
+      getRunbookStore(cwd, { runtime: 'native' }),
+      getRunbookStore(cwd, { runtime: 'native' }),
+    ]);
+    expect(concurrent).toBe(first);
+    const manager = new RunbookStateManager(cwd, { storeOptions: { runtime: 'native' } });
+    const run = await manager.create(
+      { source: 'project', path: 'inert-json.runbook.md' },
+      {
+        title: 'Inert JSON',
+        description: '',
+        steps: [makeBaseStep({ name: '1', description: 'Initial step' })],
+      } satisfies Runbook,
+      { runbookPath: 'inert-json.runbook.md' },
+    );
+    await manager.saveSession({ defaultStack: [run.id], claims: {} });
+    await expect(manager.loadSession()).resolves.toEqual({
+      defaultStack: [run.id],
+      claims: {},
+    });
+    await closeRunbookStore(cwd);
+    await expect(manager.load(run.id)).resolves.toMatchObject({ id: run.id });
+    await expect(manager.loadSession()).resolves.toEqual({
+      defaultStack: [run.id],
+      claims: {},
+    });
+
+    expect(warning).not.toHaveBeenCalled();
+    await expect(fs.readFile(output, 'utf8')).resolves.toBe('captured output');
+    for (const file of inertFiles) {
+      await expect(fs.readFile(file)).resolves.toEqual(invalidBytes);
+    }
   });
 
   it('keys distinct projects to distinct stores', async () => {

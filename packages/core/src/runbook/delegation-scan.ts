@@ -4,7 +4,7 @@ import type { FrameKey } from './targeting.js';
 import type { RunbookState, StepDelegation } from './types.js';
 
 /**
- * Result of scanning for a delegation token across run state files.
+ * Result of scanning for a delegation token across persisted runs.
  */
 export interface TokenScanResult {
   /** The parent runbook state containing the delegation. */
@@ -20,7 +20,7 @@ export interface TokenScanResult {
 }
 
 /**
- * Service for scanning run state files to find delegation tokens.
+ * Service for scanning persisted runs to find delegation tokens.
  *
  * Scans all active run states to locate which parent step/substep owns
  * a given token hash, or to find orphaned child runs.
@@ -29,21 +29,21 @@ export class DelegationScanService {
   /**
    * Create a new DelegationScanService.
    *
-   * @param manager - State manager used to list and load run state files for scanning
+   * @param manager - State manager used to list and load persisted runs for scanning
    */
   constructor(private readonly manager: RunbookStateManager) {}
 
   /**
    * Find the parent step that owns a delegation matching the given raw token.
    *
-   * Hashes the token and performs an O(N) scan over all active run state files
+   * Hashes the token and performs an O(N) scan over all active persisted runs
    * via `manager.list()`, checking each state's substepStates for a matching
    * tokenHash. Exits early on the first match.
    *
-   * **Performance note:** `manager.list()` eagerly loads and parses every state
-   * file. This is acceptable because the expected number of concurrent active
+   * **Performance note:** `manager.list()` eagerly loads every persisted run.
+   * This is acceptable because the expected number of concurrent active
    * runs is small (< 100). If active run counts grow significantly, consider
-   * adding a `tokenHash → runId` index file to avoid the full scan.
+   * adding a `tokenHash → runId` index to avoid the full scan.
    *
    * @param rawToken - The plain-text delegation token
    * @returns The scan result with parent state and delegation info, or null

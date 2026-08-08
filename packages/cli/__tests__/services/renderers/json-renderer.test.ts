@@ -56,7 +56,6 @@ describe('JSONRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-2026-04-23-abcdef.json',
         },
       };
       const completed: RunbookEventV1 = {
@@ -72,6 +71,7 @@ describe('JSONRenderer', () => {
       expect(writer.lines).toHaveLength(2);
       expect(writer.lines.some((l) => l.trim() === '{}')).toBe(false);
       expect(writer.lines[0]).toContain('"type":"runbook_started"');
+      expect(writer.lines[0]).not.toContain('statePath');
       expect(writer.lines[1]).toContain('"type":"runbook_completed"');
     });
 
@@ -87,7 +87,6 @@ describe('JSONRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/wf-2026-04-23-abcdef.json',
         },
       };
 
@@ -175,6 +174,51 @@ describe('JSONRenderer', () => {
       const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
       expect(parsed.kind).toBe('status');
       expect(parsed.message).toBe('hello');
+    });
+  });
+
+  describe('metadata rendering', () => {
+    it('carries runId into the JSON envelope alongside file and state', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+
+      renderer.render({
+        type: 'metadata',
+        metadata: {
+          file: 'runbooks/deploy.runbook.md',
+          state: '.rundown/rundown.db',
+          runId: 'rd_0123456789abcdef0123456789abcdef',
+          prompted: true,
+        },
+      });
+      renderer.flush();
+
+      const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
+      // `state` is the same database path for every run, so a consumer of
+      // `stash`/`pop`/`stop`/`complete` JSON can only identify the affected
+      // run through `runId`.
+      expect(parsed).toEqual(
+        expect.objectContaining({
+          file: 'runbooks/deploy.runbook.md',
+          state: '.rundown/rundown.db',
+          runId: 'rd_0123456789abcdef0123456789abcdef',
+          prompted: true,
+        }),
+      );
+    });
+
+    it('omits runId when the metadata carries none', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+
+      renderer.render({
+        type: 'metadata',
+        metadata: { file: 'runbooks/deploy.runbook.md', state: '.rundown/rundown.db' },
+      });
+      renderer.flush();
+
+      const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
+      expect(parsed).not.toHaveProperty('runId');
     });
   });
 

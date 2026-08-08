@@ -7,7 +7,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { closeRunbookStores } from '../../src/runbook/storage/store-registry.js';
+import { closeRunbookStores, openRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import { SCHEMA_VERSION } from '../../src/runbook/storage/schema.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import type { RunId, Runbook, Step, DelegationLinkage } from '../../src/runbook/types.js';
@@ -41,11 +42,31 @@ import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js'
  * released only after every contender has started. The DOMAIN assertions make no
  * timing assumptions — each property holds for every possible interleaving.
  *
+ * THE ONE COHORT THAT MUST NOT WARM is the cold start, whose subject is the
+ * creation of the database rather than a mutation of it. Warming opens the driver
+ * and installs the schema, so a warmed cold-start cohort would have built the
+ * authority before the barrier and would race only to re-read it. Its children
+ * therefore cross the barrier before touching the store (`coldStartSession`; see
+ * `storage/fixtures/child-protocol.ts`), which is what puts `ensureSchema`'s
+ * check-then-install inside the measured window.
+ *
  * SENSITIVITY WITNESS. A correct-but-serialized implementation would pass every
- * domain assertion while proving nothing, so every contention race asserts both
+ * domain assertion while proving nothing, so every MUTATION race asserts both
  * deterministic staging and actual `t0`/`t1` service-mutation overlap. The holder
  * protocol establishes that overlap by file-observed causality rather than
  * scheduler luck.
+ *
+ * THE COLD START IS THE ONE COHORT THAT CANNOT USE THAT PROTOCOL, structurally
+ * rather than by preference. The holder signals `transaction-held-*` from inside
+ * `mutateSession` / `mutateSessionGuarded`; `coldStartSession` is a `loadSession`
+ * READ, which opens no session write transaction, so the gate can never fire: the
+ * holder finishes and exits, and the parent's wait fails on the file it never
+ * wrote. It therefore runs with `witnessActualOverlap: false` and keeps the
+ * deterministic staging witness.
+ * Asserting `t0`/`t1` overlap there instead would be scheduler luck, not
+ * causality: the release barrier polls at 10ms and the cold window is ~7ms, so a
+ * merely-simultaneous release cannot be relied on to produce overlapping
+ * intervals — which is exactly the flake the holder protocol exists to avoid.
  */
 
 const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts', import.meta.url));
@@ -411,6 +432,77 @@ async function waitForFile(file: string, child: ChildProcess): Promise<void> {
 }
 
 describe('cross-process session write contention (transaction replaces SessionLock)', () => {
+  it('initializes one valid SQLite authority when N processes race to create it, while unreleased JSON remains inert', async () => {
+    // The product's first-run moment: two `rundown run` invocations in two
+    // terminals on a project that has no `.rundown/rundown.db` yet. Both open a
+    // database that does not exist, both convert it to WAL, and both run
+    // `ensureSchema`'s check-then-install — the one window in the store's life
+    // where concurrent writers are creating the authority rather than mutating it.
+    const inertFiles = [
+      path.join(dir, '.rundown', 'session.json'),
+      path.join(dir, '.rundown', 'runs', 'rd_legacy.json'),
+      path.join(dir, '.claude', 'rundown', 'session.json'),
+    ];
+    const invalidBytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
+    for (const file of inertFiles) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, invalidBytes);
+    }
+
+    // `coldStartSession`, not `readSession`: this cohort must cross the barrier
+    // BEFORE it touches the store, so the raced work is the CREATION of the
+    // database — `mkdir .rundown`, `new DatabaseSync` on a missing file, the
+    // rollback-journal -> WAL conversion, and the check-then-install of
+    // `ensureSchema` — not a read of one another child already built. Every other
+    // race here warms first because its subject is the mutation; warming this one
+    // would move the entire subject out of the measured window and leave the test
+    // asserting only that a database created seconds ago is still readable.
+    //
+    // Three contenders rather than two: two terminals is the product moment, and a
+    // third costs one process while widening the odds that a genuine install
+    // collision (rather than a merely simultaneous open) occurs.
+    //
+    // `witnessActualOverlap: false` is structural, not a relaxation. The holder
+    // protocol signals `transaction-held-*` from inside the gated
+    // `mutateSession` / `mutateSessionGuarded` callback, and `coldStartSession`
+    // is a `loadSession` READ that opens no session write transaction — so the
+    // gate never fires, the holder finishes and exits, and the parent's wait dies
+    // on `worker exited before writing transaction-held-1`. The staging witness
+    // below is the deterministic one this cohort can hold.
+    const results = await race(
+      [{ kind: 'coldStartSession' }, { kind: 'coldStartSession' }, { kind: 'coldStartSession' }],
+      { witnessActualOverlap: false },
+    );
+    // Every child got a usable, empty session. `values` throws on any child that
+    // reported a failure, which is where a double install ("table runs already
+    // exists"), an escaped SQLITE_BUSY, or a refused WAL conversion lands.
+    expect(values(results)).toEqual([
+      { defaultStack: [], claims: {} },
+      { defaultStack: [], claims: {} },
+      { defaultStack: [], claims: {} },
+    ]);
+    // Every child was parked at the staging barrier before ANY child touched the
+    // store, so the raced window really does contain all three cold opens rather
+    // than one child's install followed by two reads of what it built.
+    expectEveryWorkerStagedBeforeAnyMutation(results);
+    // ...and no child entered the holder gate, which is what makes the cohort's
+    // measured window the cold open itself and not a session transaction.
+    expect(results.every(({ tTransactionHeld }) => tTransactionHeld === null)).toBe(true);
+
+    const opened = await openRunbookStore(dir, { runtime: 'native' });
+    const integrity = await opened.driver.read((tx) =>
+      tx.prepare('PRAGMA integrity_check').get<{ readonly integrity_check: string }>(),
+    );
+    const schemaVersion = await opened.driver.read((tx) =>
+      tx.prepare('PRAGMA user_version').get<{ readonly user_version: number }>(),
+    );
+    expect(integrity).toEqual({ integrity_check: 'ok' });
+    expect(schemaVersion).toEqual({ user_version: SCHEMA_VERSION });
+    for (const file of inertFiles) {
+      await expect(fs.readFile(file)).resolves.toEqual(invalidBytes);
+    }
+  }, 120_000);
+
   it('does not lose any claim when N processes mint run-control claims for N different runs', async () => {
     // The canonical lost update: each writer reads the session, adds its claim,
     // writes it back. Unserialized, the last writer's snapshot (taken before the

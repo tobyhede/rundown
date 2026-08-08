@@ -76,9 +76,29 @@ debt. The fix is to move it, not to rationalise its location.
 
 ### Concurrent write synchronization
 
-When multiple CLI processes may mutate the same file (e.g.,
-`.rundown/session.json`, run state, artifact manifest), use **file-based
-exclusive locks** with process-aware stale lock reclamation:
+When multiple CLI processes may mutate a file-backed artifact such as the
+artifact manifest, use **file-based exclusive locks** with process-aware stale
+lock reclamation. Run and session authority lives in SQLite and uses database
+transactions and execution leases instead.
+
+**The replacement is not equivalent, and the difference is a failure mode, not a
+detail.** A file lock _blocks_ a contender for up to 5s and then usually
+succeeds. Of the two mechanisms that replaced it, only one behaves that way:
+
+- **Transaction contention** (`mutateSession`, and every `BEGIN IMMEDIATE`
+  write) blocks like the lock did — `PRAGMA busy_timeout = 5000` inside SQLite
+  plus 10 application-level retries at 25ms × attempt in the native driver.
+- **The optimistic CAS** behind `RunbookStore.mutateState` — the per-run
+  read-modify-write that replaced the run-state lock — does not. It replays the
+  whole cycle at most **8 times with NO backoff**, so all 8 attempts can land
+  within a few milliseconds; a few-way concurrent writer then exhausts the
+  budget and the call returns `concurrent_modification`, which surfaces as a
+  command failure where the lock would have waited and won.
+
+Treat `concurrent_modification` as a reachable arm on any path that can be
+driven concurrently — handle it or retry it, and never document it as
+theoretical. `build` callbacks passed to `mutateState` run once per attempt and
+MUST therefore be free of external side effects.
 
 **Pattern:** Acquire the lock, then scope its release with `await using` so the
 lock is released deterministically on every exit path — including early `return`
@@ -107,18 +127,24 @@ Domain locks expose `scope()` / `held()` built on them.
   committed outcome of the protected work. Never release a domain lock from a
   bare `finally` — that is the RD-102 masking defect.
 
-**Examples:** `CompletionLock`, `DelegationLock`, and `SessionLock`
-(`packages/core/src/runbook/{completion,delegation,session}-lock.ts`) all expose
-`acquire` + `scope()` / `held()`. `RunStateLock` (`run-state-lock.ts`) is the
-exception: it is consumed through the narrow `RunStateLockLike` DI interface
-(acquire/release only, so test fakes stay trivial), so its caller —
-`RunbookStateManager.withRunStateLock` in `state.ts` — wraps `heldLock` inline
-rather than calling a `held()` method. See the lock fixture tests under
-`packages/core/__tests__/runbook/` (`*-lock.test.ts`).
+**Examples:** The artifact-manifest and sql.js durable-replacement locks use
+these primitives. `CompletionLock` and `DelegationLock` also survive, over six
+production call sites: `recordManualCompletion`, `recordChildCompletion`, and
+`drainResolvedCompletions` in `packages/core/src/runbook/completion-service.ts`,
+plus the inline-launch (`packages/cli/src/services/execution.ts`), run-start
+`afterInit` (`packages/cli/src/commands/run.ts`), and claim-and-launch
+(`packages/cli/src/helpers/runbook-pipeline.ts`) paths in the CLI.
+
+Their survival is a **tracked deviation from the single-store plan**, which
+called for deleting all four core domain locks once the delegate/collect/abort
+workflows became transactional — `SessionLock` and `RunStateLock` are gone,
+these two are not. Follow-up is tracked in #690, which also owns the
+`DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
+do not add new consumers of either lock, and do not read their survival as
+licence to put new run or session state behind a file lock.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
-(e.g., `sessionLockPath(cwd)` if manifest is per-project, or derive a
-manifest-specific lock path from `manifestPath(cwd)` + `.lock`).
+derived from `manifestPath(cwd)` + `.lock`.
 
 ### Actor dependencies
 
@@ -291,20 +317,20 @@ not part of the public Rundown format specification. See
 
 ## State Persistence
 
-State persists in `.rundown/runs/` (execution state) and `.rundown/session.json`
-(active runbook tracking). Runbook source files are discovered from multiple
-locations (see [Runbook Discovery](#runbook-discovery)). State files persist
-across context clears.
+Run and session state persists in `.rundown/rundown.db`. Captured outputs remain
+under `.rundown/runs/<run-id>/outputs/`. Runbook source files are discovered
+from multiple locations (see [Runbook Discovery](#runbook-discovery)). State
+persists across context clears.
 
 <important>
 **Principle:** NEVER migrate persisted runbook state between versions.
 </important>
 
 **Principle:** Never migrate persisted runbook state between versions. This
-applies to all data written to `.rundown/runs/`: structured `RunbookState`
-fields (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob
-stored inside `RunbookState`. Neither is exempt. For the v1 release, persisted
-runbook state uses schema version `1`; state with any other schema version or
+applies to all run data written to SQLite: structured `RunbookState` fields
+(step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
+inside `RunbookState`. Neither is exempt. For the v1 release, persisted runbook
+state uses schema version `1`; state with any other schema version or
 incompatible structure is invalid. On schema changes, running runbooks should be
 completed/closed and restarted. The CLI should detect invalid state (via schema
 version or structural guard) and prompt the user to finish or prune — never
@@ -405,6 +431,18 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   before every push.** Scoped `jest` runs are not a substitute: spelling
   (`cspell`) and typed lint (`jsdoc/require-throws` and friends) only run here,
   so a change can be green in every targeted suite and still fail the gate.
+- **`pnpm run verify:site` — `verify` type-checks `site/` but does not run its
+  behaviour.** `check:types:site` (`astro check`, ~5s) is in the `verify`
+  fan-out, and is the directory's _only_ gate there: Biome, cspell, and Prettier
+  all exclude `site`, and no Playwright runs. Two regressions on the
+  single-store branch reached CI through that hole, so `site/tsconfig.json`
+  enables `exactOptionalPropertyTypes` — plain `astro/tsconfigs/strict` does not
+  catch passing `recursive: undefined` to a strictly-typed `fs.rm`, which was
+  one of them. **Touching `site/src` still means running
+  `pnpm run verify:site`** (snapshot build, then Playwright) in addition to
+  `verify`; it stays separate because the snapshot build plus browser run costs
+  minutes and most changes never touch `site/`. See
+  [site/CLAUDE.md](site/CLAUDE.md) for the dev-server foot-gun.
 - **Biome owns JS/TS/JSON/CSS; Prettier is Markdown-only** (`.prettierignore`
   line 1). **Never run `prettier` on TypeScript** — it reformats to a different
   quote/width style, and `biome format` will not undo it because it preserves

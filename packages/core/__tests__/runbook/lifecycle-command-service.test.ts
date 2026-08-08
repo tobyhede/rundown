@@ -57,7 +57,10 @@ import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-cr
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../../src/testing/effective-vars.js';
 import {
   assertClaimed,
   linkageFor,
@@ -268,6 +271,7 @@ describe('RunbookLifecycleCommandService', () => {
       substep: undefined,
       retryCount: 0,
       variables: brandStoredOutputsForTest({}),
+      templateVars: brandInitialTemplateVarsForTest({}),
       steps: [],
       resolvedCompletions: {},
       frameEntryCounts: { [buildFrameKey('1')]: 1 },

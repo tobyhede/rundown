@@ -35,8 +35,19 @@ export interface StepPosition {
 export interface RunbookMetadata {
   /** Path to the runbook source file */
   file: string;
-  /** Current runbook state (e.g., 'running', 'complete', 'stopped') */
+  /** Path to the SQLite run/session authority. */
   state: string;
+  /**
+   * Run id this output describes.
+   *
+   * The single-store cutover made {@link RunbookMetadata.state} the same
+   * constant for every run, so run identity is carried here instead of being
+   * read out of a per-run state path. Run ids are not secret — they are a
+   * read-only correlation handle, and no read command accepts one as a
+   * selector. Present on successful output only; refusal envelopes never echo
+   * the target run id.
+   */
+  runId?: string;
   /** Whether the runbook is waiting for user input (only included if true) */
   prompted?: boolean;
 }

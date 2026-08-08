@@ -13,12 +13,17 @@ import {
   exactFrame,
   inactiveFrame,
 } from '../../src/runbook/targeting.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandRunIdForTest,
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: runbookId,
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',

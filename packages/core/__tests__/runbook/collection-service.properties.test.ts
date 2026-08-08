@@ -19,7 +19,10 @@ import {
   type ClaimId,
   type RunbookState,
 } from '../../src/runbook/index.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 import type { SubstepState } from '../../src/runbook/types.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 
@@ -58,6 +61,7 @@ const steps: ResolvedStep[] = [
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   const frameKey = buildFrameKey('1');
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 'p.md' },
     runbookPath: 'p.md',

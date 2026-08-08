@@ -223,7 +223,7 @@ describe('stash command', () => {
       expect.objectContaining({ controlledRunId: childRunId }),
     );
     const ownerStatus = await runCliInProcess(['status', '--claim-id', claimId], workspace);
-    expect(JSON.parse(ownerStatus.stdout).state).toContain(childRunId);
+    expect(JSON.parse(ownerStatus.stdout).runId).toBe(childRunId);
   });
 
   it('refuses pop with a different claim id', async () => {
@@ -289,7 +289,7 @@ describe('stash command', () => {
     const sessionAfterOwnerPop = await readSession(workspace);
     expect(sessionAfterOwnerPop.stashed).toBeNull();
     const ownerStatus = await runCliInProcess(['status', '--claim-id', claimId], workspace);
-    expect(JSON.parse(ownerStatus.stdout).state).toContain(childRunId);
+    expect(JSON.parse(ownerStatus.stdout).runId).toBe(childRunId);
   });
 
   it('prevents default stash from replacing a claimed child stash', async () => {
@@ -554,6 +554,7 @@ rd echo "hello"
       stepName: 'A step that does not exist',
       retryCount: 0,
       variables: {},
+      templateVars: { ContextId: 'stash-pop-ctx', WorkPath: '.rundown/work' },
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -585,6 +586,7 @@ rd echo "hello"
       stepName: 'Parent step',
       retryCount: 0,
       variables: {},
+      templateVars: { ContextId: 'stash-pop-ctx', WorkPath: '.rundown/work' },
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -625,6 +627,7 @@ rd echo "hello"
       stepName: 'First step',
       retryCount: 0,
       variables: {},
+      templateVars: { ContextId: 'stash-pop-ctx', WorkPath: '.rundown/work' },
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -676,6 +679,6 @@ rd echo "hello"
     expect(session.active).not.toBe(runbookId);
     expect(session.stashed).toBeNull();
     const ownerStatus = await runCliInProcess(`status --claim-id ${MANUAL_CLAIM_ID}`, workspace);
-    expect(JSON.parse(ownerStatus.stdout).state).toContain(runbookId);
+    expect(JSON.parse(ownerStatus.stdout).runId).toBe(runbookId);
   });
 });

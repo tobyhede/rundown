@@ -17,6 +17,16 @@ import type { DelegationLinkage } from '../../../../src/runbook/types.js';
 
 /** One session mutation for a child process to perform after the barrier releases. */
 export type ChildOp =
+  /**
+   * Open the store from COLD and read the session.
+   *
+   * The only op the child does not warm the store for. Every other op wants the
+   * driver already open at the barrier so the measured window holds the mutation
+   * and nothing else; this one's subject IS the open — creating the database file,
+   * converting it to WAL, and installing the schema — so warming it would move the
+   * whole subject before the barrier and leave the race asserting nothing.
+   */
+  | { readonly kind: 'coldStartSession' }
   | { readonly kind: 'issueRunControlClaim'; readonly runId: string }
   | {
       readonly kind: 'claimRunbook';

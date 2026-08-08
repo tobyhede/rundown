@@ -668,7 +668,6 @@ describe('TextRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.rundown/runs/test.json',
         },
       };
 
@@ -676,6 +675,7 @@ describe('TextRenderer', () => {
 
       const output = writer.lines.join('\n');
       expect(output).toContain('test');
+      expect(output).toContain('.rundown/rundown.db');
       expect(output).toContain('START');
     });
 

@@ -1,3 +1,4 @@
+import { brandInitialTemplateVarsForTest } from './brand-helpers.js';
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
@@ -697,6 +698,7 @@ describe('executeGoto', () => {
   // fields; tests exercise only the specific fields each path consults.
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      templateVars: brandInitialTemplateVarsForTest({}),
       id: DEFAULT_RUNBOOK_ID,
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: 'test.md',

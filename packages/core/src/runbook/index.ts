@@ -29,6 +29,22 @@ export {
 // Storage is otherwise internal; the incompatible-schema error is public so the
 // CLI can classify it by type and surface the RD-305 envelope.
 export { IncompatibleSchemaError } from './storage/schema.js';
+// The WAL refusal is public for exactly the same reason, and surfaces RD-306.
+// Both fire on EVERY command, read-only ones included, because opening the store
+// precedes all of them — so an unclassifiable throw here is an RD-999 / "Unknown
+// error" on `rundown status` as readily as on `rundown pass`.
+export { WalJournalModeUnavailableError } from './storage/native-sqlite-driver.js';
+// Every unreadable-database path ends here — a corrupt file, a directory where
+// the database should be, a host without a usable `node:sqlite`. Public so a
+// consumer classifying storage failures can use `instanceof` instead of matching
+// the class name as a string, which is what the plugin's `rdpath` guard had to
+// do while this stayed internal.
+// `SqljsUnavailableError` is public for the same reason and travels with it: it
+// is the other half of the store-open failure surface (WebContainer takes the
+// sql.js path, every other host the native one), so a consumer classifying
+// "the database would not open" needs both arms or it still falls through to
+// RD-999 on exactly one class of host.
+export { NativeSqliteUnavailableError, SqljsUnavailableError } from './storage/driver-factory.js';
 // The ownership-refusal result surface is public for the same reason: a CLI
 // front end must be able to narrow a session mutation's typed refusal.
 export type {
@@ -84,6 +100,7 @@ export type {
 export { RUNBOOK_SOURCES } from './runbook-ref.js';
 export {
   assertRunId,
+  InvalidRunIdError,
   isRunId,
   RUN_ID_PATTERN,
   RUN_ID_PREFIX,
@@ -103,6 +120,8 @@ export * from './transition-kernel.js';
 export {
   generateRunId,
   RunbookStateManager,
+  ConcurrentStateModificationError,
+  isConcurrentStateModificationError,
   InvalidRunbookStateError,
   LegacySnapshotError,
   type SessionData,
@@ -462,7 +481,6 @@ export {
   CompletionLockTimeoutError,
   type CompletionLockLike,
 } from './completion-lock.js';
-export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export {
   acquireFileLock,
   FileLockTimeoutError,

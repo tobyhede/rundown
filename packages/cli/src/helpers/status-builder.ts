@@ -52,8 +52,18 @@ export interface StatusOutputData {
   stashed: boolean;
   /** Runbook file path (flat, not nested) */
   file?: string;
-  /** State file path */
+  /** SQLite run/session authority path. */
   state?: string;
+  /**
+   * Run id this status describes.
+   *
+   * Not caller-scoped: `isCallerScoped` withholds variable *contents* (`vars`,
+   * `artifacts`) from callers who cannot identify themselves, not identity.
+   * `parentLinkage` already discloses `parentRunId` and `tokenHash`
+   * unconditionally, and no read command accepts a run id as a selector, so a
+   * plain caller gains no access from it.
+   */
+  runId?: string;
   /** Whether runbook is in prompted mode */
   prompted?: boolean;
   /** Current position in runbook */
@@ -113,7 +123,7 @@ export interface StatusOutputData {
 
 function buildArtifactPathOptions(state: RunbookState, cwd: string): ArtifactPathOptions {
   const workPath =
-    typeof state.templateVars?.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
+    typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
   return { cwd, workPath };
 }
 
@@ -254,6 +264,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     stashed: true,
     file: metadata.file,
     state: metadata.state,
+    ...(metadata.runId != null && { runId: metadata.runId }),
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: buildStepPosition(
       stashedState.step,
@@ -275,7 +286,7 @@ export interface ActiveStatusOptions {
    * Session claim join map: childRunId → claimKey (#531). When provided, a
    * delegation whose COMPUTED state is `claimed` and whose childRunId has a
    * matching entry is surfaced with its `claimKey` so orphaned claims are
-   * recoverable from `rd status` without hand-reading `.rundown/session.json`.
+   * recoverable from `rundown status` without inspecting SQLite directly.
    */
   readonly claimKeyByChildRunId?: ReadonlyMap<string, string>;
 }
@@ -392,6 +403,7 @@ export function buildActiveStatus(
     stashed: !!stashedId,
     file: metadata.file,
     state: metadata.state,
+    ...(metadata.runId != null && { runId: metadata.runId }),
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: {
       ...basePosition,

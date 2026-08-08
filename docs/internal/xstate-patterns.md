@@ -539,7 +539,7 @@ This is directly relevant to dynamic compilers: a machine that exposes step IDs 
 
 Rundown has three distinct persistence concerns:
 
-1. **Domain persistence.** `.rundown/runs/`, `.rundown/session.json`, delegation records, artifact manifests, and other Rundown-owned files are the durable source for runbook state. These files store data only; function references, service instances, process-local paths, and runtime dependencies must flow through machine construction or `invoke.input` closures, not persisted context.
+1. **Domain persistence.** `.rundown/rundown.db` is the durable run/session authority; captured outputs and artifact manifests remain file-backed. Persisted state stores data only; function references, service instances, process-local paths, and runtime dependencies must flow through machine construction or `invoke.input` closures, not persisted context.
 
 2. **XState actor persistence.** XState supports `actor.getPersistedSnapshot()` and restore via `createActor(logic, { snapshot })`, including invoked/spawned actors. For Rundown, actor snapshots are subject to the same no-migration rule as every other persisted run state shape: reject stale persisted state and require explicit user action to finish, stop, prune, or restart.
 

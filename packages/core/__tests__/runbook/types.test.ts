@@ -9,7 +9,11 @@ import {
 } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandRunIdForTest,
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 import { makeSubstep } from '../helpers/step-factories.js';
 
 describe('SubstepState type', () => {
@@ -108,6 +112,7 @@ describe('Substep interface', () => {
 describe('RunbookState runbookSrc field', () => {
   it('should include runbookSrc field', () => {
     const state: RunbookState = {
+      templateVars: brandInitialTemplateVarsForTest({}),
       id: brandRunIdForTest(`rd_${'e'.repeat(32)}`),
       runbook: { source: 'project', path: 'test.runbook.md' },
       runbookPath: 'test.runbook.md',

@@ -24,7 +24,6 @@ describe('event output integration', () => {
       type: 'RUNBOOK_STARTED',
       payload: {
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
     emitter.emit({
@@ -101,7 +100,6 @@ describe('event output integration', () => {
       type: 'RUNBOOK_STARTED',
       payload: {
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
     emitter.emit({
@@ -139,7 +137,6 @@ describe('event output integration', () => {
       type: 'RUNBOOK_STARTED',
       payload: {
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
     emitter.emit({
@@ -182,7 +179,6 @@ describe('event output integration', () => {
       type: 'RUNBOOK_STARTED',
       payload: {
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
     emitter.emit({
@@ -215,7 +211,6 @@ describe('event output integration', () => {
       type: 'RUNBOOK_STARTED',
       payload: {
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 

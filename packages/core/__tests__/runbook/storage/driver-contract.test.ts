@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { runInNewContext } from 'node:vm';
 import type { SqlJsStatic } from 'sql.js';
 import { getErrorMessage, isError, isNodeError } from '../../../src/errors.js';
+import { Errors } from '../../../src/errors/factory.js';
 import {
   AsyncTransactionWorkError,
   UnrepresentableIntegerError,
@@ -17,6 +18,7 @@ import {
   NativeSqlDriver,
   openNativeDriver,
   isSqliteBusy,
+  WalJournalModeUnavailableError,
 } from '../../../src/runbook/storage/native-sqlite-driver.js';
 import {
   SqljsDriver,
@@ -673,15 +675,92 @@ function sqliteError(message: string, errcode: number): Error {
  * and spacing of the `BEGIN IMMEDIATE` attempts a contended write makes, and the
  * close-once-per-driver contract is only observable by counting `close()`.
  */
+/**
+ * Pragma answers the connection double reports back.
+ *
+ * Both fields model a REAL `node:sqlite` answer shape rather than a convenience
+ * scalar, because the driver's WAL guard reads both defensively: `.get()` may
+ * legitimately return no row, and `PRAGMA database_list` returns one row PER
+ * attached database, only one of which is `main`.
+ */
+interface PragmaFixture {
+  /**
+   * Row `PRAGMA journal_mode = WAL` answers with. An explicit `undefined`
+   * models a pragma that returned no row at all; omitting the key entirely
+   * defaults to a healthy `wal`.
+   */
+  readonly journalModeRow?: Record<string, unknown> | undefined;
+  /** Rows `PRAGMA database_list` answers with. Omitted defaults to in-memory `main`. */
+  readonly databaseList?: readonly Record<string, unknown>[];
+  /**
+   * Error the nth (0-based) `PRAGMA journal_mode = WAL` throws instead of
+   * answering; `undefined` answers normally.
+   *
+   * The connection pragmas are the ONE place the driver contends before it owns
+   * a transaction, and they all go through `prepare`. Without this seam the
+   * entire class of connection-configuration contention — the WAL conversion's
+   * busy retry, its budget, its backoff, and the short-circuit that must NOT
+   * consume it — is unreachable at unit level, because `beginIsContended` only
+   * reaches `exec('BEGIN IMMEDIATE')`.
+   *
+   * Returning an Error rather than a boolean is what lets a test distinguish
+   * contention (`SQLITE_BUSY`, retried) from a permanent failure
+   * (`SQLITE_READONLY`, rethrown at once) — the two arms of the same `if`.
+   */
+  readonly journalModeThrows?: (attempt: number) => Error | undefined;
+}
+
+/** The `database_list` an in-memory database reports: `main`, with no file behind it. */
+const IN_MEMORY_MAIN: readonly Record<string, unknown>[] = [{ seq: 0, name: 'main', file: '' }];
+
+/** The exact statement the driver issues to convert the connection to WAL. */
+const WAL_PRAGMA = 'PRAGMA journal_mode = WAL';
+
+/** A `database_list` row for `main` pointing at a real file. */
+const fileBackedMain = (): Record<string, unknown> => ({
+  seq: 0,
+  name: 'main',
+  file: path.join(dir, 'rundown.db'),
+});
+
+/**
+ * Minimal `node:sqlite` stand-in that records every statement the driver issues,
+ * can fail `BEGIN IMMEDIATE` on demand, and answers the connection pragmas.
+ *
+ * The retry budget and its backoff growth are only observable through the number
+ * and spacing of the `BEGIN IMMEDIATE` attempts a contended write makes, and the
+ * close-once-per-driver contract is only observable by counting `close()`.
+ */
 class RecordingDatabase {
   readonly executed: string[] = [];
+  /**
+   * Wall-clock stamp of each `PRAGMA journal_mode = WAL` issuance, in order.
+   *
+   * The conversion's retry BUDGET is observable as the length of this array and
+   * its BACKOFF as the gaps between entries — neither is reachable through
+   * `executed` alone, and neither is reachable at all without
+   * {@link PragmaFixture.journalModeThrows}.
+   */
+  readonly walConversionAt: number[] = [];
   closeCount = 0;
 
-  constructor(private readonly beginIsContended: (attempt: number) => boolean) {}
+  /**
+   * @param beginIsContended - Whether the nth `BEGIN IMMEDIATE` should fail busy.
+   * @param pragmas - Answers for the pragmas the constructor inspects.
+   */
+  constructor(
+    private readonly beginIsContended: (attempt: number) => boolean,
+    private readonly pragmas: PragmaFixture = {},
+  ) {}
 
   /** Number of `BEGIN IMMEDIATE` statements issued so far. */
   get beginAttempts(): number {
     return this.executed.filter((sql) => sql === 'BEGIN IMMEDIATE').length;
+  }
+
+  /** Number of `PRAGMA journal_mode = WAL` statements issued so far. */
+  get walConversionAttempts(): number {
+    return this.walConversionAt.length;
   }
 
   exec(sql: string): void {
@@ -689,6 +768,38 @@ class RecordingDatabase {
     if (sql === 'BEGIN IMMEDIATE' && this.beginIsContended(this.beginAttempts)) {
       throw sqliteError('database is locked', 5);
     }
+  }
+
+  prepare(sql: string): { get: () => unknown; all: () => unknown[] } {
+    this.executed.push(sql);
+    const pragmas = this.pragmas;
+    if (sql !== WAL_PRAGMA) {
+      return {
+        get: () => undefined,
+        all: () =>
+          sql === 'PRAGMA database_list' ? [...(pragmas.databaseList ?? IN_MEMORY_MAIN)] : [],
+      };
+    }
+    // Stamped at issue time, before the failure seam runs, so a refused attempt
+    // still counts against the budget exactly as a real one does.
+    const attempt = this.walConversionAt.length;
+    this.walConversionAt.push(Date.now());
+    return {
+      get: () => {
+        // node:sqlite compiles at `prepare` and RUNS the pragma at `get`, so a
+        // contended conversion throws from HERE. The seam matches that shape
+        // rather than throwing from `prepare`, so a driver that narrowed its
+        // `try` around only the `get` would still be covered.
+        const failure = pragmas.journalModeThrows?.(attempt);
+        if (failure !== undefined) {
+          throw failure;
+        }
+        // `in` rather than `??`: an explicit `undefined` is a distinct fixture
+        // (the pragma returned no row) and must not fall back to the default.
+        return 'journalModeRow' in pragmas ? pragmas.journalModeRow : { journal_mode: 'wal' };
+      },
+      all: () => [],
+    };
   }
 
   close(): void {
@@ -702,6 +813,16 @@ function recordingConnection(db: RecordingDatabase): DatabaseSync {
 }
 
 describe('native adapter connection configuration', () => {
+  it('installs the busy timeout before WAL initialization can contend', async () => {
+    const db = new RecordingDatabase(() => false);
+    await using _driver = new NativeSqlDriver(recordingConnection(db), { busyTimeoutMs: 1234 });
+
+    expect(db.executed.slice(0, 2)).toEqual([
+      'PRAGMA busy_timeout = 1234',
+      'PRAGMA journal_mode = WAL',
+    ]);
+  });
+
   it('opens in WAL mode with foreign keys on and the configured busy timeout', async () => {
     await using driver = new NativeSqlDriver(new DatabaseSync(path.join(dir, 'pragma.db')), {
       busyTimeoutMs: 1234,
@@ -761,6 +882,510 @@ describe('native adapter connection configuration', () => {
         });
       }),
     ).rejects.toThrow(/FOREIGN KEY/i);
+  });
+
+  // `PRAGMA journal_mode` RETURNS the effective mode: SQLite falls back to a
+  // rollback journal (and keeps running) whenever WAL cannot be established —
+  // a network filesystem, a host without shared-memory support. The driver
+  // advertises `capabilities.multiProcess`, and only WAL earns that claim, so a
+  // silent fallback must be a hard open failure rather than a `rundown.db-journal`
+  // sidecar nobody notices. Not reproducible against real `node:sqlite` on a
+  // normal host — a read-only connection and an in-transaction switch both throw
+  // outright — so the connection double is what pins the inspection.
+  describe('WAL refusal', () => {
+    it.each([
+      ['a rollback journal', 'delete'],
+      ['an in-memory rollback journal', 'memory'],
+    ])('refuses a file-backed connection that fell back to %s', (_label, mode) => {
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: mode },
+        databaseList: [fileBackedMain()],
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow(
+        `Database did not enter WAL journal mode (effective mode: ${mode}).`,
+      );
+      // Refused at construction: no transaction is ever opened over the connection.
+      expect(db.executed).not.toContain('BEGIN IMMEDIATE');
+    });
+
+    it('names the effective mode, the consequence, and only reachable causes', () => {
+      // The message is the operator's ONLY clue about which fallback happened and
+      // what to do, so it is asserted whole rather than by keyword. It states the
+      // observed mode and the guarantee that is no longer in force, and it lists
+      // the causes WITHOUT asserting one, because naming a network filesystem as
+      // THE cause would send an operator whose project is on a local disk looking
+      // in the wrong place.
+      //
+      // Every cause it names must be one that can actually reach this class, and
+      // the class is only reached when the pragma ANSWERED with a non-WAL mode.
+      // Measured on Node 24.18.1 / SQLite 3.53.1: a read-only database file and a
+      // read-only directory both THROW (errcode 8 `SQLITE_READONLY`, errcode 1544
+      // `SQLITE_READONLY_DIRECTORY`) without returning a mode, so they surface as
+      // `NativeSqliteUnavailableError` and never as this refusal. Listing them
+      // here sent the operator to `chmod` for a fault that cannot produce this
+      // message; the reachable causes replace them.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: [fileBackedMain()],
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow(
+        'Database did not enter WAL journal mode (effective mode: delete). ' +
+          'Only WAL serializes writes across processes, so that guarantee is not in ' +
+          'force on this connection. SQLite ANSWERED with the mode it kept instead of ' +
+          'failing, which narrows the cause to one of: a filesystem whose VFS provides ' +
+          'no shared memory (a network mount such as NFS or SMB is the common one), a ' +
+          'temporary database opened with no filename, or a connection that was already ' +
+          'inside a write transaction. A read-only file or directory is NOT among them — ' +
+          'that fails the pragma outright and surfaces as a different error. Establish ' +
+          'which applies before moving the project directory.',
+      );
+    });
+
+    it('refuses with a typed error carrying the effective mode', async () => {
+      // A bare Error reaches the CLI's error mapper as RD-999 / "Unknown error" on
+      // EVERY command, read-only ones included, since the store opens before any
+      // of them run. The typed class is what lets a front end classify the refusal
+      // and render a real code — the same shape IncompatibleSchemaError uses for
+      // RD-305 — and the mode rides as DATA so no consumer re-parses the message.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: [fileBackedMain()],
+      });
+
+      const err = await failureOf(() => new NativeSqlDriver(recordingConnection(db)));
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect((err as Error).name).toBe('WalJournalModeUnavailableError');
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBe('delete');
+    });
+
+    it('maps onto a registered error code rather than the unknown-error bucket', async () => {
+      // The point of the typed class is that a front end turns it into a CODED
+      // envelope; an unregistered refusal is indistinguishable from a crash to
+      // every consumer. This pins the taxonomy seam from the storage side — the
+      // mode the class carries is exactly what the factory accepts — so the CLI
+      // arm (packages/cli/src/helpers/wrapper.ts, alongside the RD-305 one) has a
+      // compile-checked contract to render and cannot silently drift back to
+      // RD-999.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: [fileBackedMain()],
+      });
+
+      const err = await failureOf(() => new NativeSqlDriver(recordingConnection(db)));
+      const coded = Errors.walJournalModeUnavailable(
+        (err as WalJournalModeUnavailableError).effectiveMode,
+      );
+
+      expect(coded.code).toBe('RD-306');
+      // The observed mode, the lost guarantee, and the candidate causes all
+      // survive into the ENVELOPE message. The code's `description` carries them
+      // too, but that reaches an operator only through `--text --verbose` and
+      // never appears in the JSON default — so the message is where they count.
+      expect(coded.message).toContain('effective mode: delete');
+      expect(coded.message).toContain('Cross-process write serialization is not in force');
+      // The envelope's cause list must be the SAME list
+      // `WalJournalModeUnavailableError` names, and every entry on it must be a
+      // condition under which the pragma ANSWERS with a non-WAL mode — the only
+      // way this code is reached. Both causes asserted here are measured, not
+      // reasoned: on Node 24.18.1 / SQLite 3.53.1 `new DatabaseSync('')` and a
+      // connection holding a dirty write transaction each return
+      // `{journal_mode:'delete'}` (the two real-connection tests below drive
+      // exactly those). A read-only file or directory does NOT, which is why the
+      // message says so outright: both throw instead (errcode 8, errcode 1544) and
+      // surface as RD-307, so naming them here sent an operator to `chmod` for a
+      // fault that cannot produce this error.
+      expect(coded.message).toContain('a temporary database opened with no filename');
+      expect(coded.message).toContain('a connection already inside a write transaction');
+      expect(coded.message).toContain(
+        'A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307',
+      );
+      expect(coded.context.effectiveMode).toBe('delete');
+    });
+
+    it('carries no effective mode when the pragma answered nothing', async () => {
+      // `unknown` in the message RENDERS an absent answer; it is not a mode SQLite
+      // reported. The typed field keeps that distinction, so a consumer cannot
+      // mistake "the pragma returned no row" for a journal mode named `unknown`.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: undefined,
+        databaseList: IN_MEMORY_MAIN,
+      });
+
+      const err = await failureOf(() => new NativeSqlDriver(recordingConnection(db)));
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBeUndefined();
+    });
+
+    it('refuses a non-memory fallback even on a connection with no file behind it', () => {
+      // Only `memory` is excusable for a connection with no file — it is what
+      // `:memory:` genuinely reports. A rollback journal is a fallback wherever
+      // it appears, so the mode check may not be widened to "anything without a file".
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: IN_MEMORY_MAIN,
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow('effective mode: delete');
+    });
+
+    it.each([
+      ['returned no row', undefined],
+      ['returned a row with no journal_mode column', {}],
+    ])('refuses when the pragma %s', (_label, journalModeRow) => {
+      // `.get()` is `unknown`-shaped: the optional chain and the `typeof` guard
+      // are what keep an absent answer from reading as a mode (or throwing a
+      // TypeError in place of the actionable refusal).
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow,
+        databaseList: IN_MEMORY_MAIN,
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow(
+        'Database did not enter WAL journal mode (effective mode: unknown).',
+      );
+    });
+
+    it('refuses when main is file-backed even though a sibling row is not', () => {
+      // `database_list` returns a row per attached database. Only `main` decides:
+      // scanning for ANY qualifying row would be wrong, and so would requiring
+      // EVERY row to qualify — `temp` never has a file.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'memory' },
+        databaseList: [fileBackedMain(), { seq: 1, name: 'temp', file: '' }],
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow('effective mode: memory');
+    });
+
+    it('accepts an in-memory main alongside an attached file-backed database', () => {
+      // The mirror image: a `main` with no file stays acceptable however many
+      // file-backed databases are attached beside it. Only `main` is consulted.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'memory' },
+        databaseList: [
+          { seq: 0, name: 'main', file: '' },
+          { seq: 2, name: 'attached', file: path.join(dir, 'other.db') },
+        ],
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).not.toThrow();
+    });
+
+    it('does not read a non-string database_list file as a path', () => {
+      // `all()` is `unknown`-shaped and SQL NULL arrives as `null`, which is
+      // `!== ''`. Without the `typeof` guard a NULL file column would read as a
+      // filesystem path and refuse a connection that legitimately has no file.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'memory' },
+        databaseList: [{ seq: 0, name: 'main', file: null }],
+      });
+
+      expect(() => new NativeSqlDriver(recordingConnection(db))).not.toThrow();
+    });
+
+    it('accepts the memory journal mode an in-memory database reports', async () => {
+      // `:memory:` cannot use WAL and always reports `memory`. It is single
+      // connection by construction, so it is not the hazard the check exists for,
+      // and every in-memory test fixture depends on it opening. Real connection,
+      // not the double: this is the behaviour the double is modelled on.
+      await using driver = new NativeSqlDriver(new DatabaseSync(':memory:'));
+      const journalMode = await driver.read(
+        (tx) =>
+          tx.prepare('PRAGMA journal_mode').get<{ readonly journal_mode: string }>()?.journal_mode,
+      );
+      expect(journalMode).toBe('memory');
+    });
+
+    it('closes the connection it opened when the refusal fires', () => {
+      // `openNativeDriver` owns the connection until the driver takes it, so a
+      // refused configuration must not leak the handle — the same rule
+      // `openRunbookDriver` applies with `disposeQuietly` on a refused schema.
+      // Patching the prototype is what makes the refusal fire on THIS path
+      // deterministically. The two conditions that refuse a real connection (see
+      // the two tests below) are reached by handing the driver a connection or by
+      // opening a temporary database — neither is an `openNativeDriver(<path>)`
+      // call, which is where the leak this test guards is observable.
+      // The refusal short-circuits before `isFileBacked` runs, so the journal-mode
+      // pragma is the ONLY statement prepared on this path — no delegation to the
+      // real `prepare` is needed, and the asserted message proves it stayed that way.
+      const prepareSpy = jest
+        .spyOn(DatabaseSync.prototype, 'prepare')
+        .mockReturnValue({ get: () => ({ journal_mode: 'delete' }) } as unknown as ReturnType<
+          DatabaseSync['prepare']
+        >);
+      const closeSpy = jest.spyOn(DatabaseSync.prototype, 'close');
+
+      try {
+        expect(() => openNativeDriver(path.join(dir, 'refused.db'))).toThrow(
+          'effective mode: delete',
+        );
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        prepareSpy.mockRestore();
+        closeSpy.mockRestore();
+      }
+    });
+
+    it('refuses a real temporary on-disk database, which cannot enter WAL', async () => {
+      // The one condition on an ordinary host that drives a REAL connection down
+      // the refusal path, with no double and no prototype patch. `DatabaseSync('')`
+      // opens a TEMPORARY on-disk database: `main` carries no filename, and SQLite
+      // will not convert a temp file to WAL, so the pragma ANSWERS `delete` rather
+      // than failing. Measured on Node 24.18.1 / SQLite 3.53.1.
+      //
+      // It matters beyond the coverage: every other refusal fixture injects a
+      // synthetic `journalModeRow`, which leaves open whether the class can fire
+      // at all. This says it can, and it is also what makes the "only `memory` is
+      // excusable for a file-less connection" rule above a real rule rather than a
+      // hypothetical — a temp database is exactly a file-less connection that
+      // reports something other than `memory`.
+      const err = await failureOf(() => openNativeDriver(''));
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBe('delete');
+    });
+
+    it('refuses a real FILE-BACKED connection that could not leave its rollback journal', async () => {
+      // The file-backed twin of the case above, on a real database file. SQLite
+      // will not change the journal mode while the connection holds a DIRTY write
+      // transaction: `sqlite3PagerOkToChangeJournalMode` returns false, so
+      // `OP_JournalMode` leaves the mode alone and the pragma ANSWERS with the one
+      // already in force instead of failing. Measured on Node 24.18.1 / SQLite
+      // 3.53.1 — and note a CLEAN `BEGIN` throws instead ("cannot change into wal
+      // mode from within a transaction"); the pending write is what makes it
+      // answer, which is why this fixture inserts before constructing.
+      //
+      // Reachable because `NativeSqlDriver` takes an already-open connection, so a
+      // consumer decides what state it is in. That makes the refusal — not a
+      // silently kept rollback journal — the right outcome here.
+      const dbPath = path.join(dir, 'dirty-txn.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec('PRAGMA journal_mode = DELETE');
+      seed.exec('CREATE TABLE t (x)');
+      seed.close();
+
+      const connection = new DatabaseSync(dbPath);
+      try {
+        connection.exec('BEGIN');
+        connection.exec('INSERT INTO t VALUES (1)');
+
+        const err = await failureOf(() => new NativeSqlDriver(connection));
+
+        expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+        expect((err as WalJournalModeUnavailableError).effectiveMode).toBe('delete');
+      } finally {
+        connection.exec('ROLLBACK');
+        connection.close();
+      }
+    });
+  });
+
+  // The conversion contends, and `PRAGMA busy_timeout` does not cover it: the
+  // pragma rewrites the database header under a write transaction, and SQLite
+  // refuses the SHARED -> RESERVED step WITHOUT consulting the busy handler
+  // (`sqlite3PagerSetBusyHandler`, pager.c). Two `rundown run` invocations racing
+  // to create a fresh database therefore leave the loser holding SQLITE_BUSY
+  // after 0.24 ms, which is why the constructor retries at all.
+  //
+  // None of this is reachable through `beginIsContended`, which only fails
+  // `exec('BEGIN IMMEDIATE')`; `journalModeThrows` is the seam that reaches it.
+  describe('WAL conversion contention', () => {
+    /** The `SQLITE_BUSY` a contended WAL conversion raises. */
+    const busy = (): Error => sqliteError('database is locked', 5);
+
+    it('retries a contended conversion and completes once it wins', async () => {
+      const db = new RecordingDatabase(() => false, {
+        journalModeThrows: (attempt) => (attempt < 3 ? busy() : undefined),
+      });
+
+      const driver = new NativeSqlDriver(recordingConnection(db), {
+        busyTimeoutMs: 0,
+        maxBusyRetries: 5,
+        busyRetryBaseMs: 1,
+      });
+
+      // Three refusals plus the attempt that won.
+      expect(db.walConversionAttempts).toBe(4);
+      // Configuration ran to completion: the pragma the constructor issues AFTER
+      // the conversion is what proves the loop exited by SUCCEEDING rather than by
+      // falling out of its budget.
+      expect(db.executed.at(-1)).toBe('PRAGMA foreign_keys = ON');
+      await driver[Symbol.asyncDispose]();
+    });
+
+    it('surfaces SQLITE_BUSY after exactly maxBusyRetries retries', async () => {
+      const db = new RecordingDatabase(() => false, {
+        journalModeThrows: () => busy(),
+      });
+
+      const err = await failureOf(
+        () =>
+          new NativeSqlDriver(recordingConnection(db), {
+            busyTimeoutMs: 0,
+            maxBusyRetries: 2,
+            busyRetryBaseMs: 1,
+          }),
+      );
+
+      expect(isSqliteBusy(err)).toBe(true);
+      // One initial attempt plus exactly maxBusyRetries retries. The budget is a
+      // bound, not a suggestion: this loop blocks the event loop while it runs,
+      // and each attempt can additionally burn a whole `busy_timeout` inside
+      // SQLite, so an unbounded (or off-by-one) loop is measured in seconds.
+      expect(db.walConversionAttempts).toBe(3);
+      // Refused during configuration: foreign keys were never turned on, and no
+      // transaction was ever opened over the connection.
+      expect(db.executed).not.toContain('PRAGMA foreign_keys = ON');
+      expect(db.executed).not.toContain('BEGIN IMMEDIATE');
+    });
+
+    it('backs off further before each successive retry', async () => {
+      const db = new RecordingDatabase(() => false, {
+        journalModeThrows: (attempt) => (attempt < 3 ? busy() : undefined),
+      });
+
+      const driver = new NativeSqlDriver(recordingConnection(db), {
+        busyTimeoutMs: 0,
+        maxBusyRetries: 3,
+        busyRetryBaseMs: 50,
+      });
+
+      expect(db.walConversionAttempts).toBe(4);
+      const gaps = db.walConversionAt.slice(1).map((at, index) => at - db.walConversionAt[index]);
+      // `busyRetryBaseMs * (attempt + 1)`: 50ms, then 100ms, then 150ms. Lower
+      // bounds only — a loaded machine can oversleep `Atomics.wait` but never wake
+      // early from it, so there is no flake here. A CONSTANT backoff, a zeroed
+      // one, or `attempt` in place of `attempt + 1` all fail the second bound.
+      expect(gaps[0]).toBeGreaterThanOrEqual(50);
+      expect(gaps[1]).toBeGreaterThanOrEqual(100);
+      expect(gaps[2]).toBeGreaterThanOrEqual(150);
+      await driver[Symbol.asyncDispose]();
+    });
+
+    it('pays the whole backoff inside the synchronous constructor', async () => {
+      // `sleepSync`/`Atomics.wait` is deliberate: the constructor is synchronous,
+      // so there is no turn to await on. The elapsed time is measured across the
+      // `new` expression with nothing awaited in between, which is what says the
+      // waiting happened THERE — a caller gets a fully configured connection or an
+      // exception, never a half-configured one it could interleave work with. The
+      // 1ms timer that still has not run says the same thing from the other side.
+      let timerFired = false;
+      const timer = setTimeout(() => {
+        timerFired = true;
+      }, 1);
+      const db = new RecordingDatabase(() => false, {
+        journalModeThrows: (attempt) => (attempt < 2 ? busy() : undefined),
+      });
+
+      const startedAt = Date.now();
+      const driver = new NativeSqlDriver(recordingConnection(db), {
+        busyTimeoutMs: 0,
+        maxBusyRetries: 5,
+        busyRetryBaseMs: 60,
+      });
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(db.walConversionAttempts).toBe(3);
+      // 60ms then 120ms, both spent before the constructor returned.
+      expect(elapsedMs).toBeGreaterThanOrEqual(180);
+      expect(timerFired).toBe(false);
+      clearTimeout(timer);
+      await driver[Symbol.asyncDispose]();
+    });
+
+    it('does not retry a conversion failure that is not contention', async () => {
+      // `isSqliteBusy` is the gate on the retry, and widening it would turn one
+      // permanent failure into eleven of them with the event loop blocked between.
+      // SQLITE_READONLY is the shape that matters: measured on Node 24.18.1 /
+      // SQLite 3.53.1, a read-only database file throws errcode 8 here rather than
+      // answering with a fallback mode.
+      const permanent = sqliteError('attempt to write a readonly database', 8);
+      const db = new RecordingDatabase(() => false, {
+        journalModeThrows: () => permanent,
+      });
+
+      const err = await failureOf(
+        () =>
+          new NativeSqlDriver(recordingConnection(db), {
+            busyTimeoutMs: 0,
+            maxBusyRetries: 10,
+            busyRetryBaseMs: 1,
+          }),
+      );
+
+      // Rethrown unwrapped, on the first attempt: the underlying SQLite error is
+      // the diagnosable one, and the budget is untouched.
+      expect(err).toBe(permanent);
+      expect(db.walConversionAttempts).toBe(1);
+    });
+
+    it('spends no retry budget on a genuine journal-mode fallback', async () => {
+      // The refusal `throw` sits OUTSIDE the catch, reached only once `.get()` has
+      // ANSWERED — so a rollback journal is decided on the first ask and never
+      // re-asked. Counting issuances is the only thing that pins it: turning that
+      // throw into a `continue` would re-issue the pragma up to the budget, and
+      // every other WAL-refusal test in this file would still pass.
+      const db = new RecordingDatabase(() => false, {
+        journalModeRow: { journal_mode: 'delete' },
+        databaseList: [fileBackedMain()],
+      });
+
+      const err = await failureOf(
+        () =>
+          new NativeSqlDriver(recordingConnection(db), {
+            busyTimeoutMs: 0,
+            maxBusyRetries: 10,
+            busyRetryBaseMs: 1,
+          }),
+      );
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect(db.walConversionAttempts).toBe(1);
+    });
+
+    it('exhausts the budget against a real writer holding the database', async () => {
+      // The double proves the loop's SHAPE; this proves the loop fires against
+      // real SQLite. A second connection holds RESERVED, which is precisely the
+      // cold-start race — and precisely the transition SQLite refuses without
+      // consulting the busy handler, so `busy_timeout` is no defence and each
+      // attempt fails in well under a millisecond.
+      //
+      // The database must start on a rollback journal: `PRAGMA journal_mode = WAL`
+      // against a database ALREADY in WAL is a no-op that takes no write lock and
+      // would make this test vacuous.
+      const dbPath = path.join(dir, 'wal-conversion-contended.db');
+      const holder = new DatabaseSync(dbPath);
+      holder.exec('PRAGMA journal_mode = DELETE');
+      holder.exec('CREATE TABLE t (x)');
+      holder.exec('BEGIN IMMEDIATE');
+      holder.exec('INSERT INTO t VALUES (1)');
+
+      const prepareSpy = jest.spyOn(DatabaseSync.prototype, 'prepare');
+      try {
+        const err = await failureOf(() =>
+          openNativeDriver(dbPath, {
+            busyTimeoutMs: 0,
+            maxBusyRetries: 2,
+            busyRetryBaseMs: 5,
+          }),
+        );
+
+        expect(isSqliteBusy(err)).toBe(true);
+        expect(getErrorMessage(err)).toMatch(/database is locked/i);
+        // Counted through the real connection, not a fixture: one initial attempt
+        // plus exactly maxBusyRetries retries actually reached SQLite.
+        const issued = prepareSpy.mock.calls.filter(([sql]) => sql === WAL_PRAGMA).length;
+        expect(issued).toBe(3);
+      } finally {
+        prepareSpy.mockRestore();
+        holder.exec('ROLLBACK');
+        holder.close();
+      }
+    });
   });
 
   it('closes the connection exactly once, however often it is disposed', async () => {
@@ -1038,6 +1663,35 @@ describe('positive driver selection', () => {
     expect(getErrorMessage(cause)).toMatch(/unable to open database file/i);
     // The code is mirrored onto the refusal so a caller need not unwrap it.
     expect((err as NodeJS.ErrnoException).code).toBe('ERR_SQLITE_ERROR');
+  });
+
+  it('surfaces the WAL refusal itself rather than the native-unavailable wrapper', async () => {
+    // node:sqlite is present and the connection opened: only the journal mode is
+    // wrong. Wrapping this one in NativeSqliteUnavailableError would assert a
+    // diagnosis that is false ("node:sqlite is unavailable on this host") AND
+    // bury the typed class a front end classifies on one `cause` deep, dropping
+    // the refusal back to RD-999. Patching the prototype is what lets a REAL
+    // connection take the refusal path — no host reports a rollback journal for
+    // a genuine file-backed database (see the WAL refusal suite).
+    const prepareSpy = jest
+      .spyOn(DatabaseSync.prototype, 'prepare')
+      .mockReturnValue({ get: () => ({ journal_mode: 'delete' }) } as unknown as ReturnType<
+        DatabaseSync['prepare']
+      >);
+
+    try {
+      const err = await failureOf(() =>
+        openRunbookDriver(path.join(dir, 'wal-refused.db'), { runtime: 'native' }),
+      );
+
+      expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
+      expect(err).not.toBeInstanceOf(NativeSqliteUnavailableError);
+      expect((err as WalJournalModeUnavailableError).effectiveMode).toBe('delete');
+      // The wrapper's framing must not survive on the message either.
+      expect(getErrorMessage(err)).not.toMatch(/node:sqlite/);
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 });
 

@@ -19,7 +19,10 @@ import {
 } from '../../src/runbook/index.js';
 import type { ExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 const CHILD = assertRunId('rd_22222222222222222222222222222222');
 const PARENT = assertRunId('rd_11111111111111111111111111111111');
@@ -52,6 +55,7 @@ function delegationLinkage(parentRunId: RunId = PARENT): DelegationLinkage {
 
 function makeState(id: RunId, overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',

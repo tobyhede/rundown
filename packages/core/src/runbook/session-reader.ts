@@ -19,7 +19,7 @@ export interface ActiveRunScope {
  * `WorkPath` / `ContextId` and should not wire together state/session
  * internals themselves.
  *
- * @param cwd - Project root containing `.rundown/session.json`.
+ * @param cwd - Project root containing the Rundown SQLite store.
  * @returns Active run scope values, or an empty object when no runbook is active.
  * @throws {Error} If active runbook state exists but fails validation or cannot be read.
  */

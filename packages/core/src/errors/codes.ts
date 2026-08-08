@@ -124,6 +124,59 @@ export const ErrorCodes = {
       'The runbook database uses a schema version this build cannot read, and Rundown never migrates persisted state. Any in-flight runs are unrecoverable — delete `.rundown/rundown.db` and restart your runbooks from source.',
     docSlug: 'incompatible-state-schema',
   },
+  WAL_JOURNAL_MODE_UNAVAILABLE: {
+    code: 'RD-306',
+    category: ErrorCategory.STATE,
+    title: 'Runbook database is not in WAL journal mode',
+    description:
+      'The runbook database fell back to a rollback journal, and only WAL serializes writes across processes, so concurrent commands are no longer serialized. SQLite answered with the mode it kept instead of failing, which narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307. Establish which applies before moving the project directory.',
+    docSlug: 'wal-journal-mode-unavailable',
+  },
+  STATE_STORE_UNAVAILABLE: {
+    code: 'RD-307',
+    category: ErrorCategory.STATE,
+    title: 'Runbook database unavailable',
+    description:
+      'The runbook database at .rundown/rundown.db could not be opened, so no command can read or write run state. The driver reports the underlying cause verbatim: a read-only database file or directory, a file that is not a database, a database another process holds locked, or a host whose SQLite adapter cannot be initialized. Rundown never downgrades to the single-writer sql.js adapter outside WebContainer, so the recovery path is repairing the host or the file — not retrying the command.',
+    docSlug: 'state-store-unavailable',
+  },
+  // The THROWN face of the same condition the CLI renders as the symbolic
+  // `CONCURRENT_MODIFICATION` code. The two are not duplicates and must not be
+  // collapsed: a command that receives `StateMutationResult` narrows the
+  // `concurrent_modification` arm and renders it itself (symbolic code), whereas
+  // `RunbookStateManager`'s throwing seam escapes to the top-level CLI error
+  // wrapper, which only speaks RD-NNN. Before this code that escape was RD-999
+  // "Unknown error" — the one surface where the condition was undiagnosable.
+  CONCURRENT_STATE_MODIFICATION: {
+    code: 'RD-308',
+    category: ErrorCategory.STATE,
+    title: 'Runbook state lost to a concurrent writer',
+    description:
+      'A run-state read-modify-write spent its optimistic compare-and-swap budget because another process committed to the same run first. Nothing was written and the persisted state is intact and consistent. Unlike the other 3xx state errors this is transient, not a refusal: re-run the command.',
+    docSlug: 'concurrent-state-modification',
+  },
+  // The ONE persisted-state refusal CLAUDE.md writes a required behaviour for:
+  // "The CLI should detect invalid state (via schema version or structural
+  // guard) and prompt the user to finish or prune — never silently adapt".
+  // Before this code that instruction was unreachable from the error surface,
+  // because `InvalidRunbookStateError` and `LegacySnapshotError` — the two
+  // classes `RunbookStateManager.load` raises for exactly that detection —
+  // reached the CLI wrapper untyped and rendered as RD-999 "Unknown error".
+  //
+  // NOT RD-305. That code is the whole DATABASE's schema (`PRAGMA user_version`)
+  // and its recovery is "delete .rundown/rundown.db"; this is ONE run row inside
+  // an otherwise healthy database, where deleting the database would destroy
+  // every other run. Nor RD-302, whose title and description name invalid JSON
+  // only — one of the four causes here — and still speak of a "state file" that
+  // the single-store cutover removed.
+  INVALID_PERSISTED_RUN_STATE: {
+    code: 'RD-309',
+    category: ErrorCategory.STATE,
+    title: 'Invalid persisted run state',
+    description:
+      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 1, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune"), then re-run the runbook from source.',
+    docSlug: 'invalid-persisted-run-state',
+  },
 
   // Validation Errors (4xx)
   GOTO_TARGET_NOT_FOUND: {

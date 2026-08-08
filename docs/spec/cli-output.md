@@ -69,7 +69,7 @@ The `--schema` flag's command-to-schema map lives in
 
 ```json
 {
-  "id": "string",      // State file identifier
+  "id": "string",      // Run identifier (`rd_` + 32 hex)
   "runbook": "string", // Runbook filename
   "status": "string",  // active, stashed, complete, stopped, inactive, invalid
   "step": "string",    // (optional) Current step position
@@ -151,10 +151,13 @@ newline-delimited event objects.
 
 **Text:**
 
+Text mode truncates the run id to its first 8 characters; JSON carries it in
+full.
+
 ```text
 ID        STATUS   STEP  RUNBOOK                    TITLE
-abc12345  active   1/3   deploy.runbook.md          Deploy to Production
-def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
+rd_01234  active   1/3   deploy.runbook.md          Deploy to Production
+rd_56789  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ```
 
 **JSON:**
@@ -162,7 +165,7 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ```json
 [
   {
-    "id": "abc12345-...",
+    "id": "rd_0123456789abcdef0123456789abcdef",
     "status": "active",
     "runbook": "deploy.runbook.md",
     "step": "1",
@@ -206,7 +209,8 @@ onboarding        plugin   New hire setup                 hr, setup
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
+Run:      rd_0123456789abcdef0123456789abcdef
 Prompt:   Yes
 
 ## 1. First Step
@@ -222,7 +226,8 @@ Step description here.
   "active": true,
   "stashed": false,
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
+  "runId": "rd_0123456789abcdef0123456789abcdef",
   "prompted": true,
   "position": { "current": "1", "total": 3 },
   "step": { "name": "1", "description": "First Step" }
@@ -234,6 +239,16 @@ scalar variables are present (it is omitted when there are none), and
 additionally include `delegations` and `parentLinkage` when present. Accumulated
 artifact records live in the unified `state.variables` map alongside other
 variables and are surfaced through `vars` rather than a separate field.
+
+`state` names the SQLite authority and is the same constant for every run, so
+`runId` is what identifies which run the response describes. It is not
+caller-scoped: a caller without `--claim-id` sees it on a claimed child's
+stashed status, just as it already sees that child's `file`, `position`, and
+`parentLinkage` (which carries `parentRunId` and `tokenHash`). Caller scoping
+withholds variable _contents_ — `vars` and `artifacts` — not identity, and a run
+id cannot be exchanged for them because no read command accepts one as a
+selector. `runId` appears on successful responses only; refusal envelopes never
+echo the target run id (see [Actor context required](#actor-context-required)).
 
 Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
 (pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for
@@ -280,7 +295,8 @@ terminal, or unlinked claim ids return an error response.
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
+Run:      rd_0123456789abcdef0123456789abcdef
 
 Action:   START
 
@@ -308,7 +324,7 @@ arbitrary command bytes cannot corrupt the JSON stream. `--text` preserves the
 human terminal behavior.
 
 ```jsonl
-{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","claim_id":"rdclm_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_started","prompted":false,"claim_id":"rdclm_0123456789abcdef0123456789abcdef_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
 {"type":"command_started","command":"echo \"hello\"","displayCommand":"echo \"hello\"","position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":3}
 {"type":"command_completed","command":"echo \"hello\"","success":true,"exitCode":0,"position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":4}
@@ -485,14 +501,12 @@ for jump).
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
-
 ─── 2 ──────────────────────────────────────────
 
 Action:   CONTINUE
 From:     1
-At:       2/3
+Result:   PASS
+At:       2
 
 ## 2. Second Step
 
@@ -505,8 +519,7 @@ Next step description.
 {
   "kind": "action",
   "action": "CONTINUE",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "stepResult": "PASS",
   "from": "1",
   "at": "2"
 }
@@ -514,6 +527,14 @@ Next step description.
 
 `from` and `at` are plain qualified step-ID strings (the step before the
 transition, and the step after). There is no `to` field.
+
+Transition responses (`pass`, `fail`, `goto`) carry no metadata block: no
+`file`, `state`, or `runId` in JSON, and no `File:`/`State:`/`Run:` header in
+text — on terminal and non-terminal transitions alike. `rundown run` and the
+session and lifecycle commands (`status`, `stop`, `complete`, `stash`, `pop`) do
+emit that metadata, including `runId`. Correlate a transition with its run
+through the `runbook_started` event's `runbookId` emitted by `rundown run`, or
+by calling `rundown status`.
 
 ### `rundown pass --claim-id <claim_id>`
 
@@ -537,9 +558,6 @@ for stopping).
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
-
 Action:   RETRY (1/3)
 At:       1/3
 
@@ -554,8 +572,6 @@ Step description.
 {
   "kind": "action",
   "action": "RETRY (1/3)",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "at": "1"
 }
 ```
@@ -565,9 +581,6 @@ Step description.
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
-
 Runbook:  STOP
 ```
 
@@ -576,9 +589,10 @@ Runbook:  STOP
 ```json
 {
   "kind": "action",
-  "action": "STOP",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "action": "stop",
+  "stepResult": "FAIL",
+  "from": "1",
+  "at": "1",
   "stopped": true
 }
 ```
@@ -606,9 +620,6 @@ The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 **Text:**
 
 ```text
-File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
-
 ─── 3 ──────────────────────────────────────────
 
 Action:   GOTO 3
@@ -626,8 +637,6 @@ Step description.
 {
   "kind": "action",
   "action": "GOTO 3",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "from": "1",
   "at": "3"
 }
@@ -664,7 +673,8 @@ object is the last line).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
+Run:      rd_0123456789abcdef0123456789abcdef
 
 Runbook:  STOP
 ```
@@ -678,7 +688,7 @@ Bare `rundown stop` emits newline-delimited JSON: the streamed
 ```jsonl
 {"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL","command":"stop","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"runbook_stopped","message":"User requested stop","position":{"current":"1","total":1},"reason":"fail_transition","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
-{"file":"runbooks/deploy.runbook.md","state":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","action":"stop","stopped":true,"kind":"action","message":"User requested stop"}
+{"file":"runbooks/deploy.runbook.md","state":".rundown/rundown.db","runId":"rd_0123456789abcdef0123456789abcdef","action":"stop","stopped":true,"kind":"action","message":"User requested stop"}
 ```
 
 ---
@@ -697,7 +707,8 @@ refusal on a delegation-exposed run, and must not be combined with `--claim-id`.
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
+Run:      rd_0123456789abcdef0123456789abcdef
 
 Runbook:  COMPLETE
 ```
@@ -711,7 +722,7 @@ Bare `rundown complete` emits newline-delimited JSON: the streamed
 ```jsonl
 {"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","command":"complete","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"runbook_completed","message":"Deployment finished","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
-{"file":"runbooks/deploy.runbook.md","state":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","action":"complete","complete":true,"kind":"action","message":"Deployment finished"}
+{"file":"runbooks/deploy.runbook.md","state":".rundown/rundown.db","runId":"rd_0123456789abcdef0123456789abcdef","action":"complete","complete":true,"kind":"action","message":"Deployment finished"}
 ```
 
 ---
@@ -726,7 +737,8 @@ Uses `action: "stash"` (command-name action).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
+Run:      rd_0123456789abcdef0123456789abcdef
 Prompt:   Yes
 
 Step:     1/3
@@ -741,7 +753,8 @@ Runbook:  STASHED
   "kind": "stash",
   "action": "stash",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
+  "runId": "rd_0123456789abcdef0123456789abcdef",
   "prompted": true,
   "position": { "current": "1", "total": 3 }
 }
@@ -764,7 +777,8 @@ Uses `action: "pop"` (command-name action).
 
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
+State:    .rundown/rundown.db
+Run:      rd_0123456789abcdef0123456789abcdef
 Prompt:   Yes
 
 Action:   PASS
@@ -782,7 +796,8 @@ Step description.
   "kind": "pop",
   "action": "pop",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
+  "state": ".rundown/rundown.db",
+  "runId": "rd_0123456789abcdef0123456789abcdef",
   "prompted": true,
   "position": { "current": "2", "total": 3 },
   "step": { "name": "2", "description": "Second Step" }
@@ -818,16 +833,18 @@ No stashed runbook to restore.
 ## prune
 
 Prune uses the same `Runbook` format as `ls`, with status values like "invalid"
-or "inactive".
+or "inactive". Ids are run ids (`rd_` + 32 hex) in both modes — prune reads them
+from the store as `RunId`s, and unlike `ls`, its text `ID` column is not
+truncated.
 
 ### `rundown prune --dry-run`
 
 **Text:**
 
 ```text
-ID        STATUS     RUNBOOK                    TITLE
-abc123    invalid    (invalid)
-def456    inactive   old-deploy.runbook.md      Old Deploy
+ID                                   STATUS    RUNBOOK                TITLE
+rd_0123456789abcdef0123456789abcdef  invalid   (invalid)
+rd_fedcba9876543210fedcba9876543210  inactive  old-deploy.runbook.md  [Old Deploy]
 ```
 
 **JSON:**
@@ -835,12 +852,12 @@ def456    inactive   old-deploy.runbook.md      Old Deploy
 ```json
 [
   {
-    "id": "abc123",
+    "id": "rd_0123456789abcdef0123456789abcdef",
     "status": "invalid",
     "runbook": "(invalid)"
   },
   {
-    "id": "def456",
+    "id": "rd_fedcba9876543210fedcba9876543210",
     "status": "inactive",
     "runbook": "old-deploy.runbook.md",
     "title": "Old Deploy"
@@ -863,12 +880,12 @@ Pruned 2 invalid state files.
 ```json
 [
   {
-    "id": "abc123",
+    "id": "rd_0123456789abcdef0123456789abcdef",
     "status": "invalid",
     "runbook": "(invalid)"
   },
   {
-    "id": "def456",
+    "id": "rd_fedcba9876543210fedcba9876543210",
     "status": "inactive",
     "runbook": "old-deploy.runbook.md",
     "title": "Old Deploy"

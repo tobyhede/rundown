@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import {
+  type ConcurrentStateModificationError,
   generateRunId,
+  isConcurrentStateModificationError,
   LegacySnapshotError,
   RunbookStateManager,
 } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { runStateLockPath, statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -851,19 +852,15 @@ describe('RunbookStateManager', () => {
       expect(session.claims[claimKey].lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
     });
 
-    it('loads a session with no claims at all without tripping the claim guard (#519)', async () => {
-      // `claims: {}` must load cleanly: `.some()` over an empty object is false. This
-      // kills the `.some` -> `.every` mutant specifically — `.every` over an empty
-      // object is TRUE, so the mutant would throw on every claimless session, which
-      // is the overwhelmingly common case.
+    it('ignores an unreleased session JSON file when loading the SQLite session', async () => {
       await mkdir(join(testDir, '.rundown'), { recursive: true });
-      await writeFile(
-        join(testDir, '.rundown', 'session.json'),
-        JSON.stringify({ defaultStack: [], claims: {} }),
-      );
+      const legacyPath = join(testDir, '.rundown', 'session.json');
+      const invalidBytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
+      await writeFile(legacyPath, invalidBytes);
 
       const session = await manager.loadSession();
       expect(session.claims).toEqual({});
+      await expect(readFile(legacyPath)).resolves.toEqual(invalidBytes);
     });
 
     it('load returns null for nonexistent runbook', async () => {
@@ -917,16 +914,6 @@ describe('RunbookStateManager', () => {
 
       const updated = await manager.load(state.id);
       expect(updated?.variables).toEqual({ A: '1', B: '2' });
-    });
-
-    it('never creates a run-state lock file', async () => {
-      // The lock is gone: atomicity comes from the transaction, so a stray lock
-      // file would mean a resurrected shadow serialization path.
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      await manager.update(state.id, { variables: merge({ A: '1' }) });
-      await expect(readFile(runStateLockPath(testDir, state.id), 'utf8')).rejects.toThrow();
     });
 
     it('lands every field when many updates contend on one run', async () => {
@@ -1000,6 +987,20 @@ describe('RunbookStateManager', () => {
 
       expect(updated.templateVars).toEqual({ env: 'prod' });
       expect(updated.templateVars).not.toHaveProperty('port');
+    });
+
+    it('always persists templateVars, even when create() is given none', async () => {
+      // Persisted state has no compatibility contract: `load` refuses a row
+      // without templateVars, so `create` must always persist it — `{}` when
+      // the caller supplies none.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      expect(state.templateVars).toEqual({});
+
+      const loaded = await manager.load(state.id);
+      expect(loaded?.templateVars).toEqual({});
     });
 
     it('preserves existing templateVars when updates.templateVars is undefined', async () => {
@@ -1232,12 +1233,12 @@ describe('RunbookStateManager', () => {
       });
 
       // Verify templateVars are present in created state
-      expect(state.templateVars?.items).toEqual(['a', 'b']);
-      expect(state.templateVars?.env).toBe('prod');
+      expect(state.templateVars.items).toEqual(['a', 'b']);
+      expect(state.templateVars.env).toBe('prod');
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
-      expect(loaded?.templateVars?.items).toEqual(['a', 'b']);
+      expect(loaded?.templateVars.items).toEqual(['a', 'b']);
     });
   });
 
@@ -1476,6 +1477,61 @@ describe('RunbookStateManager', () => {
       // would keep the assertion above green while the parent silently advanced.
       const parentAfter = await manager.load(parent.id);
       expect(parentAfter?.step).toBe('1');
+    });
+  });
+
+  describe('optimistic CAS exhaustion', () => {
+    /**
+     * Bump a run's persisted `state_version` out from under an in-flight cycle.
+     *
+     * @param runId - Run to churn.
+     */
+    async function churn(runId: string): Promise<void> {
+      const store = await getRunbookStore(testDir);
+      await store.transaction((txn) => {
+        txn.tx
+          .prepare(
+            "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+          )
+          .run({ id: runId });
+      });
+    }
+
+    // CLAUDE.md instructs callers to "handle it or retry it", which is only
+    // implementable against a typed outcome: a bare `Error` forces message
+    // matching, and reaches the CLI wrapper as RD-999 "Unknown error".
+    it('surfaces a losing read-modify-write as a typed, retryable error', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const error = await manager
+        .updateWithState(state.id, async () => {
+          // Always move the version behind our back, so no attempt can land and
+          // the whole budget is spent.
+          await churn(state.id);
+          return { stepName: 'never' };
+        })
+        .then(
+          (value) => value,
+          (reason: unknown) => reason,
+        );
+
+      expect(isConcurrentStateModificationError(error)).toBe(true);
+      expect((error as ConcurrentStateModificationError).runId).toBe(state.id);
+      // `retryable` is the discriminant, not the class name: it is what separates
+      // this from the refusals sharing the same throwing seam.
+      expect((error as ConcurrentStateModificationError).retryable).toBe(true);
+      // The name is not the discriminant, but it is what a stack trace and any
+      // structured log label the failure with, so it is pinned like its sibling
+      // InvalidRunIdError rather than left free to drift.
+      expect((error as ConcurrentStateModificationError).name).toBe(
+        'ConcurrentStateModificationError',
+      );
+      // Nothing was written: the losing cycle must not have persisted its patch.
+      expect((await manager.load(state.id))?.stepName).not.toBe('never');
     });
   });
 });

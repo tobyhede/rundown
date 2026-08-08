@@ -34,6 +34,7 @@ import {
   brandEffectiveVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
@@ -441,6 +442,7 @@ describe('deriveDelegateFrontier', () => {
     substepStates: readonly SubstepState[],
   ): RunbookState {
     return {
+      templateVars: brandInitialTemplateVarsForTest({}),
       id: brandRunIdForTest(`rd_${'1'.repeat(32)}`),
       runbook: { source: 'project', path: 'parent.md' },
       runbookPath: 'parent.md',

@@ -11,7 +11,7 @@ declare const claimSecretHashBrand: unique symbol;
 /** Bearer credential printed as `claim_id` and accepted by `--claim-id`. */
 export type ClaimId = string & { readonly [claimBearerBrand]: true };
 
-/** Non-secret lookup key persisted in `.rundown/session.json`. */
+/** Non-secret lookup key persisted in the SQLite claim table. */
 export type ClaimLookupKey = string & { readonly [claimLookupKeyBrand]: true };
 
 /** Hash of the secret segment of a claim bearer credential. */

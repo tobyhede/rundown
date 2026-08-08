@@ -13,7 +13,11 @@ import {
   resolveManualCompletionCursor,
   type RunbookState,
 } from '../../src/runbook/index.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandRunIdForTest,
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 const tx: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
@@ -61,6 +65,7 @@ const promptedForSteps: readonly ResolvedStep[] = [
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
     runbook: { source: 'project', path: 'cursor-test.md' },
     runbookPath: 'cursor-test.md',

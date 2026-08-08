@@ -40,11 +40,8 @@ export function assertSafeId(value: string, field: string): void {
   }
 }
 
-/** Directory path (relative to project root) where runbook execution state files are stored. */
+/** Directory path (relative to project root) for per-run filesystem artifacts. */
 export const RUNS_DIR = `${RUNDOWN_DIR}/runs`;
-
-/** File path (relative to project root) for the session tracking file. */
-export const SESSION_FILE = `${RUNDOWN_DIR}/session.json`;
 
 /** Directory path (relative to project root) for delegation lock files. */
 export const LOCKS_DIR = `${RUNDOWN_DIR}/locks`;
@@ -61,6 +58,26 @@ export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
 /** Single authoritative runbook state database. */
 export const DB_FILE = `${RUNDOWN_DIR}/rundown.db`;
 
+/**
+ * Suffixes SQLite appends beside {@link DB_FILE} while the database is in WAL mode.
+ *
+ * SQLite creates and removes the write-ahead log (`-wal`) and its shared-memory
+ * index (`-shm`) itself, but they are Rundown-owned state everywhere it matters
+ * to a caller: file-mode hardening has to `chmod` them alongside the database,
+ * the default policy has to grant the sandbox write access to them, and anything
+ * clearing a project's state has to delete them — a surviving `-wal` replays the
+ * previous run's frames into the next one.
+ *
+ * Declared once, as a `readonly` tuple of string literals, so the set has a
+ * single definition to extend and every consumer derives its own paths from it
+ * rather than re-typing the pair. The literal types are load-bearing: the site
+ * mirrors this constant in `site/src/lib/rundown-paths.ts` for browser code that
+ * cannot import this Node module, and `site/src/lib/rundown-paths.parity.ts`
+ * compares the two at the type level — a comparison that only has meaning while
+ * both sides stay literal. Do not widen the annotation to `readonly string[]`.
+ */
+export const DB_SIDECAR_SUFFIXES = ['-wal', '-shm'] as const;
+
 /** Directory path (relative to project root) for context-scoped output stores. */
 export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
 
@@ -71,14 +88,6 @@ export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
  * @returns Path to `.rundown/runs/`
  */
 export const runsDir = (cwd: string): string => path.join(cwd, RUNS_DIR);
-
-/**
- * Absolute path to the session tracking file.
- *
- * @param cwd - Project root directory
- * @returns Path to `.rundown/session.json`
- */
-export const sessionPath = (cwd: string): string => path.join(cwd, SESSION_FILE);
 
 /**
  * Absolute path to a project's runbook state database.
@@ -146,26 +155,6 @@ export const ensureStateDirs = async (cwd: string): Promise<void> => {
 };
 
 /**
- * Absolute path to a specific runbook state file.
- *
- * @param cwd - Project root directory
- * @param id - Runbook execution ID (must match `[A-Za-z0-9._-]+`)
- * @returns Path to `.rundown/runs/<id>.json`
- * @throws {Error} If `id` contains path separators, `..`, or is otherwise unsafe
- */
-export const statePath = (cwd: string, id: string): string => {
-  assertSafeId(id, 'id');
-  return path.join(cwd, RUNS_DIR, `${id}.json`);
-};
-
-/**
- * Session file path used by versions prior to the `.rundown/` migration.
- * Used only for upgrade detection — never written to.
- * @internal
- */
-export const LEGACY_SESSION_FILE = '.claude/rundown/session.json';
-
-/**
  * Absolute path to a delegation lock file.
  *
  * Lock path: `.rundown/locks/run-<parentRunId>.delegation.lock`
@@ -194,29 +183,3 @@ export const completionLockPath = (cwd: string, runId: string): string => {
   assertSafeId(runId, 'runId');
   return path.join(cwd, LOCKS_DIR, `run-${runId}.completion.lock`);
 };
-
-/**
- * Absolute path to a run-state lock file.
- *
- * Lock path: `.rundown/locks/run-<runId>.state.lock`
- *
- * @param cwd - Project root directory
- * @param runId - Run ID to lock (must match `[A-Za-z0-9._-]+`)
- * @returns Path to the run-state lock file
- * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
- */
-export const runStateLockPath = (cwd: string, runId: string): string => {
-  assertSafeId(runId, 'runId');
-  return path.join(cwd, LOCKS_DIR, `run-${runId}.state.lock`);
-};
-
-/**
- * Absolute path to the workspace-wide session lock file.
- *
- * One lock per project root serializes load-modify-save cycles on
- * `.rundown/session.json`. Lock path: `.rundown/locks/session.lock`.
- *
- * @param cwd - Project root directory
- * @returns Path to the session lock file
- */
-export const sessionLockPath = (cwd: string): string => path.join(cwd, LOCKS_DIR, 'session.lock');

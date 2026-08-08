@@ -1,4 +1,5 @@
 import { describe, it, expect, jest } from '@jest/globals';
+import { brandInitialTemplateVarsForTest } from '@rundown-org/core/testing/effective-vars';
 import { ExecutionEventEmitter, RunbookRefSchema, type RunbookState } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { brandStoredOutputsForTest } from './brand-helpers.js';
@@ -10,6 +11,7 @@ type ExecutionEvent = Parameters<OutputEmitter['executionEvent']>[0];
 describe('createBridgedEmitter', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      templateVars: brandInitialTemplateVarsForTest({}),
       id: 'wf-test' as RunbookState['id'],
       runbook: { source: 'project', path: 'test-runbook.runbook.md' },
       runbookPath: 'test-runbook.runbook.md',
@@ -63,7 +65,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 
@@ -86,7 +87,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 
@@ -107,7 +107,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 
@@ -128,7 +127,6 @@ describe('createBridgedEmitter', () => {
       payload: {
         title: 'Test',
         prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
       },
     });
 

@@ -12,7 +12,6 @@ describe('DEFAULT_POLICY write allowlist — semantic (glob-matcher)', () => {
       ['.rundown/runs/abc.json'],
       ['.rundown/runs/nested/state.json'],
       ['.rundown/locks/run-abc.delegation.lock'],
-      ['.rundown/session.json'],
       ['.rundown/work/main/artifact.txt'],
       ['.rundown/work/feature-foo/deep/file.md'],
       ['.rundown/contexts/ctx-abc/outputs.json'],
@@ -34,6 +33,7 @@ describe('DEFAULT_POLICY write allowlist — semantic (glob-matcher)', () => {
 
     it.each([
       ['.rundown/other.json'], // unrecognized top-level file
+      ['.rundown/session.json'], // unreleased JSON authority is inert
       ['.rundown/config.yaml.bak'], // adjacent user file
     ])('denies write to %s', (rel) => {
       expect(evaluator.checkPath(abs(rel), 'write').allowed).toBe(false);

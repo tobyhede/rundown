@@ -704,5 +704,5 @@ To debug further:
 1. Inspect MCP host logs for stderr from `rundown-mcp`.
 2. Run the corresponding CLI command directly with `--text` for human-readable
    output.
-3. Confirm `.rundown/` state files exist and are readable.
+3. Confirm `.rundown/rundown.db` exists and is readable.
 4. Confirm `npx` can resolve `rundown` from the MCP server's working directory.

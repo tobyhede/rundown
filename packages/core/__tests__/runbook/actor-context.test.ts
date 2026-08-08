@@ -9,7 +9,10 @@ import {
   verifiedClaimContext,
   type RunbookState,
 } from '../../src/runbook/index.js';
-import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 const runIdA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const runIdB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
@@ -20,6 +23,7 @@ const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
 
 function baseState(id = runIdA): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'p.md' },
     runbookPath: 'p.md',

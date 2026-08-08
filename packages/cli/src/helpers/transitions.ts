@@ -156,7 +156,7 @@ export interface TransitionContext {
   /**
    * When true, the decisive parent-advance write is run through
    * {@link SessionService.runGuardedParentAdvance} so the open-delegated-children
-   * guard is re-checked atomically under the session lock (closing the
+   * guard is re-checked inside the decisive write's own transaction (closing the
    * check-then-act race against a concurrent `rd claim`). Set only for a bare
    * pass/fail targeting the default parent; false for claim-targeted writes
    * (which advance a child) and for collect.

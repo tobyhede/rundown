@@ -103,6 +103,11 @@ export class JSONRenderer implements OutputRenderer {
       case 'metadata':
         this.output.file = event.metadata.file;
         this.output.state = event.metadata.state;
+        // `state` is the same database path for every run, so dropping `runId`
+        // here would leave the JSON consumer unable to tell runs apart.
+        if (event.metadata.runId) {
+          this.output.runId = event.metadata.runId;
+        }
         if (event.metadata.prompted) {
           this.output.prompted = event.metadata.prompted;
         }

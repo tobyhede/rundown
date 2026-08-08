@@ -285,7 +285,7 @@ export type RunningStackMemberResolution =
       readonly state: RunbookState;
     }
   | {
-      /** The named id is not on the session default stack (or its state file is missing). */
+      /** The named id is not on the session default stack (or its persisted run is missing). */
       readonly kind: 'not_on_stack';
     }
   | {
@@ -866,7 +866,7 @@ export class SessionService {
    * - Reader and writer SHARE A CLOCK. The parent's `rundown status` and the
    *   holder's authorized command are processes on the same host — the lock design
    *   requires it (stale reclamation is `kill(pid, 0)`, meaningless across hosts)
-   *   and `session.json` is a local file. A backward step moves both, so the older
+   *   and the SQLite authority is local. A backward step moves both, so the older
    *   timestamp is the CORRECT answer and no premature idle occurs.
    * - The clamp would introduce the AC6 fail-open it appears to prevent. Pinning
    *   `lastSeenAt` in the future meets `claimActivity`'s `Math.max(0, …)` skew

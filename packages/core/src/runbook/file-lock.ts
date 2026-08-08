@@ -7,8 +7,10 @@
  * the lock file is never visible half-written — with retry-jitter and
  * stale-lock reclaim.
  *
- * Used by the completion, delegation, session, and run-state locks, and by the
- * artifact-manifest append paths (sync and async).
+ * Used by the completion and delegation locks, by the artifact-manifest append
+ * paths (sync and async), and by the sql.js durable-replacement lock. Run and
+ * session state are no longer file-locked — they commit through SQLite
+ * transactions.
  *
  * @module runbook/file-lock
  */

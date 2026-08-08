@@ -7,6 +7,13 @@ jest.unstable_mockModule('../../../src/runbook/storage/sqljs-driver.js', () => (
 }));
 jest.unstable_mockModule('../../../src/runbook/storage/native-sqlite-driver.js', () => ({
   openNativeDriver: jest.fn(),
+  // The factory imports this as a VALUE — it narrows on the class to re-throw a
+  // WAL refusal unwrapped instead of mislabelling it "native SQLite unavailable"
+  // — so the mock has to supply a class, not a stub. One stands in for the real
+  // one throughout this suite because the mock replaces the module for the
+  // factory too, which keeps `instanceof` identity consistent; the pass-through
+  // itself is pinned against the REAL class in driver-contract.test.ts.
+  WalJournalModeUnavailableError: class WalJournalModeUnavailableError extends Error {},
 }));
 
 const { openSqljsDriver } = await import('../../../src/runbook/storage/sqljs-driver.js');

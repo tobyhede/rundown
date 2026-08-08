@@ -92,7 +92,17 @@ describe('status command', () => {
     expect(result.stdout).toMatch(/rd_[a-f0-9]{32}/);
   });
 
-  it('reports invalid persisted state without prune guidance', async () => {
+  // CLAUDE.md § State Persistence: "The CLI should detect invalid state (via
+  // schema version or structural guard) and prompt the user to finish or prune
+  // — never silently adapt". This test previously pinned the opposite: it
+  // asserted `RD-999` AND asserted the emitted output did NOT mention prune,
+  // codifying the defect that made that documented recovery path unreachable
+  // from the error surface. Reproduced against the built CLI before the fix:
+  //   { "kind": "error",
+  //     "error": "Unknown error - Invalid runbook state for \"rd_…\": invalid
+  //               schemaVersion; expected schema version 1.",
+  //     "code": "RD-999", "details": { "title": "Unknown error" } }
+  it('reports invalid persisted state as RD-309 with finish/stop/prune guidance', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
     const state = await getActiveState(workspace);
@@ -111,15 +121,33 @@ describe('status command', () => {
       kind?: string;
       error?: string;
       code?: string;
+      details?: { title?: string };
     };
 
     expect(error.kind).toBe('error');
-    expect(error.code).toBe('RD-999');
-    expect(error.error).toMatch(/invalid runbook state|state.*invalid/i);
+    expect(error.code).toBe('RD-309');
+    expect(error.details?.title).not.toBe('Unknown error');
+    // The diagnosed cause survives …
+    expect(error.error).toMatch(/invalid schemaVersion/i);
+    // … alongside the recovery, in the default JSON envelope rather than only
+    // in the `--text --verbose` description.
+    expect(error.error).toMatch(/rundown complete/);
+    expect(error.error).toMatch(/rundown stop/);
+    expect(error.error).toMatch(/rundown prune/);
+  });
 
-    const emitted = `${result.stdout}\n${result.stderr}`;
-    expect(emitted).not.toMatch(/prune/i);
-    expect(emitted).not.toMatch(/clear invalid state/i);
+  // The recovery the envelope names must actually work on the state that
+  // produced it, or the instruction is worse than none.
+  it('accepts the stop recovery the RD-309 envelope names', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+    const state = await getActiveState(workspace);
+    expect(state).toBeDefined();
+
+    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+
+    const stopped = await runCliInProcess('stop', workspace);
+    expect(stopped.exitCode).toBe(0);
   });
 
   describe('incompatible database schema (RD-305)', () => {
@@ -284,13 +312,13 @@ describe('claim-id delegated children', () => {
     const claimId2 = child2Output!.claim_id as string;
 
     let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
-    expect(JSON.parse(status.stdout).state).toContain(child1Id);
+    expect(JSON.parse(status.stdout).runId).toBe(child1Id);
 
     status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
-    expect(JSON.parse(status.stdout).state).toContain(child2Id);
+    expect(JSON.parse(status.stdout).runId).toBe(child2Id);
 
     status = await runCliInProcess('status', workspace);
-    expect(JSON.parse(status.stdout).state).toContain(parentId);
+    expect(JSON.parse(status.stdout).runId).toBe(parentId);
   });
 
   async function setupOwnedStash() {
@@ -355,7 +383,7 @@ describe('claim-id delegated children', () => {
   }
 
   it('plain status can report the global stashed child without claim vars', async () => {
-    await setupOwnedStash();
+    const { childRunId } = await setupOwnedStash();
 
     const status = await runCliInProcess('status', workspace);
 
@@ -364,6 +392,11 @@ describe('claim-id delegated children', () => {
       expect.objectContaining({ active: false, stashed: true }),
     );
     expect(status.stdout).toContain('child-secret.runbook.md');
+    // Identity is not caller-scoped: `runId` joins `file`, `position`, and the
+    // unconditional `parentLinkage` (which already carries `parentRunId` and
+    // `tokenHash`). No read command accepts a run id as a selector, so a plain
+    // caller cannot trade it for the vars below.
+    expect(JSON.parse(status.stdout).runId).toBe(childRunId);
     // Plain status must not leak claim-scoped variables: only `--claim-id`
     // callers see them (asserted positively in the next test).
     expect(status.stdout).not.toContain('top-secret-input');
@@ -380,7 +413,7 @@ describe('claim-id delegated children', () => {
     expect(output.active).toBe(true);
     expect(output.stashed).toBe(true);
     expect(output.file).toContain('child-secret.runbook.md');
-    expect(output.state).toContain(childRunId);
+    expect(output.runId).toBe(childRunId);
     expect(output.parentLinkage).toEqual(
       expect.objectContaining({
         kind: 'delegation',
@@ -407,7 +440,7 @@ describe('claim-id delegated children', () => {
     expect(status.exitCode).toBe(0);
     expect(output.active).toBe(false);
     expect(output.status).toBe('completed');
-    expect(output.state).toContain(childRunId);
+    expect(output.runId).toBe(childRunId);
   });
 
   it('anonymous stash remains visible to plain callers', async () => {

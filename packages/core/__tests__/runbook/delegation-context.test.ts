@@ -40,6 +40,7 @@ function ancestorRunId(index: number): RunId {
 /** Helper: create minimal RunbookState for buildContextSnapshot tests. */
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    templateVars: brandInitialTemplateVarsForTest({}),
     id: RUN_ID,
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
