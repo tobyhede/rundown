@@ -2345,10 +2345,28 @@ export class RunbookLifecycleCommandService {
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
       ready.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-    // The in-lock open-children re-check applies the same rule to a run-shaped
-    // ready resolution: guard when bare-shaped, exempt when the transition
-    // carries an explicit step target.
-    const guardOpenChildren = (ready.kind === 'default' || ready.kind === 'run') && !targeted;
+    // Every resolution shape is guarded by the in-transaction open-children
+    // re-check, with two exemptions: a transition carrying an explicit step
+    // target, and a delegated-child bearer. Stated as exemptions rather than as
+    // an enumeration of guarded shapes because that is the actual rule — and
+    // because enumerating would re-test `kind === 'claim'` inside a branch only
+    // reachable when it holds, which no test can distinguish.
+    //
+    // A run-control claim is guarded too, and is in practice the arm that
+    // matters: on a delegation-exposed run a bare mutation is refused
+    // ACTOR_CONTEXT_REQUIRED and `--run` cannot carry a bearer, so `--claim-id`
+    // is the only invocation the post-R1 protocol leaves an orchestrator.
+    // Guarding only the bare/run shapes would guard the arms an orchestrator
+    // cannot reach and leave the prescribed one unguarded (#700).
+    //
+    // A delegated-child bearer is exempt, mirroring the pre-check exemption in
+    // `resolveTransitionTarget`. The guard reads `claims WHERE parent_run_id =
+    // <target>`, and a delegated child can never be a delegation parent because
+    // RD-819 refuses nested delegation, so the set is provably empty. That is a
+    // coincidence of two independent rules, not an authority decision, and it
+    // evaporates the day the nested prohibition moves.
+    const guardOpenChildren =
+      !targeted && (ready.kind === 'claim' ? ready.claim.delegation === undefined : true);
 
     // Single resolution: derive the resolved run's steps in-seam from its
     // in-memory state, rather than taking `steps` as an input that would force the

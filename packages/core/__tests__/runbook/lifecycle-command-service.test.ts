@@ -4644,6 +4644,108 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  describe('claim-targeted open-children guard', () => {
+    const parentRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee10');
+    const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee11');
+
+    const twoSteps: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    it('refuses a racing child claim on the run-control claim arm', async () => {
+      // The run-control `--claim-id` arm is the ONLY invocation the post-R1
+      // protocol permits on a delegation-exposed run: a bare mutation is
+      // refused ACTOR_CONTEXT_REQUIRED, and `--run` cannot carry a bearer. So
+      // this arm, not the `run`-shaped one, is where an orchestrator actually
+      // advances a parent — and it must reach the same in-transaction guard.
+      //
+      // The child claim commits after the resolver's cheap pre-check and inside
+      // the fenced preparation, so only the in-transaction guard can catch it.
+      loadStepsImpl = () => twoSteps;
+      const linkage = linkageFor(parentRunId, 'a');
+      await activate(baseState({ id: parentRunId }));
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const evidence = runControlEvidence(parentRunId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realPrepare = actorService.prepareActorMutation.bind(actorService);
+      let claimResult: Awaited<ReturnType<SessionService['claimRunbook']>> | undefined;
+      jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+        claimResult ??= await claimant.claimRunbook(childRunId, linkage);
+        return realPrepare(...args);
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'claim', claimId: evidence.claimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(claimResult?.kind).toBe('committed');
+      expect(outcome.kind).toBe('open_delegated_children');
+      // The guard aborts before the first UPDATE, so the parent never advanced.
+      expect((await manager.load(parentRunId))?.step).toBe('1');
+    });
+
+    it('exempts a delegated-child bearer from the open-children guard', async () => {
+      // RD-819 refuses nested delegation, so a delegated child can never be a
+      // delegation parent and the guard's `claims WHERE parent_run_id = <child>`
+      // is provably empty. The exemption mirrors the pre-check exemption in
+      // `resolveTransitionTarget`, and is asserted as "the read is skipped"
+      // rather than "the read returns nothing" — the latter passes with or
+      // without the exemption and so pins nothing.
+      loadStepsImpl = () => twoSteps;
+      const linkage = linkageFor(parentRunId, 'a');
+      await activate(baseState({ id: parentRunId }));
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, childRunId, linkage),
+      );
+      const guardSpy = jest.spyOn(sessionService, 'runGuardedParentAdvance');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'claim_bearer', claimId: claimed.claimId },
+        targetSelector: { kind: 'claim', claimId: claimed.claimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect(guardSpy).not.toHaveBeenCalled();
+    });
+
+    it('routes a bare advance through the guard seam', async () => {
+      // The bare arm cannot itself reach an open-children refusal: a run with
+      // delegated children is delegation-exposed, so a bare mutation is refused
+      // ACTOR_CONTEXT_REQUIRED well before this point. It is still routed
+      // through the guarded seam rather than the plain one, which is what keeps
+      // the open-children and collection-pending checks a property of the seam
+      // instead of something each caller has to remember.
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: parentRunId }));
+      const guardSpy = jest.spyOn(sessionService, 'runGuardedParentAdvance');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect(guardSpy).toHaveBeenCalledWith(parentRunId, expect.any(Function));
+    });
+  });
+
   describe('resolveRunNavigation (goto seam)', () => {
     const twoSteps: ResolvedStep[] = [
       { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
