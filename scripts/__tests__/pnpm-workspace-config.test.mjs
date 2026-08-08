@@ -382,8 +382,15 @@ test('.osv-scanner.toml exists and the OSV workflow wires it via --config', asyn
   // The OSV job is blocking and passes `--config=.osv-scanner.toml`; if the file is
   // missing from the tree the scanner errors while loading config and the gate
   // hard-fails. Guards the P1 "config not in the patch" foot-gun.
+  //
+  // Deliberately does NOT require an `[[IgnoredVulns]]` table. An empty ignore
+  // list is the GOAL state — every acceptance retired — and the last one went on
+  // 2026-08-07, when a from-scratch lockfile resolve reached the @hono/node-server
+  // major that made its path-traversal finding genuinely fixable rather than
+  // accepted. Asserting the table exists would have made reaching that goal fail
+  // CI. The retired entry's full history is recorded in .osv-scanner.toml.
   const toml = await readRepoFile('.osv-scanner.toml');
-  assert.ok(toml.includes('[[IgnoredVulns]]'), '.osv-scanner.toml must contain the ignore table');
+  assert.ok(toml.trim().length > 0, '.osv-scanner.toml must not be empty');
   const workflow = await readRepoFile('.github/workflows/osv-scanner.yml');
   assert.match(
     workflow,

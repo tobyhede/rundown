@@ -8,6 +8,7 @@ import {
   DEFAULT_CONCURRENCY,
   VERDICT_ORDER,
   classify,
+  countInstances,
   extractListBlock,
   mapWithConcurrency,
   parseArgs,
@@ -16,6 +17,15 @@ import {
 } from '../audit-overrides.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+/**
+ * Build a finding map in the shape `parseFindings` returns.
+ *
+ * @param entries - `name:VULN-ID` to the versions carrying it
+ * @returns the finding map
+ */
+const findings = (entries) =>
+  new Map(Object.entries(entries).map(([key, versions]) => [key, new Set(versions)]));
 
 const WORKSPACE_FIXTURE = [
   'packages:',
@@ -52,12 +62,36 @@ test('parseArgs does not mistake the concurrency value for an override key', () 
   const parsed = parseArgs(['--concurrency', '2', 'qs']);
   assert.equal(parsed.concurrency, 2);
   assert.deepEqual(parsed.keys, ['qs']);
+  assert.ok(!('error' in parsed), 'a valid limit must not report a usage error');
+});
+
+test('parseArgs rejects an unusable --concurrency value up front', () => {
+  // A limit of 0/NaN starts no runners at all, so the failure would otherwise
+  // surface as a crash formatting a sparse result array — AFTER the expensive
+  // control resolution has been paid for.
+  for (const argv of [
+    ['--concurrency'],
+    ['--concurrency', 'abc'],
+    ['--concurrency', ''],
+    ['--concurrency', '0'],
+    ['--concurrency', '-1'],
+    ['--concurrency', '2.5'],
+    ['--concurrency', 'Infinity'],
+    ['--concurrency', '--print'],
+  ]) {
+    const parsed = parseArgs(argv);
+    assert.match(
+      parsed.error ?? '',
+      /--concurrency needs a positive integer/,
+      `${JSON.stringify(argv)} must be rejected`,
+    );
+  }
 });
 
 test('parseFindings keys on package name, not name@version', () => {
   // The removed pin's version differs between the control and test runs by
-  // construction. Including the version would make every pin look load-bearing.
-  const findings = parseFindings({
+  // construction. Keying on the version would make every pin look load-bearing.
+  const parsed = parseFindings({
     results: [
       {
         packages: [
@@ -70,36 +104,81 @@ test('parseFindings keys on package name, not name@version', () => {
       },
     ],
   });
-  assert.deepEqual([...findings].sort(), [
+  assert.deepEqual([...parsed.keys()].sort(), [
     'postcss:GHSA-bbbb',
     'postcss:GHSA-cccc',
     'qs:GHSA-aaaa',
   ]);
+  assert.deepEqual(
+    [...parsed.get('qs:GHSA-aaaa')],
+    ['6.15.1'],
+    'the version is carried, not keyed',
+  );
+});
+
+test('parseFindings counts two vulnerable versions of one package as two instances', () => {
+  // A scoped pin can introduce a SECOND vulnerable copy of a package the control
+  // already flags. Collapsing to a bare name loses that, and the pin reads INERT.
+  const parsed = parseFindings({
+    results: [
+      {
+        packages: [
+          { package: { name: 'qs', version: '6.9.0' }, vulnerabilities: [{ id: 'GHSA-aaaa' }] },
+          { package: { name: 'qs', version: '6.2.0' }, vulnerabilities: [{ id: 'GHSA-aaaa' }] },
+        ],
+      },
+    ],
+  });
+  assert.equal(parsed.size, 1, 'still one advisory');
+  assert.deepEqual([...parsed.get('qs:GHSA-aaaa')].sort(), ['6.2.0', '6.9.0']);
+  assert.equal(countInstances(parsed), 2);
 });
 
 test('parseFindings tolerates an empty or absent results document', () => {
   assert.equal(parseFindings({}).size, 0);
   assert.equal(parseFindings({ results: [] }).size, 0);
   assert.equal(parseFindings({ results: [{ packages: [] }] }).size, 0);
+  assert.equal(countInstances(parseFindings({})), 0);
 });
 
 test('classify reports LOAD-BEARING only for findings absent from the control', () => {
-  const control = new Set(['qs:GHSA-aaaa']);
+  const control = findings({ 'qs:GHSA-aaaa': ['6.9.0'] });
   // The pre-existing control finding must not be attributed to the removed pin.
-  assert.deepEqual(classify(control, new Set(['qs:GHSA-aaaa'])), {
+  assert.deepEqual(classify(control, findings({ 'qs:GHSA-aaaa': ['6.9.0'] })), {
     verdict: 'INERT',
     detail: 'resolution reaches a safe version without this pin',
   });
-  assert.deepEqual(classify(control, new Set(['qs:GHSA-aaaa', 'hono:GHSA-dddd'])), {
+  assert.deepEqual(
+    classify(control, findings({ 'qs:GHSA-aaaa': ['6.9.0'], 'hono:GHSA-dddd': ['4.0.0'] })),
+    { verdict: 'LOAD-BEARING', detail: 'hono:GHSA-dddd @ 4.0.0' },
+  );
+});
+
+test('classify reports a pin that ADDS an instance of an already-flagged advisory', () => {
+  // The duplicate-instance case: the set of `name:VULN-ID` keys is identical
+  // between control and test, so presence alone reads INERT and would recommend
+  // deleting a pin that is holding back a second vulnerable copy.
+  const control = findings({ 'qs:GHSA-aaaa': ['6.9.0'] });
+  const test = findings({ 'qs:GHSA-aaaa': ['6.9.0', '6.2.0'] });
+  assert.deepEqual(classify(control, test), {
     verdict: 'LOAD-BEARING',
-    detail: 'hono:GHSA-dddd',
+    detail: 'qs:GHSA-aaaa @ 6.2.0, 6.9.0 (1 -> 2 vulnerable instances)',
   });
+});
+
+test('classify treats a same-count version shift as drift, not a regression', () => {
+  // Removing an unrelated pin can move a still-vulnerable package to a different
+  // still-vulnerable version. The instance count is unchanged, so it is not this
+  // pin's regression — this is why counts are compared and identities are not.
+  const control = findings({ 'postcss:GHSA-bbbb': ['8.4.31'] });
+  const test = findings({ 'postcss:GHSA-bbbb': ['8.4.30'] });
+  assert.equal(classify(control, test).verdict, 'INERT');
 });
 
 test('classify treats a control finding that DISAPPEARS as inert, not load-bearing', () => {
   // Removing a pin can shift resolution enough to drop an unrelated finding. That
   // is not a regression, and must not be reported as one.
-  assert.equal(classify(new Set(['qs:GHSA-aaaa']), new Set()).verdict, 'INERT');
+  assert.equal(classify(findings({ 'qs:GHSA-aaaa': ['6.9.0'] }), new Map()).verdict, 'INERT');
 });
 
 test('removeOverrideLine drops exactly the named key and leaves comments intact', () => {
@@ -148,6 +227,18 @@ test('mapWithConcurrency preserves input order and bounds parallelism', async ()
   });
   assert.deepEqual(results, [20, 2, 16, 4, 12, 6], 'results must stay in input order');
   assert.ok(peak <= 2, `expected at most 2 concurrent tasks, saw ${peak}`);
+});
+
+test('mapWithConcurrency rejects a non-positive limit instead of returning holes', async () => {
+  // Zero or NaN starts no runners, so every result stays `undefined` and the
+  // failure only surfaces later, while formatting the report.
+  for (const limit of [0, -1, Number.NaN, 1.5, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      () => mapWithConcurrency([1, 2], limit, async (n) => n),
+      /positive integer limit/,
+      `limit ${limit} must be rejected`,
+    );
+  }
 });
 
 test('VERDICT_ORDER puts actionable verdicts above INERT', () => {

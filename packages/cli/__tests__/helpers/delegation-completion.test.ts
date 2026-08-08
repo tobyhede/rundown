@@ -447,6 +447,7 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
       childState,
       'pass',
     );
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.flush).toHaveBeenCalled();
   });
 
@@ -483,6 +484,7 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
     expect(result).toBe('blocked');
     // The operator diagnostic is no longer pushed out of core through a sink —
     // this adapter owns the emitter, so it renders the returned trip itself.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
@@ -621,6 +623,7 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     propagateTerminalChildUpward.mockResolvedValue(REPEAT_CYCLE_SEAM_RESULT);
     const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
     expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
@@ -635,6 +638,7 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     const output = makeOutput();
     propagateTerminalChildUpward.mockResolvedValue({ kind: 'handled' });
     await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).not.toHaveBeenCalled();
   });
 });
@@ -653,6 +657,7 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
     propagateTerminalChildUpward.mockResolvedValue(REPEAT_CYCLE_SEAM_RESULT);
     const result = await propagateChildTerminal(childState, 'pass', '/test', output);
     expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
@@ -680,6 +685,7 @@ describe('emitLinkageCycleDiagnostic (#602/#603)', () => {
       code: 'INLINE_PARENT_CYCLE',
       message: 'core-composed repeat message',
     });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(
       'core-composed repeat message',
       'INLINE_PARENT_CYCLE',
@@ -698,6 +704,7 @@ describe('emitLinkageCycleDiagnostic (#602/#603)', () => {
       code: 'INLINE_PARENT_CYCLE',
       message: 'core-composed depth message',
     });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(
       'core-composed depth message',
       'INLINE_PARENT_CYCLE',

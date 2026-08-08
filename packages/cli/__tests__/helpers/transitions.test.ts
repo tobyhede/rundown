@@ -297,6 +297,7 @@ describe('emitOpenDelegatedChildrenError', () => {
   it('emits OPEN_DELEGATED_CHILDREN with structured details', () => {
     const output = makeOutput();
     emitOpenDelegatedChildrenError(output, 'pass', PARENT_RUN_ID, [TEST_CLAIM_KEY], [CHILD_RUN_ID]);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledTimes(1);
     const [message, code, details] = output.error.mock.calls[0];
     expect(message).toContain('Cannot run bare rundown pass');
@@ -322,6 +323,7 @@ describe('emitDelegationCollectionPendingError', () => {
       ['1|1|'],
       'Delegated outcome pending.',
     );
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledTimes(1);
     const [message, code, details] = output.error.mock.calls[0];
     expect(message).toContain('Cannot run bare rundown fail');
@@ -462,6 +464,7 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
     expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
     expect(runArgs.explicitTarget).toStrictEqual({ stepId: '1.1' });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.noActiveRunbook).toHaveBeenCalledWith('fail');
     expect(result.exitError).toBe(false);
   });
@@ -525,9 +528,11 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.noActiveRunbook).toHaveBeenCalledWith('pass');
     expect(result.applied).toBeUndefined();
     expect(result.exitError).toBe(false);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.flush).toHaveBeenCalled();
   });
 
@@ -542,6 +547,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith('claim gone', 'CLAIMED_RUNBOOK_UNAVAILABLE');
     expect(result.exitError).toBe(true);
   });
@@ -560,6 +566,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(
       'parent moved past this delegation',
       'DELEGATION_SUPERSEDED',
@@ -578,6 +585,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.json).toHaveBeenCalledWith({
       kind: 'action',
       action: 'pass',
@@ -600,7 +608,9 @@ describe('runSeamTransition — refusal render table', () => {
 
     await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.json).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.message).toHaveBeenCalledTimes(1);
     expect(output.message.mock.calls[0][0]).toContain('ALREADY FAIL');
   });
@@ -617,6 +627,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledTimes(1);
     const [message, code] = output.error.mock.calls[0];
     expect(message).toContain('already resolved as pass');
@@ -635,6 +646,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledTimes(1);
     const [, code, details] = output.error.mock.calls[0];
     expect(code).toBe('OPEN_DELEGATED_CHILDREN');
@@ -811,6 +823,7 @@ describe('runSeamTransition — refusal render table', () => {
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(outcome.message, code);
     expect(result.exitError).toBe(true);
   });
@@ -827,6 +840,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.action).toHaveBeenCalledTimes(1);
     const block = output.action.mock.calls[0][0] as Record<string, unknown>;
     expect(block.action).toBe('ACTION_LABEL');
@@ -873,6 +887,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.complete).toHaveBeenCalledWith('all done', { at: '2' });
   });
 
@@ -892,6 +907,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.stopped).toHaveBeenCalledWith('halted', { at: '1' });
     expect(result.applied).toEqual({ status: 'stopped', runId: PARENT_RUN_ID });
     expect(result.exitError).toBe(true);
@@ -912,6 +928,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith('boom', 'RD-999');
   });
 
@@ -925,6 +942,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.status).toHaveBeenCalledWith('pass', 'Completion already recorded for 1.1', {
       status: 'already-resolved',
       at: '1.1',
@@ -995,6 +1013,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     // manual-completion renders through the bridged emitter sink...
     expect(mockManualSink.onStepTransitioned).toHaveBeenCalledTimes(1);
     // ...and NOT through the buffered top-level action sink.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.action).not.toHaveBeenCalled();
   });
 });
