@@ -711,6 +711,13 @@ async function evaluateTransitionPolicy(
   // reads neither and the query is skipped (and reader fakes asserting "no
   // open-claim read for targeted" stay valid). Not bare-shaped: a run-control
   // claim reads them too — only a delegated-child bearer sets `skipOpenClaims`.
+  //
+  // RD-819-DEPENDENT: skipOpenClaims.
+  // That bearer's exemption is not a condition this expression enforces. It is
+  // sound only because RD-819 refuses nested delegation, so a delegated child
+  // can have no delegated children and both consumers above would see the empty
+  // set anyway. Enumerated at the RD-819 guard in `delegation-service.ts`;
+  // relaxing that prohibition means revisiting this.
   const openClaims =
     targeted || policyOptions.skipOpenClaims === true
       ? []
