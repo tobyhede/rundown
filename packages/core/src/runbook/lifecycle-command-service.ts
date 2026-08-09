@@ -8,7 +8,12 @@ import {
 import type { RunbookActorService } from './actor-service.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
-import { authorizeClaim, claimCanReportDelegationResult, claimKeyFromBearer } from './claim-id.js';
+import {
+  authorizeClaim,
+  claimCanReportDelegationResult,
+  claimKeyFromBearer,
+  isDelegatedChildClaim,
+} from './claim-id.js';
 import type {
   ClaimAuthorizationRequest,
   ClaimId,
@@ -2373,7 +2378,7 @@ export class RunbookLifecycleCommandService {
     // coincidence of two independent rules, not an authority decision, and it
     // evaporates the day the nested prohibition moves.
     const guardOpenChildren =
-      !targeted && (ready.kind === 'claim' ? ready.claim.delegation === undefined : true);
+      !targeted && !(ready.kind === 'claim' && isDelegatedChildClaim(ready.claim));
 
     // Single resolution: derive the resolved run's steps in-seam from its
     // in-memory state, rather than taking `steps` as an input that would force the
@@ -2774,7 +2779,7 @@ export class RunbookLifecycleCommandService {
     // would conflate collection authority with claim identity — the schema
     // permits a delegated claim to also hold that grant — and silently route
     // the child's delegation report through the bare cascade instead.
-    const isRunControlClaim = resolution.claim.delegation === undefined;
+    const isRunControlClaim = !isDelegatedChildClaim(resolution.claim);
     if (isRunControlClaim) {
       return this.#driveTerminalBare(input, state);
     }
@@ -3701,7 +3706,9 @@ export class RunbookLifecycleCommandService {
   }
 
   // Run a parent-advancing write under the open-delegated-children guard when the
-  // transition is bare, or plainly when it is not. The single place that pairs
+  // caller's shape is guarded, or plainly when it is exempt — see
+  // `guardOpenChildren` in `runTransition` for which is which (every shape but a
+  // delegated-child bearer, since #700). The single place that pairs
   // `runGuardedParentAdvance` with `#guardRefusal`; every guarded decisive write
   // in this service goes through it.
   //

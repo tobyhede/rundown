@@ -509,7 +509,9 @@ export function createDelegation(
   //    condition, because it makes the state they would have to handle
   //    impossible to construct. Narrowing or removing this guard weakens all
   //    three, and no test will fail — that is precisely why they are listed
-  //    here rather than left to be rediscovered:
+  //    here rather than left to be rediscovered. The first two both classify the
+  //    bearer with `isDelegatedChildClaim` (`claim-id.ts`), so grepping that
+  //    predicate finds every exemption this invariant underwrites:
   //      - `resolveTransitionTarget`'s `skipOpenClaims` exemption
   //        (`command-target-resolver.ts`) skips the parent open-claim read for a
   //        delegated-child bearer, sound only because such a run can have no

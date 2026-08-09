@@ -597,6 +597,23 @@ export function authorizeClaim(
 }
 
 /**
+ * Test whether a verified claim was minted from a delegation token — i.e. it is
+ * a delegated child's bearer rather than a run-control claim.
+ *
+ * The two claim shapes are distinguished solely by the presence of delegation
+ * linkage, and several open-children exemptions turn on that distinction. They
+ * share this predicate so the shapes are named once rather than re-derived from
+ * the raw field at each site: see the RD-819 dependents enumerated on
+ * `createDelegation` in `delegation-service.ts`.
+ *
+ * @param claim - Verified claim to classify.
+ * @returns Whether the claim carries delegation linkage.
+ */
+export function isDelegatedChildClaim(claim: VerifiedClaim): boolean {
+  return claim.delegation !== undefined;
+}
+
+/**
  * Test whether a verified claim can report the exact delegated child result.
  *
  * @param claim - Verified claim whose report grant should be checked.
