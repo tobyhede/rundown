@@ -4,6 +4,7 @@ import {
   assertClaimLookupKey,
   claimCanReportDelegationResult,
   claimKeyFromBearer,
+  isDelegatedChildClaim,
   type ClaimGrant,
   type VerifiedClaim,
   createDelegatedChildGrants,
@@ -132,6 +133,42 @@ describe('claim bearer credentials', () => {
         false,
       );
     }
+  });
+});
+
+describe('isDelegatedChildClaim', () => {
+  const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  const childRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  const claimKey = assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`);
+
+  it('classifies a claim minted from a delegation token as a delegated child', () => {
+    const linkage = {
+      childRunId,
+      tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
+      parentRunId,
+      parentStepId: '1.1',
+      parentStep: 'Process item',
+      parentFrameKey: buildFrameKey('1', 0),
+      parentEntry: 1,
+    };
+    const childClaim: VerifiedClaim = {
+      claimKey,
+      controlledRunId: childRunId,
+      delegation: linkage,
+      grants: createDelegatedChildGrants({ linkage }),
+    };
+
+    expect(isDelegatedChildClaim(childClaim)).toBe(true);
+  });
+
+  it('classifies a run-control claim, which carries no delegation linkage, as not a delegated child', () => {
+    const runControlClaim: VerifiedClaim = {
+      claimKey,
+      controlledRunId: parentRunId,
+      grants: createRunControlGrants(parentRunId),
+    };
+
+    expect(isDelegatedChildClaim(runControlClaim)).toBe(false);
   });
 });
 

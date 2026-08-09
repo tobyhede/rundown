@@ -1,5 +1,7 @@
+import { jest } from '@jest/globals';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import type { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { SessionService } from '../../src/runbook/session-service.js';
 import type { RunbookStateManager } from '../../src/runbook/state.js';
 import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
@@ -91,6 +93,55 @@ export async function claimLiveDelegation(
 ): Promise<ClaimRunbookResult> {
   await seedLiveDelegation(manager, linkage);
   return unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage));
+}
+
+/**
+ * Land a child claim inside the parent's decisive write, after the resolver's
+ * cheap pre-check has already passed.
+ *
+ * This is the interleaving that only the in-transaction open-children guard can
+ * catch: the claim commits during `prepareActorMutation` — inside the fenced
+ * preparation, past every pre-check — so a parent advance that consults only the
+ * pre-check will commit straight over it. Spying that seam is the whole fixture,
+ * and it is shared so the fence point is stated once: every arm that must reach
+ * the guard races the claim at the same instant, and moving the fence moves it
+ * for all of them.
+ *
+ * WITNESSES ROUTING, NOT ISOLATION. `claimant` resolves its store through the
+ * process-level, path-keyed registry, so on the same cwd it shares one driver
+ * and one connection with the run under test and the two writes serialize on
+ * that driver — see the header of `session-service.process.test.ts`, which is
+ * why every genuine contention race there runs in real child processes. What
+ * this fixture proves is that the arm reaches `runGuardedParentAdvance` at all
+ * and that the guard's in-transaction read sees a claim the pre-checks missed;
+ * that seam's behaviour under true multi-connection contention is pinned
+ * cross-process by `session-service.process.test.ts`'s "refuses after a claim
+ * commits between the fast check and guarded parent write". A test built here
+ * would still pass if SQLite offered no isolation whatsoever, so do not read it
+ * as evidence of the transactional property.
+ *
+ * Restored by the caller's `jest.restoreAllMocks()`; the claim fires at most
+ * once however many times the seam is entered.
+ *
+ * @param actorService - Service whose `prepareActorMutation` seam is spied.
+ * @param claimant - Independent session service standing in for the racing process.
+ * @param childRunId - Child run the racing process claims.
+ * @param linkage - Delegation linkage the racing claim presents.
+ * @returns Getter for the racing claim's result, `undefined` if the seam never ran.
+ */
+export function raceChildClaimDuringActorPrepare(
+  actorService: RunbookActorService,
+  claimant: SessionService,
+  childRunId: RunId,
+  linkage: DelegationLinkage,
+): () => Awaited<ReturnType<SessionService['claimRunbook']>> | undefined {
+  const realPrepare = actorService.prepareActorMutation.bind(actorService);
+  let claimResult: Awaited<ReturnType<SessionService['claimRunbook']>> | undefined;
+  jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+    claimResult ??= await claimant.claimRunbook(childRunId, linkage);
+    return realPrepare(...args);
+  });
+  return () => claimResult;
 }
 
 const isClaimed = <T extends { status: string }>(

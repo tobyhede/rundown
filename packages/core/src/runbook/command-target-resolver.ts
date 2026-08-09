@@ -1,6 +1,7 @@
 import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
 import {
   authorizeClaim,
+  isDelegatedChildClaim,
   redactClaimId,
   type ClaimAuthorizationRequest,
   type ClaimId,
@@ -615,7 +616,7 @@ export async function resolveTransitionTarget(
           kind: 'claim',
           claimId: claimed.claimId,
         },
-        { skipOpenClaims: claimed.claim.delegation !== undefined },
+        { skipOpenClaims: isDelegatedChildClaim(claimed.claim) },
       );
       if (refusal) return refusal;
       return claimed;
@@ -704,9 +705,12 @@ async function evaluateTransitionPolicy(
   policyOptions: { readonly skipOpenClaims?: boolean } = {},
 ): Promise<TransitionTargetResolution | undefined> {
   const targeted = options.targeted === true;
-  // Open claims feed only the bare-shaped open-children guard; a targeted
-  // transition is exempt from it, so the read is skipped (and reader fakes
-  // asserting "no open-claim read for targeted" stay valid).
+  // Open claims feed `resolveCommandIntent` twice over: they raise the authority
+  // bar (`hasOpenClaims` -> `requiresBearer`) and they emit the `open_claims`
+  // refusal. Both consumers are gated on `!targeted`, so a targeted transition
+  // reads neither and the query is skipped (and reader fakes asserting "no
+  // open-claim read for targeted" stay valid). Not bare-shaped: a run-control
+  // claim reads them too — only a delegated-child bearer sets `skipOpenClaims`.
   const openClaims =
     targeted || policyOptions.skipOpenClaims === true
       ? []

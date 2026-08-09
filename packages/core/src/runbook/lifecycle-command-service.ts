@@ -8,7 +8,12 @@ import {
 import type { RunbookActorService } from './actor-service.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
-import { authorizeClaim, claimCanReportDelegationResult, claimKeyFromBearer } from './claim-id.js';
+import {
+  authorizeClaim,
+  claimCanReportDelegationResult,
+  claimKeyFromBearer,
+  isDelegatedChildClaim,
+} from './claim-id.js';
 import type {
   ClaimAuthorizationRequest,
   ClaimId,
@@ -2513,10 +2518,50 @@ export class RunbookLifecycleCommandService {
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
       ready.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-    // The in-lock open-children re-check applies the same rule to a run-shaped
-    // ready resolution: guard when bare-shaped, exempt when the transition
-    // carries an explicit step target.
-    const guardOpenChildren = (ready.kind === 'default' || ready.kind === 'run') && !targeted;
+    // Every resolution shape is guarded by the in-transaction open-children
+    // re-check, with one exemption this expression actually applies: a
+    // delegated-child bearer. Stated as an exemption rather than as an
+    // enumeration of guarded shapes because that is the rule — and because
+    // enumerating would re-test `kind === 'claim'` inside a branch reachable
+    // only when it holds, an equivalent mutant no test can distinguish.
+    //
+    // `!targeted` restates an exemption enforced elsewhere: `#drive` routes an
+    // explicit target to `#driveSubstepFenced` with a hardcoded `false`, so the
+    // value computed here is discarded exactly when the conjunct would matter.
+    // Kept as a statement of the rule where the rule is described, not as the
+    // thing that applies it — `#drive` is where an explicit target stops being
+    // guarded.
+    //
+    // A run-control claim is guarded too, and is in practice the arm that
+    // matters: on a delegation-exposed run a bare mutation is refused
+    // ACTOR_CONTEXT_REQUIRED and `--run` cannot carry a bearer, so `--claim-id`
+    // is the only invocation the post-R1 protocol leaves an orchestrator.
+    // Guarding only the bare/run shapes would guard the arms an orchestrator
+    // cannot reach and leave the prescribed one unguarded (#700).
+    //
+    // A delegated-child bearer is exempt, mirroring the pre-check exemption in
+    // `resolveTransitionTarget`. That is a coincidence of two independent rules,
+    // not an authority decision, and it evaporates the day the nested
+    // prohibition moves.
+    //
+    // FALSE HERE SUPPRESSES THREE CHECKS, not one — `#runGuardedOrPlain` routes
+    // to `unguarded()`, skipping everything `runGuardedParentAdvance` does. All
+    // three are empty for a delegated child, but by two different mechanisms,
+    // and enumerating them is the point: the exemption is sound only while every
+    // one of them stays empty.
+    //   1. The open-children pre-check and 3. the in-transaction guard both read
+    //      `claims WHERE parent_run_id = <target>`. A delegated child can never
+    //      be a delegation parent — RD-819 refuses nested delegation — so the
+    //      set is provably empty.
+    //   2. The `delegation_collection_pending` re-check reads delegation-outcome
+    //      facts off the target's OWN state
+    //      (`readDelegationCollectionPendingForPolicy`). Same rule, different
+    //      mechanism: a run that cannot issue a delegation has no outcome to
+    //      collect, so `pending` is always false. Called out because the
+    //      claims-set argument above does not cover it, and a reader who checks
+    //      only that argument would find this exemption unjustified.
+    const guardOpenChildren =
+      !targeted && !(ready.kind === 'claim' && isDelegatedChildClaim(ready.claim));
 
     // Single resolution: derive the resolved run's steps in-seam from its
     // in-memory state, rather than taking `steps` as an input that would force the
@@ -2910,7 +2955,7 @@ export class RunbookLifecycleCommandService {
     // would conflate collection authority with claim identity — the schema
     // permits a delegated claim to also hold that grant — and silently route
     // the child's delegation report through the bare cascade instead.
-    const isRunControlClaim = resolution.claim.delegation === undefined;
+    const isRunControlClaim = !isDelegatedChildClaim(resolution.claim);
     if (isRunControlClaim) {
       return this.#driveTerminalBare(input, state);
     }
@@ -3831,7 +3876,9 @@ export class RunbookLifecycleCommandService {
   }
 
   // Run a parent-advancing write under the open-delegated-children guard when the
-  // transition is bare, or plainly when it is not. The single place that pairs
+  // caller's shape is guarded, or plainly when it is exempt — see
+  // `guardOpenChildren` in `runTransition` for which is which (every shape but a
+  // delegated-child bearer, since #700). The single place that pairs
   // `runGuardedParentAdvance` with `#guardRefusal`; every guarded decisive write
   // in this service goes through it.
   //

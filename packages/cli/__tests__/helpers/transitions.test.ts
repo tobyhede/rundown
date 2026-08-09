@@ -352,7 +352,6 @@ describe('buildTransitionContext', () => {
     expect(result.kind).toBe('ready');
     if (result.kind === 'ready') {
       expect(result.ctx.terminalReleaseMode).toBe('release-runbook');
-      expect(result.ctx.guardOpenChildren).toBe(false);
       expect(result.ctx.claim).toBeDefined();
     }
   });
