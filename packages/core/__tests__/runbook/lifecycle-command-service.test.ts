@@ -5133,6 +5133,168 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.runId).toBe(childRunId);
       expect(outcome.terminalReleaseMode).toBe('release-runbook');
     });
+
+    it('refuses a bearer retired inside the fenced navigation write, without recovery', async () => {
+      // The interleave witness for #608 path 1. Both reads that precede the
+      // decisive write see a LIVE bearer — `resolveRunNavigation` returns
+      // `allowed`, and the fence's own authority capture returns `captured` —
+      // and the claim is retired only after that capture returns. Nothing but
+      // the claim re-validation inside the decisive write's transaction can
+      // refuse from there, which is what makes this a sensitivity witness
+      // rather than one more pre-check test: racing the retirement any earlier
+      // is caught by the capture read, and a test that cannot tell those two
+      // apart passes with the in-transaction re-read deleted.
+      //
+      // Retirement is committed by an independent `SessionService` on its own
+      // manager — a second connection, exactly as the transition seam's witness
+      // ("refuses a racing child claim through the in-transaction guard")
+      // commits its racing claim.
+      //
+      // The capture is the last point a claim write on the TARGET can land:
+      // from lease acquisition onward the run carries `exec_token`, and the
+      // schema's `claims_guard_*` triggers abort any claim write against an
+      // execution-owned run. So this window, not the compute window, is where a
+      // navigation's authority can go stale.
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+      const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee20');
+      const linkage = linkageFor(runId, 'a');
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, childRunId, linkage),
+      );
+      const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
+
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'claim', claimId: claimed.claimId },
+      });
+      expect(navigation.kind).toBe('allowed');
+      if (navigation.kind !== 'allowed') return;
+
+      const store = await getRunbookStore(tmp);
+      const retiring = new SessionService(new RunbookStateManager(tmp));
+      const realCapture = store.captureAuthorityState.bind(store);
+      let capturedKind: string | undefined;
+      let retired: Awaited<ReturnType<SessionService['releaseRunbook']>> | undefined;
+      jest.spyOn(store, 'captureAuthorityState').mockImplementation(async (...args) => {
+        const captured = await realCapture(...args);
+        capturedKind ??= captured.kind;
+        retired ??= await retiring.releaseRunbook(childRunId);
+        return captured;
+      });
+
+      const outcome = await seam.runNavigationMutation({
+        runId: childRunId,
+        callerEvidence: evidence,
+        steps: navigation.steps,
+        target: { step: '2' },
+        terminalReleaseMode: navigation.terminalReleaseMode,
+      });
+
+      // The authority the write would be validated against was live when read.
+      expect(capturedKind).toBe('captured');
+      expect(retired?.kind).toBe('committed');
+      // Asserted by message, not by kind alone: the re-read refuses on two
+      // independent arms — the claim row's own status, and the
+      // `claim_generation` CAS — and a retirement trips both, so `kind` alone
+      // cannot say which one fired. The message names the arm.
+      expect(outcome).toEqual({
+        kind: 'claim_superseded',
+        runId: childRunId,
+        message: `The presented claim no longer controls run ${childRunId}.`,
+      });
+      // Write-free: the guard refuses before the first UPDATE, so the run never
+      // moved and is not parked in recovery for a race that changed nothing.
+      expect((await manager.load(childRunId))?.step).toBe('1');
+      expect(await store.readPendingRecovery(childRunId)).toBeNull();
+    });
+
+    it('commits a run-targeted navigation over a racing child claim and retires it', async () => {
+      // The counterpart, at the same fence point the transition seam's witness
+      // uses — and the opposite outcome. #702 proposed racing a CHILD claim into
+      // the goto window on the model of `runTransition`'s witness; it cannot
+      // refuse here, by design twice over.
+      //
+      // First, navigation is exempt from the open-claims guard on purpose (see
+      // `resolveRunNavigation`) — it is operator control flow, not completion —
+      // so `runNavigationMutation` threads no `ParentAdvanceGuard` into the
+      // commit and there is no seam for `open_delegated_children` to come from.
+      // Second, even the fence cannot see it: `claimRunbook` writes only the
+      // child's claim row, and `claims_bump_gen_insert` bumps the CHILD's
+      // `claim_generation`, so every value the parent's CAS compares is
+      // unchanged.
+      //
+      // Pinned as an allowance rather than left unstated: arming a guard here is
+      // a decision about what `goto` means, not a defect fix, and this is the
+      // test that makes someone make it. But the allowance is NOT symmetric —
+      // see the post-write assertions: the navigation commits AND revokes the
+      // racing bearer.
+      loadStepsImpl = () => twoSteps;
+      const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee21');
+      const linkage = linkageFor(runId, 'a');
+      await activate(baseState());
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'run', runId },
+      });
+      expect(navigation.kind).toBe('allowed');
+      if (navigation.kind !== 'allowed') return;
+
+      const claimant = new SessionService(new RunbookStateManager(tmp));
+      const realPrepare = actorService.prepareActorMutation.bind(actorService);
+      let claimResult: Awaited<ReturnType<SessionService['claimRunbook']>> | undefined;
+      jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+        claimResult ??= await claimant.claimRunbook(childRunId, linkage);
+        return realPrepare(...args);
+      });
+
+      const outcome = await seam.runNavigationMutation({
+        runId,
+        callerEvidence: runControlEvidence(runId),
+        steps: navigation.steps,
+        target: { step: '2' },
+        terminalReleaseMode: navigation.terminalReleaseMode,
+      });
+
+      expect(claimResult?.kind).toBe('committed');
+      expect(outcome.kind).toBe('applied');
+      expect((await manager.load(runId))?.step).toBe('2');
+
+      // The allowance is ONE-sided, and the `applied` outcome hides the other
+      // half: the racing bearer does NOT survive. The decisive write's own
+      // transaction retires it. `afterAuthoritativeStateWrite` runs
+      // `invalidateClosedDelegatedClaims` — the parent half of R2's two-sided
+      // durable latch — right after the run UPDATE, and classifies every active
+      // claim naming this parent against the COMMITTED parent state, whose
+      // cursor has just left the delegating step. `classifyDelegationLiveness`
+      // therefore reads `closed`/`cursor-advanced` and tombstones the row in the
+      // same transaction that let the navigation through.
+      //
+      // So goto does not merely proceed past an open child: it revokes the
+      // child's authority. Only WHICH write collects the tombstone is timing-
+      // dependent — a claim committing after this transaction opens is missed
+      // here and superseded by the next authoritative parent write, with the
+      // claim-side half of the latch refusing its use meanwhile. The bearer
+      // never regains authority either way.
+      if (claimResult === undefined) throw new Error('expected the racing claim to have run');
+      const raced = assertClaimed(unwrapSessionMutation(claimResult));
+      const store = await getRunbookStore(tmp);
+      expect((await store.loadClaim(claimKeyFromBearer(raced.claimId)))?.status).toBe('superseded');
+      // Read through the bearer as a caller would, not just off the row:
+      // `loadSession` surfaces active claims only, so the tombstone is what makes
+      // verification report the bearer missing rather than verified.
+      expect((await sessionService.verifyClaimId(raced.claimId)).status).toBe('missing');
+    });
   });
 
   describe('top-level transition drive', () => {
