@@ -102,6 +102,15 @@ const COUNT_SENTENCE = /\b([A-Z]+) OTHER SITES? LEANS? ON THIS INVARIANT\b/i;
 /** The dependents that exist today. A legitimate change to this set is a review event. */
 const KNOWN_DEPENDENTS = ['guardOpenChildren', 'skipOpenClaims', 'transitionDelegationRuntime'];
 
+/**
+ * How many lines below its marker a site's named symbol may sit and still count
+ * as "the site this marker names". The largest gap among today's dependents is
+ * `guardOpenChildren` (marker to `const`, ~24 lines through an intervening
+ * comment block), so this leaves generous headroom for reflow while still
+ * excluding the same name's distant reuse elsewhere in the file.
+ */
+const MARKER_SITE_WINDOW = 60;
+
 /** The enumeration block, and enough of its surroundings to prove it is still attached. */
 interface Enumeration {
   /** The contiguous `//` block introduced by the header, or `''` when absent. */
@@ -171,14 +180,50 @@ function markedNames(text: string): string[] {
 }
 
 /**
- * Blank comments so prose quoting an identifier is not mistaken for the code
- * that defines it. Crude by design — an existence check does not need a parser.
+ * Site markers in a source string, each paired with the window of source
+ * immediately below it in which its named symbol is expected to appear.
  *
- * @param text - TypeScript source.
- * @returns The source with block and line comments blanked.
+ * The window ANCHORS the existence check to the marker's own site. A package-wide
+ * "does this name appear anywhere in core" check false-greens whenever the name
+ * is independently reused: `guardOpenChildren` is also a boolean parameter at
+ * eight unrelated call sites, so orphaning its marker would still find those and
+ * pass — exactly the deleted/renamed-site case the check exists to catch. Binding
+ * the check to the lines directly below the marker excludes that distant reuse.
+ *
+ * @param text - Source text to scan.
+ * @returns One entry per marker, in source order, each with its lookahead window.
  */
-function withoutComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+function markerSites(text: string): { name: string; window: string }[] {
+  const lines = text.split('\n');
+  return [...text.matchAll(DEPENDENT_MARKER)].map((match) => {
+    const markerLine = text.slice(0, match.index).split('\n').length - 1;
+    return {
+      name: match[1],
+      window: lines.slice(markerLine + 1, markerLine + 1 + MARKER_SITE_WINDOW).join('\n'),
+    };
+  });
+}
+
+/**
+ * Whether `name` occurs as CODE — not inside a comment — in a chunk of source.
+ *
+ * Skips whole-line comments (`//`, `/*`, and ` * ` JSDoc bodies) and trailing
+ * line comments, so a marker's own prose, which names the very symbol it marks,
+ * cannot satisfy the check on its own. Crude and line-based by design: it runs
+ * over a bounded window, not the whole tree, so it needs no parser.
+ *
+ * @param text - Source window to scan.
+ * @param name - Identifier to look for.
+ * @returns True when the identifier occurs on a code line.
+ */
+function appearsAsCode(text: string, name: string): boolean {
+  const word = new RegExp(`\\b${name}\\b`);
+  return text.split('\n').some((line) => {
+    if (/^\s*(\/\/|\/\*|\*)/.test(line)) {
+      return false;
+    }
+    return word.test(line.replace(/\/\/.*$/, ''));
+  });
 }
 
 /**
@@ -203,16 +248,16 @@ describe('RD-819 dependents stay linked to the guard they lean on (#703)', () =>
 
   const sourceFiles = typeScriptFilesUnder(CORE_SRC);
   const sites = new Map<string, string[]>();
-  const code: string[] = [];
+  const siteMarkers: { name: string; file: string; window: string }[] = [];
   for (const file of sourceFiles) {
     const text =
       file === GUARD_MODULE ? enumeration.moduleWithoutBlock : readFileSync(file, 'utf-8');
-    code.push(withoutComments(text));
-    for (const name of markedNames(text)) {
-      sites.set(name, [...(sites.get(name) ?? []), relative(CORE_SRC, file)]);
+    const rel = relative(CORE_SRC, file);
+    for (const { name, window } of markerSites(text)) {
+      sites.set(name, [...(sites.get(name) ?? []), rel]);
+      siteMarkers.push({ name, file: rel, window });
     }
   }
-  const coreCode = code.join('\n');
 
   it('scans this package (sanity: the walk is not vacuous)', () => {
     expect(sourceFiles.length).toBeGreaterThan(100);
@@ -247,11 +292,36 @@ describe('RD-819 dependents stay linked to the guard they lean on (#703)', () =>
     expect([...sites].filter(([, files]) => files.length > 1)).toEqual([]);
   });
 
-  it('names a symbol that still exists in core source', () => {
-    // Catches a site deleted while its marker comment was left behind, which the
-    // set comparison alone would read as a healthy link.
-    const missing = enumerated.filter((name) => !new RegExp(`\\b${name}\\b`).test(coreCode));
-    expect(missing).toEqual([]);
+  it('names a symbol that still exists as code below its marker', () => {
+    // Catches a site deleted or renamed while its marker comment was left behind,
+    // which the set comparison alone would read as a healthy link. Bound to the
+    // window directly below each marker, NOT to the whole package: several
+    // dependents' names are independently reused elsewhere in core
+    // (`guardOpenChildren` is a boolean parameter at eight unrelated sites), and a
+    // package-wide existence check would read that reuse as a live link and
+    // false-green on exactly the orphaned marker this asserts against.
+    const orphaned = siteMarkers
+      .filter(({ name, window }) => !appearsAsCode(window, name))
+      .map(({ name, file }) => `${name} (${file})`);
+    expect(orphaned).toEqual([]);
+  });
+
+  it('binds the existence check to the marker, not to distant reuse of the name', () => {
+    // Regression guard for that false-green: a marker whose site is gone but whose
+    // name survives far below — as an unrelated parameter, say — must NOT pass.
+    const attached = markerSites(
+      ['// RD-819-DEPENDENT: sample', 'const sample = true;'].join('\n'),
+    );
+    expect(appearsAsCode(attached[0].window, 'sample')).toBe(true);
+
+    const orphaned = markerSites(
+      [
+        '// RD-819-DEPENDENT: sample',
+        ...Array.from({ length: MARKER_SITE_WINDOW + 5 }, () => '// filler'),
+        'function unrelated(sample: boolean) {}',
+      ].join('\n'),
+    );
+    expect(appearsAsCode(orphaned[0].window, 'sample')).toBe(false);
   });
 
   it('agrees with the count word in the enumeration prose', () => {
