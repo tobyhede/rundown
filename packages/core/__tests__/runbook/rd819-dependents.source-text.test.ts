@@ -316,6 +316,10 @@ describe('RD-819 dependents stay linked to the guard they lean on (#703)', () =>
     const attached = markerSites(
       ['// RD-819-DEPENDENT: sample', 'const sample = true;'].join('\n'),
     );
+    // Both halves rest on the fixture yielding exactly one marker. Assert it, so
+    // a marker regex that stopped matching fails as that, not as a TypeError on
+    // an undefined index.
+    expect(attached).toHaveLength(1);
     expect(appearsAsCode(attached[0].window, 'sample')).toBe(true);
 
     const orphaned = markerSites(
@@ -325,6 +329,7 @@ describe('RD-819 dependents stay linked to the guard they lean on (#703)', () =>
         'function unrelated(sample: boolean) {}',
       ].join('\n'),
     );
+    expect(orphaned).toHaveLength(1);
     expect(appearsAsCode(orphaned[0].window, 'sample')).toBe(false);
   });
 
