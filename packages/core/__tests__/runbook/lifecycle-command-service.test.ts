@@ -5213,7 +5213,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(await store.readPendingRecovery(childRunId)).toBeNull();
     });
 
-    it('commits a run-targeted navigation over a child claim racing the fenced write', async () => {
+    it('commits a run-targeted navigation over a racing child claim and retires it', async () => {
       // The counterpart, at the same fence point the transition seam's witness
       // uses — and the opposite outcome. #702 proposed racing a CHILD claim into
       // the goto window on the model of `runTransition`'s witness; it cannot
@@ -5230,7 +5230,9 @@ describe('RunbookLifecycleCommandService', () => {
       //
       // Pinned as an allowance rather than left unstated: arming a guard here is
       // a decision about what `goto` means, not a defect fix, and this is the
-      // test that makes someone make it.
+      // test that makes someone make it. But the allowance is NOT symmetric —
+      // see the post-write assertions: the navigation commits AND revokes the
+      // racing bearer.
       loadStepsImpl = () => twoSteps;
       const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee21');
       const linkage = linkageFor(runId, 'a');
@@ -5267,6 +5269,31 @@ describe('RunbookLifecycleCommandService', () => {
       expect(claimResult?.kind).toBe('committed');
       expect(outcome.kind).toBe('applied');
       expect((await manager.load(runId))?.step).toBe('2');
+
+      // The allowance is ONE-sided, and the `applied` outcome hides the other
+      // half: the racing bearer does NOT survive. The decisive write's own
+      // transaction retires it. `afterAuthoritativeStateWrite` runs
+      // `invalidateClosedDelegatedClaims` — the parent half of R2's two-sided
+      // durable latch — right after the run UPDATE, and classifies every active
+      // claim naming this parent against the COMMITTED parent state, whose
+      // cursor has just left the delegating step. `classifyDelegationLiveness`
+      // therefore reads `closed`/`cursor-advanced` and tombstones the row in the
+      // same transaction that let the navigation through.
+      //
+      // So goto does not merely proceed past an open child: it revokes the
+      // child's authority. Only WHICH write collects the tombstone is timing-
+      // dependent — a claim committing after this transaction opens is missed
+      // here and superseded by the next authoritative parent write, with the
+      // claim-side half of the latch refusing its use meanwhile. The bearer
+      // never regains authority either way.
+      if (claimResult === undefined) throw new Error('expected the racing claim to have run');
+      const raced = assertClaimed(unwrapSessionMutation(claimResult));
+      const store = await getRunbookStore(tmp);
+      expect((await store.loadClaim(claimKeyFromBearer(raced.claimId)))?.status).toBe('superseded');
+      // Read through the bearer as a caller would, not just off the row:
+      // `loadSession` surfaces active claims only, so the tombstone is what makes
+      // verification report the bearer missing rather than verified.
+      expect((await sessionService.verifyClaimId(raced.claimId)).status).toBe('missing');
     });
   });
 
