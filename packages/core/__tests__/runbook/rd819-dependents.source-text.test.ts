@@ -217,7 +217,11 @@ function markerSites(text: string): { name: string; window: string }[] {
  * @returns True when the identifier occurs on a code line.
  */
 function appearsAsCode(text: string, name: string): boolean {
-  const word = new RegExp(`\\b${name}\\b`);
+  // `DEPENDENT_MARKER` admits `$` in a name, which is regex syntax rather than a
+  // `\b` word character — `\b$foo\b` would anchor mid-pattern and never match.
+  // So escape the name and spell the identifier boundaries out instead.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const word = new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`);
   return text.split('\n').some((line) => {
     if (/^\s*(\/\/|\/\*|\*)/.test(line)) {
       return false;
