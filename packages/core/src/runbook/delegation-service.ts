@@ -520,6 +520,12 @@ export function createDelegation(
   //        same bearer from the in-transaction open-children guard, for the same
   //        reason. Lifting this prohibition without revisiting it reintroduces
   //        #700 one level down.
+  //      - That same exemption ALSO skips the `delegation_collection_pending`
+  //        re-check, which rides on this invariant by a different mechanism: a
+  //        run that cannot issue a delegation has no reported outcome awaiting
+  //        collection. Listed separately because the open-children argument does
+  //        not cover it, so relaxing the prohibition breaks two checks here, not
+  //        one.
   //      - `transitionDelegationRuntime` (`lifecycle-command-service.ts`) keeps
   //        a structural rather than behavioural grant check, which cannot be
   //        exploited only because the sole bearer holding `mutate-run` without

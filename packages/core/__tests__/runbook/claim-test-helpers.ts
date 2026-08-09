@@ -107,6 +107,19 @@ export async function claimLiveDelegation(
  * the guard races the claim at the same instant, and moving the fence moves it
  * for all of them.
  *
+ * WITNESSES ROUTING, NOT ISOLATION. `claimant` resolves its store through the
+ * process-level, path-keyed registry, so on the same cwd it shares one driver
+ * and one connection with the run under test and the two writes serialize on
+ * that driver — see the header of `session-service.process.test.ts`, which is
+ * why every genuine contention race there runs in real child processes. What
+ * this fixture proves is that the arm reaches `runGuardedParentAdvance` at all
+ * and that the guard's in-transaction read sees a claim the pre-checks missed;
+ * that seam's behaviour under true multi-connection contention is pinned
+ * cross-process by `session-service.process.test.ts`'s "refuses after a claim
+ * commits between the fast check and guarded parent write". A test built here
+ * would still pass if SQLite offered no isolation whatsoever, so do not read it
+ * as evidence of the transactional property.
+ *
  * Restored by the caller's `jest.restoreAllMocks()`; the claim fires at most
  * once however many times the seam is entered.
  *

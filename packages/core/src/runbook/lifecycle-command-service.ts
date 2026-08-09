@@ -2372,11 +2372,26 @@ export class RunbookLifecycleCommandService {
     // cannot reach and leave the prescribed one unguarded (#700).
     //
     // A delegated-child bearer is exempt, mirroring the pre-check exemption in
-    // `resolveTransitionTarget`. The guard reads `claims WHERE parent_run_id =
-    // <target>`, and a delegated child can never be a delegation parent because
-    // RD-819 refuses nested delegation, so the set is provably empty. That is a
-    // coincidence of two independent rules, not an authority decision, and it
-    // evaporates the day the nested prohibition moves.
+    // `resolveTransitionTarget`. That is a coincidence of two independent rules,
+    // not an authority decision, and it evaporates the day the nested
+    // prohibition moves.
+    //
+    // FALSE HERE SUPPRESSES THREE CHECKS, not one — `#runGuardedOrPlain` routes
+    // to `unguarded()`, skipping everything `runGuardedParentAdvance` does. All
+    // three are empty for a delegated child, but by two different mechanisms,
+    // and enumerating them is the point: the exemption is sound only while every
+    // one of them stays empty.
+    //   1. The open-children pre-check and 3. the in-transaction guard both read
+    //      `claims WHERE parent_run_id = <target>`. A delegated child can never
+    //      be a delegation parent — RD-819 refuses nested delegation — so the
+    //      set is provably empty.
+    //   2. The `delegation_collection_pending` re-check reads delegation-outcome
+    //      facts off the target's OWN state
+    //      (`readDelegationCollectionPendingForPolicy`). Same rule, different
+    //      mechanism: a run that cannot issue a delegation has no outcome to
+    //      collect, so `pending` is always false. Called out because the
+    //      claims-set argument above does not cover it, and a reader who checks
+    //      only that argument would find this exemption unjustified.
     const guardOpenChildren =
       !targeted && !(ready.kind === 'claim' && isDelegatedChildClaim(ready.claim));
 
