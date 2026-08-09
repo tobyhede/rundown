@@ -154,15 +154,6 @@ export interface TransitionContext {
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
   /**
-   * When true, the decisive parent-advance write is run through
-   * {@link SessionService.runGuardedParentAdvance} so the open-delegated-children
-   * guard is re-checked inside the decisive write's own transaction (closing the
-   * check-then-act race against a concurrent `rd claim`). Set only for a bare
-   * pass/fail targeting the default parent; false for claim-targeted writes
-   * (which advance a child) and for collect.
-   */
-  guardOpenChildren: boolean;
-  /**
    * Resolved claim record when the target was selected via `--claim-id`;
    * undefined for the default-stack target. Identifies the bearer-verified claim
    * whose authority core evaluates for policy. Surfaced on the base (collect)
@@ -277,9 +268,6 @@ export async function buildTransitionContext(
       cwd,
       terminalReleaseMode,
       commandStreamOptions: options.commandStreamOptions,
-      // Base-path callers (collect) are exempt from the bare-pass/fail
-      // open-delegated-children guard by construction.
-      guardOpenChildren: false,
       ...(claim ? { claim } : {}),
     },
   };
