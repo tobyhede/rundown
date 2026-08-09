@@ -140,17 +140,17 @@ describe('isDelegatedChildClaim', () => {
   const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   const childRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
   const claimKey = assertClaimLookupKey(`rdclk_${'1'.repeat(32)}`);
+  const linkage = {
+    childRunId,
+    tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
+    parentRunId,
+    parentStepId: '1.1',
+    parentStep: 'Process item',
+    parentFrameKey: buildFrameKey('1', 0),
+    parentEntry: 1,
+  };
 
   it('classifies a claim minted from a delegation token as a delegated child', () => {
-    const linkage = {
-      childRunId,
-      tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
-      parentRunId,
-      parentStepId: '1.1',
-      parentStep: 'Process item',
-      parentFrameKey: buildFrameKey('1', 0),
-      parentEntry: 1,
-    };
     const childClaim: VerifiedClaim = {
       claimKey,
       controlledRunId: childRunId,
@@ -169,6 +169,32 @@ describe('isDelegatedChildClaim', () => {
     };
 
     expect(isDelegatedChildClaim(runControlClaim)).toBe(false);
+  });
+
+  // The two cases below decouple linkage from grants, which co-vary in every
+  // real claim. They pin the documented contract that the two claim shapes are
+  // distinguished *solely* by delegation linkage: a predicate that instead
+  // sniffed the grant list for `report-delegation-result` would satisfy both
+  // tests above and fail both of these.
+  it('classifies a delegation-linked claim as a delegated child even when it carries run-control grants', () => {
+    const linkedButRunControlGranted: VerifiedClaim = {
+      claimKey,
+      controlledRunId: childRunId,
+      delegation: linkage,
+      grants: createRunControlGrants(childRunId),
+    };
+
+    expect(isDelegatedChildClaim(linkedButRunControlGranted)).toBe(true);
+  });
+
+  it('classifies an unlinked claim as not a delegated child even when it carries delegated-child grants', () => {
+    const grantedButUnlinked: VerifiedClaim = {
+      claimKey,
+      controlledRunId: childRunId,
+      grants: createDelegatedChildGrants({ linkage }),
+    };
+
+    expect(isDelegatedChildClaim(grantedButUnlinked)).toBe(false);
   });
 });
 
