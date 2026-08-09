@@ -1197,6 +1197,9 @@ interface TransitionDelegationRuntime {
  * the two: a bearer authorized to advance a run also received the capability to
  * mint bearers from it.
  *
+ * RD-819-DEPENDENT: transitionDelegationRuntime.
+ * Enumerated at the RD-819 guard in `delegation-service.ts`.
+ *
  * The check is structural on purpose. The weaker gate has never been
  * exploitable, because the only bearer holding `mutate-run` without
  * `delegate-from-run` is a delegated child's, and nested delegation is refused
@@ -2538,6 +2541,9 @@ export class RunbookLifecycleCommandService {
     // is the only invocation the post-R1 protocol leaves an orchestrator.
     // Guarding only the bare/run shapes would guard the arms an orchestrator
     // cannot reach and leave the prescribed one unguarded (#700).
+    //
+    // RD-819-DEPENDENT: guardOpenChildren.
+    // Enumerated at the RD-819 guard in `delegation-service.ts`.
     //
     // A delegated-child bearer is exempt, mirroring the pre-check exemption in
     // `resolveTransitionTarget`. That is a coincidence of two independent rules,
