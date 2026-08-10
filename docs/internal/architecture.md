@@ -28,7 +28,7 @@ work.
 [Runbook File] --> [Parser] --> [XState Machine] --> [State Manager]
                                        ^                    |
                                        |                    v
-                              [CLI Commands] <---- [.rundown/rundown.db]
+                              [CLI Commands] <---> [.rundown/rundown.db]
                                                     (SQLite: runs, session,
                                                      claims, execution leases)
 ```
@@ -962,8 +962,17 @@ re-instrument from git history rather than re-deriving.
 
 Run, session, and claim authority live in **one SQLite database per project**,
 `.rundown/rundown.db`. Nothing else is authoritative: there is no per-run JSON
-state file, no separate session file, and no file lock guarding either. The one
-piece of run-adjacent state outside the database is **captured filesystem
+state file, no separate session file, and no file lock guarding run or session
+_authority_ — on the native multi-process path, concurrent CLI processes are
+serialised by transactions and execution leases alone. Two file locks do survive
+elsewhere, and neither is an authority mechanism: the sql.js driver takes an
+advisory lock around its durable-replacement cycle, an implementation detail of
+that single-writer WebContainer adapter (see
+[§ Drivers](#drivers-two-implementations-one-atomicity-bar)), and
+`CompletionLock` / `DelegationLock` remain around the completion and delegation
+workflows as tracked debt (see
+[§ Two domain locks survive](#two-domain-locks-survive-as-tracked-debt)). The
+one piece of run-adjacent state outside the database is **captured filesystem
 output**, which stays under `.rundown/runs/<run-id>/outputs/`
 (`outputsDirForRun`, `packages/core/src/runbook/output-channels.ts`) because it
 is arbitrary user data, not authority.
@@ -1237,8 +1246,12 @@ theoretical:
    is only the SIGKILL case that is uncovered — but that case has no in-product
    exit. A hard-killed owner leaves `runs.exec_token` set; every subsequent
    mutation refuses `EXECUTION_IN_PROGRESS`, and `deleteRun` guards on
-   `exec_token IS NULL`, so `rundown prune` refuses the run as well. Recovery
-   means deleting `.rundown/rundown.db`.
+   `exec_token IS NULL`, so `rundown prune` refuses the run as well. The only
+   exit is deleting `.rundown/rundown.db`, and that is an **emergency-only**
+   measure: the database is per-project, so deleting it destroys the
+   authoritative state of **every** run in the project — plus the session stack,
+   stash, and claims — not just the stranded one. Back up `.rundown/rundown.db`
+   first.
 
 ### Optimistic CAS: `mutateState` is not a lock
 
