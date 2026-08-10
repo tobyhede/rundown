@@ -613,17 +613,17 @@ test('merge: fails closed when no reports exist and MATRIX is malformed', () => 
 // `incomplete` stayed empty, and the merger uploaded a partial, scoped report over
 // the module's dashboard baseline — precisely the corruption this script exists to
 // prevent. Unknown expectations must fail closed whether or not reports arrived.
-// The artifact directory name is data read off the filesystem, and its module
-// component reached the dashboard upload URL (and the `${module}.json` output
-// path). Both collectors used to accept any `[a-z]+` name, so a directory naming
-// a module that does not exist would be merged and PUT to the dashboard under
-// that name. The module set is now single-sourced from PACKAGES.
+// Both collectors used to accept any `[a-z]+` directory name, so an artifact
+// naming a module that does not exist would be merged and PUT to the dashboard
+// under that name — creating a junk module on a public dashboard. The module set
+// is now single-sourced from PACKAGES, the same list the planner builds the
+// matrix from.
 //
-// This is the test that stops the flow coming back if someone later loosens
-// either regex: it drives BOTH collectors — a report artifact and a status
-// artifact for the same unknown module — and asserts nothing about that module
-// reaches a merge, an upload, or the score summary, while a known module in the
-// same directory is unaffected.
+// This is the test that stops that coming back if someone later loosens either
+// regex: it drives BOTH collectors — a report artifact and a status artifact for
+// the same unknown module — and asserts nothing about that module reaches a
+// merge, an upload, or the score summary, while a known module in the same
+// directory is unaffected.
 test('merge: an artifact naming an unknown module is ignored by both collectors', () => {
   const dir = mkdtempSync(join(tmpdir(), 'merge-unknown-module-'));
   try {

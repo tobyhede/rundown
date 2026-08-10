@@ -66,21 +66,26 @@ const UNDETECTED = new Set(['Survived', 'NoCoverage']);
  *
  * Single-sourced from {@link PACKAGES}, which is also what the shard planner
  * builds the matrix from, so the collectors below and the plan cannot disagree
- * about what a module is. Both collectors previously accepted any `[a-z]+`
- * directory name, which had two consequences:
+ * about what a module is.
  *
- * - **A junk dashboard module.** An artifact directory naming a module that does
- *   not exist would be merged and PUT to the dashboard under that name, silently
- *   creating a module on a public dashboard that nothing in this repo produces.
- * - **A file-data-to-network flow.** The artifact directory name is data read off
- *   the filesystem, and its module component reached the upload URL. The URL's
- *   HOST never did — `dashboardBase` and `project` are env-derived with constant
- *   defaults — so this was never host redirection, and the slug was already
- *   `encodeURIComponent`'d into a query parameter. Constraining it to a fixed set
- *   removes the flow at the source rather than relying on that encoding.
+ * Both collectors previously accepted any `[a-z]+` directory name, so an
+ * artifact directory naming a module that does not exist would be merged and PUT
+ * to the dashboard under that name — silently creating a module on a public
+ * dashboard that nothing in this repo produces. That same string also builds the
+ * `${module}.json` path under OUT_DIR and the `?module=` query parameter on the
+ * upload URL; both are now constrained to a fixed set.
  *
- * The same constraint protects `${module}.json` under OUT_DIR, which is a path
- * built from the same string.
+ * **This is NOT a fix for the `js/file-access-to-http` alert on this file**,
+ * despite looking like one — that was the hypothesis it was written under, and
+ * the SARIF disproved it. The alert's flow runs `readFileSync` of a shard report
+ * (in `mergeModule`) through `merged.{schemaVersion,thresholds,framework,config}`
+ * into the `JSON.stringify(report)` BODY of the PUT below. The module slug is not
+ * on that flow, and the URL's HOST never was file-derived at all — `dashboardBase`
+ * and `project` are env-derived with constant defaults.
+ *
+ * That flow is irreducible: reading mutation reports off disk and uploading them
+ * IS this script. Do not try to clear the alert by dropping fields from the
+ * merged report — that trades a real report for a quieter scanner.
  */
 const KNOWN_MODULES = new Set(PACKAGES.map((pkg) => pkg.module));
 
