@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -48,6 +48,26 @@ function plan(env) {
     encoding: 'utf8',
   });
   return JSON.parse(out);
+}
+
+/**
+ * Run the shard planner and return its matrix AND its stderr. The planner's
+ * diagnostics (budget widening, an unreachable cap) are stderr-only by design —
+ * the matrix goes to stdout — so asserting on them needs the stream captured
+ * rather than inherited, which `execFileSync` does not do by default.
+ *
+ * @param {Record<string,string>} env - extra environment for the planner.
+ * @returns {{include: Array<object>, stderr: string}} the matrix and diagnostics.
+ */
+function planCapture(env) {
+  const res = spawnSync('node', [planScript], {
+    cwd: repoRoot,
+    env: hermeticEnv(env),
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  assert.equal(res.status, 0, `planner exited ${res.status}: ${res.stderr}`);
+  return { ...JSON.parse(res.stdout), stderr: res.stderr };
 }
 
 test('plan: a dispatch for core emits only balanced, disjoint core shards', () => {
@@ -150,6 +170,36 @@ test('plan: the producer matrix never exceeds MAX_SHARD_JOBS', () => {
   assert.ok(include.length <= 40, `planned ${include.length} shards over the cap`);
   const all = include.flatMap((e) => e.mutate.split(','));
   assert.equal(new Set(all).size, all.length, 'widening the budget must not duplicate scopes');
+});
+
+// The widening loop is bounded, which means it can STOP without having reached
+// the cap — and when it does, the matrix it emits exceeds MAX_SHARD_JOBS with no
+// word said. That is the one outcome an operator has to know about: the cap is
+// the wave bound, so silently blowing through it is exactly the CI starvation the
+// number exists to prevent. It matters more now the ceiling (80) is close to the
+// plan (60) rather than 4x it.
+//
+// A cap of 1 cannot be reached at any budget: every package contributes at least
+// one shard, and each file over LARGE_SOURCE_FILE_LINES is isolated onto its own
+// shard however wide the budget gets. So this drives the non-convergent exit.
+test('plan: says so when the budget cannot be widened enough to reach the cap', () => {
+  const { include, stderr } = planCapture({
+    EVENT_NAME: 'workflow_dispatch',
+    INPUT_PACKAGE: 'core',
+    MAX_SHARD_JOBS: '1',
+  });
+  assert.ok(include.length > 1, 'this fixture only means anything if the cap is unreachable');
+  assert.match(
+    stderr,
+    /could not .*(reach|reduce|converge)/i,
+    'a plan that overshoots its cap must say that it did',
+  );
+  assert.match(stderr, /MAX_SHARD_JOBS=1/, 'the diagnostic must name the cap it missed');
+  assert.match(
+    stderr,
+    new RegExp(String(include.length)),
+    'and the shard count it actually emitted',
+  );
 });
 
 // The producer used to plan DIFFERENTIALLY on push: it diffed PUSH_BASE..HEAD and
@@ -501,17 +551,19 @@ function runMergeCapture(downloadDir, env, summaryPath) {
   if (summaryPath) childEnv.GITHUB_STEP_SUMMARY = summaryPath;
   const readSummary = () =>
     summaryPath && existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8') : '';
-  try {
-    execFileSync('node', [mergeScript], {
-      cwd: repoRoot,
-      env: childEnv,
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-    return { status: 0, stderr: '', summary: readSummary() };
-  } catch (err) {
-    return { status: err.status ?? 1, stderr: err.stderr ?? '', summary: readSummary() };
-  }
+  // spawnSync, not execFileSync-in-a-try: the try/catch form could only reach
+  // stderr through the thrown error, so on a SUCCESSFUL merge it returned a
+  // hardcoded ''. Every diagnostic the merger writes on a run that exits 0 —
+  // an ignored artifact, an unreadable status — could therefore not be asserted on, and
+  // a test that tried would fail for a reason that has nothing to do with the
+  // code under test. spawnSync gives the same fields on both paths.
+  const res = spawnSync('node', [mergeScript], {
+    cwd: repoRoot,
+    env: childEnv,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  return { status: res.status ?? 1, stderr: res.stderr ?? '', summary: readSummary() };
 }
 
 test('merge: passes when shards are complete and above the floor', () => {
@@ -671,6 +723,103 @@ test('merge: an artifact naming an unknown module is ignored by both collectors'
   }
 });
 
+// `scoreOf` returns 100 when `valid` is 0 (`valid ? … : 100`), so a module that
+// measured nothing scores a perfect 100% — and the upload guard only checks
+// `incomplete`, which a module with a complete-but-empty shard set is not. That
+// combination PUTs a 100%-of-nothing report straight over the module's dashboard
+// baseline: the same corruption the partial-merge guard exists to prevent,
+// arriving through a different door.
+//
+// Two cases, because `total === 0` and `valid === 0` are not the same thing and
+// only the first is currently detected at all:
+for (const [label, statuses] of [
+  ['no mutants at all', {}],
+  // total = 3, valid = 0: every mutant excluded from scoring. Scores 100% too,
+  // and does not even trip the existing zero-mutant failure.
+  ['only mutants that cannot be scored', { Ignored: 3 }],
+]) {
+  test(`merge: a module with ${label} must not upload over its baseline`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'merge-zero-mutant-'));
+    try {
+      writeReport(join(dir, 'mutation-report-core-shard1'), statuses);
+      // A COMPLETE plan: the module is not `incomplete`, so nothing else stops
+      // the upload. DASHBOARD_BASE is a closed local port, so an attempted
+      // upload surfaces as an `upload core:` failure instead of a real PUT.
+      const matrix = JSON.stringify({ include: [{ module: 'core', shard: 1 }] });
+      const { stderr } = runMergeCapture(dir, {
+        MATRIX: matrix,
+        UPLOAD: 'true',
+        DASHBOARD_API_KEY: 'dummy-key',
+        DASHBOARD_BASE: 'http://127.0.0.1:1/api/reports',
+        APPLY_BREAK: 'false',
+      });
+      assert.doesNotMatch(
+        stderr,
+        /upload core:/,
+        'a module with nothing that can be scored must not be PUT over the baseline',
+      );
+      assert.doesNotMatch(stderr, /uploaded /, 'must not report a successful upload');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+// (The zero-mutant FAILURE MESSAGE is already pinned by
+// 'merge: a module whose measured shards found zero mutants fails loudly' below;
+// these two cases are about the upload, which nothing covered.)
+
+// The allowlist is supposed to be the thing that rejects an unrecognised module,
+// and to SAY SO. But the artifact regex captures `[a-z]+`, so a slug carrying a
+// digit or a hyphen fails to parse and is dropped before the allowlist ever sees
+// it — silently, which is the outcome the allowlist was written to avoid.
+// Latent today (all four PACKAGES slugs are plain lowercase) and a trap for the
+// first package named `core2` or matched on a hyphenated slug.
+for (const slug of ['core2', 'claude-code-plugin']) {
+  test(`merge: an artifact for unknown module '${slug}' is reported, not silently dropped`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'merge-slug-'));
+    try {
+      writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+      writeReport(join(dir, `mutation-report-${slug}-shard1`), { Killed: 4 });
+      const matrix = JSON.stringify({ include: [{ module: 'core', shard: 1 }] });
+      const { stderr } = runMergeCapture(dir, { MATRIX: matrix, APPLY_BREAK: 'false' });
+      assert.match(
+        stderr,
+        new RegExp(`ignoring artifact 'mutation-report-${slug}-shard1'`),
+        'the allowlist must be what rejects the module, and it must name it',
+      );
+      assert.ok(
+        !existsSync(join(dir, 'merged', `${slug}.json`)),
+        'an unknown module must still not be merged',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+// The silence on a malformed status is deliberate — a truncated status must not
+// take down a merge that has real reports — but silence is not the same as
+// saying nothing. This PR exists to make unmeasured shards visible; a status
+// document that fails to parse is exactly the evidence that would explain one,
+// and it currently vanishes without a word.
+test('merge: a malformed shard status is reported to stderr, not swallowed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-bad-status-'));
+  try {
+    writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+    const statusDir = join(dir, 'status', 'mutation-status-core-shard1');
+    mkdirSync(statusDir, { recursive: true });
+    writeFileSync(join(statusDir, 'shard-status.json'), '{"outcome": "failure"');
+    const matrix = JSON.stringify({ include: [{ module: 'core', shard: 1 }] });
+    const { status, stderr } = runMergeCapture(dir, { MATRIX: matrix, APPLY_BREAK: 'false' });
+    assert.match(stderr, /shard-status\.json/, 'the unreadable status must be named by path');
+    assert.match(stderr, /could not (be )?parse/i, 'and the failure must be described');
+    assert.equal(status, 0, 'a malformed status must not fail a merge with real reports');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('merge: fails closed when reports exist but MATRIX is absent', () => {
   const dir = mkdtempSync(join(tmpdir(), 'merge-unknown-with-reports-'));
   try {
@@ -751,43 +900,56 @@ test('merge: unions one file split across shards instead of overwriting it', () 
   }
 });
 
-test('merge: a mutant measured by one chunk is not demoted by another chunk that ignored it', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'merge-split-dup-'));
-  try {
-    const split = 'src/runbook/compiler.ts';
-    // Identical location in both shards: a chunk boundary can land inside a
-    // multi-line expression, so the same mutant legitimately appears twice.
-    writeReport(
-      join(dir, 'mutation-report-core-shard1'),
-      { Killed: 1 },
-      {
-        file: split,
-        startLine: 400,
-      },
-    );
-    writeReport(
-      join(dir, 'mutation-report-core-shard2'),
-      { Ignored: 1 },
-      {
-        file: split,
-        startLine: 400,
-      },
-    );
-    const matrix = JSON.stringify({
-      include: [
-        { module: 'core', shard: 1 },
-        { module: 'core', shard: 2 },
-      ],
-    });
-    assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 0);
-    const merged = JSON.parse(readFileSync(join(dir, 'merged', 'core.json'), 'utf8'));
-    const mutants = merged.files[split].mutants;
-    assert.equal(mutants.length, 1, 'the same mutant must not be counted twice');
-    assert.equal(mutants[0].status, 'Killed', 'a real result outranks an Ignored placeholder');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+// A mutant inside the 40-line chunk overlap is measured by TWO shards running
+// DIFFERENT `--mutate` scopes, so divergent statuses for one mutant are an
+// expected outcome of the overlap, not a hypothetical. Resolving them by ARRIVAL
+// ORDER would make the merged score depend on which shard's report the merger
+// happened to read first — the same campaign scoring differently run to run, and
+// a `Killed` silently downgraded to `Survived` in the baseline the PR gate diffs
+// against.
+//
+// Precedence must therefore be explicit and order-independent. `collectShardReports`
+// sorts by shard number, so shard1 is always the incumbent and shard2 always the
+// incoming entry — which is what lets this table drive BOTH arrival orders.
+//
+// One table covers both rules: a real result beats an `Ignored` placeholder (the
+// case this test originally covered in one direction only, kept), and a
+// demonstrated `Killed` beats a `Survived`.
+for (const [first, second, expected] of [
+  ['Killed', 'Survived', 'Killed'],
+  ['Survived', 'Killed', 'Killed'],
+  ['Killed', 'Ignored', 'Killed'],
+  ['Ignored', 'Killed', 'Killed'],
+]) {
+  test(`merge: an overlapped mutant resolves to ${expected} when shard1=${first} and shard2=${second}`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'merge-split-dup-'));
+    try {
+      const split = 'src/runbook/compiler.ts';
+      // Identical location in both shards: a chunk boundary can land inside a
+      // multi-line expression, so the same mutant legitimately appears twice.
+      const at = { file: split, startLine: 400 };
+      writeReport(join(dir, 'mutation-report-core-shard1'), { [first]: 1 }, at);
+      writeReport(join(dir, 'mutation-report-core-shard2'), { [second]: 1 }, at);
+      const matrix = JSON.stringify({
+        include: [
+          { module: 'core', shard: 1 },
+          { module: 'core', shard: 2 },
+        ],
+      });
+      assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 0);
+      const merged = JSON.parse(readFileSync(join(dir, 'merged', 'core.json'), 'utf8'));
+      const mutants = merged.files[split].mutants;
+      assert.equal(mutants.length, 1, 'the same mutant must not be counted twice');
+      assert.equal(
+        mutants[0].status,
+        expected,
+        `${first}+${second} must merge to ${expected} regardless of which shard is read first`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 // Issue #670 item 3: a shard that produced no report must be reported as "not
 // measured", by name and with a reason. Absence used to be reported only as a

@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { buildStatus, parseInstrumented, parseProgress } from '../mutation-shard-status.mjs';
 
-const repoRoot = new URL('../..', import.meta.url).pathname;
+// fileURLToPath, not `new URL(...).pathname`: pathname leaves percent-encoding
+// undecoded (a repo checked out under a path with a space becomes `%20`) and on
+// Windows yields a leading-slash drive path. Either produces a cwd that
+// execFileSync cannot resolve.
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const statusScript = 'scripts/mutation-shard-status.mjs';
 
 // A real progress line from the 2026-08-03 producer run, which is where the
@@ -120,6 +125,39 @@ test('the status script writes its document and never fails the shard job', () =
     assert.equal(status.outcome, 'cancelled');
     assert.equal(status.reportWritten, false);
     assert.equal(status.progress.tested, 488);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The log READ is wrapped and reported; the status WRITE is not. An unwritable
+// STATUS_FILE therefore throws out of main(), `process.exitCode = main()` never
+// assigns, and the process exits non-zero — breaking the always-0 contract this
+// script's own JSDoc states, and doing it on the `always()` step that exists to
+// stop a shard failing silently. A status writer must never be the reason a
+// shard job fails.
+test('the status script exits 0 and explains itself when the status file cannot be written', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'shard-status-unwritable-'));
+  try {
+    // STATUS_FILE points at a DIRECTORY, so writeFileSync fails with EISDIR.
+    const statusPath = join(dir, 'status-is-a-directory');
+    mkdirSync(statusPath, { recursive: true });
+    const res = spawnSync('node', [statusScript], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        MODULE: 'core',
+        SHARD: '2',
+        OUTCOME: 'failure',
+        REPORT: '',
+        STATUS_FILE: statusPath,
+      },
+    });
+    assert.equal(res.status, 0, 'the status writer must never fail the shard job');
+    assert.match(res.stderr, /could not write/i, 'the write failure must be reported');
+    assert.match(res.stderr, /status-is-a-directory/, 'and must name the path it tried');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

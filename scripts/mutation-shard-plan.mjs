@@ -256,6 +256,28 @@ for (let attempt = 0; attempt < 10 && shardTotal(producerPlan) > maxShardJobs; a
   producerPlan = planProducer(shardBudget);
 }
 
+// The loop is bounded, so it can stop while the plan is STILL over the cap —
+// and then the matrix is emitted anyway, silently exceeding the wave bound the
+// cap exists to express. One check on the final state rather than one per exit
+// path, so it holds for the attempt limit, for the non-monotonic guard above,
+// and for any exit added later.
+//
+// Widening cannot always converge: every selected package contributes at least
+// one shard, and each file over LARGE_SOURCE_FILE_LINES is isolated onto its own
+// shard no matter how wide the budget gets, so the plan has a floor the budget
+// cannot lower.
+const plannedShardTotal = shardTotal(producerPlan);
+if (plannedShardTotal > maxShardJobs) {
+  process.stderr.write(
+    `WARNING: could not reach MAX_SHARD_JOBS=${maxShardJobs}. The plan plans ` +
+      `${plannedShardTotal} shard(s) at MAX_SHARD_LINES=${shardBudget}, and widening the budget ` +
+      'further cannot reduce it: each package contributes at least one shard and each file over ' +
+      'the large-file threshold is isolated onto its own. Proceeding over the cap: ' +
+      `${plannedShardTotal} shards is ${Math.ceil(plannedShardTotal / 20)} wave(s) of the 20 ` +
+      'concurrent job slots this account allows.\n',
+  );
+}
+
 for (const { pkg, shards } of producerPlan) {
   shards.forEach((shard, i) => {
     include.push({

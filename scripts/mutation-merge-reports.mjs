@@ -87,7 +87,15 @@ const KNOWN_MODULES = new Set(PACKAGES.map((pkg) => pkg.module));
  * they cannot drift on what a valid artifact name is — a name that parses for
  * reports must parse identically for statuses, differing only in `kind`.
  */
-const SHARD_ARTIFACT = /^mutation-(report|status)-([a-z]+)-shard(\d+)$/;
+// The module capture is deliberately WIDER than the four slugs in PACKAGES.
+// `[a-z]+` would reject a slug carrying a digit or a hyphen before
+// parseShardArtifact could test it, so a future package named `core2` — or one
+// matched on a hyphenated slug — would be dropped SILENTLY by the regex instead
+// of reported as unknown by the allowlist. The allowlist is meant to be the
+// thing that rejects, and to say so; the regex only decides what is
+// artifact-SHAPED. The trailing `-shard(\d+)$` anchor keeps this unambiguous
+// even though `-` is now in the class.
+const SHARD_ARTIFACT = /^mutation-(report|status)-([a-z0-9-]+)-shard(\d+)$/;
 
 /**
  * Parse a shard artifact directory name into the module and shard it belongs to.
@@ -195,11 +203,64 @@ function collectShardStatuses(dir) {
         `${parsed.module}#${parsed.shard}`,
         JSON.parse(readFileSync(statusPath, 'utf8')),
       );
-    } catch {
-      // A truncated status must not take down a merge that has real reports.
+    } catch (error) {
+      // Still non-fatal: a truncated status must not take down a merge that has
+      // real reports. But no longer silent. A status document is the evidence
+      // that EXPLAINS an unmeasured shard, so one that cannot be read is the
+      // explanation going missing — precisely the disappearance this job exists
+      // to stop. The shard it belonged to is still accounted for by the
+      // completeness check; it just loses its reason.
+      process.stderr.write(
+        `could not parse ${statusPath}: ${error?.message ?? String(error)}; ` +
+          'the shard it describes will be reported without its measured progress\n',
+      );
     }
   }
   return statuses;
+}
+
+/**
+ * Precedence for two measurements of the SAME mutant, highest wins.
+ *
+ * Without this the winner was whichever shard was read first, which made the
+ * merged score depend on shard ordering — the same campaign scoring differently
+ * run to run, and a demonstrated `Killed` silently downgraded to `Survived` in
+ * the baseline the PR gate diffs against.
+ *
+ * The ordering is evidence strength, and it is consistent with the score this
+ * same file computes (`scoreOf`, where `DETECTED = Killed | Timeout`):
+ *
+ * - `Killed` (4) outranks everything: a test demonstrably failed on the mutant.
+ *   That is a positive observation, and no other status is one.
+ * - `Timeout` (3) is detected per Stryker's own classification — which `scoreOf`
+ *   implements — so it must outrank the undetected statuses or the merged score
+ *   would contradict the scoring function beside it. It sits below `Killed`
+ *   because a demonstrated kill is the stronger and more informative result.
+ * - `Survived` / `NoCoverage` (2) are real measurements that observed no kill.
+ * - Compile/runtime errors (1, and the fallback for anything unrecognised) are
+ *   real, but excluded from the score.
+ * - `Ignored` / `Pending` (0) are placeholders — a chunk that skipped the mutant
+ *   rather than measuring it — so they lose to every real result. This is the
+ *   pre-existing rule, now expressed as the bottom of the same scale.
+ *
+ * @param {string} status - a mutant status from a shard report.
+ * @returns {number} its precedence; higher wins a conflict.
+ */
+function statusRank(status) {
+  switch (status) {
+    case 'Killed':
+      return 4;
+    case 'Timeout':
+      return 3;
+    case 'Survived':
+    case 'NoCoverage':
+      return 2;
+    case 'Ignored':
+    case 'Pending':
+      return 0;
+    default:
+      return 1;
+  }
 }
 
 /**
@@ -214,16 +275,17 @@ function collectShardStatuses(dir) {
  * not the report-local `id`, is what makes two entries the same mutant.
  *
  * A duplicate is possible even between disjoint ranges: a chunk boundary can
- * land inside a multi-line expression. When it happens, a real result wins over
- * an `Ignored`/`Pending` placeholder, so a mutant measured by one chunk is never
- * demoted by another chunk that merely skipped it.
+ * land inside a multi-line expression, and the CHUNK_OVERLAP_LINES window makes
+ * it routine — a mutant in the overlap is measured twice, by two shards running
+ * different `--mutate` scopes. Divergent statuses for one mutant are therefore an
+ * expected outcome, not a corner case, and they are resolved by
+ * {@link STATUS_RANK} rather than by which report happened to be read first.
  *
  * @param {object} into - the accumulating merged file entry (mutated in place).
  * @param {object} from - the incoming shard's file entry.
  * @param {string} file - the report key, for diagnostics.
  */
 function mergeFileEntry(into, from, file) {
-  const placeholder = new Set(['Ignored', 'Pending']);
   // A mutant missing the identifying attributes cannot be correlated, so it
   // falls back to its own serialisation: byte-identical duplicates still
   // collapse, and anything else is kept. Merging must never DROP a measured
@@ -246,7 +308,10 @@ function mergeFileEntry(into, from, file) {
       seen.set(key, into.mutants.push(mutant) - 1);
       continue;
     }
-    if (placeholder.has(into.mutants[existing].status) && !placeholder.has(mutant.status)) {
+    // Strictly greater, so an equal rank keeps the incumbent — two shards that
+    // agree produce the same merged entry either way, and the merge stays a pure
+    // function of the shard SET rather than of its order.
+    if (statusRank(mutant.status) > statusRank(into.mutants[existing].status)) {
       into.mutants[existing] = mutant;
     }
   }
@@ -574,7 +639,22 @@ for (const [module, shardReports] of byModule) {
   // letting a 100%-of-nothing module read as a clean pass.
   if (total === 0) {
     failures.push(`${module}: every measured shard reported 0 mutants (scope resolved to nothing)`);
+  } else if (valid === 0) {
+    // total and valid are NOT the same test, and only the first was checked. A
+    // report whose mutants are all Ignored/errored has total > 0 yet nothing
+    // that can be scored, so it slipped through the check above and reported a clean
+    // 100%.
+    failures.push(
+      `${module}: none of the ${total} measured mutant(s) can be scored, so ${score.toFixed(2)}% is ` +
+        '100% of nothing',
+    );
   }
+  // `scoreOf` returns 100 when `valid` is 0, so a module that measured nothing
+  // that can be scored is a PERFECT score by construction. Uploading it would overwrite
+  // the module's dashboard baseline with that — the same corruption the
+  // partial-merge guard exists to prevent, arriving through a different door, so
+  // it reuses the same mechanism rather than adding a parallel one.
+  if (valid === 0) incomplete.add(module);
 
   // Only upload a module with full shard coverage; an incomplete merge would
   // overwrite the dashboard baseline with a partial report.

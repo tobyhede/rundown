@@ -139,7 +139,18 @@ export function main() {
     log,
     reportWritten: report !== '' && existsSync(report),
   });
-  writeFileSync(statusFile, `${JSON.stringify(status, null, 2)}\n`);
+  // Guarded for the same reason the log read above is: this runs on an `always()`
+  // step whose entire job is to stop a shard failing silently. An unwritable
+  // STATUS_FILE throwing out of here would skip the `process.exitCode = main()`
+  // assignment entirely and exit non-zero — the status writer becoming the
+  // reason the shard job fails, which is the one thing it must never be. The
+  // status is still echoed to stderr below, so the information survives even
+  // when the file does not.
+  try {
+    writeFileSync(statusFile, `${JSON.stringify(status, null, 2)}\n`);
+  } catch (error) {
+    process.stderr.write(`could not write ${statusFile}: ${error?.message ?? String(error)}\n`);
+  }
   process.stderr.write(`${JSON.stringify(status)}\n`);
   return 0;
 }
