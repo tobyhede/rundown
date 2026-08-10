@@ -32,7 +32,15 @@ export function makeConfig({ sandboxed }) {
   // mutant is tested, not a skipped assertion. Name any such test
   // `*.repo-asset.test.ts`; it is ignored in the sandbox and still runs under the
   // normal Jest config. See scripts/__tests__/mutation-sandbox-assets.test.mjs.
-  const sandboxMetaTestIgnore = sandboxed ? ['\\.repo-asset\\.test\\.ts$'] : [];
+  //
+  // Source-text meta-tests read a `src/**` file as a STRING and assert on literal
+  // substrings, which instrumentation rewrites into `stryMutAct_*` switches — the
+  // same hard abort by a different route. Name any such test
+  // `*.source-text.test.ts`. This package has none today; the hatch is registered
+  // anyway so the first one added does not have to discover the abort in CI.
+  const sandboxMetaTestIgnore = sandboxed
+    ? ['\\.source-text\\.test\\.ts$', '\\.repo-asset\\.test\\.ts$']
+    : [];
 
   return {
     testPathIgnorePatterns: [
