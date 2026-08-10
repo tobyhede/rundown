@@ -158,3 +158,43 @@ plan or the #648 audit block, not from this addendum.
 - **#698 (`rdpath.ts` unreachable by mutation testing) is explicitly carved
   out.** It poisons only the unscoped `pnpm run test:mutate`, which ledger §31
   forbids PR 14 from running, and PR 14 touches no plugin source.
+- **`ESRCH` was added to `cspell-dictionary.txt`.** `EPERM`, `EACCES`,
+  `ENOENT`, `ELOOP`, and `errno` were already there; `ESRCH` had never been
+  spell-checked because its only prose occurrences were under
+  `docs/superpowers/`, which cspell ignores. Adding it is the smallest change
+  that keeps `verify` green without weakening the check. `unbypassable` was
+  rephrased rather than dictionary-added.
+
+## Findings that correct the 2026-08-10 audit block
+
+The audit instructed that PR 14 describe "PID-identity recovery" as a live
+mechanism. Reading the source to write that description turned up two facts the
+block does not record. Both are documented in `architecture.md` as they are,
+because `docs/internal/` describes what exists.
+
+1. **The dead-owner recovery path has no production caller.**
+   `recoverDeadOwner` is reached only from `withWait`
+   (`storage/execution-lease.ts:759`), which returns at `:752-753` unless a
+   `LeaseWaitPolicy` was supplied. No caller in `packages/*/src` supplies one —
+   the only `wait:` occurrences are two conditional pass-throughs in
+   `effectful-actor-mutation-runner.ts` (`:298`, `:508`), and no production
+   caller sets `input.wait`. So `isProcessAlive`, both exact-tuple CAS
+   statements, `reclaimed_pre_effect`, and `unresolved` are exercised only by
+   tests. This makes carved issue 1 **latent**, not live — its failure mode is
+   real but currently unreachable, which is worth knowing before prioritising
+   it.
+2. **A SIGKILL-stranded execution owner has no in-product recovery.**
+   `deleteRun` guards on `exec_token IS NULL`
+   (`storage/runbook-store.ts:1741`) and raises `execution_in_progress`
+   otherwise, so `rundown prune` refuses a run whose owner was hard-killed —
+   the same refusal every mutation gets. Combined with finding 1, the only exit
+   is deleting `.rundown/rundown.db`. The 2026-08-08 block's phrasing implies
+   pruning is available here; it is not.
+
+Two smaller corrections:
+
+- **`SCHEMA_VERSION` is `2`.** The ledger's PR 10 correction permitted 3; the
+  shape never required it.
+- **`recoverDeadOwner`'s `{kind:'alive'}` return is line 578**, not 577 — 577 is
+  the `isProcessAlive` guard above it. Its token/epoch CAS is `:662-668`, not
+  `:660-666`.

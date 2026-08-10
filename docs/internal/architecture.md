@@ -1084,7 +1084,7 @@ no window in which state is committed but the run still reads as owned.
 
 ### What the schema enforces on its own
 
-Triggers, not application code, are what make the CAS unbypassable:
+Triggers, not application code, are what make the CAS impossible to bypass:
 
 - **Owned-run guards.** While `runs.exec_token IS NOT NULL`, any claim or stash
   insert/update/delete `RAISE(ABORT, 'execution_in_progress')`. The store
@@ -1098,18 +1098,19 @@ Triggers, not application code, are what make the CAS unbypassable:
   claim-liveness touch be recorded while an owner holds the run without either
   being refused or invalidating captured authority. It is the reason "nothing
   written" on a refusal is stated as **nothing _authority-bearing_ written**:
-  every mutating path commits an inert `recordClaimSeen` row in its own
-  transaction beforehand, by design, so a failed liveness write can never roll
-  back the collection and a refused collection can never lose the liveness
-  record. The rationale is recorded in `collection-service.ts` at
-  `recordPresenterLiveness`.
+  every claim-authenticated mutating path commits an inert `recordClaimSeen` row
+  in its own transaction beforehand, by design, so a failed liveness write can
+  never roll back the mutation and a refused mutation can never lose the
+  liveness record. The rationale is recorded in `collection-service.ts` at
+  `recordPresenterLiveness`; the call sites are the claim seams in
+  `lifecycle-command-service.ts` and `collect`.
 - **Partial unique index.**
   `claims_one_active_per_run … WHERE status = 'active'` makes "the run's
   controlling claim" a function rather than an arbitrary pick.
 - **Execution identity is all-or-nothing.** A `CHECK` on `runs` requires
   `exec_epoch`, `exec_pid`, and `exec_token` to be present together or absent
-  together, so a half-populated identity — an owner recovery cannot resolve — is
-  unrepresentable.
+  together, so a half-populated identity — one that names an owner recovery
+  could not resolve — is unrepresentable.
 
 Claims are tombstoned, never hard-deleted: a claim that leaves the session
 becomes `status = 'superseded'` so issuance history survives.
@@ -1209,11 +1210,13 @@ theoretical:
 2. **The dead-owner path has no production caller today.** `recoverDeadOwner` is
    reached only from `withWait`, which returns before it unless a
    `LeaseWaitPolicy` was supplied — and nothing in `packages/*/src` constructs
-   one. In practice a hard-killed owner leaves `runs.exec_token` set, and
-   subsequent commands refuse `EXECUTION_IN_PROGRESS` until the state is pruned.
-   The in-process paths (`releaseClaimed`, `releaseEffectStarted`,
-   `abandonToRecovery`) cover every failure the executor itself observes; it is
-   only the SIGKILL case that is uncovered.
+   one. The in-process paths (`releaseClaimed`, `releaseEffectStarted`,
+   `abandonToRecovery`) cover every failure the executor itself observes, so it
+   is only the SIGKILL case that is uncovered — but that case has no in-product
+   exit. A hard-killed owner leaves `runs.exec_token` set; every subsequent
+   mutation refuses `EXECUTION_IN_PROGRESS`, and `deleteRun` guards on
+   `exec_token IS NULL`, so `rundown prune` refuses the run as well. Recovery
+   means deleting `.rundown/rundown.db`.
 
 ### Optimistic CAS: `mutateState` is not a lock
 
