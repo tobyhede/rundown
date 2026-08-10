@@ -613,6 +613,64 @@ test('merge: fails closed when no reports exist and MATRIX is malformed', () => 
 // `incomplete` stayed empty, and the merger uploaded a partial, scoped report over
 // the module's dashboard baseline — precisely the corruption this script exists to
 // prevent. Unknown expectations must fail closed whether or not reports arrived.
+// The artifact directory name is data read off the filesystem, and its module
+// component reached the dashboard upload URL (and the `${module}.json` output
+// path). Both collectors used to accept any `[a-z]+` name, so a directory naming
+// a module that does not exist would be merged and PUT to the dashboard under
+// that name. The module set is now single-sourced from PACKAGES.
+//
+// This is the test that stops the flow coming back if someone later loosens
+// either regex: it drives BOTH collectors — a report artifact and a status
+// artifact for the same unknown module — and asserts nothing about that module
+// reaches a merge, an upload, or the score summary, while a known module in the
+// same directory is unaffected.
+test('merge: an artifact naming an unknown module is ignored by both collectors', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-unknown-module-'));
+  try {
+    writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+    // Same shape as a real artifact in every respect except the module name.
+    writeReport(join(dir, 'mutation-report-evil-shard1'), { Killed: 4 });
+    mkdirSync(join(dir, 'status'), { recursive: true });
+    writeStatus(join(dir, 'status'), 'evil', 1, { outcome: 'failure' });
+    const matrix = JSON.stringify({ include: [{ module: 'core', shard: 1 }] });
+    // DASHBOARD_BASE points at a closed local port, so an upload that IS
+    // attempted is recorded as an `upload <module>:` failure instead of touching
+    // the real dashboard. `core` is complete here, so it DOES attempt an upload —
+    // and that is deliberate: it proves the upload path was live during this run,
+    // which is what makes the absence of `upload evil:` evidence of filtering
+    // rather than of a path that never executed.
+    const { stderr } = runMergeCapture(dir, {
+      MATRIX: matrix,
+      UPLOAD: 'true',
+      DASHBOARD_API_KEY: 'dummy-key',
+      DASHBOARD_BASE: 'http://127.0.0.1:1/api/reports',
+      APPLY_BREAK: 'false',
+    });
+    assert.match(
+      stderr,
+      /upload core:/,
+      'the upload path must be live for this test to mean anything',
+    );
+    assert.doesNotMatch(stderr, /upload evil:/, 'must not attempt to upload an unknown module');
+    assert.doesNotMatch(stderr, /^evil:/m, 'an unknown module must not appear in the scores');
+    assert.match(stderr, /ignoring artifact 'mutation-report-evil-shard1'/, 'report must be named');
+    assert.match(stderr, /ignoring artifact 'mutation-status-evil-shard1'/, 'status must be named');
+    // The known module in the same directory is unaffected: the allowlist filters
+    // the stray artifact out, it does not swallow a real one.
+    assert.match(stderr, /^core: /m, 'the known module must still be merged and scored');
+    assert.ok(
+      !existsSync(join(dir, 'merged', 'evil.json')),
+      'an unknown module must not reach the OUT_DIR path either',
+    );
+    assert.ok(
+      existsSync(join(dir, 'merged', 'core.json')),
+      'the known module must still be written',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('merge: fails closed when reports exist but MATRIX is absent', () => {
   const dir = mkdtempSync(join(tmpdir(), 'merge-unknown-with-reports-'));
   try {

@@ -125,10 +125,15 @@ merge** — so that every individual job stays under its cap:
   step-failed, how far it got, and at what measured mutants/min — in both stderr
   and the job summary, and fails the merge. A shard that finished but measured
   zero mutants is called out separately, because 100% of nothing is not a clean
-  result. **From `main`** it PUTs each complete report to the Stryker dashboard
-  (gating both the upload flag and the `STRYKER_DASHBOARD_API_KEY` on
-  `refs/heads/main && workflow_dispatch`) and enforces the aggregate `break`
-  floor. A dispatch off a feature branch never uploads and is advisory only.
+  result. Both collectors accept only artifact directories naming a module in
+  `PACKAGES` (`scripts/lib/mutation-scope.mjs`), the same list the planner
+  builds the matrix from — so an unrecognised directory name can never become a
+  junk module on the public dashboard, and the artifact name (file data) cannot
+  reach the upload URL. **From `main`** it PUTs each complete report to the
+  Stryker dashboard (gating both the upload flag and the
+  `STRYKER_DASHBOARD_API_KEY` on `refs/heads/main && workflow_dispatch`) and
+  enforces the aggregate `break` floor. A dispatch off a feature branch never
+  uploads and is advisory only.
 
 - `ignoreStatic` is OFF (env unset) so static mutants are scored.
 - **Upload safety.** The producer always shards the FULL scope of the packages

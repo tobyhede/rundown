@@ -44,6 +44,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 
 import { join } from 'node:path';
 
 import { mutantIdentity } from './assert-mutation-regressions.mjs';
+import { PACKAGES } from './lib/mutation-scope.mjs';
 
 const downloadDir = process.env.DOWNLOAD_DIR ?? 'shard-reports';
 const statusDir = process.env.STATUS_DIR ?? 'shard-status';
@@ -59,6 +60,65 @@ const dashboardBase =
 
 const DETECTED = new Set(['Killed', 'Timeout']);
 const UNDETECTED = new Set(['Survived', 'NoCoverage']);
+
+/**
+ * The only module names a shard artifact may claim.
+ *
+ * Single-sourced from {@link PACKAGES}, which is also what the shard planner
+ * builds the matrix from, so the collectors below and the plan cannot disagree
+ * about what a module is. Both collectors previously accepted any `[a-z]+`
+ * directory name, which had two consequences:
+ *
+ * - **A junk dashboard module.** An artifact directory naming a module that does
+ *   not exist would be merged and PUT to the dashboard under that name, silently
+ *   creating a module on a public dashboard that nothing in this repo produces.
+ * - **A file-data-to-network flow.** The artifact directory name is data read off
+ *   the filesystem, and its module component reached the upload URL. The URL's
+ *   HOST never did — `dashboardBase` and `project` are env-derived with constant
+ *   defaults — so this was never host redirection, and the slug was already
+ *   `encodeURIComponent`'d into a query parameter. Constraining it to a fixed set
+ *   removes the flow at the source rather than relying on that encoding.
+ *
+ * The same constraint protects `${module}.json` under OUT_DIR, which is a path
+ * built from the same string.
+ */
+const KNOWN_MODULES = new Set(PACKAGES.map((pkg) => pkg.module));
+
+/**
+ * Matches both shard artifact families. ONE regex, shared by both collectors, so
+ * they cannot drift on what a valid artifact name is — a name that parses for
+ * reports must parse identically for statuses, differing only in `kind`.
+ */
+const SHARD_ARTIFACT = /^mutation-(report|status)-([a-z]+)-shard(\d+)$/;
+
+/**
+ * Parse a shard artifact directory name into the module and shard it belongs to.
+ *
+ * @param {string} name - the artifact directory name.
+ * @param {'report' | 'status'} kind - which artifact family to accept.
+ * @returns {{module: string, shard: number} | null} the parsed identity, or null
+ *   when the name is not a shard artifact of this kind, or names a module outside
+ *   {@link KNOWN_MODULES}.
+ */
+function parseShardArtifact(name, kind) {
+  const match = SHARD_ARTIFACT.exec(name);
+  if (!match || match[1] !== kind) return null;
+  const [, , module, shard] = match;
+  if (!KNOWN_MODULES.has(module)) {
+    // Not fatal — a stray directory must not take down a merge that has real
+    // reports — but never silent either. Every other unmeasured-shard path in
+    // this script is named and explained, and an artifact dropped on the floor
+    // is exactly the kind of thing that should not vanish quietly. A shard the
+    // PLAN expected is still reported as NOT MEASURED by the completeness check,
+    // because the plan is built from the same PACKAGES list.
+    process.stderr.write(
+      `ignoring artifact '${name}': '${module}' is not a known module ` +
+        `(${[...KNOWN_MODULES].join(', ')})\n`,
+    );
+    return null;
+  }
+  return { module, shard: Number(shard) };
+}
 
 /**
  * Recompute a report's mutation score from its merged mutants. Mirrors Stryker:
@@ -86,7 +146,8 @@ function scoreOf(report) {
 /**
  * Discover shard report files grouped by module, keeping each report's shard
  * NUMBER. Expects artifact directories named `mutation-report-<module>-shard<N>`
- * each containing one report JSON.
+ * each containing one report JSON, where `<module>` is one of
+ * {@link KNOWN_MODULES}.
  *
  * The shard number is what lets the completeness check below name the shards
  * that are missing instead of only counting them — the difference between
@@ -101,13 +162,12 @@ function collectShardReports(dir) {
   if (!existsSync(dir)) return byModule;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const match = /^mutation-report-([a-z]+)-shard(\d+)$/.exec(entry.name);
-    if (!match) continue;
-    const module = match[1];
+    const parsed = parseShardArtifact(entry.name, 'report');
+    if (!parsed) continue;
     const reportPath = join(dir, entry.name, 'mutation-report.json');
     if (!existsSync(reportPath)) continue;
-    if (!byModule.has(module)) byModule.set(module, []);
-    byModule.get(module).push({ shard: Number(match[2]), path: reportPath });
+    if (!byModule.has(parsed.module)) byModule.set(parsed.module, []);
+    byModule.get(parsed.module).push({ shard: parsed.shard, path: reportPath });
   }
   for (const reports of byModule.values()) reports.sort((a, b) => a.shard - b.shard);
   return byModule;
@@ -128,12 +188,15 @@ function collectShardStatuses(dir) {
   if (!existsSync(dir)) return statuses;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const match = /^mutation-status-([a-z]+)-shard(\d+)$/.exec(entry.name);
-    if (!match) continue;
+    const parsed = parseShardArtifact(entry.name, 'status');
+    if (!parsed) continue;
     const statusPath = join(dir, entry.name, 'shard-status.json');
     if (!existsSync(statusPath)) continue;
     try {
-      statuses.set(`${match[1]}#${Number(match[2])}`, JSON.parse(readFileSync(statusPath, 'utf8')));
+      statuses.set(
+        `${parsed.module}#${parsed.shard}`,
+        JSON.parse(readFileSync(statusPath, 'utf8')),
+      );
     } catch {
       // A truncated status must not take down a merge that has real reports.
     }
