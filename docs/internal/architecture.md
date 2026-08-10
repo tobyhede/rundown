@@ -1112,8 +1112,11 @@ Triggers, not application code, are what make the CAS impossible to bypass:
   together, so a half-populated identity — one that names an owner recovery
   could not resolve — is unrepresentable.
 
-Claims are tombstoned, never hard-deleted: a claim that leaves the session
-becomes `status = 'superseded'` so issuance history survives.
+While a controlled run remains, claims that leave the session are tombstoned
+rather than hard-deleted: they become `status = 'superseded'` so issuance
+history survives release and replacement. Deleting or pruning the controlled run
+hard-deletes its claims through `claims.controlled_run ON DELETE CASCADE`, so
+claim history does not survive run deletion.
 
 ### Execution leases and the effect fence
 

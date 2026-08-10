@@ -932,9 +932,12 @@ describe('native adapter connection configuration', () => {
 
       expect(() => new NativeSqlDriver(recordingConnection(db))).toThrow(
         'Database did not enter WAL journal mode (effective mode: delete). ' +
-          'Only WAL serializes writes across processes, so that guarantee is not in ' +
-          'force on this connection. SQLite ANSWERED with the mode it kept instead of ' +
-          'failing, which narrows the cause to one of: a filesystem whose VFS provides ' +
+          'WAL mode is required for supported multi-process operation. SQLite still ' +
+          'serializes cross-process writers using file locks in rollback-journal mode, ' +
+          "but rollback-journal mode does not provide WAL's reader/writer concurrency " +
+          'and is not a validated Rundown deployment mode. SQLite returned the non-WAL ' +
+          'mode it kept instead of failing. This narrows the cause to one of: a ' +
+          'filesystem whose VFS provides ' +
           'no shared memory (a network mount such as NFS or SMB is the common one), a ' +
           'temporary database opened with no filename, or a connection that was already ' +
           'inside a write transaction. A read-only file or directory is NOT among them — ' +
@@ -945,9 +948,9 @@ describe('native adapter connection configuration', () => {
 
     it('refuses with a typed error carrying the effective mode', async () => {
       // A bare Error reaches the CLI's error mapper as RD-999 / "Unknown error" on
-      // EVERY command, read-only ones included, since the store opens before any
-      // of them run. The typed class is what lets a front end classify the refusal
-      // and render a real code — the same shape IncompatibleSchemaError uses for
+      // every command that opens the store, including read-only state commands.
+      // The typed class is what lets a front end classify the refusal and render
+      // a real code — the same shape IncompatibleSchemaError uses for
       // RD-305 — and the mode rides as DATA so no consumer re-parses the message.
       const db = new RecordingDatabase(() => false, {
         journalModeRow: { journal_mode: 'delete' },
@@ -980,12 +983,18 @@ describe('native adapter connection configuration', () => {
       );
 
       expect(coded.code).toBe('RD-306');
-      // The observed mode, the lost guarantee, and the candidate causes all
+      // The observed mode, the unsupported concurrency model, and the candidate causes all
       // survive into the ENVELOPE message. The code's `description` carries them
       // too, but that reaches an operator only through `--text --verbose` and
       // never appears in the JSON default — so the message is where they count.
       expect(coded.message).toContain('effective mode: delete');
-      expect(coded.message).toContain('Cross-process write serialization is not in force');
+      expect(coded.message).toContain(
+        'SQLite still serializes cross-process writers using file locks',
+      );
+      expect(coded.message).toContain(
+        "rollback-journal mode does not provide WAL's reader/writer concurrency",
+      );
+      expect(coded.message).not.toContain('Cross-process write serialization is not in force');
       // The envelope's cause list must be the SAME list
       // `WalJournalModeUnavailableError` names, and every entry on it must be a
       // condition under which the pragma ANSWERS with a non-WAL mode — the only
@@ -1018,6 +1027,12 @@ describe('native adapter connection configuration', () => {
 
       expect(err).toBeInstanceOf(WalJournalModeUnavailableError);
       expect((err as WalJournalModeUnavailableError).effectiveMode).toBeUndefined();
+      expect((err as Error).message).toContain('The pragma returned no readable journal mode');
+      expect((err as Error).message).not.toContain('mode it kept');
+
+      const coded = Errors.walJournalModeUnavailable(undefined);
+      expect(coded.message).toContain('The pragma returned no readable journal mode');
+      expect(coded.message).not.toContain('mode it kept');
     });
 
     it('refuses a non-memory fallback even on a connection with no file behind it', () => {

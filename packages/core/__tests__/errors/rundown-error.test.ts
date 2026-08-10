@@ -219,6 +219,24 @@ describe('ErrorCodes', () => {
     const uniqueSlugs = new Set(slugs);
     expect(uniqueSlugs.size).toBe(slugs.length);
   });
+
+  it('describes database-open errors with their actual command scope and recovery', () => {
+    const description = ErrorCodes.STATE_STORE_UNAVAILABLE.description;
+
+    expect(description).toContain('commands that access persisted run state');
+    expect(description).toContain('Retry after transient lock contention');
+    expect(description).toContain('repair the host or file for persistent failures');
+    expect(description).not.toContain('no command can read or write run state');
+    expect(description).not.toContain('not retrying the command');
+  });
+
+  it('describes RD-306 without assuming SQLite returned a readable rollback mode', () => {
+    const description = ErrorCodes.WAL_JOURNAL_MODE_UNAVAILABLE.description;
+
+    expect(description).toContain('did not enter WAL journal mode');
+    expect(description).toContain('a non-WAL mode or no readable mode');
+    expect(description).not.toContain('fell back to a rollback journal');
+  });
 });
 
 describe('retry idempotency error codes', () => {

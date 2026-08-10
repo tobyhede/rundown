@@ -152,8 +152,8 @@ function isFileBacked(db: DatabaseSync): boolean {
  * Typed rather than a bare `Error` for the reason
  * {@link import('./schema.js').IncompatibleSchemaError} is: a front end classifies
  * on the CLASS to render a real error code, and an unclassifiable throw reaches
- * the operator as RD-999 / "Unknown error" on every command — including the
- * read-only ones, since opening the store precedes all of them.
+ * the operator as RD-999 / "Unknown error" on every command that opens the
+ * store — including read-only state commands.
  */
 export class WalJournalModeUnavailableError extends Error {
   /**
@@ -173,11 +173,17 @@ export class WalJournalModeUnavailableError extends Error {
    *   returned no readable answer.
    */
   constructor(effectiveMode: string | undefined) {
+    const modeOutcome =
+      effectiveMode === undefined
+        ? 'The pragma returned no readable journal mode.'
+        : 'SQLite returned the non-WAL mode it kept instead of failing.';
     super(
       `Database did not enter WAL journal mode (effective mode: ${effectiveMode ?? 'unknown'}). ` +
-        'Only WAL serializes writes across processes, so that guarantee is not in ' +
-        'force on this connection. SQLite ANSWERED with the mode it kept instead of ' +
-        'failing, which narrows the cause to one of: a filesystem whose VFS provides ' +
+        'WAL mode is required for supported multi-process operation. SQLite still ' +
+        'serializes cross-process writers using file locks in rollback-journal mode, ' +
+        "but rollback-journal mode does not provide WAL's reader/writer concurrency " +
+        `and is not a validated Rundown deployment mode. ${modeOutcome} This narrows ` +
+        'the cause to one of: a filesystem whose VFS provides ' +
         'no shared memory (a network mount such as NFS or SMB is the common one), a ' +
         'temporary database opened with no filename, or a connection that was already ' +
         'inside a write transaction. A read-only file or directory is NOT among them — ' +

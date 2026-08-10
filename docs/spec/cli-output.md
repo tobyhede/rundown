@@ -1660,8 +1660,8 @@ Two are open-time faults on the database as a whole, two concern one run.
 
 | Code     | Symbolic name                   | Scope    | Nature                    |
 | -------- | ------------------------------- | -------- | ------------------------- |
-| `RD-306` | `WAL_JOURNAL_MODE_UNAVAILABLE`  | Database | Refusal — fix the host    |
-| `RD-307` | `STATE_STORE_UNAVAILABLE`       | Database | Refusal — fix the host    |
+| `RD-306` | `WAL_JOURNAL_MODE_UNAVAILABLE`  | Database | Refusal — establish WAL   |
+| `RD-307` | `STATE_STORE_UNAVAILABLE`       | Database | Retry lock; else repair   |
 | `RD-308` | `CONCURRENT_STATE_MODIFICATION` | One run  | **Transient — re-run it** |
 | `RD-309` | `INVALID_PERSISTED_RUN_STATE`   | One run  | Refusal — finish or prune |
 
@@ -1670,18 +1670,20 @@ governs the database's own schema version; it is not repeated here.
 
 #### `RD-306` — database is not in WAL journal mode
 
-Only WAL serializes writes across processes. SQLite answered the pragma with the
-mode it kept rather than failing, so cross-process serialization is not in
-force. The candidate causes are enumerated in the message because a temporary
-database and an in-transaction connection reach the same fallback — naming a
-network filesystem as _the_ cause would send an operator on local disk looking
-in the wrong place. A read-only file or directory is explicitly **not** among
-them: that fails the pragma outright and surfaces as `RD-307`.
+WAL is Rundown's required and validated journal mode. SQLite also serializes
+cross-process writers in rollback-journal modes through file locking, but those
+modes do not provide WAL's reader/writer concurrency. SQLite either returned a
+non-WAL effective mode or no readable mode. The candidate causes are enumerated
+in the message because a temporary database and an in-transaction connection
+reach the same refusal — naming a network filesystem as _the_ cause would send
+an operator on local disk looking in the wrong place. A read-only file or
+directory is explicitly **not** among them: that fails the pragma outright and
+surfaces as `RD-307`.
 
 **Text:**
 
 ```text
-Error RD-306: Runbook database is not in WAL journal mode - effective mode: delete. Cross-process write serialization is not in force on this database. SQLite answered with the mode it kept instead of failing, which narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307
+Error RD-306: Runbook database is not in WAL journal mode - effective mode: delete. WAL mode is required for supported multi-process operation. SQLite still serializes cross-process writers using file locks in rollback-journal mode, but rollback-journal mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned the non-WAL mode it kept instead of failing. This narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307
 ```
 
 **JSON:**
@@ -1689,7 +1691,7 @@ Error RD-306: Runbook database is not in WAL journal mode - effective mode: dele
 ```json
 {
   "kind": "error",
-  "error": "Runbook database is not in WAL journal mode - effective mode: delete. Cross-process write serialization is not in force on this database.",
+  "error": "Runbook database is not in WAL journal mode - effective mode: delete. WAL mode is required for supported multi-process operation. SQLite still serializes cross-process writers using file locks in rollback-journal mode, but rollback-journal mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned the non-WAL mode it kept instead of failing. This narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307",
   "code": "RD-306",
   "command": "run",
   "details": {
@@ -1703,18 +1705,20 @@ Error RD-306: Runbook database is not in WAL journal mode - effective mode: dele
 
 #### `RD-307` — database unavailable
 
-`.rundown/rundown.db` could not be opened, so no command can read or write run
-state. This reaches **every** command, read-only ones included, because opening
-the database precedes all of them. The driver's own message rides in `error`
-because it is the only thing that distinguishes a read-only file from a file
-that is not a database from a locked database from a host with no working SQLite
-adapter. Rundown never downgrades to the single-writer sql.js adapter outside
-WebContainer, so the recovery is repairing the host or the file — not retrying.
+`.rundown/rundown.db` could not be opened, so commands that access persisted run
+state cannot continue. This includes read-only state commands, but not commands
+that never open the store, such as `rundown check`. The driver's own message
+rides in `error` because it is the only thing that distinguishes a read-only
+file from a file that is not a database from lock contention that outlasted the
+driver's bounded timeout and retries from a host with no working SQLite adapter.
+Rundown never downgrades to the single-writer sql.js adapter outside
+WebContainer. Retry after transient lock contention; repair the host or file for
+persistent failures.
 
 **Text:**
 
 ```text
-Error RD-307: Runbook database unavailable - SQLITE_READONLY: attempt to write a readonly database
+Error RD-307: Runbook database unavailable - Native SQLite (node:sqlite) is unavailable on this multi-process host: attempt to write a readonly database. Rundown does not downgrade to the single-writer sql.js adapter outside WebContainer.
 ```
 
 **JSON:**
@@ -1722,7 +1726,7 @@ Error RD-307: Runbook database unavailable - SQLITE_READONLY: attempt to write a
 ```json
 {
   "kind": "error",
-  "error": "Runbook database unavailable - SQLITE_READONLY: attempt to write a readonly database",
+  "error": "Runbook database unavailable - Native SQLite (node:sqlite) is unavailable on this multi-process host: attempt to write a readonly database. Rundown does not downgrade to the single-writer sql.js adapter outside WebContainer.",
   "code": "RD-307",
   "command": "status",
   "details": {
