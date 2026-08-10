@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { PACKAGES, partitionPrEntries } from '../lib/mutation-scope.mjs';
+import { basename, dirname, join } from 'node:path';
+import {
+  DEFAULT_SHARD_CONCURRENCY,
+  LARGE_FILE_SHARD_CONCURRENCY,
+  LARGE_SOURCE_FILE_LINES,
+  PACKAGES,
+  partitionPrEntries,
+} from '../lib/mutation-scope.mjs';
 
 const repoRoot = new URL('../..', import.meta.url).pathname;
 const planScript = 'scripts/mutation-shard-plan.mjs';
@@ -60,7 +66,88 @@ test('plan: a dispatch for core emits only balanced, disjoint core shards', () =
   );
   // Shards must be disjoint and collectively cover the eligible set exactly once.
   const all = include.flatMap((e) => e.mutate.split(','));
-  assert.equal(new Set(all).size, all.length, 'shards must mutate disjoint files');
+  assert.equal(new Set(all).size, all.length, 'shards must mutate disjoint scopes');
+});
+
+// The producer's oldest failure: it emitted WHOLE-FILE scopes only, so a module
+// too big for one shard was an indivisible unit and every campaign lost it to the
+// job timeout (issue #670). A large file must now arrive as several range scopes
+// on several shards.
+test('plan: a file above the large-file threshold is split across shards by line range', () => {
+  const { include } = plan({
+    EVENT_NAME: 'workflow_dispatch',
+    INPUT_PACKAGE: 'core',
+    MAX_SHARD_LINES: '800',
+  });
+  const scopesOf = (file) =>
+    include.flatMap((e) =>
+      e.mutate.split(',').filter((scope) => scope.startsWith(`${file}:`) || scope === file),
+    );
+  const big = 'src/runbook/compiler.ts'; // ~5000 lines, core's largest module
+  const scopes = scopesOf(big);
+  assert.ok(scopes.length > 1, `${big} must be split into several range scopes`);
+  for (const scope of scopes) assert.match(scope, /:\d+-\d+$/, 'each part must be a line range');
+
+  // Every line of the file is covered, with no gap. Consecutive chunks overlap
+  // by design (a mutant Stryker cannot fit entirely inside a range is never
+  // placed), so the invariant is "no gap", not "no overlap".
+  const ranges = scopes
+    .map((scope) => scope.slice(`${big}:`.length).split('-').map(Number))
+    .sort((a, b) => a[0] - b[0]);
+  assert.equal(ranges[0][0], 1, 'the split must start at line 1');
+  for (let i = 1; i < ranges.length; i++) {
+    assert.ok(ranges[i][0] > ranges[i - 1][0], 'chunk starts must advance');
+    assert.ok(
+      ranges[i][0] <= ranges[i - 1][1] + 1,
+      'chunks must leave no gap in the mutated lines',
+    );
+  }
+
+  // A split file is isolated on its own shard, which is what makes the shard's
+  // concurrency decidable from one unambiguous fact.
+  const shardsWithBig = include.filter((e) => e.mutate.includes(`${big}:`));
+  for (const shard of shardsWithBig) {
+    assert.equal(shard.mutate.split(',').length, 1, 'a large-file chunk is not batched');
+    assert.equal(shard.concurrency, LARGE_FILE_SHARD_CONCURRENCY);
+  }
+});
+
+test('plan: every producer shard carries a size-aware Stryker concurrency', () => {
+  const { include } = plan({
+    EVENT_NAME: 'workflow_dispatch',
+    INPUT_PACKAGE: 'core',
+    MAX_SHARD_LINES: '800',
+  });
+  assert.ok(include.length > 0);
+  for (const entry of include) {
+    assert.ok(
+      entry.concurrency === DEFAULT_SHARD_CONCURRENCY ||
+        entry.concurrency === LARGE_FILE_SHARD_CONCURRENCY,
+      `unexpected concurrency ${entry.concurrency}`,
+    );
+    // A batched shard only ever holds files at or under the threshold, so it can
+    // safely keep the full concurrency.
+    const batched = entry.mutate.split(',').length > 1;
+    if (batched) assert.equal(entry.concurrency, DEFAULT_SHARD_CONCURRENCY);
+  }
+  assert.ok(
+    include.some((e) => e.concurrency === LARGE_FILE_SHARD_CONCURRENCY),
+    `core has files over ${LARGE_SOURCE_FILE_LINES} lines, so some shard must be bounded`,
+  );
+});
+
+// GitHub hard-fails a workflow run whose matrix exceeds 256 jobs, so an
+// unbounded budget turns package growth into a producer that cannot start.
+test('plan: the producer matrix never exceeds MAX_SHARD_JOBS', () => {
+  const { include } = plan({
+    EVENT_NAME: 'schedule',
+    MAX_SHARD_LINES: '800',
+    MAX_SHARD_JOBS: '40',
+  });
+  assert.ok(include.length > 0, 'a capped plan must still plan shards');
+  assert.ok(include.length <= 40, `planned ${include.length} shards over the cap`);
+  const all = include.flatMap((e) => e.mutate.split(','));
+  assert.equal(new Set(all).size, all.length, 'widening the budget must not duplicate scopes');
 });
 
 // The pull_request planner is a different shape from the producer's: one shard
@@ -280,24 +367,58 @@ test('PR partitioning globally caps a fixture-driven multi-package plan', () => 
 /**
  * Write a minimal Stryker report fixture with the given per-status counts.
  *
+ * Mutants carry the attributes that identify them ACROSS reports (location,
+ * mutatorName, replacement) because that is the key the merger unions on. The
+ * report key defaults to one derived from the shard directory, so two shards
+ * describe different files unless a test deliberately says otherwise — the
+ * earlier fixture derived it from the path LENGTH, which is equal for
+ * `…-shard1` and `…-shard2`, so every two-shard merge fixture was silently
+ * exercising the same-file path.
+ *
  * @param {string} dir - directory to write `mutation-report.json` into.
  * @param {Record<string, number>} statuses - status -> mutant count.
+ * @param {{file?: string, startLine?: number}} [options] - report key and first mutant line.
  */
-function writeReport(dir, statuses) {
+function writeReport(dir, statuses, options = {}) {
   mkdirSync(dir, { recursive: true });
+  const file = options.file ?? `${basename(dir)}.ts`;
+  let line = options.startLine ?? 1;
   let id = 0;
   const mutants = [];
   for (const [status, n] of Object.entries(statuses)) {
-    for (let i = 0; i < n; i++) mutants.push({ id: `${id++}`, status });
+    for (let i = 0; i < n; i++) {
+      mutants.push({
+        id: `${id++}`,
+        status,
+        mutatorName: 'ConditionalExpression',
+        replacement: 'true',
+        location: { start: { line, column: 1 }, end: { line, column: 20 } },
+      });
+      line += 1;
+    }
   }
   writeFileSync(
     join(dir, 'mutation-report.json'),
     JSON.stringify({
       schemaVersion: '2',
       thresholds: { high: 80, low: 60 },
-      files: { [`f${dir.length}.ts`]: { mutants } },
+      files: { [file]: { mutants } },
     }),
   );
+}
+
+/**
+ * Write a shard status artifact fixture.
+ *
+ * @param {string} dir - the status download directory.
+ * @param {string} module - dashboard module name.
+ * @param {number} shard - shard number.
+ * @param {object} status - the status document.
+ */
+function writeStatus(dir, module, shard, status) {
+  const target = join(dir, `mutation-status-${module}-shard${shard}`);
+  mkdirSync(target, { recursive: true });
+  writeFileSync(join(target, 'shard-status.json'), JSON.stringify(status));
 }
 
 /**
@@ -308,46 +429,40 @@ function writeReport(dir, statuses) {
  * @returns {number} the process exit code.
  */
 function runMerge(downloadDir, env) {
-  try {
-    execFileSync('node', [mergeScript], {
-      cwd: repoRoot,
-      env: hermeticEnv({
-        DOWNLOAD_DIR: downloadDir,
-        OUT_DIR: join(downloadDir, 'merged'),
-        ...env,
-      }),
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-    return 0;
-  } catch (err) {
-    return err.status ?? 1;
-  }
+  return runMergeCapture(downloadDir, env).status;
 }
 
 /**
- * Run the merge script and return both its exit code and captured stderr, so a
- * test can assert on what the merger did (e.g. that no upload was attempted).
+ * Run the merge script and return its exit code, stderr, and job summary, so a
+ * test can assert on what the merger did (e.g. that no upload was attempted, or
+ * that an unmeasured shard was named).
  *
  * @param {string} downloadDir - artifact directory.
  * @param {Record<string,string>} env - extra environment.
- * @returns {{status: number, stderr: string}} exit code and stderr text.
+ * @param {string} [summaryPath] - a GITHUB_STEP_SUMMARY path to capture.
+ * @returns {{status: number, stderr: string, summary: string}} the run's outputs.
  */
-function runMergeCapture(downloadDir, env) {
+function runMergeCapture(downloadDir, env, summaryPath) {
+  const childEnv = hermeticEnv({
+    DOWNLOAD_DIR: downloadDir,
+    STATUS_DIR: join(downloadDir, 'status'),
+    OUT_DIR: join(downloadDir, 'merged'),
+    ...env,
+  });
+  // Applied after the hermetic strip, or it would be deleted again.
+  if (summaryPath) childEnv.GITHUB_STEP_SUMMARY = summaryPath;
+  const readSummary = () =>
+    summaryPath && existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8') : '';
   try {
     execFileSync('node', [mergeScript], {
       cwd: repoRoot,
-      env: hermeticEnv({
-        DOWNLOAD_DIR: downloadDir,
-        OUT_DIR: join(downloadDir, 'merged'),
-        ...env,
-      }),
+      env: childEnv,
       encoding: 'utf8',
       stdio: 'pipe',
     });
-    return { status: 0, stderr: '' };
+    return { status: 0, stderr: '', summary: readSummary() };
   } catch (err) {
-    return { status: err.status ?? 1, stderr: err.stderr ?? '' };
+    return { status: err.status ?? 1, stderr: err.stderr ?? '', summary: readSummary() };
   }
 }
 
@@ -487,6 +602,205 @@ test('merge: enforces the aggregate break floor', () => {
   }
 });
 
+// Splitting one file's ranges across shards makes a repeated `files` key normal.
+// The merge used to `Object.assign` shard reports together, so the last shard to
+// arrive silently erased every mutant its siblings measured for that file.
+test('merge: unions one file split across shards instead of overwriting it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-split-file-'));
+  try {
+    const split = 'src/runbook/compiler.ts';
+    writeReport(
+      join(dir, 'mutation-report-core-shard1'),
+      { Killed: 8 },
+      {
+        file: split,
+        startLine: 1,
+      },
+    );
+    writeReport(
+      join(dir, 'mutation-report-core-shard2'),
+      { Survived: 5 },
+      {
+        file: split,
+        startLine: 500,
+      },
+    );
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1, mutate: `${split}:1-400` },
+        { module: 'core', shard: 2, mutate: `${split}:401-800` },
+      ],
+    });
+    assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 0);
+    const merged = JSON.parse(readFileSync(join(dir, 'merged', 'core.json'), 'utf8'));
+    const mutants = merged.files[split].mutants;
+    assert.equal(mutants.length, 13, 'both chunks contribute their mutants');
+    assert.equal(mutants.filter((m) => m.status === 'Killed').length, 8);
+    assert.equal(mutants.filter((m) => m.status === 'Survived').length, 5);
+    // Stryker numbers ids from 0 per RUN, so both chunks start at 0; a merged
+    // report has to renumber or it carries duplicate ids within one file.
+    assert.equal(new Set(mutants.map((m) => m.id)).size, mutants.length, 'ids must be unique');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('merge: a mutant measured by one chunk is not demoted by another chunk that ignored it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-split-dup-'));
+  try {
+    const split = 'src/runbook/compiler.ts';
+    // Identical location in both shards: a chunk boundary can land inside a
+    // multi-line expression, so the same mutant legitimately appears twice.
+    writeReport(
+      join(dir, 'mutation-report-core-shard1'),
+      { Killed: 1 },
+      {
+        file: split,
+        startLine: 400,
+      },
+    );
+    writeReport(
+      join(dir, 'mutation-report-core-shard2'),
+      { Ignored: 1 },
+      {
+        file: split,
+        startLine: 400,
+      },
+    );
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1 },
+        { module: 'core', shard: 2 },
+      ],
+    });
+    assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 0);
+    const merged = JSON.parse(readFileSync(join(dir, 'merged', 'core.json'), 'utf8'));
+    const mutants = merged.files[split].mutants;
+    assert.equal(mutants.length, 1, 'the same mutant must not be counted twice');
+    assert.equal(mutants[0].status, 'Killed', 'a real result outranks an Ignored placeholder');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Issue #670 item 3: a shard that produced no report must be reported as "not
+// measured", by name and with a reason. Absence used to be reported only as a
+// count, which cannot distinguish "found no survivors" from "never ran".
+test('merge: names every unmeasured shard and explains why, in the job summary', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-not-measured-'));
+  const summaryPath = join(dir, 'summary.md');
+  try {
+    writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+    writeStatus(join(dir, 'status'), 'core', 2, {
+      module: 'core',
+      shard: 2,
+      outcome: 'failure',
+      reportWritten: false,
+      mutate: 'src/runbook/compiler.ts:1-400',
+      instrumented: { files: 1, mutants: 900 },
+      progress: { tested: 300, total: 900, elapsedMinutes: 60 },
+    });
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1, mutate: 'src/a.ts' },
+        { module: 'core', shard: 2, mutate: 'src/runbook/compiler.ts:1-400' },
+      ],
+    });
+    const { status, stderr, summary } = runMergeCapture(
+      dir,
+      { MATRIX: matrix, APPLY_BREAK: 'false' },
+      summaryPath,
+    );
+    assert.equal(status, 1, 'an incomplete campaign must still fail');
+    assert.match(stderr, /core shard 2: NOT MEASURED/);
+    assert.match(summary, /1 of 2 planned shard\(s\) NOT MEASURED/);
+    assert.match(summary, /`core` shard 2/);
+    assert.match(summary, /step timeout or crash/);
+    // The measured rate is the number the shard budget has to be calibrated
+    // against, so it must survive into the report a human reads.
+    assert.match(summary, /reached 300\/900 tested in ~60 min, ~5\.0 mutants\/min/);
+    assert.match(summary, /src\/runbook\/compiler\.ts:1-400/);
+    assert.match(summary, /1\/2 shards measured/, 'the score line must show its coverage');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('merge: an unmeasured shard with no status artifact still names its planned scope', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-no-status-'));
+  const summaryPath = join(dir, 'summary.md');
+  try {
+    writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1, mutate: 'src/a.ts' },
+        { module: 'core', shard: 2, mutate: 'src/b.ts' },
+      ],
+    });
+    const { status, summary } = runMergeCapture(
+      dir,
+      { MATRIX: matrix, APPLY_BREAK: 'false' },
+      summaryPath,
+    );
+    assert.equal(status, 1);
+    assert.match(summary, /never reached its status step/);
+    assert.match(summary, /scope: src\/b\.ts/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The all-shards-crashed path exited from inside a guard clause, so it produced
+// a single stderr line and NO job summary — the loudest failure reported the most
+// quietly, and invisibly to anyone reading the run in the GitHub UI.
+test('merge: a campaign where every shard crashed still writes a job summary', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-all-crashed-'));
+  const summaryPath = join(dir, 'summary.md');
+  try {
+    writeStatus(join(dir, 'status'), 'core', 1, {
+      module: 'core',
+      shard: 1,
+      outcome: 'cancelled',
+      reportWritten: false,
+      mutate: 'src/a.ts',
+      progress: { tested: 10, total: 900, elapsedMinutes: 60 },
+    });
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1, mutate: 'src/a.ts' },
+        { module: 'core', shard: 2, mutate: 'src/b.ts' },
+      ],
+    });
+    const { status, summary } = runMergeCapture(
+      dir,
+      { MATRIX: matrix, APPLY_BREAK: 'false' },
+      summaryPath,
+    );
+    assert.equal(status, 1);
+    assert.match(summary, /2 of 2 planned shard\(s\) NOT MEASURED/);
+    assert.match(summary, /the shard was cancelled/);
+    assert.match(summary, /no module produced a mergeable report/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A finished shard that measured nothing is a DIFFERENT outcome from a shard
+// that never reported, and it scores 100% of nothing. Saying so keeps a
+// mis-scoped run from reading as a clean pass.
+test('merge: a module whose measured shards found zero mutants fails loudly', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-zero-mutants-'));
+  try {
+    writeReport(join(dir, 'mutation-report-core-shard1'), {});
+    const matrix = JSON.stringify({ include: [{ module: 'core', shard: 1, mutate: 'src/a.ts' }] });
+    const { status, stderr } = runMergeCapture(dir, { MATRIX: matrix, APPLY_BREAK: 'false' });
+    assert.equal(status, 1);
+    assert.match(stderr, /every measured shard reported 0 mutants/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('merge: never uploads a module with a missing shard, and still fails', () => {
   const dir = mkdtempSync(join(tmpdir(), 'merge-upload-gap-'));
   try {
@@ -511,7 +825,7 @@ test('merge: never uploads a module with a missing shard, and still fails', () =
     assert.equal(status, 1, 'an incomplete merge must fail');
     assert.doesNotMatch(stderr, /uploaded /, 'must not report a successful upload');
     assert.doesNotMatch(stderr, /upload core:/, 'must not attempt to upload the incomplete module');
-    assert.match(stderr, /a shard crashed/, 'must report the missing shard');
+    assert.match(stderr, /core shard 2: NOT MEASURED/, 'must name the missing shard');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

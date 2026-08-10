@@ -52,29 +52,56 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_PACKAGE: ${{ github.event.inputs.package }}
           PUSH_BASE: ${{ github.event.before }}
-          # Source-line budget per shard (a mutant-count proxy). Sized so every
-          # shard lands well under the 60-min hard cap at concurrency 4. Lower it
-          # to add shards if a shard ever times out.
-          MAX_SHARD_LINES: '6000'
+          # Source-line budget per shard (a mutant-count proxy, measured at
+          # 0.39-0.60 mutants per source line across the four packages).
+          #
+          # Calibrated from the 2026-08-03 campaign, where all 9 core shards at
+          # MAX_SHARD_LINES=6000 were killed by the timeout with 12-27% of their
+          # mutants tested. The SLOWEST shard there managed 5.6 mutants/min
+          # (core's most widely imported modules pull most of the suite through
+          # findRelatedTests); 800 lines is ~310 core mutants, ~56 min at that
+          # worst-observed rate and ~25 min at the campaign median of 12.4/min.
+          # A file above LARGE_SOURCE_FILE_LINES is split into line-range chunks
+          # of half this budget and run at concurrency 2 (see
+          # partitionProducerFiles), which is what makes a 4000-line module
+          # measurable at all.
+          MAX_SHARD_LINES: '800'
+          # GitHub hard-fails a run whose matrix exceeds 256 jobs. The planner
+          # widens the line budget (and says so) rather than dropping coverage
+          # when the plan would cross this.
+          MAX_SHARD_JOBS: '240'
         run: node scripts/mutation-shard-plan.mjs
 
-  # One job per shard. Hard-capped at 60 min; a shard that exceeds it is
-  # mis-sized (shrink MAX_SHARD_LINES), not legitimately slow. Shards never hold
-  # the dashboard key, so they cannot upload a partial, scoped report that would
-  # corrupt the baseline — only the merge job uploads.
+  # One job per shard. A shard that exceeds its budget is mis-sized (shrink
+  # MAX_SHARD_LINES), not legitimately slow. Shards never hold the dashboard key,
+  # so they cannot upload a partial, scoped report that would corrupt the
+  # baseline — only the merge job uploads.
+  #
+  # The two timeouts are deliberately UNEQUAL, and that is the fix for the
+  # producer's oldest failure mode. They used to both be 60: the job clock starts
+  # ~3 min before the Stryker step, so the JOB timeout always fired first and
+  # CANCELLED the job. Stryker writes its JSON report only on completion, so the
+  # shard then vanished from the merged report with no evidence of why, and
+  # raising only the job cap would have changed nothing because the step cap fired
+  # at the same wall-clock. With the step capped strictly below the job, the step
+  # FAILS (absorbed by continue-on-error) while the job is still alive, and the
+  # status and upload steps below run normally.
   mutate:
     needs: plan
     if: ${{ needs.plan.outputs.empty != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     env:
-      # GitHub's linux runner is 4 vCPU / 16 GB; the config default is a
-      # conservative 2. Safe now that enableFindRelatedTests keeps each in-band
-      # child small and maxTestRunnerReuse recycles it. See issue #485.
-      STRYKER_CONCURRENCY: '4'
+      # Size-aware, decided per shard by the planner: 4 for a shard of
+      # ordinary-sized files, 2 for a shard mutating a file above
+      # LARGE_SOURCE_FILE_LINES, whose instrumented module graph every worker
+      # holds (a ~3600-line file measured 3-4 GB per worker). This mirrors the
+      # local policy in scripts/mutate-changed.mjs off the SAME threshold
+      # constant. An empty value falls back to the package default of 2.
+      STRYKER_CONCURRENCY: ${{ matrix.concurrency }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -87,12 +114,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - name: Run mutation shard
+        id: shard
         # A low score makes Stryker exit non-zero on thresholds.break; that floor
         # belongs on the merged aggregate, not a single shard, so a shard must
-        # not fail the job on score alone. A genuine crash produces no report and
-        # is caught by the merge job's per-module completeness check. The report
-        # uploads regardless via always() below.
+        # not fail the job on score alone. A crash or a step timeout produces no
+        # report and is caught by the merge job's per-shard completeness check,
+        # which reads the status recorded below. The report uploads regardless
+        # via always().
         continue-on-error: true
+        # Strictly below the job cap; see the mutate job comment above.
         timeout-minutes: 60
         working-directory: ${{ matrix.dir }}
         # The dashboard key is deliberately absent here: shards never upload.
@@ -101,13 +131,48 @@ jobs:
         # file path with shell metacharacters can't inject into the command.
         env:
           MUTATE: ${{ matrix.mutate }}
-        run: pnpm exec stryker run --mutate "$MUTATE"
+          SHARD_LOG: ${{ runner.temp }}/shard.log
+        # `tee` under pipefail so the step still reports Stryker's exit status
+        # while the log survives for the status step below. The log is the only
+        # place a killed shard's measured progress can be recovered from.
+        run: |
+          set -o pipefail
+          pnpm exec stryker run --mutate "$MUTATE" 2>&1 | tee "$SHARD_LOG"
+
+      # Runs on EVERY exit path, including a cancelled job, so an unmeasured
+      # shard is reported as such instead of silently missing from the merge.
+      - name: Record shard status
+        if: ${{ always() }}
+        env:
+          MODULE: ${{ matrix.module }}
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ matrix.shardCount }}
+          CONCURRENCY: ${{ matrix.concurrency }}
+          MUTATE: ${{ matrix.mutate }}
+          OUTCOME: ${{ steps.shard.outcome }}
+          SHARD_LOG: ${{ runner.temp }}/shard.log
+          REPORT: ${{ matrix.dir }}/reports/mutation/mutation-report.json
+          STATUS_FILE: ${{ runner.temp }}/shard-status.json
+        run: node scripts/mutation-shard-status.mjs
+
       - name: Upload shard report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: mutation-report-${{ matrix.module }}-shard${{ matrix.shard }}
           path: ${{ matrix.dir }}/reports/mutation/mutation-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Deliberately NOT named `mutation-report-*`: the merge job globs that
+      # pattern for reports, and a status matching it would be counted as one.
+      - name: Upload shard status
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: mutation-status-${{ matrix.module }}-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-status.json
           retention-days: 7
           if-no-files-found: warn
 
@@ -120,7 +185,9 @@ jobs:
     needs: [plan, mutate]
     if: ${{ always() && needs.plan.outputs.empty != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Two artifacts per shard and a matrix now in the low hundreds, so the
+    # download dominates this job rather than the merge itself.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -136,9 +203,19 @@ jobs:
         with:
           path: shard-reports
           pattern: mutation-report-*
+      # A status exists for every shard, including the ones that produced no
+      # report — that is what turns "absent" into a named, explained shard in the
+      # job summary. Non-fatal: statuses are diagnostics, never the verdict.
+      - name: Download shard statuses
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        continue-on-error: true
+        with:
+          path: shard-status
+          pattern: mutation-status-*
       - name: Merge reports, enforce floor, upload baseline
         env:
           DOWNLOAD_DIR: shard-reports
+          STATUS_DIR: shard-status
           MATRIX: ${{ needs.plan.outputs.matrix }}
           VERSION: main
           # Upload ONLY on the weekly schedule on main: that is the only run that

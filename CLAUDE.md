@@ -518,10 +518,13 @@ All package scripts live in `package.json` — run `pnpm run` to list them
 
   `test:mutate:changed` therefore sets `STRYKER_CONCURRENCY=1` itself on a
   source-change scope whose mutated file exceeds `LARGE_SOURCE_FILE_LINES`
-  (1000, in `scripts/mutate-changed.mjs`). **Do not set it by hand for that
-  path** — an explicit `STRYKER_CONCURRENCY` in the environment always wins, so
-  doing so only overrides a size-aware default with a flat one. Two paths the
-  automatic bound does **not** cover:
+  (1000, in `scripts/lib/mutation-scope.mjs`, re-exported from
+  `scripts/mutate-changed.mjs`). The CI producer's shard planner keys off the
+  **same** constant, dropping a shard that mutates a file over it to concurrency
+  2 — one threshold, two policies, so they cannot drift. **Do not set it by hand
+  for that path** — an explicit `STRYKER_CONCURRENCY` in the environment always
+  wins, so doing so only overrides a size-aware default with a flat one. Two
+  paths the automatic bound does **not** cover:
   - **The test-only tier.** It passes no `--mutate` scope, so it mutates the
     whole package glob — the largest instrumented graph there is, and the worst
     case for the blow-up this bound exists to prevent — at the default 2. There

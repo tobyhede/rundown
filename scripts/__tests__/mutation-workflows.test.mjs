@@ -236,16 +236,71 @@ test('mutation.yml shards the campaign across a plan/mutate/merge pipeline', asy
     /node scripts\/mutation-merge-reports\.mjs/,
     'merge must run the report merger',
   );
-  assert.match(yml, /STRYKER_CONCURRENCY:\s*'4'/, 'shards run at concurrency 4');
+  // Concurrency is decided per shard by the planner from the size of the file
+  // being mutated (see partitionProducerFiles); a flat literal here would be the
+  // hand-rolled second policy the shared threshold exists to prevent.
+  assert.match(
+    yml,
+    /STRYKER_CONCURRENCY:\s*\$\{\{\s*matrix\.concurrency\s*\}\}/,
+    'shard concurrency must come from the plan matrix, not a flat literal',
+  );
 });
 
-test('mutation.yml caps every shard at the 60-min hard limit', async () => {
+// REGRESSION (#670): both timeouts were 60, and the job clock starts ~3 min
+// before the Stryker step — so the JOB cap always fired first and CANCELLED the
+// job. Stryker writes its report only on completion, so the shard then vanished
+// from the merged report entirely. The step cap must be STRICTLY below the job
+// cap, or the graceful path (step fails, status and upload steps still run) is
+// unreachable and raising the job cap alone changes nothing.
+test('mutation.yml caps the shard step strictly below the job, so a slow shard fails gracefully', async () => {
   const yml = await read('.github/workflows/mutation.yml');
-  // The mutate job and its run step are both bounded so a mis-sized shard fails
-  // fast rather than burning a long budget.
   const mutateJob = yml.match(/\n {2}mutate:\n([\s\S]*?)\n {2}merge:/)?.[1];
   assert.ok(mutateJob, 'mutate job must precede merge job');
-  assert.match(mutateJob, /timeout-minutes:\s*60/, 'mutate job must cap at 60 min');
+  const jobTimeout = Number(/^\s{4}timeout-minutes:\s*(\d+)/m.exec(mutateJob)?.[1]);
+  const stepTimeout = Number(
+    /- name: Run mutation shard[\s\S]*?timeout-minutes:\s*(\d+)/.exec(mutateJob)?.[1],
+  );
+  assert.ok(Number.isInteger(jobTimeout), 'mutate job must declare a timeout');
+  assert.ok(Number.isInteger(stepTimeout), 'the shard step must declare a timeout');
+  assert.ok(
+    stepTimeout < jobTimeout,
+    `shard step timeout ${stepTimeout} must be below the job timeout ${jobTimeout}, ` +
+      'or the job is cancelled before the step can fail and record a status',
+  );
+});
+
+// Issue #670 item 3. Stryker writes no report when it is killed, so absence is
+// the only signal a shard leaves behind — and absence alone cannot distinguish
+// "ran and found nothing" from "never finished". A status artifact, written on
+// every exit path and merged separately, is what closes that gap.
+test('mutation.yml records and ships a status for every shard, measured or not', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  const mutateJob = yml.match(/\n {2}mutate:\n([\s\S]*?)\n {2}merge:/)?.[1];
+  assert.ok(mutateJob);
+  assert.match(
+    mutateJob,
+    /- name: Record shard status\n\s*if: \$\{\{ always\(\) \}\}/,
+    'the status must be recorded on every exit path, including a cancelled job',
+  );
+  assert.match(mutateJob, /node scripts\/mutation-shard-status\.mjs/);
+  assert.match(mutateJob, /tee "\$SHARD_LOG"/, 'the shard log is the only source of progress');
+  assert.match(
+    mutateJob,
+    /- name: Upload shard status\n\s*if: \$\{\{ always\(\) \}\}/,
+    'the status must upload even when the shard produced no report',
+  );
+
+  // The status artifact must not be swept up by the report glob, or the merge
+  // would count a status as a measured shard.
+  const statusArtifact = /name: mutation-status-\$\{\{[^\n]*\}\}/.exec(yml)?.[0];
+  assert.ok(statusArtifact, 'status upload must name a mutation-status-* artifact');
+  assert.doesNotMatch(statusArtifact, /mutation-report-/);
+  assert.match(
+    yml,
+    /- name: Download shard statuses[\s\S]*?pattern: mutation-status-\*/,
+    'the merge job must download the statuses it reports from',
+  );
+  assert.match(yml, /STATUS_DIR:\s*shard-status/, 'the merger needs the status directory');
 });
 
 test('mutation.yml shards never upload; only the schedule merge seeds the baseline', async () => {

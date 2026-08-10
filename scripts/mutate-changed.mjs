@@ -64,6 +64,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  LARGE_SOURCE_FILE_LINES,
   PACKAGES,
   buildScope,
   git,
@@ -73,6 +74,10 @@ import {
 } from './lib/mutation-scope.mjs';
 
 export { PACKAGES };
+// The size threshold lives in the shared scope module so this local policy and
+// the CI producer planner's shard-concurrency policy key off ONE number. It is
+// re-exported here because this is where callers (and its tests) look for it.
+export { LARGE_SOURCE_FILE_LINES };
 
 /**
  * Parse argv into options.
@@ -259,9 +264,6 @@ export function strykerArgs(entry, relatedTests) {
 export function testOnlyStrykerArgs() {
   return ['--incremental'];
 }
-
-/** Source lines above which a scope is forced to single-unit concurrency. */
-export const LARGE_SOURCE_FILE_LINES = 1000;
 
 /**
  * Choose Stryker's concurrency for one scoped run from the mutated file's size.

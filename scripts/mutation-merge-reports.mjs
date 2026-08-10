@@ -2,17 +2,28 @@
 // it once to the dashboard, and apply the aggregate break threshold.
 //
 // The producer fans a module's mutation campaign across shards that each mutate
-// a DISJOINT set of files (see mutation-shard-plan.mjs). Each shard uploads its
-// partial `mutation-report.json` as a CI artifact but never writes to the
+// a disjoint set of SCOPES — whole files, or line ranges of one file too large
+// to measure in a single shard (see mutation-shard-plan.mjs). Each shard uploads
+// its partial `mutation-report.json` as a CI artifact but never writes to the
 // dashboard — a partial, scoped report would overwrite the module's baseline
-// with a thin one. This job runs after all shards: it unions their `files`
-// (disjoint keys, so no collision) into a single complete module report,
-// recomputes the aggregate score, PUTs it to the dashboard once (when the run
-// is an upload-eligible producer), and fails if a module's aggregate falls
-// under the break floor.
+// with a thin one. This job runs after all shards: it unions their `files` into
+// a single complete module report (a split file's key arrives from several
+// shards, so entries are combined by mutant identity, not overwritten), recomputes
+// the aggregate score, PUTs it to the dashboard once (when the run is an
+// upload-eligible producer), and fails if a module's aggregate falls under the
+// break floor.
+//
+// It also ACCOUNTS FOR EVERY PLANNED SHARD. A shard killed by a timeout writes
+// no report at all, so absence used to be the only trace it left; each missing
+// shard is now named, explained from its status artifact, and reported in the
+// job summary (issue #670).
 //
 // Inputs (env):
 //   DOWNLOAD_DIR   - dir holding `mutation-report-<module>-shard<N>/mutation-report.json`
+//   STATUS_DIR     - dir holding `mutation-status-<module>-shard<N>/shard-status.json`,
+//                    written by scripts/mutation-shard-status.mjs on every shard
+//                    exit path. A shard killed by a timeout writes no report, so
+//                    the status is the ONLY evidence of how far it got.
 //   MATRIX         - the plan job's matrix JSON; used to verify every expected
 //                    shard produced a report (a crashed shard runs under
 //                    continue-on-error, so its absence must fail the merge here)
@@ -27,7 +38,10 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { mutantIdentity } from './assert-mutation-regressions.mjs';
+
 const downloadDir = process.env.DOWNLOAD_DIR ?? 'shard-reports';
+const statusDir = process.env.STATUS_DIR ?? 'shard-status';
 const upload = process.env.UPLOAD === 'true';
 const apiKey = process.env.DASHBOARD_API_KEY ?? '';
 const applyBreak = process.env.APPLY_BREAK === 'true';
@@ -65,38 +79,132 @@ function scoreOf(report) {
 }
 
 /**
- * Discover shard report files grouped by module. Expects artifact directories
- * named `mutation-report-<module>-shard<N>` each containing one report JSON.
+ * Discover shard report files grouped by module, keeping each report's shard
+ * NUMBER. Expects artifact directories named `mutation-report-<module>-shard<N>`
+ * each containing one report JSON.
+ *
+ * The shard number is what lets the completeness check below name the shards
+ * that are missing instead of only counting them — the difference between
+ * "1 of 74 shards crashed" and "core shard 37 (src/runbook/compiler.ts:1-400)
+ * was not measured".
  *
  * @param {string} dir - the artifact download directory.
- * @returns {Map<string, string[]>} module name -> report file paths.
+ * @returns {Map<string, Array<{shard: number, path: string}>>} module -> shard reports.
  */
 function collectShardReports(dir) {
   const byModule = new Map();
   if (!existsSync(dir)) return byModule;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const match = /^mutation-report-([a-z]+)-shard\d+$/.exec(entry.name);
+    const match = /^mutation-report-([a-z]+)-shard(\d+)$/.exec(entry.name);
     if (!match) continue;
     const module = match[1];
     const reportPath = join(dir, entry.name, 'mutation-report.json');
     if (!existsSync(reportPath)) continue;
     if (!byModule.has(module)) byModule.set(module, []);
-    byModule.get(module).push(reportPath);
+    byModule.get(module).push({ shard: Number(match[2]), path: reportPath });
   }
+  for (const reports of byModule.values()) reports.sort((a, b) => a.shard - b.shard);
   return byModule;
 }
 
 /**
- * Combine shard reports for one module into a single complete report. `files`
- * keys are disjoint across shards; `testFiles` may repeat (same file relates to
- * sources in several shards) and is merged by key.
+ * Discover per-shard status documents, keyed `<module>#<shard>`.
  *
- * @param {string[]} reportPaths - shard report file paths for the module.
+ * Statuses are best-effort context, never authority: a status is present for a
+ * shard whose report is missing (that is the point), and absent for a job that
+ * never reached its status step. Nothing here fails on a malformed one.
+ *
+ * @param {string} dir - the status artifact download directory.
+ * @returns {Map<string, object>} `<module>#<shard>` -> status document.
+ */
+function collectShardStatuses(dir) {
+  const statuses = new Map();
+  if (!existsSync(dir)) return statuses;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const match = /^mutation-status-([a-z]+)-shard(\d+)$/.exec(entry.name);
+    if (!match) continue;
+    const statusPath = join(dir, entry.name, 'shard-status.json');
+    if (!existsSync(statusPath)) continue;
+    try {
+      statuses.set(`${match[1]}#${Number(match[2])}`, JSON.parse(readFileSync(statusPath, 'utf8')));
+    } catch {
+      // A truncated status must not take down a merge that has real reports.
+    }
+  }
+  return statuses;
+}
+
+/**
+ * Merge one file's mutants from two shard reports.
+ *
+ * Shards used to mutate disjoint FILES, so a plain key-overwrite union was
+ * correct. Now that an oversized file is split into line-range scopes across
+ * several shards (see partitionProducerFiles), the same `files` key legitimately
+ * arrives more than once and an overwrite would silently discard every mutant a
+ * sibling chunk measured. Mutants are therefore combined by cross-report identity
+ * — the same key Stryker's own incremental differ uses — because that identity,
+ * not the report-local `id`, is what makes two entries the same mutant.
+ *
+ * A duplicate is possible even between disjoint ranges: a chunk boundary can
+ * land inside a multi-line expression. When it happens, a real result wins over
+ * an `Ignored`/`Pending` placeholder, so a mutant measured by one chunk is never
+ * demoted by another chunk that merely skipped it.
+ *
+ * @param {object} into - the accumulating merged file entry (mutated in place).
+ * @param {object} from - the incoming shard's file entry.
+ * @param {string} file - the report key, for diagnostics.
+ */
+function mergeFileEntry(into, from, file) {
+  const placeholder = new Set(['Ignored', 'Pending']);
+  // A mutant missing the identifying attributes cannot be correlated, so it
+  // falls back to its own serialisation: byte-identical duplicates still
+  // collapse, and anything else is kept. Merging must never DROP a measured
+  // mutant, which a throw here would do to the whole module.
+  const identify = (mutant) => {
+    try {
+      return mutantIdentity(mutant, file);
+    } catch {
+      return `raw:${JSON.stringify(mutant)}`;
+    }
+  };
+  const seen = new Map();
+  for (const [index, mutant] of (into.mutants ?? []).entries()) {
+    seen.set(identify(mutant), index);
+  }
+  for (const mutant of from.mutants ?? []) {
+    const key = identify(mutant);
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, into.mutants.push(mutant) - 1);
+      continue;
+    }
+    if (placeholder.has(into.mutants[existing].status) && !placeholder.has(mutant.status)) {
+      into.mutants[existing] = mutant;
+    }
+  }
+}
+
+/**
+ * Combine shard reports for one module into a single complete report.
+ *
+ * `testFiles` may repeat (the same test relates to sources in several shards)
+ * and is merged by key. `files` keys may now also repeat, because one source
+ * file's line ranges can be spread across shards; those entries are combined by
+ * {@link mergeFileEntry} rather than overwritten.
+ *
+ * Mutant `id` is renumbered across the merged report. Stryker assigns it as a
+ * run-global counter, so every shard starts again at 0 and a merged report would
+ * otherwise carry duplicate ids — within one file, once a file is split. The
+ * schema wants them unique, and no consumer correlates ids across reports
+ * (`assert-mutation-regressions.mjs` documents exactly why it does not).
+ *
+ * @param {Array<{shard: number, path: string}>} shardReports - the module's shard reports.
  * @returns {object} the merged report.
  */
-function mergeModule(reportPaths) {
-  const reports = reportPaths.map((p) => JSON.parse(readFileSync(p, 'utf8')));
+function mergeModule(shardReports) {
+  const reports = shardReports.map(({ path }) => JSON.parse(readFileSync(path, 'utf8')));
   const merged = {
     schemaVersion: reports[0].schemaVersion,
     thresholds: reports[0].thresholds,
@@ -107,8 +215,19 @@ function mergeModule(reportPaths) {
   if (reports[0].config) merged.config = reports[0].config;
   const testFiles = {};
   for (const r of reports) {
-    Object.assign(merged.files, r.files ?? {});
+    for (const [file, entry] of Object.entries(r.files ?? {})) {
+      const existing = merged.files[file];
+      if (!existing) {
+        merged.files[file] = { ...entry, mutants: [...(entry.mutants ?? [])] };
+        continue;
+      }
+      mergeFileEntry(existing, entry, file);
+    }
     Object.assign(testFiles, r.testFiles ?? {});
+  }
+  let nextId = 0;
+  for (const entry of Object.values(merged.files)) {
+    entry.mutants = (entry.mutants ?? []).map((mutant) => ({ ...mutant, id: String(nextId++) }));
   }
   if (Object.keys(testFiles).length > 0) merged.testFiles = testFiles;
   return merged;
@@ -138,16 +257,19 @@ async function uploadToDashboard(module, report) {
 }
 
 /**
- * Expected shard count per module, parsed from the plan matrix. A shard that
- * crashed produced no artifact; comparing found-vs-expected turns that silent
- * gap into a merge failure (low-score exits are swallowed by continue-on-error,
- * so absence is the only crash signal left).
+ * Every shard the plan matrix expected, per module, keyed by shard number and
+ * carrying its Stryker scope. A shard that crashed produced no artifact;
+ * comparing found-vs-expected turns that silent gap into a merge failure
+ * (low-score exits are swallowed by continue-on-error, so absence is the only
+ * crash signal left), and keeping the scope lets the failure NAME what went
+ * unmeasured instead of only counting it.
  *
- * @returns {{known: true, counts: Map<string, number>} | {known: false, reason: string}}
- *   known plan counts, or a diagnostic explaining why expectations are unknown.
+ * @returns {{known: true, planned: Map<string, Map<number, {mutate: string}>>} | {known: false, reason: string}}
+ *   the planned shards, or a diagnostic explaining why expectations are unknown.
  */
-function expectedShardCounts() {
-  const counts = new Map();
+function expectedShards() {
+  /** @type {Map<string, Map<number, {mutate: string}>>} */
+  const planned = new Map();
   const raw = process.env.MATRIX;
   if (!raw) return { known: false, reason: 'MATRIX is absent' };
   let parsed;
@@ -160,13 +282,75 @@ function expectedShardCounts() {
     return { known: false, reason: 'MATRIX has no include array' };
   }
   for (const entry of parsed.include) {
-    counts.set(entry.module, (counts.get(entry.module) ?? 0) + 1);
+    if (!planned.has(entry.module)) planned.set(entry.module, new Map());
+    const shards = planned.get(entry.module);
+    // Fall back to positional numbering if a matrix entry ever lacks `shard`, so
+    // an unnumbered plan still yields the right EXPECTED COUNT.
+    const shard = Number.isInteger(entry.shard) ? entry.shard : shards.size + 1;
+    shards.set(shard, { mutate: typeof entry.mutate === 'string' ? entry.mutate : '' });
   }
-  return { known: true, counts };
+  return { known: true, planned };
+}
+
+/**
+ * Explain, for a human, why a planned shard produced no report.
+ *
+ * The distinction this draws is the whole point of the status artifact: a shard
+ * that was killed mid-run reports how far it got and how fast it was going,
+ * which is exactly the measurement the shard budget has to be calibrated
+ * against. Without it every unmeasured shard looks identical.
+ *
+ * @param {object | undefined} status - the shard's status document, when uploaded.
+ * @param {string} plannedMutate - the shard's planned Stryker scope, from the matrix.
+ * @returns {string} a one-line reason.
+ */
+function describeMissing(status, plannedMutate) {
+  const scope = status?.mutate || plannedMutate;
+  const withScope = (text) => (scope ? `${text}; scope: ${scope}` : text);
+  if (!status) {
+    return withScope(
+      'no report and no status artifact — the shard job never reached its status step',
+    );
+  }
+  const parts = [];
+  const outcome = status.outcome ?? 'unknown';
+  parts.push(
+    outcome === 'cancelled'
+      ? 'the shard was cancelled (job timeout or a cancelled run)'
+      : `the Stryker step ended '${outcome}' without writing a report (step timeout or crash)`,
+  );
+  if (status.instrumented) {
+    parts.push(
+      `instrumented ${status.instrumented.files} file(s) / ${status.instrumented.mutants} mutant(s)`,
+    );
+  }
+  const progress = status.progress;
+  if (progress) {
+    const rate =
+      progress.elapsedMinutes > 0
+        ? `, ~${(progress.tested / progress.elapsedMinutes).toFixed(1)} mutants/min`
+        : '';
+    parts.push(
+      `reached ${progress.tested}/${progress.total} tested in ~${progress.elapsedMinutes ?? '?'} min${rate}`,
+    );
+  }
+  return withScope(parts.join('; '));
+}
+
+/**
+ * Append a block to the GitHub job summary, when running under Actions.
+ *
+ * @param {string} markdown - the markdown to append.
+ */
+function appendJobSummary(markdown) {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (!path) return;
+  writeFileSync(path, markdown, { flag: 'a' });
 }
 
 const byModule = collectShardReports(downloadDir);
-const expected = expectedShardCounts();
+const statuses = collectShardStatuses(statusDir);
+const expected = expectedShards();
 
 // Unknown expectations fail closed regardless of how many reports arrived. Scoped
 // to the zero-report case this guard missed the more damaging half: with reports
@@ -180,7 +364,73 @@ if (!expected.known) {
       'crashed shard is indistinguishable from a complete run, and a partial merge ' +
       'would overwrite the dashboard baseline.\n',
   );
+  appendJobSummary(
+    `## Mutation (merged)\n\n### ⚠️ Not merged\n\nThe plan matrix was unusable (${expected.reason}), ` +
+      'so a crashed shard could not be told apart from a complete run. Nothing was merged or ' +
+      'uploaded.\n',
+  );
   process.exit(1);
+}
+
+// Account for EVERY planned shard before anything else, so the outcome of the
+// campaign is legible whether it merged cleanly, lost one shard, or lost all of
+// them. Previously the all-shards-lost path exited from inside a bare `if` with
+// a single stderr line and no job summary at all — the loudest failure reported
+// most quietly.
+/** @type {Array<{module: string, shard: number, reason: string}>} */
+const notMeasured = [];
+const incomplete = new Set();
+let plannedShards = 0;
+for (const [module, shards] of expected.planned) {
+  const measured = new Set((byModule.get(module) ?? []).map((r) => r.shard));
+  for (const [shard, plan] of shards) {
+    plannedShards += 1;
+    if (measured.has(shard)) continue;
+    incomplete.add(module);
+    notMeasured.push({
+      module,
+      shard,
+      reason: describeMissing(statuses.get(`${module}#${shard}`), plan.mutate),
+    });
+  }
+}
+
+const failures = notMeasured.map(
+  ({ module, shard, reason }) => `${module} shard ${shard}: NOT MEASURED — ${reason}`,
+);
+const summary = [];
+
+/**
+ * Emit the campaign report to stderr and the job summary, then exit.
+ *
+ * Every exit path goes through here, so a reader always gets the same document:
+ * merged module scores, then an explicit "not measured" list. A shard that
+ * produced no report is the one thing this job exists to make visible, and it
+ * must never be able to leave silently.
+ *
+ * @param {number} code - the process exit code.
+ * @returns {never}
+ */
+function report(code) {
+  const scored = summary.length > 0 ? summary : ['(no module produced a mergeable report)'];
+  process.stderr.write(`\nmerged module scores:\n${scored.join('\n')}\n`);
+  const lines = ['## Mutation (merged)', '', ...scored.map((s) => `- ${s}`)];
+  if (notMeasured.length > 0) {
+    lines.push(
+      '',
+      `### ⚠️ ${notMeasured.length} of ${plannedShards} planned shard(s) NOT MEASURED`,
+      '',
+      'These shards produced no mutation report. Their files are absent from the merged',
+      'score above — read that score as incomplete, not as a clean result.',
+      '',
+      ...notMeasured.map(
+        ({ module, shard, reason }) => `- \`${module}\` shard ${shard}: ${reason}`,
+      ),
+    );
+  }
+  appendJobSummary(`${lines.join('\n')}\n`);
+  if (failures.length > 0) process.stderr.write(`\nFAILURES:\n${failures.join('\n')}\n`);
+  process.exit(code);
 }
 
 // Zero reports is only a legitimate no-op when the plan expected no shards. If
@@ -189,45 +439,36 @@ if (!expected.known) {
 // a run whose entire mutation campaign died reported success. That inverted the
 // partial-loss check below, which correctly fails when 1 of 2 shards is missing.
 if (byModule.size === 0) {
-  const wanted = [...expected.counts.values()].reduce((sum, n) => sum + n, 0);
-  if (wanted === 0) {
+  if (plannedShards === 0) {
     process.stderr.write(`no shard reports found under ${downloadDir}; nothing to merge.\n`);
-    process.exit(0);
+    report(0);
   }
   process.stderr.write(
-    `no shard reports found under ${downloadDir}, but the plan expected ${wanted} ` +
-      `(${[...expected.counts].map(([m, n]) => `${m}:${n}`).join(', ')}); every shard crashed.\n`,
+    `no shard reports found under ${downloadDir}, but the plan expected ${plannedShards} ` +
+      `(${[...expected.planned].map(([m, s]) => `${m}:${s.size}`).join(', ')}); ` +
+      'every shard crashed.\n',
   );
-  process.exit(1);
+  report(1);
 }
 if (upload && !apiKey) throw new Error('UPLOAD=true but DASHBOARD_API_KEY is empty');
 
 mkdirSync(outDir, { recursive: true });
-const failures = [];
-const summary = [];
 
-// Fail on any module that lost a shard (crash → no artifact), so a partial
-// merge never masquerades as a complete baseline. An incomplete module must
-// also be barred from the dashboard upload below: seeding the baseline with a
-// partial report is exactly the corruption this check exists to prevent.
-// `expected.known` is true here by construction: the guard above exits when it is
-// not, so this loop can never be silently skipped into an empty `incomplete` set.
-const incomplete = new Set();
-for (const [module, want] of expected.counts) {
-  const got = byModule.get(module)?.length ?? 0;
-  if (got < want) {
-    incomplete.add(module);
-    failures.push(`${module}: only ${got}/${want} shard reports present (a shard crashed)`);
-  }
-}
-
-for (const [module, paths] of byModule) {
-  const merged = mergeModule(paths);
+for (const [module, shardReports] of byModule) {
+  const merged = mergeModule(shardReports);
   const { score, detected, valid, total } = scoreOf(merged);
   writeFileSync(join(outDir, `${module}.json`), JSON.stringify(merged));
+  const planned = expected.planned.get(module)?.size ?? shardReports.length;
   summary.push(
-    `${module}: ${score.toFixed(2)}% (${detected}/${valid} detected, ${total} mutants, ${paths.length} shards)`,
+    `${module}: ${score.toFixed(2)}% (${detected}/${valid} detected, ${total} mutants, ` +
+      `${shardReports.length}/${planned} shards measured)`,
   );
+  // A shard CAN finish and legitimately measure nothing (an empty scope), and
+  // that is not the same as a shard that never reported. Say so rather than
+  // letting a 100%-of-nothing module read as a clean pass.
+  if (total === 0) {
+    failures.push(`${module}: every measured shard reported 0 mutants (scope resolved to nothing)`);
+  }
 
   // Only upload a module with full shard coverage; an incomplete merge would
   // overwrite the dashboard baseline with a partial report.
@@ -243,15 +484,4 @@ for (const [module, paths] of byModule) {
   }
 }
 
-process.stderr.write(`\nmerged module scores:\n${summary.join('\n')}\n`);
-if (process.env.GITHUB_STEP_SUMMARY) {
-  writeFileSync(
-    process.env.GITHUB_STEP_SUMMARY,
-    `## Mutation (merged)\n\n${summary.map((s) => `- ${s}`).join('\n')}\n`,
-    { flag: 'a' },
-  );
-}
-if (failures.length > 0) {
-  process.stderr.write(`\nFAILURES:\n${failures.join('\n')}\n`);
-  process.exit(1);
-}
+report(failures.length > 0 ? 1 : 0);

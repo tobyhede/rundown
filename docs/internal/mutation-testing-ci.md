@@ -21,42 +21,95 @@ gates proved structurally too slow regardless of tuning.
 ## Full-fidelity producer (`.github/workflows/mutation.yml`)
 
 Even with the `enableFindRelatedTests` fix (see Config below), a full `core`
-(~17k mutants) or `cli` (~9k) campaign does not fit a single **60-min** CI job,
-so the producer fans out across shards. It runs as a three-job pipeline — **plan
-→ mutate → merge** — so that every individual job stays under the 60-min hard
-cap:
+(~23k mutants) or `cli` (~9k) campaign does not fit a single CI job, so the
+producer fans out across shards. It runs as a three-job pipeline — **plan →
+mutate → merge** — so that every individual job stays under its hard cap:
 
 - **`plan`** (`scripts/mutation-shard-plan.mjs`) globs each package's
   mutate-eligible files (the config `mutate` array, `!` negations included) and
-  greedily partitions them into shards balanced by source line count — a mutant
-  proxy — sized by `MAX_SHARD_LINES` (6000) so each shard lands well under 60
-  min at concurrency 4. It emits a GitHub Actions matrix. On **push** it instead
-  shards only the source changed since `github.event.before` (differential); a
-  package with no changed source contributes no shards. Shards mutate **disjoint
-  file sets**, which is what lets the merge reassemble a complete report.
+  partitions them into shards sized by `MAX_SHARD_LINES` (800). Source line
+  count is the shard weight because it is a good mutant proxy — measured at
+  0.39–0.60 mutants per line across the four packages. It emits a GitHub Actions
+  matrix. On **push** it instead shards only the source changed since
+  `github.event.before` (differential); a package with no changed source
+  contributes no shards.
+
+  Two tiers, in `partitionProducerFiles` (`scripts/lib/mutation-scope.mjs`):
+  - A file above `LARGE_SOURCE_FILE_LINES` (1000) is **isolated and split by
+    line range** into chunks of half the budget, each its own shard at
+    `STRYKER_CONCURRENCY=2`. Halving both the worker count and the mutant budget
+    keeps projected wall time equal to an ordinary shard while halving peak
+    memory — a worker holds the whole instrumented module graph, measured at 3–4
+    GB for a ~3600-line file. Splitting is what makes a 4000-line module
+    measurable at all; before it, whole-file scopes were indivisible and no
+    budget could bring one under the job timeout (issue #670).
+  - Everything else is **batched** largest-first onto the lightest shard, at
+    `STRYKER_CONCURRENCY=4`.
+
+  Chunks of a split file **overlap** by `CHUNK_OVERLAP_LINES` (40). Stryker
+  places a mutant only when its location fits entirely inside a mutation range,
+  so without the overlap a mutant straddling a chunk boundary would be dropped
+  by both chunks and never measured. The merge dedupes the copies the overlap
+  produces. A mutant spanning more than 40 lines at a boundary is still lost — a
+  bounded, documented fidelity cost that applies only to files too large to
+  measure in one shard.
+
+  `MAX_SHARD_JOBS` (240) caps the matrix below GitHub's 256-job hard limit; over
+  it the planner widens the line budget (and says so in the log) rather than
+  dropping coverage.
+
 - **`mutate`** runs one job per shard from that matrix —
-  `stryker run --mutate <shard files> --allowEmpty` at `STRYKER_CONCURRENCY=4`,
-  hard-capped at 60 min. A shard **never holds the dashboard key**, so it cannot
+  `stryker run --mutate <shard scopes>` at the matrix's `concurrency`. **The job
+  cap (75 min) and the step cap (60 min) are deliberately unequal.** They used
+  to both be 60, and because the job clock starts ~3 min before the Stryker
+  step, the _job_ cap always fired first and **cancelled** the job; Stryker
+  writes its report only on completion, so the shard vanished from the merged
+  report with no evidence of why, and raising the job cap alone would have
+  changed nothing (the step cap then fired at the same wall-clock). With the
+  step strictly below the job, a slow shard **fails** — absorbed by
+  `continue-on-error` — while the job is still alive, so the status and upload
+  steps run normally. A shard **never holds the dashboard key**, so it cannot
   upload a partial, scoped report. Each shard uploads its `mutation-report.json`
-  as an artifact. The run step is `continue-on-error` because a sub-floor score
-  makes Stryker exit non-zero on `thresholds.break`, and that floor belongs on
-  the merged aggregate, not a single shard.
+  and, via `scripts/mutation-shard-status.mjs` on an `always()` step, a
+  `shard-status.json` recording its outcome, resolved scope, and last progress
+  reading. The run step is `continue-on-error` because a sub-floor score makes
+  Stryker exit non-zero on `thresholds.break`, and that floor belongs on the
+  merged aggregate, not a single shard.
 - **`merge`** (`scripts/mutation-merge-reports.mjs`) downloads every shard
-  artifact, unions the disjoint `files` maps into one complete per-module
-  report, recomputes the aggregate score, and writes a job summary. It verifies
-  that every shard the plan emitted produced a report — a crashed shard
-  (swallowed by `continue-on-error`) leaves a gap that fails the merge. On the
-  **weekly schedule on `main`** — the only run that shards the FULL scope — it
-  PUTs each complete report to the Stryker dashboard (gating both the upload
-  flag and the `STRYKER_DASHBOARD_API_KEY` on `refs/heads/main && schedule`) and
-  enforces the aggregate `break` floor. A push (differential, partial) and a
-  dispatch (may be a feature branch) never upload and are advisory only.
+  report and status, unions the `files` maps into one complete per-module
+  report, recomputes the aggregate score, and writes a job summary. Because a
+  split file's ranges live on several shards, a repeated `files` key is normal:
+  entries are combined by cross-report mutant identity (a real status beats an
+  `Ignored` placeholder) rather than overwritten, and mutant ids are renumbered
+  so the merged report has none of the duplicates Stryker's per-run counter
+  produces. It verifies that every shard the plan emitted produced a report;
+  each one that did not is reported **by name, with a reason** — cancelled vs
+  step-failed, how far it got, and at what measured mutants/min — in both stderr
+  and the job summary, and fails the merge. A shard that finished but measured
+  zero mutants is called out separately, because 100% of nothing is not a clean
+  result. On the **weekly schedule on `main`** — the only run that shards the
+  FULL scope — it PUTs each complete report to the Stryker dashboard (gating
+  both the upload flag and the `STRYKER_DASHBOARD_API_KEY` on
+  `refs/heads/main && schedule`) and enforces the aggregate `break` floor. A
+  push (differential, partial) and a dispatch (may be a feature branch) never
+  upload and are advisory only.
+
 - `ignoreStatic` is OFF (env unset) so static mutants are scored.
 - **Upload safety.** Only the weekly schedule produces a complete report, so it
   is the only run that may (re)seed the dashboard baseline. A push merge is
   partial by construction (changed files only) and a dispatch may run off a
   feature branch, so neither uploads — exactly the thin-report corruption the PR
   check also avoids.
+
+**Calibration.** `MAX_SHARD_LINES` comes from the 2026-08-03 campaign, in which
+all 9 core shards at `MAX_SHARD_LINES=6000` were killed by the timeout having
+tested 12–27% of their mutants. Measured throughput varied 12x across those
+shards — 5.6 to 71 mutants/min — because wall time is dominated by how many test
+files transitively import the mutated module, which line count cannot predict.
+800 lines is ~310 core mutants: ~56 min at the worst observed rate and ~25 min
+at the campaign median of 12.4/min. When a shard still busts its cap, the status
+artifact reports its measured rate, so the next adjustment is arithmetic rather
+than guesswork.
 
 ## Config (`packages/*/stryker.config.mjs`)
 
