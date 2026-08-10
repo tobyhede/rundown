@@ -1379,17 +1379,31 @@ export class RunbookStore {
               kind: 'recovery_required',
               runId,
               epoch: pending.epoch,
-              // No recovery COMMAND is named, because none exists. Recovery is
-              // driven inline by the command that owns the run's execution
-              // (`EffectfulActorMutationRunner` constructs an
-              // `ExecutionRecoveryService` for the exact epoch a fence refusal
-              // named), so "run recovery before continuing" sent an operator
-              // looking for a `rundown recover` binary that has never shipped.
-              // See docs/internal/architecture.md § Recovery.
+              // THIS PATH IS DETECTION ONLY, and the message says nothing it
+              // does not do. It is reached solely from `SessionService`'s
+              // `mutateGuarded` — stash, pop, prune, delegate, abort, and the
+              // run/terminal release paths — none of which constructs an
+              // `ExecutionRecoveryService`. The only two constructions in the
+              // codebase are in `EffectfulActorMutationRunner`, fed by
+              // `CoreEffectfulMutationExecutor`, which never reaches this
+              // method. So this refusal starts no recovery, and the attempt is
+              // still `recovery_pending` when it returns.
+              //
+              // Two claims are therefore banned here, and both have shipped:
+              // "run recovery before continuing" (there has never been a
+              // `rundown recover` binary), and "recovery is automatic" (true of
+              // the FENCE refusals built in `classifyExecution` and
+              // `abandonToRecovery`, which the runner does recover inline — not
+              // of this one). A third would be to name what will recover it:
+              // `abandonToRecovery` leaves `runs.exec_token` set, so a later
+              // execution-owning command refuses `execution_in_progress` at
+              // `acquireInTx` and never reaches the runner's recovery branch.
+              // Saying "retrying will not clear it" is the strongest claim the
+              // call graph supports.
               message:
                 `Run ${runId} ended execution with an unknown outcome at epoch ${String(pending.epoch)}; ` +
-                `its recovery has not completed. Recovery is automatic and has no separate command; ` +
-                `this mutation wrote nothing.`,
+                `its recovery has not completed. Nothing was written and no recovery was started ` +
+                `here, so retrying this command will not clear it.`,
             } satisfies SessionMutationResult<T>;
           }
           if (txn.executionOwned(runId)) {

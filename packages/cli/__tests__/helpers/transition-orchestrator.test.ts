@@ -165,8 +165,8 @@ describe('orchestrateTransition', () => {
         epoch: 7,
         message:
           `Run ${baseState.id} ended execution with an unknown outcome at epoch 7; its ` +
-          `recovery has not completed. Recovery is automatic and has no separate command; ` +
-          `this mutation wrote nothing.`,
+          `recovery has not completed. Nothing was written and no recovery was started here, ` +
+          `so retrying this command will not clear it.`,
       },
       code: 'RECOVERY_REQUIRED',
     },

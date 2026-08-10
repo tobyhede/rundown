@@ -556,8 +556,8 @@ describe('mutateSessionGuarded ownership refusals', () => {
       epoch: attempt.epoch,
       message:
         `Run ${runId} ended execution with an unknown outcome at epoch ${String(attempt.epoch)}; ` +
-        `its recovery has not completed. Recovery is automatic and has no separate command; ` +
-        `this mutation wrote nothing.`,
+        `its recovery has not completed. Nothing was written and no recovery was started here, ` +
+        `so retrying this command will not clear it.`,
     });
     expect(await store.read((txn) => txn.stack())).toEqual([]);
   });

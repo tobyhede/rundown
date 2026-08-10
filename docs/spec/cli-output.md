@@ -1300,18 +1300,29 @@ attempt ended without recording an outcome, so whether its effect ran is
 unknown. Distinct from `EXECUTION_IN_PROGRESS`: no process holds the run —
 waiting will not clear it. The interrupted attempt must be recovered first.
 
-**There is no `rundown recover` command, and none is needed.** Recovery is
-automatic: the command that drives the named run's execution recovers the exact
-epoch a fence refusal names, inline and in the same call
-(`EffectfulActorMutationRunner`). This refusal means that recovery has not
-completed for the named attempt, and that this command wrote nothing.
+**There is no `rundown recover` command**, and never has been. But do not read
+that as "recovery happens by itself here" — `RECOVERY_REQUIRED` is emitted from
+two different places, and only one of them recovers anything:
+
+| Origin                                                                                                         | Message                                                       | Recovers?                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Execution fence** — the effect-boundary refusal on a run you are executing                                   | `Run … needs recovery: …`                                     | **Yes.** `EffectfulActorMutationRunner` recovers the exact epoch inline, in the same call, then still reports the refusal so the command is not retried |
+| **Session-targeting write** — `stash`, `pop`, `prune`, `delegate`, `abort`, and the run/terminal release paths | `Run … ended execution with an unknown outcome at epoch N; …` | **No.** Detection only. Nothing is written and no recovery is started, so the attempt is still pending afterwards                                       |
+
+The envelope below is the **session-targeting** one, and its message says so:
+retrying the same command cannot make progress, because nothing about the run
+changed. It is not telling you to run something else either — the interrupted
+attempt leaves the run execution-owned, so a later execution-owning command
+refuses `EXECUTION_IN_PROGRESS` rather than recovering it. A run that reaches
+this state persistently is the SIGKILL case described in
+[docs/internal/architecture.md § PID-identity recovery](../internal/architecture.md#pid-identity-recovery-and-its-two-known-weaknesses).
 
 The message names the run and the recovery epoch of the unresolved attempt.
 
 **Text:**
 
 ```text
-Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Recovery is automatic and has no separate command; this mutation wrote nothing.
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Nothing was written and no recovery was started here, so retrying this command will not clear it.
 Code: RECOVERY_REQUIRED
 ```
 
@@ -1320,7 +1331,7 @@ Code: RECOVERY_REQUIRED
 ```json
 {
   "kind": "error",
-  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Recovery is automatic and has no separate command; this mutation wrote nothing.",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Nothing was written and no recovery was started here, so retrying this command will not clear it.",
   "code": "RECOVERY_REQUIRED",
   "command": "pass"
 }
