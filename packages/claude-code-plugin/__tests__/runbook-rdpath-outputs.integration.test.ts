@@ -21,19 +21,15 @@ import {
 } from '@rundown-org/core/testing/session-fixtures';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getCliPath } from './helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pluginDir = resolve(__dirname, '..');
-// Resolved, never traversed: a `../../packages/cli/dist` traversal off this file
-// is correct in the normal tree but lands inside `.stryker-tmp/` in Stryker's
-// sandbox (the copy adds two path segments), which aborted the plugin dry run.
-// See getCliPath in __tests__/helpers/test-utils.ts for the full rationale.
-const cliPath = createRequire(import.meta.url).resolve('@rundown-org/cli');
+const cliPath = getCliPath();
 const rdpathDist = join(pluginDir, 'dist', 'rdpath.js');
 const rdxDist = join(pluginDir, 'dist', 'rdx.js');
 

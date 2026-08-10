@@ -25,7 +25,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { globSync } from 'glob';
@@ -86,7 +86,16 @@ const CALL_GLOBAL = new RegExp(CALL_SOURCE, 'g');
 const CALL_FIRST = new RegExp(CALL_SOURCE);
 const STRING_LITERAL = /^(['"])((?:[^'"\\\n]|\\.)*)\1$/;
 const BINDING =
-  /(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=\s*(?:[\w$.]+\(\s*)*$/;
+  /(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=\s*(?:(?:new\s+)?[\w$.]+\s*\(\s*)*$/;
+
+/**
+ * @param {string} callee - matched path-building callee.
+ * @returns {'join' | 'resolve' | 'url'} its path-composition semantics.
+ */
+function callKind(callee) {
+  if (/URL$/.test(callee)) return 'url';
+  return /join$/.test(callee) ? 'join' : 'resolve';
+}
 
 /**
  * Split a balanced, comma-separated argument list.
@@ -133,18 +142,18 @@ function readArguments(text, open) {
  *
  * @param {string} text - comment-stripped source.
  * @param {number} open - index of the call's opening parenthesis.
- * @param {boolean} isUrl - whether the call is `new URL(…)`.
+ * @param {'join' | 'resolve' | 'url'} kind - the call's path-composition semantics.
  * @param {string} fileDir - directory holding the file.
  * @param {Map<string, string>} bindings - consts already bound to a resolved path.
  * @returns {{value: string, end: number} | null} the resolved absolute path and the
  *   index of the closing parenthesis, or null when it is not statically known.
  */
-function evaluateCall(text, open, isUrl, fileDir, bindings) {
+function evaluateCall(text, open, kind, fileDir, bindings) {
   const parsed = readArguments(text, open);
   if (parsed === null || parsed.args.length === 0) return null;
   const { args, end } = parsed;
 
-  if (isUrl) {
+  if (kind === 'url') {
     const literal = STRING_LITERAL.exec(args[0]);
     if (literal === null || args[1] !== 'import.meta.url') return null;
     return { value: resolve(fileDir, literal[2]), end };
@@ -162,7 +171,7 @@ function evaluateCall(text, open, isUrl, fileDir, bindings) {
     const inner = evaluateCall(
       anchor,
       nested.index + nested[0].length - 1,
-      /URL$/.test(nested[1]),
+      callKind(nested[1]),
       fileDir,
       bindings,
     );
@@ -173,7 +182,7 @@ function evaluateCall(text, open, isUrl, fileDir, bindings) {
   for (const arg of args.slice(1)) {
     const literal = STRING_LITERAL.exec(arg);
     if (literal === null) return null;
-    value = isAbsolute(literal[2]) ? literal[2] : resolve(value, literal[2]);
+    value = kind === 'join' ? join(value, literal[2]) : resolve(value, literal[2]);
   }
   return { value, end };
 }
@@ -193,7 +202,7 @@ function fileAnchoredPaths(text, file) {
   CALL_GLOBAL.lastIndex = 0;
   for (let match = CALL_GLOBAL.exec(text); match !== null; match = CALL_GLOBAL.exec(text)) {
     const open = match.index + match[0].length - 1;
-    const evaluated = evaluateCall(text, open, /^new/.test(match[1]), fileDir, bindings);
+    const evaluated = evaluateCall(text, open, callKind(match[1]), fileDir, bindings);
     if (evaluated === null) continue;
     const binding = BINDING.exec(text.slice(Math.max(0, match.index - 200), open + 1));
     if (binding !== null) bindings.set(binding[1], evaluated.value);
@@ -207,6 +216,24 @@ function fileAnchoredPaths(text, file) {
   }
   return found;
 }
+
+test('path evaluation preserves wrapped URL bindings and call semantics', () => {
+  const file = '/repo/packages/example/__tests__/fixture.test.ts';
+  const paths = fileAnchoredPaths(
+    `
+      const repoRoot = fileURLToPath ( new URL('../..', import.meta.url) );
+      join(repoRoot, '/asset');
+      resolve(repoRoot, '/asset');
+      resolve(join(repoRoot, '/asset'), 'child');
+    `,
+    file,
+  );
+
+  assert.deepEqual(
+    paths.map(({ resolved }) => resolved),
+    ['/repo/packages', '/repo/packages/asset', '/asset', '/repo/packages/asset/child'],
+  );
+});
 
 /**
  * Jest `testPathIgnorePatterns` compiled against absolute paths.
@@ -261,7 +288,7 @@ for (const pkg of PACKAGES) {
 // segment per argument in `__tests__/helpers/test-utils.ts`, and a `repoRoot`
 // chained off an intermediate const in
 // `__tests__/runbook-rdpath-outputs.integration.test.ts` and
-// `__tests__/content/no-bare-rd-command.test.ts`. Five plugin suites failed a
+// `__tests__/content/no-bare-rd-command.repo-asset.test.ts`. Five plugin suites failed a
 // full sandbox jest run because of them.
 //
 // Those five were ARMED BUT NOT FIRING, and the distinction is worth keeping
