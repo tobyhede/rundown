@@ -65,6 +65,13 @@ const eventName = process.env.EVENT_NAME ?? 'workflow_dispatch';
 const inputPackage = process.env.INPUT_PACKAGE ?? 'all';
 const baseRef = process.env.BASE_REF ?? '';
 const maxShardLines = Number.parseInt(process.env.MAX_SHARD_LINES ?? '', 10) || 2400;
+/**
+ * Concurrent job slots this account allows, which is what MAX_SHARD_JOBS is
+ * ultimately denominated in — the cap is a number of WAVES of this, not an
+ * abstract limit. GitHub Free (personal) allows 20; the default ceiling of 80 is
+ * four of them.
+ */
+const CONCURRENT_JOB_SLOTS = 20;
 // A CEILING on the matrix, not a target: the default line budget plans 60 jobs,
 // and this is where the planner starts widening that budget rather than dropping
 // coverage. The campaign's TOTAL work is flat in the budget — sharding only
@@ -240,10 +247,18 @@ function planProducer(budget) {
 let shardBudget = maxShardLines;
 let producerPlan = planProducer(shardBudget);
 const shardTotal = (plan) => plan.reduce((sum, p) => sum + p.shards.length, 0);
+/** Widening passes before the loop gives up, whether or not it reached the cap. */
+const WIDEN_ATTEMPTS = 10;
+let widenAttemptsUsed = 0;
 // Widen the budget rather than dropping coverage when the matrix would exceed
 // the cap. Bounded and monotonic: each pass scales the budget by the overshoot
 // ratio, and the loop stops as soon as the budget cannot grow further.
-for (let attempt = 0; attempt < 10 && shardTotal(producerPlan) > maxShardJobs; attempt++) {
+for (
+  let attempt = 0;
+  attempt < WIDEN_ATTEMPTS && shardTotal(producerPlan) > maxShardJobs;
+  attempt++
+) {
+  widenAttemptsUsed = attempt + 1;
   const planned = shardTotal(producerPlan);
   const widened = Math.ceil((shardBudget * planned) / maxShardJobs);
   if (widened <= shardBudget) break;
@@ -268,13 +283,22 @@ for (let attempt = 0; attempt < 10 && shardTotal(producerPlan) > maxShardJobs; a
 // cannot lower.
 const plannedShardTotal = shardTotal(producerPlan);
 if (plannedShardTotal > maxShardJobs) {
+  // WHY it stopped decides what can honestly be claimed. Only the loop running
+  // out of room proves the count is irreducible; hitting the attempt limit
+  // proves nothing except that the loop stopped looking, which is exactly the
+  // case that widens the budget to an absurd value and then gives up.
+  const why =
+    widenAttemptsUsed >= WIDEN_ATTEMPTS
+      ? `widening stopped after ${WIDEN_ATTEMPTS} attempts without reaching the cap, so the ` +
+        'count is not known to be irreducible — it is only known that widening did not reduce it'
+      : 'widening the budget further cannot reduce the count: each package contributes at least ' +
+        'one shard, and each file over the large-file threshold is isolated onto its own';
   process.stderr.write(
-    `WARNING: could not reach MAX_SHARD_JOBS=${maxShardJobs}. The plan plans ` +
-      `${plannedShardTotal} shard(s) at MAX_SHARD_LINES=${shardBudget}, and widening the budget ` +
-      'further cannot reduce it: each package contributes at least one shard and each file over ' +
-      'the large-file threshold is isolated onto its own. Proceeding over the cap: ' +
-      `${plannedShardTotal} shards is ${Math.ceil(plannedShardTotal / 20)} wave(s) of the 20 ` +
-      'concurrent job slots this account allows.\n',
+    `WARNING: could not reach MAX_SHARD_JOBS=${maxShardJobs}. The plan emits ` +
+      `${plannedShardTotal} shard(s) at MAX_SHARD_LINES=${shardBudget}, and ${why}. ` +
+      `Proceeding over the cap: ${plannedShardTotal} shards is ` +
+      `${Math.ceil(plannedShardTotal / CONCURRENT_JOB_SLOTS)} wave(s) of the ` +
+      `${CONCURRENT_JOB_SLOTS} concurrent job slots this account allows.\n`,
   );
 }
 

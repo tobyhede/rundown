@@ -230,13 +230,24 @@ function collectShardStatuses(dir) {
  * The ordering is evidence strength, and it is consistent with the score this
  * same file computes (`scoreOf`, where `DETECTED = Killed | Timeout`):
  *
- * - `Killed` (4) outranks everything: a test demonstrably failed on the mutant.
+ * Every rank is DISTINCT wherever there is an argument for one, because equal
+ * ranks would hand the decision back to arrival order for that pair — the exact
+ * defect this function exists to remove. Statuses that share a rank are resolved
+ * by the tie-break in {@link mergeFileEntry}.
+ *
+ * - `Killed` (5) outranks everything: a test demonstrably failed on the mutant.
  *   That is a positive observation, and no other status is one.
- * - `Timeout` (3) is detected per Stryker's own classification — which `scoreOf`
+ * - `Timeout` (4) is detected per Stryker's own classification — which `scoreOf`
  *   implements — so it must outrank the undetected statuses or the merged score
  *   would contradict the scoring function beside it. It sits below `Killed`
- *   because a demonstrated kill is the stronger and more informative result.
- * - `Survived` / `NoCoverage` (2) are real measurements that observed no kill.
+ *   because a demonstrated kill is stronger evidence than a run that hung:
+ *   CLAUDE.md is explicit that a spurious timeout credits a kill no test
+ *   performed.
+ * - `Survived` (3) observed coverage and no kill. It outranks `NoCoverage` (2),
+ *   which observed no test reaching the mutant at all, on the same logic as
+ *   `Killed`: if one shard saw the mutant covered then it IS covered, and the
+ *   other shard's `NoCoverage` is the weaker reading. Both are undetected, so
+ *   the score is unaffected either way — the merged REPORT is not.
  * - Compile/runtime errors (1, and the fallback for anything unrecognised) are
  *   real, but excluded from the score.
  * - `Ignored` / `Pending` (0) are placeholders — a chunk that skipped the mutant
@@ -249,10 +260,11 @@ function collectShardStatuses(dir) {
 function statusRank(status) {
   switch (status) {
     case 'Killed':
-      return 4;
+      return 5;
     case 'Timeout':
-      return 3;
+      return 4;
     case 'Survived':
+      return 3;
     case 'NoCoverage':
       return 2;
     case 'Ignored':
@@ -279,7 +291,8 @@ function statusRank(status) {
  * it routine — a mutant in the overlap is measured twice, by two shards running
  * different `--mutate` scopes. Divergent statuses for one mutant are therefore an
  * expected outcome, not a corner case, and they are resolved by
- * {@link STATUS_RANK} rather than by which report happened to be read first.
+ * {@link statusRank} (with the tie-break below) rather than by which report
+ * happened to be read first.
  *
  * @param {object} into - the accumulating merged file entry (mutated in place).
  * @param {object} from - the incoming shard's file entry.
@@ -308,10 +321,24 @@ function mergeFileEntry(into, from, file) {
       seen.set(key, into.mutants.push(mutant) - 1);
       continue;
     }
-    // Strictly greater, so an equal rank keeps the incumbent — two shards that
-    // agree produce the same merged entry either way, and the merge stays a pure
-    // function of the shard SET rather than of its order.
-    if (statusRank(mutant.status) > statusRank(into.mutants[existing].status)) {
+    // Rank first; on an EQUAL rank fall back to a stable comparison of the
+    // status text, alphabetically first winning.
+    //
+    // The fallback is what makes the merge a pure function of the shard SET
+    // rather than of its order. Strict-greater-on-rank alone is not enough: it
+    // is order-independent for IDENTICAL statuses (they compare equal and the
+    // incumbent stays) but not for DISTINCT statuses sharing a rank —
+    // `CompileError` vs `RuntimeError`, `Ignored` vs `Pending`, or two
+    // unrecognised statuses — where arrival order would still decide, and the
+    // merged report would differ between runs of the same campaign.
+    //
+    // Alphabetical is frankly arbitrary, and deliberately so: those pairs have no
+    // evidence ordering to appeal to, and inventing a hierarchy for them would be
+    // asserting something unfounded. Stable beats meaningful here. Every pair
+    // that DOES have an argument is separated by rank instead — see statusRank.
+    const held = into.mutants[existing];
+    const byRank = statusRank(mutant.status) - statusRank(held.status);
+    if (byRank > 0 || (byRank === 0 && mutant.status < held.status)) {
       into.mutants[existing] = mutant;
     }
   }

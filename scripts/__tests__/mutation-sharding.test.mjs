@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_SHARD_CONCURRENCY,
   LARGE_FILE_SHARD_CONCURRENCY,
@@ -12,7 +13,11 @@ import {
   partitionPrEntries,
 } from '../lib/mutation-scope.mjs';
 
-const repoRoot = new URL('../..', import.meta.url).pathname;
+// fileURLToPath, not `new URL(...).pathname`, for the same reason as in
+// mutation-shard-status.test.mjs: pathname leaves percent-encoding undecoded and
+// yields a leading-slash drive path on Windows, and this value is the `cwd` every
+// spawned planner and merger runs in.
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const planScript = 'scripts/mutation-shard-plan.mjs';
 const planScriptAbs = join(repoRoot, planScript);
 const mergeScript = 'scripts/mutation-merge-reports.mjs';
@@ -195,10 +200,20 @@ test('plan: says so when the budget cannot be widened enough to reach the cap', 
     'a plan that overshoots its cap must say that it did',
   );
   assert.match(stderr, /MAX_SHARD_JOBS=1/, 'the diagnostic must name the cap it missed');
+  // Bound to the surrounding phrasing, not a bare number: MAX_SHARD_LINES, the
+  // wave count and the cap are all digits in this same line, so a bare
+  // `/14/` would pass on any of them and keep passing if the count vanished.
   assert.match(
     stderr,
-    new RegExp(String(include.length)),
-    'and the shard count it actually emitted',
+    new RegExp(`emits ${include.length} shard\\(s\\)`),
+    'the diagnostic must name the shard count it actually emitted',
+  );
+  // The attempt-limit exit cannot know it reached the structural floor, so it
+  // must not claim the count is irreducible.
+  assert.doesNotMatch(
+    stderr,
+    /cannot reduce it/,
+    'a run that stopped on the attempt limit has not proven the count is irreducible',
   );
 });
 
@@ -765,6 +780,49 @@ for (const [label, statuses] of [
   });
 }
 
+// Some pairs have no evidence ordering to appeal to — `Ignored` vs `Pending`,
+// `CompileError` vs `RuntimeError`, or anything unrecognised. Ranking them
+// against each other would be inventing a hierarchy; leaving them equal would
+// leave arrival order deciding. A stable tie-break on the status value itself is
+// the honest third option: arbitrary, but a pure function of the shard SET.
+//
+// A companion mutant that CAN be scored rides along at the same location in both shards,
+// because a report of nothing but placeholders has `valid === 0` and is refused
+// upload (and fails) for that separate reason.
+for (const [first, second] of [
+  ['Ignored', 'Pending'],
+  ['Pending', 'Ignored'],
+]) {
+  test(`merge: equal-ranked ${first}/${second} resolves the same way in either order`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'merge-tiebreak-'));
+    try {
+      const split = 'src/runbook/compiler.ts';
+      const at = { file: split, startLine: 400 };
+      // Killed lands on line 400 in both shards (identical, so it just merges);
+      // the contested placeholder lands on 401.
+      writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 1, [first]: 1 }, at);
+      writeReport(join(dir, 'mutation-report-core-shard2'), { Killed: 1, [second]: 1 }, at);
+      const matrix = JSON.stringify({
+        include: [
+          { module: 'core', shard: 1 },
+          { module: 'core', shard: 2 },
+        ],
+      });
+      assert.equal(runMerge(dir, { MATRIX: matrix, APPLY_BREAK: 'false' }), 0);
+      const merged = JSON.parse(readFileSync(join(dir, 'merged', 'core.json'), 'utf8'));
+      const contested = merged.files[split].mutants.find((m) => m.location.start.line === 401);
+      assert.ok(contested, 'the contested mutant must survive the merge');
+      assert.equal(
+        contested.status,
+        'Ignored',
+        'an equal-ranked conflict must resolve identically whichever shard is read first',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 // (The zero-mutant FAILURE MESSAGE is already pinned by
 // 'merge: a module whose measured shards found zero mutants fails loudly' below;
 // these two cases are about the upload, which nothing covered.)
@@ -920,6 +978,16 @@ for (const [first, second, expected] of [
   ['Survived', 'Killed', 'Killed'],
   ['Killed', 'Ignored', 'Killed'],
   ['Ignored', 'Killed', 'Killed'],
+  // Both DETECTED, so the SCORE is identical either way — but the merged report
+  // is not, and it is what reaches the dashboard. A demonstrated kill outranks a
+  // run that merely hung.
+  ['Killed', 'Timeout', 'Killed'],
+  ['Timeout', 'Killed', 'Killed'],
+  // Both UNDETECTED, same story: `Survived` observed coverage and no kill,
+  // `NoCoverage` observed no test reaching the mutant at all. A positive
+  // observation of coverage beats its absence.
+  ['Survived', 'NoCoverage', 'Survived'],
+  ['NoCoverage', 'Survived', 'Survived'],
 ]) {
   test(`merge: an overlapped mutant resolves to ${expected} when shard1=${first} and shard2=${second}`, () => {
     const dir = mkdtempSync(join(tmpdir(), 'merge-split-dup-'));
