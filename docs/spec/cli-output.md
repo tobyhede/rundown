@@ -1643,18 +1643,20 @@ they reach output through the top-level error wrapper rather than through
 
 - **Text** is `Error <code>: <message>` on one line — not the `Error: …` /
   `Code: …` pair the symbolic codes render. `--verbose` appends the registered
-  description and a documentation link.
-- **JSON** carries an extra `details` object holding `category`, `title`, the
-  error's structured `context`, and `docsUrl`. The documented envelope fields
-  (`kind`, `error`, `code`, `command`) are unchanged.
+  description, and nothing else.
+- **JSON** carries an extra `details` object holding `category`, `title`, and
+  the error's structured `context`. The documented envelope fields (`kind`,
+  `error`, `code`, `command`) are unchanged.
 
 The registered `description` reaches an operator **only** under
 `--text --verbose`, and never appears in the default JSON envelope, so each of
 these codes deliberately spells its diagnosis and its recovery into `error`
 itself.
 
-> The `docsUrl` these envelopes carry points at a host that does not currently
-> resolve. It is documented as emitted, not as reachable.
+**No documentation URL is emitted, by any code.** Errors carry no `docsUrl`
+field and `--verbose` prints no link. The per-code `docSlug` still exists in the
+registry as the durable identifier a future `/docs/errors/` route would key on,
+but no such route has ever been served, so nothing renders it.
 
 Two are open-time faults on the database as a whole, two concern one run.
 
@@ -1697,8 +1699,7 @@ Error RD-306: Runbook database is not in WAL journal mode - effective mode: dele
   "details": {
     "category": "STATE",
     "title": "Runbook database is not in WAL journal mode",
-    "context": { "effectiveMode": "delete" },
-    "docsUrl": "https://rundown.dev/docs/errors/wal-journal-mode-unavailable"
+    "context": { "effectiveMode": "delete" }
   }
 }
 ```
@@ -1732,8 +1733,7 @@ Error RD-307: Runbook database unavailable - Native SQLite (node:sqlite) is unav
   "details": {
     "category": "STATE",
     "title": "Runbook database unavailable",
-    "context": { "driverCode": "SQLITE_READONLY" },
-    "docsUrl": "https://rundown.dev/docs/errors/state-store-unavailable"
+    "context": { "driverCode": "SQLITE_READONLY" }
   }
 }
 ```
@@ -1772,8 +1772,7 @@ Error RD-308: Runbook state lost to a concurrent writer - Run rd_9e725b142d81dab
   "details": {
     "category": "STATE",
     "title": "Runbook state lost to a concurrent writer",
-    "context": { "runId": "rd_9e725b142d81dabcefb9e04919568fcd" },
-    "docsUrl": "https://rundown.dev/docs/errors/concurrent-state-modification"
+    "context": { "runId": "rd_9e725b142d81dabcefb9e04919568fcd" }
   }
 }
 ```
@@ -1814,8 +1813,7 @@ Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568
   "details": {
     "category": "STATE",
     "title": "Invalid persisted run state",
-    "context": {},
-    "docsUrl": "https://rundown.dev/docs/errors/invalid-persisted-run-state"
+    "context": {}
   }
 }
 ```

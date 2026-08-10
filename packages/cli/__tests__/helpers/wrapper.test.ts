@@ -71,6 +71,10 @@ describe('withErrorHandling', () => {
       category: error.errorCode.category,
       title: error.errorCode.title,
     });
+    // No documentation URL rides in `details`. `ErrorDetailsSchema` is `.loose()`,
+    // so a re-added field would validate silently — this is the only guard.
+    expect(parsed.details).not.toHaveProperty('docsUrl');
+    expect(JSON.stringify(parsed)).not.toContain('/docs/errors/');
     expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);
   });
 
@@ -353,6 +357,10 @@ describe('withErrorHandling', () => {
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const output = errorSpy.mock.calls[0]?.[0] as string;
-    expect(output).toContain('Documentation:');
+    // Verbose adds the registered description — and nothing else. The docs link
+    // it used to append named a host that has never resolved.
+    expect(output).toContain(error.errorCode.description);
+    expect(output).not.toContain('Documentation:');
+    expect(output).not.toContain('rundown.dev');
   });
 });

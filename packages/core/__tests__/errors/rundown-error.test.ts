@@ -76,10 +76,31 @@ describe('RundownError', () => {
     });
   });
 
-  describe('docsUrl', () => {
-    it('returns documentation URL', () => {
+  // A documentation URL is deliberately absent from every error surface. No
+  // `/docs/errors/` route has ever existed on either the `rundown.dev` host the
+  // field named (which does not resolve at all) or the real `rundown.cool`
+  // site, so all 62 registered codes emitted a dead link. These assertions are
+  // the regression guard: the field must not silently reappear on the instance,
+  // in the JSON payload, or in `--verbose` text.
+  describe('documentation URL', () => {
+    it('exposes no docsUrl on the instance', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
-      expect(error.docsUrl).toBe('https://rundown.dev/docs/errors/file-not-found');
+
+      // `in` walks the whole prototype chain, so a re-added getter is caught.
+      expect('docsUrl' in error).toBe(false);
+    });
+
+    it('emits no documentation host in any rendered surface', () => {
+      const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
+      const rendered = [
+        error.message,
+        error.toCliString(),
+        error.toCliString(true),
+        JSON.stringify(error.toJSON()),
+      ].join('\n');
+
+      expect(rendered).not.toContain('rundown.dev');
+      expect(rendered).not.toContain('/docs/errors/');
     });
   });
 
@@ -91,13 +112,16 @@ describe('RundownError', () => {
       expect(output).toBe('Error RD-101: Runbook file not found: test.md');
     });
 
-    it('includes description and docs URL when verbose', () => {
+    it('includes the description but no docs link when verbose', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
       const output = error.toCliString(true);
 
-      expect(output).toContain('Error RD-101:');
-      expect(output).toContain('does not exist or cannot be accessed');
-      expect(output).toContain('Documentation:');
+      expect(output).toBe(
+        'Error RD-101: Runbook file not found: test.md\n' +
+          '\n' +
+          'The specified runbook file does not exist or cannot be accessed.',
+      );
+      expect(output).not.toContain('Documentation:');
     });
   });
 
@@ -112,8 +136,8 @@ describe('RundownError', () => {
         title: 'Runbook file not found',
         message: 'Runbook file not found: test.md',
         context: { file: 'test.md' },
-        docsUrl: 'https://rundown.dev/docs/errors/file-not-found',
       });
+      expect(json).not.toHaveProperty('docsUrl');
     });
   });
 });

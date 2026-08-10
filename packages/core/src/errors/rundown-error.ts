@@ -80,15 +80,6 @@ export class RundownError extends Error {
   }
 
   /**
-   * Get documentation URL for this error.
-   *
-   * @returns URL to the error documentation page
-   */
-  get docsUrl(): string {
-    return `https://rundown.dev/docs/errors/${this.errorCode.docSlug}`;
-  }
-
-  /**
    * Format error message with context.
    *
    * Renders context fields in priority order, filtering out undefined values.
@@ -137,7 +128,11 @@ export class RundownError extends Error {
   /**
    * Format for CLI display.
    *
-   * @param verbose - Include description and docs link
+   * Verbose appends the registered `description` and nothing else. No
+   * documentation link is emitted — see {@link ErrorCodeDefinition.docSlug} for
+   * why the slug survives with no URL consumer.
+   *
+   * @param verbose - Append the registered description
    * @returns Formatted error string
    */
   toCliString(verbose = false): string {
@@ -148,8 +143,6 @@ export class RundownError extends Error {
     if (verbose) {
       lines.push('');
       lines.push(this.errorCode.description);
-      lines.push('');
-      lines.push(`Documentation: ${this.docsUrl}`);
     }
 
     return lines.join('\n');
@@ -167,7 +160,6 @@ export class RundownError extends Error {
       title: this.errorCode.title,
       message: this.message,
       context: this.context,
-      docsUrl: this.docsUrl,
     };
   }
 }
