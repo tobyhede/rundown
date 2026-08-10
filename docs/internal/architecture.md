@@ -11,13 +11,14 @@ TypeScript patterns, see [xstate-patterns.md](./xstate-patterns.md).
 
 ## Architecture Overview
 
-The Rundown system separates concerns into three layers:
+The Rundown system separates concerns into these layers:
 
 | Layer             | Component               | Responsibility                                                     |
 | ----------------- | ----------------------- | ------------------------------------------------------------------ |
 | **Format**        | `.runbook.md` files     | Runbook definition (steps, transitions, commands)                  |
 | **State Machine** | XState-compiled machine | State transitions and guards                                       |
-| **Persistence**   | JSON files              | Runbook state survives context clears                              |
+| **Persistence**   | One SQLite database     | Run, session, and claim authority survives context clears          |
+| **Concurrency**   | Transactions and leases | Serialises concurrent CLI processes against that authority         |
 | **Iteration**     | Machine-owned actors    | Per-iteration data source value resolution and machine transitions |
 
 The CLI is an orchestration and control interface. Claude executes the actual
@@ -27,8 +28,14 @@ work.
 [Runbook File] --> [Parser] --> [XState Machine] --> [State Manager]
                                        ^                    |
                                        |                    v
-                              [CLI Commands] <---- [Persisted JSON]
+                              [CLI Commands] <---- [.rundown/rundown.db]
+                                                    (SQLite: runs, session,
+                                                     claims, execution leases)
 ```
+
+Captured filesystem outputs are the one piece of run-adjacent state that is not
+in the database: they stay under `.rundown/runs/<run-id>/outputs/`. See
+[§ State Persistence and Concurrency](#state-persistence-and-concurrency).
 
 ---
 
@@ -927,12 +934,18 @@ behind exposure is follow-up work tracked outside this document.
 
 Every persisted write that changes `RunbookState.lifecycle` — and every
 run-state deletion — emits a `logger.debug('lifecycle-write', …)` line from the
-two persistence chokepoints, `RunbookStateManager.saveUnlocked` (transitions,
-including creation as `null -> running`) and `RunbookStateManager.delete`. All
-state mutators funnel through these two methods, so every writer — actor
-snapshot sync, the lifecycle command seam, collection drain, plugin-hook-spawned
-CLI processes, `cleanupOrphanedActiveStack` — is covered regardless of caller.
+two persistence chokepoints, `RunbookStateManager.save` (transitions, including
+creation as `null -> running`) and `RunbookStateManager.delete`. All state
+mutators funnel through these two methods, so every writer — actor snapshot
+sync, the lifecycle command seam, collection drain, plugin-hook-spawned CLI
+processes, `cleanupOrphanedActiveStack` — is covered regardless of caller.
 Enable with `RUNDOWN_LOG_LEVEL=debug`; the logger stamps pid.
+
+The delete trail is emitted after the row delete commits and **before** the
+per-run outputs directory is removed, so a later `fs.rm` failure cannot suppress
+the record of a deletion that actually happened. The row delete cascades to
+claims, stack, stash, completions, and attempts, and refuses while an execution
+owns the run.
 
 This is deliberately a debug signal, not a durable subsystem: the forensic
 instrumentation that root-caused #536 (pid/ppid/argv/call-site records in an
@@ -942,6 +955,325 @@ and caller-evidence model (see the delegation-lifecycle roadmap's explicit
 targeting work) — identity is named by the caller, not reconstructed from
 process metadata. If an unattributed-writer class of bug ever reappears,
 re-instrument from git history rather than re-deriving.
+
+---
+
+## State Persistence and Concurrency
+
+Run, session, and claim authority live in **one SQLite database per project**,
+`.rundown/rundown.db`. Nothing else is authoritative: there is no per-run JSON
+state file, no separate session file, and no file lock guarding either. The one
+piece of run-adjacent state outside the database is **captured filesystem
+output**, which stays under `.rundown/runs/<run-id>/outputs/`
+(`outputsDirForRun`, `packages/core/src/runbook/output-channels.ts`) because it
+is arbitrary user data, not authority.
+
+For the normative operator-facing contract — storage locations, the two version
+checks, the no-migration rule — see
+[docs/reference/runtime.md § State Persistence](../reference/runtime.md#7-state-persistence).
+This section describes the implementation behind it.
+
+### One store, one opener
+
+`packages/core/src/runbook/storage/store-registry.ts` is the sole authoritative
+open path: `new RunbookStore(...)` is constructed in exactly one place, inside
+`openRunbookStore`. The registry keys open stores by project root, so every
+service in a process shares one driver and one connection. Legacy-state refusal
+happens in that opener, before the database is created, so an incompatible
+project can never get a half-initialised store.
+
+Schema installation is `ensureSchema` (`storage/schema.ts`): it stamps
+`PRAGMA user_version` with `SCHEMA_VERSION` on a fresh database, no-ops on a
+matching one, and throws `IncompatibleSchemaError` on anything else. It never
+migrates. Because the DDL and the constant live in the same file, **any DDL edit
+must move `SCHEMA_VERSION`** — the file says so at its head, having already been
+bitten once by a widened `CHECK` that shipped without a version bump.
+
+Six tables carry everything: `runs`, `claims`, `session_stack`, `stash_slot`,
+`resolved_completions`, `execution_attempts`.
+
+### Two schema versions, deliberately distinct
+
+They are separate mechanisms with separate failure modes, and conflating them is
+a documented mistake:
+
+| Version                      | Governs                                                                            | Where it lives                     | Rule                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------- |
+| SQLite storage schema        | The whole database — runs, session, stash, claims, attempts                        | `PRAGMA user_version`              | Must equal `SCHEMA_VERSION` (currently `2`) |
+| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The run row's persisted state JSON | Must be exactly `1`                         |
+
+A wrong storage version invalidates the whole database (`RD-305`); a wrong
+`RunbookState.schemaVersion` invalidates **only that run** (`RD-309`). Session,
+stash, and claim rows carry no `schemaVersion` of their own. Neither version is
+ever migrated, hydrated, shimmed, or dual-read — the recovery path is always
+explicit user action.
+
+### Drivers: two implementations, one atomicity bar
+
+`storage/driver-factory.ts` selects the driver, and the selection is
+fail-closed:
+
+- **`node:sqlite` (native)** everywhere real multi-process concurrency exists.
+  The database is opened in WAL mode with `PRAGMA busy_timeout = 5000` and
+  `PRAGMA foreign_keys = ON`; every write runs as a short `BEGIN IMMEDIATE` with
+  explicit rollback, plus a bounded application-level retry (10 retries after
+  the first attempt, backing off `25ms × attempt`) for the `SQLITE_BUSY` that
+  escapes the busy timeout. `BEGIN IMMEDIATE` rather than deferred is
+  deliberate: it converts a mid-transaction upgrade failure into an entry-point
+  one the retry loop can handle. If native SQLite cannot initialise, the factory
+  raises `NativeSqliteUnavailableError` — it does **not** fall back.
+- **`sql.js` (WASM)** only inside WebContainer, identified positively by the
+  `jsh` shell marker. Forcing it anywhere else raises
+  `SqljsUnsupportedHostError`, because the adapter is single-writer and would
+  reintroduce the hazard the native driver rules out.
+
+**The atomicity bar is identical on both drivers.** `sqljs-driver.ts` issues a
+plain `BEGIN` rather than `BEGIN IMMEDIATE`, but exclusion does not come from
+the SQL verb: it comes from `runLocked`, which serialises each critical section
+behind an in-process mutex and an advisory file lock, and from the load →
+`BEGIN` → work → `COMMIT` → durable-export → close cycle running entirely inside
+that lock. More importantly, the property that matters — **claim
+compare-and-swap before any write, in the same transaction** — lives in
+`commitOwnedRunSet` / `classifyCommitRow`, not in either driver. Do not record
+this as "the bar holds only on native"; that reading would misdirect a future
+WebContainer audit.
+
+Where the two genuinely differ is the multi-process guarantee, and that
+difference is confined by construction: the sql.js adapter declares
+`capabilities.multiProcess: false`, and `driver-factory.ts` only ever selects it
+on a host that is single-writer anyway.
+
+Both drivers take **synchronous** transaction callbacks (`SyncWork`, enforced at
+runtime by `assertSyncWorkResult`). That type is load-bearing: it makes it
+structurally impossible to hold a transaction open across an awaited external
+effect, which is what forces the effect fence below to be three transactions
+rather than one.
+
+### The decisive commit: CAS first, write after
+
+The atomicity bar for a mutation is: **one decisive `BEGIN IMMEDIATE`
+transaction whose first act is a claim compare-and-swap, with a refusal rolling
+back having written nothing authority-bearing.**
+
+`classifyCommitRow` (`storage/runbook-store.ts`) is the total classifier that
+encodes the ordering, and the order is the contract:
+
+1. **Existence** — run gone → `missing`.
+2. **Claim validity** — claim absent, not controlling this run, or not `active`
+   → `claim_superseded`.
+3. **Claim generation** — moved since capture → `claim_superseded`.
+4. **Delegated-parent liveness** — parent missing, terminal, or relinked →
+   `claim_superseded`.
+5. **Lost update** — `state_version` moved → `concurrent_modification`.
+6. **Execution identity** — the owning attempt is not the expected
+   `(epoch, token)` tuple → `execution_in_progress` / `recovery_required`.
+
+A zero-row `UPDATE` cannot distinguish "run gone" from "generation moved", which
+is why the classifying `SELECT` decides and the `UPDATE` merely applies.
+
+`commitOwnedRunSet` extends this to a run **set** without weakening it: it
+classifies **every** member before writing **any**, then writes in
+caller-supplied dependency order (descendants before roots before external
+parents), then applies the optional session projection last — by which point
+every affected execution owner has already been cleared, so no trigger-guarded
+session write can be refused by the owned-run guard. One member's moved
+generation refuses the whole set with nothing written.
+
+Ownership is cleared in the _same_ `UPDATE` that writes `state_json`. There is
+no window in which state is committed but the run still reads as owned.
+
+### What the schema enforces on its own
+
+Triggers, not application code, are what make the CAS unbypassable:
+
+- **Owned-run guards.** While `runs.exec_token IS NOT NULL`, any claim or stash
+  insert/update/delete `RAISE(ABORT, 'execution_in_progress')`. The store
+  normalises that abort into the typed refusal, matching on the exact string.
+- **Generation bumps.** Any claim or stash mutation bumps
+  `runs.claim_generation`, invalidating every authority captured before it. Any
+  `state_json` write bumps `runs.state_version`.
+- **The liveness exception.** Both claim `UPDATE` triggers are scoped
+  `UPDATE OF` nine resolution-affecting columns, deliberately **excluding
+  `last_seen_at` and `updated_at`**. That exclusion is what lets a
+  claim-liveness touch be recorded while an owner holds the run without either
+  being refused or invalidating captured authority. It is the reason "nothing
+  written" on a refusal is stated as **nothing _authority-bearing_ written**:
+  every mutating path commits an inert `recordClaimSeen` row in its own
+  transaction beforehand, by design, so a failed liveness write can never roll
+  back the collection and a refused collection can never lose the liveness
+  record. The rationale is recorded in `collection-service.ts` at
+  `recordPresenterLiveness`.
+- **Partial unique index.**
+  `claims_one_active_per_run … WHERE status = 'active'` makes "the run's
+  controlling claim" a function rather than an arbitrary pick.
+- **Execution identity is all-or-nothing.** A `CHECK` on `runs` requires
+  `exec_epoch`, `exec_pid`, and `exec_token` to be present together or absent
+  together, so a half-populated identity — an owner recovery cannot resolve — is
+  unrepresentable.
+
+Claims are tombstoned, never hard-deleted: a claim that leaves the session
+becomes `status = 'superseded'` so issuance history survives.
+
+### Execution leases and the effect fence
+
+"One transaction" applies to the **decisive write only**. A mutation that has an
+external effect cannot hold a transaction across it — the `SyncWork` type
+forbids it — so the real shape is **one decisive commit behind a
+three-transaction lease fence**, driven by `CoreEffectfulMutationExecutor`
+(`effectful-mutation-executor.ts`) and `effectful-actor-mutation-runner.ts`:
+
+| Stage                                    | Transaction | Purpose                                                                   |
+| ---------------------------------------- | ----------- | ------------------------------------------------------------------------- |
+| Capture authority + state                | read        | Snapshot `state_version`, `claim_generation`, and parent linkage together |
+| `acquire` / `acquireAll`                 | write       | Take exclusive execution ownership; insert the attempt at phase `claimed` |
+| `markEffectStarted(All)`                 | write       | Move to `effect_started` **before** the effect runs                       |
+| The effect                               | none        | `compute` runs outside any transaction and may await                      |
+| `commitOwnedState` / `commitOwnedRunSet` | write       | The decisive commit: CAS, then write, then clear ownership                |
+
+`execution_attempts.phase` is a closed union — `claimed`, `effect_started`,
+`recovery_pending`, `committed`, `released` — validated at every read edge by
+`assertExecutionPhase` and again by a DDL `CHECK`. `committed` and `released`
+are terminal and are deliberately distinct: conflating them would let a released
+attempt read as a durable commit.
+
+Marking `effect_started` before the effect is the whole point of the fence. A
+process that dies during `compute` leaves an `effect_started` attempt, which
+recovery moves to `recovery_pending` rather than silently re-running.
+
+**Aggregate acquisition is all-or-none.** `acquireAll` runs one transaction and
+throws an internal rollback marker on the first refusing member, so a partial
+failure leaves no attempt rows and no `runs.exec_*` writes; the caller sees the
+first refusing run's discriminant. `markEffectStartedAll` and
+`abandonAllToRecovery` use the same shape. The executor layers an
+`optionalRunIds` policy on top: an optional member that refuses is dropped and
+the acquisition retried, rather than failing the aggregate.
+
+### There is no exactly-once-effect guarantee
+
+The fence guarantees **at-most-once**, not exactly-once. Its stated
+non-negotiable rule is that _an ambiguous external effect is never automatically
+repeated_:
+
+- An ambiguous failure after the effect boundary abandons the attempt to
+  `recovery_pending` and returns `recovery_required`. The effect is not retried.
+- A commit that throws is not converted into a refusal, because
+  `commitOwnedState` moves the same `(run, epoch, token)` tuple to `committed` —
+  so the refusal would conflate "another actor is recovering" with "we committed
+  durably and lost the response". Reporting the latter as "did not happen" would
+  invite exactly the retry the fence forbids, and a durable commit clears
+  ownership, so that retry would acquire a fresh attempt and re-run the effect.
+
+The one idempotency primitive is at the commit layer, not the effect layer:
+`isExactAttemptCommitted` probes `phase = 'committed'` for the exact
+`(run_id, exec_epoch, exec_token)`, letting a re-observed commit short-circuit
+as `committed`. That is what makes the executor's reconciliation retry safe —
+the probe distinguishes a durable prior write from a genuine refusal. `compute`
+is never re-run on any of these paths.
+
+Recovery itself is machine-owned and effect-free.
+`ExecutionRecoveryService.recover` rehydrates an actor from the persisted
+snapshot and sends exactly one pure event,
+`EXECUTION_OUTCOME_UNKNOWN { epoch, reason, interruptedStepId }`. Its actor
+factory is contractually required to compile the machine with inert command,
+delegation, and helper implementations, so the original effect path cannot be
+re-entered. Recovery is **automatic**: when the fence returns
+`recovery_required`, the runner drives recovery inline, in the same process and
+the same call, for the exact epoch the refusal named — there is no
+`rundown recover` command, and none is needed. Recovery unblocks the run's
+state, but the command's own outcome stays `recovery_required`: the caller is
+told the mutation did not happen, which is true.
+
+### PID-identity recovery, and its two known weaknesses
+
+`recoverDeadOwner` decides whether an owning process is still alive by
+evaluating `isProcessAlive(owner.execPid)` **outside** SQLite and then
+protecting the decision with an exact-tuple CAS on
+`(run_id, exec_pid, exec_token, exec_epoch)`. A dead owner still in `claimed`
+has its lease reclaimed and its attempt closed as `released`; a dead owner past
+`effect_started` is moved to `recovery_pending`. If the CAS matches nothing the
+result is `alive` (pre-effect) or `unresolved` — never a steal, on the principle
+that another process may have reissued the lease between the read and the CAS.
+
+Two weaknesses are worth stating plainly, because both are latent rather than
+theoretical:
+
+1. **Owner identity is PID-only in practice.** `runs.exec_start_id` and
+   `execution_attempts.owner_start_id` are declared and `CHECK`-constrained, but
+   every production write sets them NULL — the acquisition `UPDATE` does not
+   list them at all. The process-start-id disambiguator the schema reserves is
+   therefore inert, so a **reused PID is indistinguishable from the original
+   owner**. `isProcessAlive` compounds it by design: only `ESRCH` proves death,
+   and every other error (including `EPERM`) returns "alive", so the bias is
+   safe against theft and unsafe against stranding. The failure mode is a
+   permanent stall, not a lost mutation.
+2. **The dead-owner path has no production caller today.** `recoverDeadOwner` is
+   reached only from `withWait`, which returns before it unless a
+   `LeaseWaitPolicy` was supplied — and nothing in `packages/*/src` constructs
+   one. In practice a hard-killed owner leaves `runs.exec_token` set, and
+   subsequent commands refuse `EXECUTION_IN_PROGRESS` until the state is pruned.
+   The in-process paths (`releaseClaimed`, `releaseEffectStarted`,
+   `abandonToRecovery`) cover every failure the executor itself observes; it is
+   only the SIGKILL case that is uncovered.
+
+### Optimistic CAS: `mutateState` is not a lock
+
+`RunbookStore.mutateState` is the claim-free read-modify-write that replaced the
+per-run file lock, and **it does not behave like one**. It reads
+`state_version`, runs the caller's `build` outside any transaction, and commits
+only if the version is unchanged and the run is unowned. On a moved version it
+replays the whole cycle — at most **8 attempts, with NO backoff**, so all eight
+can land within a few milliseconds. A few-way concurrent writer then exhausts
+the budget and the call returns `concurrent_modification`, which surfaces to the
+user as a command failure (`CONCURRENT_MODIFICATION`, or `RD-308` when it
+escapes through the throwing seam) where the deleted lock would have blocked and
+won.
+
+Two consequences bind callers:
+
+- `concurrent_modification` is a **reachable** arm on any path that can be
+  driven concurrently. Handle it or retry it; never document it as theoretical.
+- `build` runs **once per attempt** and MUST therefore be free of external side
+  effects. Only the final committed return value is persisted; nothing unwinds
+  what a losing attempt did elsewhere.
+
+Note the CAS asymmetry: `mutateState` guards on `state_version` only, **not** on
+`claim_generation`. A claim revoked between an out-of-band authority check and
+this commit is invisible to it. That is sound for its claim-free contract, but a
+`committed` result is **not** evidence that the caller's authority was still
+valid at commit time — a write that must be claim-guarded goes through
+`saveState` / `commitOwnedState` instead.
+
+By contrast, transaction contention on `mutateSession` and every other
+`BEGIN IMMEDIATE` write **does** block like the lock did, via
+`busy_timeout = 5000` inside SQLite plus the native driver's bounded retry.
+
+### Two domain locks survive, as tracked debt
+
+The single-store plan called for deleting all four core domain locks.
+`SessionLock` and `RunStateLock` are gone; **`CompletionLock` and
+`DelegationLock` are not**, and they remain wired at exactly six production call
+sites:
+
+| Lock             | Site                                                                           |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `CompletionLock` | `completion-service.ts` — `recordManualCompletion`, `drainResolvedCompletions` |
+| `DelegationLock` | `completion-service.ts` — `recordChildCompletion`                              |
+| `DelegationLock` | `packages/cli/src/commands/run.ts` — run-start `afterInit`                     |
+| `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch                       |
+| `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch              |
+
+This is a **tracked deviation**, followed up in #690 (which also owns the
+`DELEGATION_LOCK_TIMEOUT` / RD-810 error surface outliving them). Until it
+closes: do not add consumers of either lock, and do not read their survival as
+licence to put new run or session state behind a file lock. The remaining
+legitimate uses of `file-lock.ts` are the artifact manifest and the sql.js
+driver's own durable-replacement critical section.
+
+Where a lock is still held, its release is scoped with `await using` and is
+best-effort and non-propagating (RD-102): a failed unlink leaks only a
+self-healing lock, reclaimed by the next acquirer via PID-aware stale detection,
+and must never replace the committed outcome of the work it protected. Releasing
+a domain lock from a bare `finally` is the RD-102 masking defect.
 
 ---
 
@@ -1093,6 +1425,25 @@ process.
 - `executeRdCommandInternal()` dispatches to internal handlers
 - Currently supported: `echo`, `prompt` commands
 - Unsupported commands fall back to standard spawn behavior
+
+### Storage in WebContainer
+
+WebContainer stubs `node:sqlite`, so the native driver cannot back a run there.
+`storage/driver-factory.ts` selects the WASM `sql.js` driver instead, and does
+so on a **positive** signal — the `jsh` shell marker — rather than by catching a
+native failure. The selection is one-way: forcing sql.js on any other host is
+refused with `SqljsUnsupportedHostError`, because that adapter is single-writer
+and the refusal is what stops an env var becoming a supported way to reintroduce
+the multi-writer hazard. See
+[§ Drivers](#drivers-two-implementations-one-atomicity-bar) for why the
+atomicity bar is nonetheless identical on both.
+
+`site/tests/sqlite-substrate.spec.ts` is the standing guard on the empirical
+findings that justify this arrangement: native `node:sqlite` is stubbed, WASM
+sql.js persists a database across sequential processes, and the shell marker
+holds. It boots its own files, so it runs without the snapshot. The
+complementary proof that the **built** snapshot ships a working sql.js and
+executes runbooks off it lives in `site/tests/runbook-runner.spec.ts`.
 
 ### Site snapshot: size budget and pruning
 

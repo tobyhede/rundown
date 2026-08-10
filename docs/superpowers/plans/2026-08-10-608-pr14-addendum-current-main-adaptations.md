@@ -1,0 +1,160 @@
+# 608 Controlled Rebuild — PR 14 addendum: adaptations to current `main`
+
+**Amends:**
+[2026-07-23-608-pr14-webcontainer-schemas-docs-release.md](2026-07-23-608-pr14-webcontainer-schemas-docs-release.md),
+subject to
+[2026-07-27-608-pr09-pr14-correction-ledger.md](2026-07-27-608-pr09-pr14-correction-ledger.md).
+
+**Tracked in:** [#648](https://github.com/tobyhede/rundown/issues/648), whose
+`## Post-PR13 audit corrections — 2026-08-10` block is the authoritative scope
+statement this addendum implements.
+
+**Base:** `origin/main` @ `a7a99c566fb4a4cd20c689a5c12e43463ebf96b9` (merge of
+#709). Branch `issue-608/pr14-descriptive-docs`.
+
+`check:docs:dated-immutable` forbids editing the PR 14 plan in place, so this
+file records every departure from it. It is itself write-once: append-only after
+first commit.
+
+## Why this addendum exists
+
+PR 14's plan was written on 2026-07-23, before PRs 8–13 landed. Of its ~22
+decomposed tasks, **7 are already done**, **7 are invalidated** (by the
+correction ledger, by a later PR solving the same problem differently, or by a
+maintainer decision), and **8 remain**. Executing the plan literally would
+re-do merged work, re-register codes that already exist, run mutation campaigns
+the ledger forbids, and cut a release that has been withdrawn.
+
+## Task disposition
+
+### Already done before this PR (7)
+
+| Plan task                                                                        | Where it actually landed                                                                                                                                        |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bundle sql.js JS/WASM into the WebContainer snapshot                             | Already true. `sql.js` is a hard `dependency` of `@rundown-org/core`; `site/scripts/prune-sqljs.mjs` throws when a declared entry point or a retained loader's `.wasm` is missing. Ledger §141-144 called this correctly. |
+| Cherry-pick `4859a9c08`'s probe + awaited output drain                           | PR 1 landed the probe; the awaited drain is on `main`. Only the `git mv` to `dev/` remains (below).                                                             |
+| Register `EXECUTION_IN_PROGRESS` / `RECOVERY_REQUIRED`                           | PR 9 (#667), per ledger §49.                                                                                                                                    |
+| Register `CLAIM_SUPERSEDED` / `CONCURRENT_MODIFICATION`                          | PR 11 (#669), per ledger §49.                                                                                                                                   |
+| Remove `runbook_started.statePath`; make the event storage-agnostic              | PR 13 (#674), per ledger §138 (`statePath` removal assigned once, to PR 13). PR 14 verifies parity only.                                                        |
+| Typed `RD-305` and the SQLite-vs-`RunbookState` schema-version distinction in the runtime reference | Already on `main`: `docs/reference/runtime.md` §7.4 carries both version checks as a table and states `RunbookState.schemaVersion` MUST be `1`.                |
+| Update `CLAUDE.md` for the store cutover and the surviving locks                 | Already on `main`: § State Persistence names `.rundown/rundown.db`, and § Concurrent write synchronization documents the two surviving domain locks, their six call sites, #690, and the RD-102 non-masking release policy. |
+
+### Invalidated (7)
+
+| Plan task                                                                    | Why it is not done                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Register a generic lowercase `missing` result code                           | Forbidden by ledger §50: "never emit generic lowercase `missing`". `missing` exists only as an internal discriminant on `GuardedMutationResult`, which is correct.                                                                |
+| The four whole-file scoped Stryker campaigns in the plan's §61-81 block      | Superseded by ledger §23-29. Current policy is `pnpm run test:mutate:changed`; this PR changes no `packages/` source, so its plan is empty (recorded as evidence, not skipped).                                                   |
+| The eight-hour unscoped `pnpm run test:mutate`                              | Explicitly forbidden by ledger §31.                                                                                                                                                                                                |
+| Add final implementation targets to `packages/{core,cli}/stryker.config.mjs` | The configs' `mutate` arrays are already package globs; per-PR scoping is now done by `scripts/lib/mutation-scope.mjs`, not by editing configs. Editing them would encode a scope the runner no longer reads.                     |
+| The "path-check staging" two-stage cherry-pick gate                          | Moot — `4859a9c08`'s content is already merged, so there is no cherry-pick to stage. Only the rename survives.                                                                                                                     |
+| `packages/core/src/errors/{codes,factory}.ts`, `packages/core/src/output/zod-schemas.ts`, `packages/cli/src/{schemas/output-schemas,services/schema-service}.ts` edits | No `packages/` source change is in PR 14's remaining scope. RD-306..309 are already registered in `codes.ts` (PR 13) and flow into `RundownErrorCodeValues` derivationally; documenting them needs no source edit. |
+| Cut a 2.0.0 release; merge release PR #636; validate and clean up salvage    | **Withdrawn by maintainer decision, 2026-08-10.** See below.                                                                                                                                                                       |
+
+### Remaining, and implemented here (8)
+
+1. Rewrite `docs/internal/architecture.md` so it describes the SQLite
+   substrate. Two statements on it are actively false, not merely silent:
+   `| **Persistence** | JSON files |` and the overview diagram's
+   `[CLI Commands] <---- [Persisted JSON]`.
+2. Document RD-306..309 in `docs/spec/cli-output.md` — which is what arms the
+   `docs-error-code-drift.repo-asset.test.ts` guard, since that guard reads
+   only that file and only its ` ```json ` fences.
+3. Add RD-306..309 to the ungoverned prose table in `docs/reference/cli.md`.
+4. Rescope the no-migration MUST NOT in `docs/spec/language.md` §12, which
+   binds `.rundown/runs/` — post-cutover that directory holds only captured
+   outputs, so the normative rule does not bind the database at all.
+5. Make `site/tests/sqlite-substrate.spec.ts` prove the **built** snapshot runs
+   sql.js offline, rather than mounting its own files (ledger §144).
+6. Extend `site/tests/runbook-runner.spec.ts` to assert the snapshot bundles
+   sql.js JS **and** WASM and that run/pass/fail/goto work with no runtime
+   install.
+7. `git mv site/src/pages/sqlite-substrate-probe.astro` →
+   `site/src/pages/dev/sqlite-substrate-probe.astro`, repointing the spec's
+   `goto`, leaving no duplicate page, and keeping the comment that warns against
+   an `_`-prefixed filename (Astro excludes those from routing).
+8. This addendum.
+
+## Withdrawn release scope
+
+Cutting 2.0.0 is **withdrawn by maintainer decision on 2026-08-10**: Rundown is
+not near release, and treating changesets as a gate generates noise rather than
+signal. Nothing under `.changeset/` is touched by this PR, no changeset is
+added, release PR #636 is untouched, and no release command is run.
+
+Recorded so it is not rediscovered when the release track resumes:
+
+- `.changeset/` holds **five** changesets (not four — #706 added
+  `claim-arm-open-children-guard.md` on 2026-08-09).
+- All five packages sit in one `fixed` group, so everything lands on the same
+  version.
+- Release PR **#636** already contains the generated output. **Do not merge it**
+  until the release track is deliberately resumed.
+- Coverage is **5 changesets against 372 merge PRs** since
+  `@rundown-org/core@1.0.0` (`e2dbb00cc`, 2026-01-20), with **14 of 15
+  breaking-marked commits uncovered**.
+- #701's `!` breaking marker was erased by the squash-merge (branch commit
+  `aedbf2d50` carries it; the merged title does not), so conventional-commit
+  breaking markers are not durable in this repo's merge flow.
+
+## Carried to linked issues, not done inline
+
+Per #648's own instruction. Bodies are drafted in the PR description; the issues
+themselves are created by the maintainer.
+
+1. **`exec_start_id` / `owner_start_id` are declared and `CHECK`-constrained but
+   never written.** `schema.ts:106,200` declare them; `schema.ts:113-116`
+   constrains execution identity as all-or-nothing while leaving
+   `exec_start_id` optional. Every production write is NULL
+   (`execution-lease.ts:448,488,663`, `runbook-store.ts:1666,1844` all clear
+   it; nothing sets it). Recovery therefore compares PID only, so PID reuse
+   means a dead owner is never recovered. Confirmed **not** redundant:
+   `recoverDeadOwner` returns `{kind:'alive'}` at `execution-lease.ts:577` and
+   never reaches the token/epoch CAS below it. `isProcessAlive` compounds it by
+   failing *toward* alive on any non-`ESRCH` error (`file-lock.ts:106`).
+   Failure mode is a permanent stall, not a safety break.
+2. **Every typed error ships a dead documentation link.**
+   `rundown-error.ts:88` emits `https://rundown.dev/docs/errors/<slug>`, and
+   `wrapper.ts:178` puts it in the default JSON error envelope's `details`.
+   `rundown.dev` does not resolve; `site/astro.config.mjs:20` sets
+   `site: 'https://rundown.cool'`. The fix is the URL, not a site route.
+3. **`docs/reference/cli.md`'s `RECOVERY_REQUIRED` row prescribes a command
+   that does not exist.** It tells operators to "Resolve the interrupted attempt
+   through recovery before retrying the command", but there is no
+   `rundown recover`, and recovery is automatic — performed by the command that
+   emits the error (`effectful-actor-mutation-runner.ts:300-320`).
+   Documentation-parity defect.
+
+## Deviations taken while implementing
+
+Recorded as they arose. Anything below is a departure from either the PR 14
+plan or the #648 audit block, not from this addendum.
+
+- **"Rewrite" `docs/internal/architecture.md` is executed as a targeted
+  correction plus a new substrate section, not a from-scratch replacement.**
+  Roughly 1000 of its 1130 lines describe the XState machine, the CLI/core event
+  boundary, and the lifecycle command seam, and those are accurate. Discarding
+  them to satisfy the word "rewrite" would delete correct descriptive
+  documentation to fix false documentation. What is replaced is the
+  architecture-overview table row and diagram, and what is added is a
+  `## State Persistence and Concurrency` section describing the substrate as it
+  exists.
+- **`docs/internal/architecture.md` is not the only file touched for item 1.**
+  Its `WebContainer Environment` section is extended with the driver-selection
+  rule, because that is where a reader looking for "what runs in the browser"
+  arrives.
+- **`packages/core/src/runbook/storage/schema.ts` declares
+  `SCHEMA_VERSION = 2`**, not 3. The ledger's PR 10 correction (§85) *permitted*
+  advancing to 3 "when the database shape changes"; the shape did not require
+  it. Documentation states 2 and, more durably, points at the constant rather
+  than repeating the number.
+- **The audit's line-number citations have drifted in three places**, recorded
+  so the next auditor does not re-derive them: `codes.ts` RD-306..309 sit at
+  key-name lines 127/135/150/172 with their `code:` fields on 128/136/151/173;
+  `language.md`'s MUST NOT is at 872-878 (the audit's `:872-874` covers only its
+  first three lines, and the sentence that needs rescoping ends on 878);
+  `effectful-actor-mutation-runner.ts`'s automatic recovery spans 300-320, not
+  300-315.
+- **#698 (`rdpath.ts` unreachable by mutation testing) is explicitly carved
+  out.** It poisons only the unscoped `pnpm run test:mutate`, which ledger §31
+  forbids PR 14 from running, and PR 14 touches no plugin source.

@@ -10,15 +10,22 @@ import { test, expect } from '@playwright/test';
  * change re-validates the substrate choice instead of silently invalidating it.
  *
  * Requires only the site dev server. The probe page is a test-only isolated
- * route, not linked from any shipped page, and it mounts its own files into a
- * fresh WebContainer rather than loading `public/rundown-snapshot.bin` — so
- * unlike the homepage demo this spec runs without the snapshot built.
+ * route under `/dev/`, not linked from any shipped page, and it mounts its own
+ * files into a fresh WebContainer rather than loading
+ * `public/rundown-snapshot.bin` — so unlike the homepage demo this spec runs
+ * without the snapshot built.
+ *
+ * That independence is deliberate and is also this spec's limit: proving the
+ * *substrate* is not proving the *shipped artifact*. The complementary proof —
+ * that the built snapshot bundles the sql.js loader and its WASM payload, and
+ * that run/pass/fail/goto work off it with no runtime install — lives in
+ * `runbook-runner.spec.ts`, which does load `public/rundown-snapshot.bin`.
  */
 test.describe('SQLite WebContainer substrate', () => {
   test('sql.js persists across sequential processes; native is stubbed; marker holds', async ({
     page,
   }) => {
-    await page.goto('/sqlite-substrate-probe');
+    await page.goto('/dev/sqlite-substrate-probe');
 
     const result = page.locator('#probe-result');
     // The probe boots WebContainer, installs sql.js, and runs four Node

@@ -870,10 +870,23 @@ Step-level runbook lists are represented as sequential implicit substeps (`N.1`,
 `N.2`, ...).
 
 Rundown implementations MUST NOT migrate persisted runbook state between
-versions. This applies to all data under `.rundown/runs/`, including structured
-state fields and opaque snapshots. When persisted state is stale or structurally
-incompatible, implementations SHOULD require the user to complete, stop, or
-prune the run and restart from the source document. See
+versions. The rule binds the state itself, wherever an implementation stores it
+— it is not scoped to any one path. In this implementation that means the
+runbook state database, `.rundown/rundown.db`: every run row's structured state
+fields and its opaque snapshot blob, together with the session, stash, and
+delegation/claim rows the same database holds. It equally binds any other
+location an implementation persists run state to. `.rundown/runs/` holds
+captured filesystem outputs, not run state, and is therefore not what this rule
+protects.
+
+Two version checks enforce it and MUST NOT be conflated:
+`RunbookState.schemaVersion`, which governs a run's own state and MUST be `1`;
+and the database schema version, which governs the whole store. Either check
+failing makes the affected state invalid.
+
+When persisted state is stale or structurally incompatible, implementations
+SHOULD require the user to complete, stop, or prune the run and restart from the
+source document. See
 [runtime recovery](../reference/runtime.md#invalid-persisted-state--no-migration)
 for operational details.
 
