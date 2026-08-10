@@ -44,11 +44,11 @@ the ledger forbids, and cut a release that has been withdrawn.
 | Plan task                                                                    | Why it is not done                                                                                                                                                                                                                |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Register a generic lowercase `missing` result code                           | Forbidden by ledger §50: "never emit generic lowercase `missing`". `missing` exists only as an internal discriminant on `GuardedMutationResult`, which is correct.                                                                |
-| The four whole-file scoped Stryker campaigns in the plan's §61-81 block      | Superseded by ledger §23-29. Current policy is `pnpm run test:mutate:changed`; this PR changes no `packages/` source, so its plan is empty (recorded as evidence, not skipped).                                                   |
+| The four whole-file scoped Stryker campaigns in the plan's §61-81 block      | Superseded by ledger §23-29. Current policy is `pnpm run test:mutate:changed`, which derives its own scopes from the diff — see [§ Mutation evidence](#mutation-evidence) for what it actually ran.                              |
 | The eight-hour unscoped `pnpm run test:mutate`                              | Explicitly forbidden by ledger §31.                                                                                                                                                                                                |
 | Add final implementation targets to `packages/{core,cli}/stryker.config.mjs` | The configs' `mutate` arrays are already package globs; per-PR scoping is now done by `scripts/lib/mutation-scope.mjs`, not by editing configs. Editing them would encode a scope the runner no longer reads.                     |
 | The "path-check staging" two-stage cherry-pick gate                          | Moot — `4859a9c08`'s content is already merged, so there is no cherry-pick to stage. Only the rename survives.                                                                                                                     |
-| `packages/core/src/errors/{codes,factory}.ts`, `packages/core/src/output/zod-schemas.ts`, `packages/cli/src/{schemas/output-schemas,services/schema-service}.ts` edits | No `packages/` source change is in PR 14's remaining scope. RD-306..309 are already registered in `codes.ts` (PR 13) and flow into `RundownErrorCodeValues` derivationally; documenting them needs no source edit. |
+| `packages/core/src/output/zod-schemas.ts`, `packages/cli/src/{schemas/output-schemas,services/schema-service}.ts` edits | The plan wanted these to *register* the five result codes. That registration already happened in PR 9 and PR 11, and RD-306..309 flow into `RundownErrorCodeValues` derivationally, so documenting them needs no schema edit. (`codes.ts` and `factory.ts` **were** edited on this branch, for an unrelated reason — see [§ `ccfb2e69b`](#deviation--pr-14-carries-a-packages-change-ccfb2e69b).) |
 | Cut a 2.0.0 release; merge release PR #636; validate and clean up salvage    | **Withdrawn by maintainer decision, 2026-08-10.** See below.                                                                                                                                                                       |
 
 ### Remaining, and implemented here (8)
@@ -126,6 +126,92 @@ themselves are created by the maintainer.
    `rundown recover`, and recovery is automatic — performed by the command that
    emits the error (`effectful-actor-mutation-runner.ts:300-320`).
    Documentation-parity defect.
+
+## Deviation — PR 14 carries a `packages/` change (`ccfb2e69b`)
+
+**This supersedes the "no `packages/` source change" statement made throughout
+this PR's earlier working notes and reports.** Those are obsolete. PR 14 ships
+seven `packages/` files.
+
+`ccfb2e69b` ("fix: correct SQLite state error guidance") landed on this branch
+from concurrent work while the documentation task was in progress, and the
+maintainer's decision on 2026-08-10 is that it **stays**. `origin/main` is
+unchanged at `a7a99c566` and remains this branch's base; the commit is not
+rebased away, dropped, or moved.
+
+That is a departure from the PR 14 plan's scope, which lists no `packages/`
+source edit, and from the #648 audit block's re-derived four-item scope.
+
+**Why it is acceptable here.** It is error-message and doc-comment text with no
+logic change — no control flow, no types, no exported surface. More to the
+point, it is *the same factual correction this PR's documentation work applied
+at the other layer*. Splitting them would ship one PR whose prose contradicts
+the other's strings until both landed, which is precisely the drift the
+descriptive-docs rule exists to prevent.
+
+Two claims are corrected, both of which this PR had documented faithfully
+because they came from `codes.ts`:
+
+| Claim | Why it was wrong |
+| --- | --- |
+| RD-306: "only WAL serializes writes across processes" | SQLite serializes cross-process **writers** in rollback-journal mode too, through file locking. What WAL adds is reader/writer **concurrency**. The old wording implied a correctness hazard that is not there. |
+| RD-307: "reaches every command, read-only ones included" | Commands that never open the store — `rundown check` — cannot reach it. The refusal reaches commands that access persisted run state. |
+
+The corrected text also makes RD-307's lock-contention arm explicitly
+retryable, where the old wording said the recovery was "not retrying the
+command".
+
+`docs/internal/architecture.md` was checked against both corrections and
+contradicts neither: it never claimed WAL was the only cross-process
+serializer, and its multi-process statements are about the **adapter**
+(`capabilities.multiProcess: false`), not about journal modes.
+
+<a id="mutation-evidence"></a>
+
+## Mutation evidence
+
+`ccfb2e69b` makes the mutation gate load-bearing for this PR, so
+`pnpm run test:mutate:changed` was run and its findings acted on. It plans four
+source campaigns:
+
+| Scope | Instrumented | Result |
+| --- | --- | --- |
+| `core src/errors/codes.ts:132,140` | **0 mutants** | Structural — see below |
+| `core src/errors/factory.ts:65-78,84-93` | 14 mutants | 14 survived on the first run; killed by new tests |
+| `core src/runbook/storage/native-sqlite-driver.ts:155-156,176-186` | 13 mutants | 0 survived |
+| `cli src/helpers/wrapper.ts:74-76` | **0 mutants** | Comment-only change |
+
+Two of the four instrument zero mutants, and **neither is a gap the gate can
+close**:
+
+- **`codes.ts` is unmutable by construction.** The whole file is one
+  `export const ErrorCodes = { … } as const;`. Stryker does not mutate literals
+  under a `const` assertion, because the mutated literal would not satisfy the
+  inferred literal type. Verified by widening the scope: an entire error-code
+  entry (`:119-134`) and then the whole file both report
+  `Instrumented 1 source file(s) with 0 mutant(s)`. No test can change this —
+  the registered descriptions are instead pinned directly by
+  `__tests__/errors/rundown-error.test.ts`.
+- **`wrapper.ts:74-76` is a comment.** `ccfb2e69b` reworded the doc comment
+  above the RD-307 arm and changed no code there. Zero mutants is the correct
+  answer, not a silent no-op — though note the `--print` plan labels it
+  `[source changed]`, which does not distinguish a comment edit from a code
+  edit.
+
+**The 14 `factory.ts` survivors were real and are now killed.** They were not a
+`--testFiles` scoping artefact: `__tests__/errors/factory.test.ts` had **no
+test at all** for `walJournalModeUnavailable` or `stateStoreUnavailable`, and
+`ccfb2e69b` added its wording assertions to `rundown-error.test.ts`, which pins
+the registered `description` rather than the message the factory builds. The
+survivors covered the new `modeOutcome` branch (3 conditional mutants), both of
+its arms, the error-code key, and six template chunks of the message.
+
+Six tests were added to `factory.test.ts` covering both branches, the `??`
+fallback rendering an absent mode as `unknown` rather than `undefined`, the
+corrected WAL wording, the three enumerated causes with the read-only exclusion,
+and RD-307's driver-diagnosis/`driverCode`/`cause` passthrough. Writing tests in
+`packages/` is in scope for this PR by the same decision that keeps
+`ccfb2e69b`.
 
 ## Deviations taken while implementing
 

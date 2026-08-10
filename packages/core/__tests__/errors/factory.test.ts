@@ -184,6 +184,98 @@ describe('Errors factory - exhaustive coverage', () => {
         expect(error.message).toContain('Something is wrong. Rundown never migrates');
       });
     });
+
+    // RD-306 is the one factory arm that BRANCHES, and the branch is the whole
+    // point of it: the pragma either answered with a mode Rundown will not run
+    // on, or did not answer readably at all. Those are different diagnoses and
+    // the message must not blur them. `rundown-error.test.ts` pins the
+    // registered `description`; this pins what the factory actually builds,
+    // which is the half that reaches the JSON envelope.
+    describe('walJournalModeUnavailable → RD-306', () => {
+      it('names the kept mode when SQLite answered with one', () => {
+        const error = Errors.walJournalModeUnavailable('delete');
+
+        expect(error).toBeInstanceOf(RundownError);
+        expect(error.code).toBe('RD-306');
+        expect(error.context.effectiveMode).toBe('delete');
+        expect(error.message).toContain('effective mode: delete');
+        expect(error.message).toContain(
+          'SQLite returned the non-WAL mode it kept instead of failing.',
+        );
+        expect(error.message).not.toContain('The pragma returned no readable journal mode.');
+      });
+
+      it('reports an unreadable pragma answer distinctly, as "unknown"', () => {
+        const error = Errors.walJournalModeUnavailable(undefined);
+
+        expect(error.code).toBe('RD-306');
+        expect(error.context.effectiveMode).toBeUndefined();
+        // `?? 'unknown'`, not `&& 'unknown'`: the nullish fallback is what keeps
+        // an absent mode from rendering as the literal "undefined".
+        expect(error.message).toContain('effective mode: unknown');
+        expect(error.message).toContain('The pragma returned no readable journal mode.');
+        expect(error.message).not.toContain('SQLite returned the non-WAL mode');
+      });
+
+      it('states the WAL requirement without claiming rollback mode loses cross-process serialization', () => {
+        const error = Errors.walJournalModeUnavailable('delete');
+
+        // The correction this wording carries: SQLite DOES serialize
+        // cross-process writers under a rollback journal, via file locking.
+        // What WAL adds is reader/writer concurrency. Saying otherwise sent an
+        // operator looking for a corruption risk that is not there.
+        expect(error.message).toContain(
+          'WAL mode is required for supported multi-process operation.',
+        );
+        expect(error.message).toContain(
+          'SQLite still serializes cross-process writers using file locks in rollback-journal mode',
+        );
+        expect(error.message).toContain("does not provide WAL's reader/writer concurrency");
+        expect(error.message).toContain('is not a validated Rundown deployment mode.');
+      });
+
+      it('enumerates the three candidate causes and excludes the read-only one', () => {
+        const error = Errors.walJournalModeUnavailable('delete');
+
+        expect(error.message).toContain(
+          'This narrows the cause to one of: a filesystem whose VFS provides no shared memory',
+        );
+        expect(error.message).toContain('a temporary database opened with no filename');
+        expect(error.message).toContain('a connection already inside a write transaction');
+        // Read-only file/directory THROWS rather than answering the pragma, so
+        // it surfaces as RD-307 and must stay named as excluded here.
+        expect(error.message).toContain('A read-only database file or directory is NOT among them');
+        expect(error.message).toContain('surfaces as RD-307');
+      });
+    });
+
+    describe('stateStoreUnavailable → RD-307', () => {
+      it('carries the driver diagnosis verbatim, plus the driver code and cause', () => {
+        const cause = new Error('attempt to write a readonly database');
+        const error = Errors.stateStoreUnavailable(
+          'Native SQLite (node:sqlite) is unavailable on this multi-process host: attempt to write a readonly database.',
+          'SQLITE_READONLY',
+          cause,
+        );
+
+        expect(error).toBeInstanceOf(RundownError);
+        expect(error.code).toBe('RD-307');
+        // The driver's own text is the only thing that distinguishes a
+        // read-only file from a locked database from a missing adapter, so it
+        // must reach `message` — the JSON envelope carries that, not the
+        // registered description.
+        expect(error.message).toContain('attempt to write a readonly database');
+        expect(error.context.driverCode).toBe('SQLITE_READONLY');
+        expect(error.cause).toBe(cause);
+      });
+
+      it('omits driverCode when the driver reported none', () => {
+        const error = Errors.stateStoreUnavailable('could not open database');
+
+        expect(error.code).toBe('RD-307');
+        expect(error.context.driverCode).toBeUndefined();
+      });
+    });
   });
 
   describe('Validation errors', () => {
