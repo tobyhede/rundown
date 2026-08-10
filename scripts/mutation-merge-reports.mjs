@@ -77,15 +77,8 @@ const UNDETECTED = new Set(['Survived', 'NoCoverage']);
  *
  * **This is NOT a fix for the `js/file-access-to-http` alert on this file**,
  * despite looking like one — that was the hypothesis it was written under, and
- * the SARIF disproved it. The alert's flow runs `readFileSync` of a shard report
- * (in `mergeModule`) through `merged.{schemaVersion,thresholds,framework,config}`
- * into the `JSON.stringify(report)` BODY of the PUT below. The module slug is not
- * on that flow, and the URL's HOST never was file-derived at all — `dashboardBase`
- * and `project` are env-derived with constant defaults.
- *
- * That flow is irreducible: reading mutation reports off disk and uploading them
- * IS this script. Do not try to clear the alert by dropping fields from the
- * merged report — that trades a real report for a quieter scanner.
+ * the SARIF disproved it. The module slug is not on that alert's flow at all.
+ * See {@link uploadToDashboard}, which is where the alert is anchored.
  */
 const KNOWN_MODULES = new Set(PACKAGES.map((pkg) => pkg.module));
 
@@ -308,6 +301,46 @@ function mergeModule(shardReports) {
 
 /**
  * PUT a merged module report to the Stryker dashboard.
+ *
+ * ---
+ * **CodeQL `js/file-access-to-http` (alert #134) is anchored on the
+ * `JSON.stringify(report)` below, and is dismissed in the Code Scanning UI.**
+ *
+ * There is deliberately no `// codeql[js/file-access-to-http]` suppression
+ * comment here, because under this repository's configuration one would silence
+ * nothing. Two independent reasons, both checked rather than assumed:
+ *
+ * 1. The analysis runs no alert-suppression query. The SARIF for this repo's own
+ *    analysis carries 103 rules from `codeql/javascript-queries` and zero
+ *    `alert-suppression` rules, so no `suppressions[]` property is ever emitted
+ *    for a comment to populate.
+ * 2. Nothing would act on it if it were. GitHub code scanning does not dismiss
+ *    alerts from SARIF suppression data by itself — that is what the separate
+ *    `advanced-security/dismiss-alerts` action exists to do — and
+ *    `.github/workflows/codeql.yml` (advanced setup: init/autobuild/analyze)
+ *    does not run it.
+ *
+ * A decorative annotation would read as handled while doing nothing, which is
+ * worse than none. The UI dismissal is the mechanism that closes this.
+ *
+ * Why it is safe to dismiss:
+ *
+ * - **The destination cannot be influenced by file data.** `dashboardBase` and
+ *   `project` are env-derived with constant defaults, and `version` likewise, so
+ *   no file content can redirect this request. The only file-derived component
+ *   near the URL is the `module` slug, which is constrained to
+ *   {@link KNOWN_MODULES} and `encodeURIComponent`'d into a query parameter.
+ * - **The tainted value is the request payload, and that is the point.** All four
+ *   flows run `readFileSync` of a shard report (in {@link mergeModule}) through
+ *   `merged.{schemaVersion,thresholds,framework,config}` into the body below.
+ *   Reading mutation reports off disk and uploading them IS this script; every
+ *   field of the body is file data by definition, so the flow is irreducible.
+ * - **It pre-dates this branch.** Alert #134 was opened 2026-07-02 against
+ *   `main`, where the same sink sits at `:130`.
+ *
+ * Do not try to clear it by dropping fields from the merged report — that trades
+ * a real report for a quieter scanner.
+ * ---
  *
  * @param {string} module - the dashboard module name.
  * @param {object} report - the full merged report.
