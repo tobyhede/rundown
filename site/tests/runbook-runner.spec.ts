@@ -123,32 +123,64 @@ test.describe('runbook execution off the built snapshot', () => {
   // reason.
   test.describe.configure({ mode: 'serial' });
 
+  /** Hosts a runtime package install would have to reach. */
+  const PACKAGE_REGISTRY = /registry\.npmjs\.org|\/\/registry\.|unpkg\.com|cdn\.jsdelivr\.net/;
+
   /**
-   * Load the homepage demo and wait for the mounted snapshot to be ready.
+   * Observed network activity for one demo run.
    *
-   * @param page - The Playwright page under test.
+   * The positive half is what keeps this from being vacuous: the snapshot fetch
+   * definitely happens, so asserting it proves the environment really came from
+   * `public/rundown-snapshot.bin`. The negative half is best-effort — nothing
+   * guarantees a container-side registry fetch surfaces as a page request — so
+   * it complements, rather than replaces, the structural check above.
    */
-  async function bootHomepageDemo(page: Page): Promise<void> {
-    await page.goto('/');
-    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+  interface DemoNetwork {
+    /** Status of the `/rundown-snapshot.bin` response, or -1 if never fetched. */
+    snapshotStatus: number;
+    /** Every requested URL that looks like a package registry. */
+    registryHits: string[];
   }
 
   /**
-   * Assert the run consumed no package manager output.
-   *
-   * A runtime companion to the structural check above: if anything had installed
-   * packages to make the CLI work, npm's progress or summary lines would be in
-   * the terminal the demo streams.
+   * Load the homepage demo, recording network activity, and wait for the
+   * mounted snapshot to be ready.
    *
    * @param page - The Playwright page under test.
+   * @returns The network observations for this run, populated as it proceeds.
    */
-  async function expectNoInstallOutput(page: Page): Promise<void> {
-    const terminal = await page.locator('.xterm-rows').innerText();
-    expect(terminal).not.toMatch(/npm (install|ci)\b|added \d+ packages?/i);
+  async function bootHomepageDemo(page: Page): Promise<DemoNetwork> {
+    const network: DemoNetwork = { snapshotStatus: -1, registryHits: [] };
+    page.on('request', (request) => {
+      if (PACKAGE_REGISTRY.test(request.url())) network.registryHits.push(request.url());
+    });
+    page.on('response', (response) => {
+      if (response.url().includes('/rundown-snapshot.bin')) {
+        network.snapshotStatus = response.status();
+      }
+    });
+
+    await page.goto('/');
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    return network;
+  }
+
+  /**
+   * Assert the demo's environment came from the built snapshot and nothing was
+   * installed at runtime.
+   *
+   * @param network - Observations gathered by {@link bootHomepageDemo}.
+   */
+  function expectOfflineBoot(network: DemoNetwork): void {
+    // Any 2xx: the dev server answers 200, but a range or revalidated response
+    // is still a successful fetch of the built asset.
+    expect(network.snapshotStatus, 'GET /rundown-snapshot.bin').toBeGreaterThanOrEqual(200);
+    expect(network.snapshotStatus, 'GET /rundown-snapshot.bin').toBeLessThan(300);
+    expect(network.registryHits).toEqual([]);
   }
 
   test('run, pass and fail reach COMPLETE with no runtime install', async ({ page }) => {
-    await bootHomepageDemo(page);
+    const network = await bootHomepageDemo(page);
 
     await page.getByRole('button', { name: /Retry on fail/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
@@ -166,11 +198,11 @@ test.describe('runbook execution off the built snapshot', () => {
 
     await expect(page.locator(FOOTER_RESULT)).toContainText('COMPLETE', { timeout: 60000 });
     await expect(page.locator(FOOTER_STEP)).toContainText('6/6');
-    await expectNoInstallOutput(page);
+    expectOfflineBoot(network);
   });
 
   test('goto reaches COMPLETE with no runtime install', async ({ page }) => {
-    await bootHomepageDemo(page);
+    const network = await bootHomepageDemo(page);
 
     await page.getByRole('button', { name: /Skip to end/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
@@ -186,7 +218,7 @@ test.describe('runbook execution off the built snapshot', () => {
 
     await expect(page.locator(FOOTER_RESULT)).toContainText('COMPLETE', { timeout: 60000 });
     await expect(page.locator(FOOTER_STEP)).toContainText('6/6');
-    await expectNoInstallOutput(page);
+    expectOfflineBoot(network);
   });
 });
 
