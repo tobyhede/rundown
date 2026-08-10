@@ -163,7 +163,10 @@ describe('orchestrateTransition', () => {
         kind: 'recovery_required' as const,
         runId: baseState.id,
         epoch: 7,
-        message: `Run ${baseState.id} ended execution with an unknown outcome at epoch 7; run recovery before continuing.`,
+        message:
+          `Run ${baseState.id} ended execution with an unknown outcome at epoch 7; its ` +
+          `recovery has not completed. Recovery is automatic and has no separate command; ` +
+          `this mutation wrote nothing.`,
       },
       code: 'RECOVERY_REQUIRED',
     },

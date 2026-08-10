@@ -57,7 +57,9 @@ const recoveryRequired = {
   kind: 'recovery_required',
   runId: RUN_ID,
   epoch: 7,
-  message: `Run ${RUN_ID} ended execution with an unknown outcome at epoch 7; run recovery before continuing.`,
+  message:
+    `Run ${RUN_ID} ended execution with an unknown outcome at epoch 7; its recovery has not ` +
+    `completed. Recovery is automatic and has no separate command; this mutation wrote nothing.`,
 } as unknown as SessionMutationRefusalOutcome;
 
 function makeOutput(): { emitter: OutputEmitter; error: jest.Mock } {

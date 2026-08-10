@@ -2247,6 +2247,40 @@ describe('commitRecovery', () => {
   });
 });
 
+describe('mutateSessionGuarded recovery refusal wording', () => {
+  it('names the run and epoch without prescribing a recovery command', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id, { epoch: 4, phase: 'recovery_pending' });
+    });
+
+    const result = await store.mutateSessionGuarded([state.id], (ctx) => {
+      ctx.session.defaultStack.push(state.id);
+      return null;
+    });
+
+    expect(result).toEqual({
+      kind: 'recovery_required',
+      runId: state.id,
+      epoch: 4,
+      message:
+        `Run ${state.id} ended execution with an unknown outcome at epoch 4; its recovery has ` +
+        `not completed. Recovery is automatic and has no separate command; this mutation wrote ` +
+        `nothing.`,
+    });
+    // There is no `rundown recover` command and never has been — recovery is
+    // driven inline by the command that owns the run's execution
+    // (`EffectfulActorMutationRunner`). A message that tells an operator to
+    // "run recovery" sends them looking for a binary that does not exist.
+    if (result.kind !== 'recovery_required') throw new Error('unreachable');
+    expect(result.message).not.toMatch(/run recovery/i);
+    expect(result.message).not.toMatch(/rundown recover/i);
+    // The refusal is decided before the write, so the session is untouched.
+    expect(await store.read((txn) => txn.stack())).toEqual([]);
+  });
+});
+
 describe('assertExecutionPhase', () => {
   it.each(['claimed', 'effect_started', 'recovery_pending', 'committed', 'released'])(
     'returns the recognized phase %s unchanged',

@@ -1298,14 +1298,20 @@ Code: EXECUTION_IN_PROGRESS
 The command needed to change session targeting for a run whose last execution
 attempt ended without recording an outcome, so whether its effect ran is
 unknown. Distinct from `EXECUTION_IN_PROGRESS`: no process holds the run —
-waiting will not clear it. Recovery must resolve the interrupted attempt first.
+waiting will not clear it. The interrupted attempt must be recovered first.
+
+**There is no `rundown recover` command, and none is needed.** Recovery is
+automatic: the command that drives the named run's execution recovers the exact
+epoch a fence refusal names, inline and in the same call
+(`EffectfulActorMutationRunner`). This refusal means that recovery has not
+completed for the named attempt, and that this command wrote nothing.
 
 The message names the run and the recovery epoch of the unresolved attempt.
 
 **Text:**
 
 ```text
-Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Recovery is automatic and has no separate command; this mutation wrote nothing.
 Code: RECOVERY_REQUIRED
 ```
 
@@ -1314,7 +1320,7 @@ Code: RECOVERY_REQUIRED
 ```json
 {
   "kind": "error",
-  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Recovery is automatic and has no separate command; this mutation wrote nothing.",
   "code": "RECOVERY_REQUIRED",
   "command": "pass"
 }
@@ -1896,9 +1902,9 @@ cursor is the idempotent `already-aggregated` no-op (`COLLECT_ALREADY_APPLIED`),
 and it cannot retry the transition that was refused. Recover the streamed `code`
 on its own terms (its row in
 [docs/reference/cli.md](../reference/cli.md#common-errors-and-resolutions)
-carries the remedy: wait out the owning process, run recovery, or re-resolve a
-bearer that is no longer authority), then drive the delegating run forward from
-where it now stands.
+carries the remedy: wait out the owning process, let the automatic inline
+recovery finish, or re-resolve a bearer that is no longer authority), then drive
+the delegating run forward from where it now stands.
 
 ```jsonl
 {"type":"error_occurred","message":"Run rd_0123456789abcdef0123456789abcdef claim generation advanced since it was captured.","code":"STALE_CLAIM","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":3}

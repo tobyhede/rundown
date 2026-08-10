@@ -1379,7 +1379,17 @@ export class RunbookStore {
               kind: 'recovery_required',
               runId,
               epoch: pending.epoch,
-              message: `Run ${runId} ended execution with an unknown outcome at epoch ${String(pending.epoch)}; run recovery before continuing.`,
+              // No recovery COMMAND is named, because none exists. Recovery is
+              // driven inline by the command that owns the run's execution
+              // (`EffectfulActorMutationRunner` constructs an
+              // `ExecutionRecoveryService` for the exact epoch a fence refusal
+              // named), so "run recovery before continuing" sent an operator
+              // looking for a `rundown recover` binary that has never shipped.
+              // See docs/internal/architecture.md § Recovery.
+              message:
+                `Run ${runId} ended execution with an unknown outcome at epoch ${String(pending.epoch)}; ` +
+                `its recovery has not completed. Recovery is automatic and has no separate command; ` +
+                `this mutation wrote nothing.`,
             } satisfies SessionMutationResult<T>;
           }
           if (txn.executionOwned(runId)) {
