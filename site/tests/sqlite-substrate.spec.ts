@@ -9,8 +9,12 @@ import { test, expect } from '@playwright/test';
  * "SQLite everywhere". This test is the cheap guard so a WebContainer runtime
  * change re-validates the substrate choice instead of silently invalidating it.
  *
- * Requires only the site dev server. The probe page is a test-only isolated
- * route under `/dev/`, not linked from any shipped page, and it mounts its own
+ * Requires the site DEV server specifically, not a preview of the production
+ * build. The probe page lives outside `src/pages/` and is injected as a route
+ * only when Astro runs with `command === 'dev'` (see `astro.config.mjs`'s
+ * `devOnlyRoutes()`), because the page boots a WebContainer and npm-installs
+ * sql.js on load and must never be deployed. `playwright.config.ts` runs the
+ * suite against `npm run dev`, so the route is live here. It mounts its own
  * files into a fresh WebContainer rather than loading
  * `public/rundown-snapshot.bin` — so unlike the homepage demo this spec runs
  * without the snapshot built.
@@ -25,7 +29,17 @@ test.describe('SQLite WebContainer substrate', () => {
   test('sql.js persists across sequential processes; native is stubbed; marker holds', async ({
     page,
   }) => {
-    await page.goto('/dev/sqlite-substrate-probe');
+    const response = await page.goto('/dev/sqlite-substrate-probe');
+
+    // Assert the route resolved BEFORE waiting on the probe. The route is
+    // injected only in dev, so a config regression (or running this suite
+    // against a preview of the production build) 404s it — and a 404 body has
+    // no `#probe-result`, which would otherwise surface as an inscrutable 110s
+    // timeout rather than "the route is gone". Fail loudly, and fast.
+    expect(
+      response?.status(),
+      'the dev-only probe route did not resolve — see devOnlyRoutes() in astro.config.mjs',
+    ).toBe(200);
 
     const result = page.locator('#probe-result');
     // The probe boots WebContainer, installs sql.js, and runs four Node

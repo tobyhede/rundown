@@ -1,7 +1,19 @@
 ---
-// TEST-ONLY isolated page (not linked from any shipped route). It boots a
-// WebContainer, installs sql.js, and proves the SQLite substrate choice in the
-// REAL WebContainer runtime:
+// TEST-ONLY page, dev-only BY CONSTRUCTION — not merely by convention.
+//
+// This file deliberately lives outside `src/pages/`. The site builds with
+// static output and declares no route exclusions, so every page under
+// `src/pages/` is emitted into `dist/` and deployed to rundown.cool. This page
+// boots a WebContainer and runs `npm install sql.js` the moment it loads, so
+// shipping it would hand that to any visitor who found the URL — which is
+// exactly what happened while it sat in `src/pages/dev/`.
+//
+// The route is served at `/dev/sqlite-substrate-probe` only because
+// `astro.config.mjs`'s `devOnlyRoutes()` integration injects it when
+// `command === 'dev'`. The production build never sees the route and cannot
+// emit it. If you move this file back under `src/pages/`, it ships again.
+//
+// What it proves, in the REAL WebContainer runtime:
 //   1. WASM sql.js runs and persists a database across three sequential Node
 //      processes sharing the WebContainer filesystem (the demo's process model).
 //   2. Native `node:sqlite` is a stub there (constructed instances have no
@@ -12,9 +24,16 @@
 // The empirical findings in the design spec are the record; this page is the
 // cheap, reproducible guard that a WebContainer runtime change re-validates.
 //
-// Do NOT rename this file to a leading-underscore form: Astro excludes
-// `_`-prefixed files in `src/pages/` from routing, so the route would 404 and
-// the Playwright guard would silently assert against a 404 page.
+// The old `_`-prefix warning still stands, and guards the opposite failure.
+// Astro drops `_`-prefixed files in `src/pages/` from routing entirely, so
+// anyone who moves this page back there and then reaches for a leading
+// underscore to keep it off rundown.cool kills the route in EVERY environment
+// — including the `astro dev` server Playwright runs against (see
+// playwright.config.ts's `webServer`), where the guard would load a 404 body
+// instead of the probe. Restricting a route's *environments* is the fix; making
+// it unroutable is not. And `tests/sqlite-substrate.spec.ts` asserts the
+// response status is 200, so any regression that 404s this route fails loudly
+// and immediately rather than timing out on a missing element.
 ---
 
 <!doctype html>
