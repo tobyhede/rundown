@@ -109,9 +109,11 @@ themselves are created by the maintainer.
    (`execution-lease.ts:448,488,663`, `runbook-store.ts:1666,1844` all clear
    it; nothing sets it). Recovery therefore compares PID only, so PID reuse
    means a dead owner is never recovered. Confirmed **not** redundant:
-   `recoverDeadOwner` returns `{kind:'alive'}` at `execution-lease.ts:577` and
-   never reaches the token/epoch CAS below it. `isProcessAlive` compounds it by
-   failing *toward* alive on any non-`ESRCH` error (`file-lock.ts:106`).
+   `recoverDeadOwner` returns `{kind:'alive'}` at `execution-lease.ts:578`
+   (`:577` is the `isProcessAlive` guard above it, which is what the audit
+   block cites) and never reaches the token/epoch CAS at `:662-668`.
+   `isProcessAlive` compounds it by failing *toward* alive on any non-`ESRCH`
+   error (`file-lock.ts:106`).
    Failure mode is a permanent stall, not a safety break.
 2. **Every typed error ships a dead documentation link.**
    `rundown-error.ts:88` emits `https://rundown.dev/docs/errors/<slug>`, and
@@ -164,6 +166,26 @@ plan or the #648 audit block, not from this addendum.
   `docs/superpowers/`, which cspell ignores. Adding it is the smallest change
   that keeps `verify` green without weakening the check. `unbypassable` was
   rephrased rather than dictionary-added.
+- **No new normative keyword was added to `docs/spec/language.md`.** The review
+  finding was that one recovery SHOULD covered two failures with different
+  scopes; the fix is the scope/recovery table. A drafted
+  `MUST NOT offer either recovery for the other's failure` was **withdrawn**
+  before commit. Its store-level half is unarguable — pruning a run cannot
+  repair a store this build refuses — but its run-level half is not: discarding
+  the store *does* remove one bad run, and a user with no other active runs may
+  legitimately choose it, so "disproportionate" is not "forbidden". A spec-level
+  MUST NOT also constrains implementations' recovery UX, which is not what §12
+  governs, and nothing in the conformance fixtures could enforce it. The
+  asymmetry is now stated descriptively instead, which carries the same
+  reasoning without adding unenforceable normative surface.
+- **`page.route` in `site/tests/runbook-runner.spec.ts` matches by predicate,
+  not `'**/*'`.** The first draft intercepted every request and tested the URL
+  inside the handler. That put Playwright's interception layer in front of a
+  ~10 MiB snapshot stream and a WebContainer boot on a cross-origin-isolated
+  page — far more surface than the assertion needs. A URL predicate leaves
+  everything unmatched on the normal path. Behaviourally identical for the
+  assertion, and it removes the most plausible source of `verify:site`
+  flakiness.
 
 ## Findings that correct the 2026-08-10 audit block
 

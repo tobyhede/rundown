@@ -1051,9 +1051,15 @@ rather than one.
 
 ### The decisive commit: CAS first, write after
 
-The atomicity bar for a mutation is: **one decisive `BEGIN IMMEDIATE`
-transaction whose first act is a claim compare-and-swap, with a refusal rolling
-back having written nothing authority-bearing.**
+The atomicity bar for a mutation is: **one decisive transaction whose first act
+is a claim compare-and-swap, with a refusal rolling back having written nothing
+authority-bearing.**
+
+The bar is the ordering and the single transaction, not the SQL verb. The native
+driver implements that transaction as `BEGIN IMMEDIATE`; the sql.js driver as a
+plain `BEGIN` inside `runLocked`. Both satisfy it, because what enforces it is
+`classifyCommitRow` running ahead of every write — see
+[§ Drivers](#drivers-two-implementations-one-atomicity-bar).
 
 `classifyCommitRow` (`storage/runbook-store.ts`) is the total classifier that
 encodes the ordering, and the order is the contract:
@@ -1184,8 +1190,21 @@ re-entered. Recovery is **automatic**: when the fence returns
 `recovery_required`, the runner drives recovery inline, in the same process and
 the same call, for the exact epoch the refusal named — there is no
 `rundown recover` command, and none is needed. Recovery unblocks the run's
-state, but the command's own outcome stays `recovery_required`: the caller is
-told the mutation did not happen, which is true.
+state, but the command's own outcome stays `recovery_required`.
+
+**Read that outcome precisely, because the imprecise reading is the retry this
+fence exists to forbid.** Two different things are being reported, and only one
+of them is known:
+
+|                          | Status                                                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| The durable state commit | **Known not to have happened.** The mutation did not land; the run's state is what it was before the attempt.               |
+| The external effect      | **Unknown.** The attempt reached `effect_started` before it was interrupted, so the effect may well have run to completion. |
+
+`recovery_required` therefore means "your mutation did not commit" — never
+"nothing happened". A caller that reads it as the latter and re-issues the
+command re-runs an effect that may already have taken place, which is exactly
+the at-most-once guarantee being thrown away by hand.
 
 ### PID-identity recovery, and its two known weaknesses
 

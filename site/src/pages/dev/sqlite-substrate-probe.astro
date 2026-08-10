@@ -126,7 +126,7 @@ console.log('shell=' + (process.env.SHELL ?? ''));
         setStatus('installing sql.js');
         const install = await run(container, 'npm', ['install', 'sql.js@^1.14.1']);
         if (install.code !== 0) {
-          throw new Error('npm install sql.js failed: ' + install.out);
+          throw new Error(`npm install sql.js failed: ${install.out}`);
         }
 
         setStatus('running native + marker probe');
@@ -143,12 +143,12 @@ console.log('shell=' + (process.env.SHELL ?? ''));
         for (const phase of ['create', 'append']) {
           const step = await run(container, 'node', ['probe.mjs', phase]);
           if (step.code !== 0) {
-            throw new Error('probe.mjs ' + phase + ' exited ' + step.code + ': ' + step.out);
+            throw new Error(`probe.mjs ${phase} exited ${step.code}: ${step.out}`);
           }
         }
         const read = await run(container, 'node', ['probe.mjs', 'read']);
         if (read.code !== 0) {
-          throw new Error('probe.mjs read exited ' + read.code + ': ' + read.out);
+          throw new Error(`probe.mjs read exited ${read.code}: ${read.out}`);
         }
 
         const persistedTotal = /total=(\d+)/.exec(read.out)?.[1];
@@ -170,7 +170,7 @@ console.log('shell=' + (process.env.SHELL ?? ''));
         setStatus('done');
       } catch (err) {
         resultEl.textContent = 'FAIL';
-        detailEl.textContent = 'error: ' + (err && err.message ? err.message : String(err));
+        detailEl.textContent = `error: ${err && err.message ? err.message : String(err)}`;
         setStatus('error');
       }
     </script>
