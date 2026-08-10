@@ -54,6 +54,58 @@ export const PACKAGES = [
 export const RANGE_MERGE_GAP = 3;
 
 /**
+ * Source lines above which a file is treated as a memory-heavy mutation scope.
+ *
+ * Mutation runs are MEMORY-bound, not CPU-bound, and the memory is per worker:
+ * each Stryker concurrency unit holds the whole instrumented module graph, so
+ * the cost scales with the size of the file being mutated rather than with how
+ * many mutants it yields. Both the local runner
+ * (`scripts/mutate-changed.mjs`, which drops to concurrency 1) and the CI
+ * producer planner (which drops a shard to
+ * {@link LARGE_FILE_SHARD_CONCURRENCY}) key off this ONE threshold, so the two
+ * policies cannot drift apart.
+ */
+export const LARGE_SOURCE_FILE_LINES = 1000;
+
+/** Stryker concurrency for a producer shard whose files are all ordinary-sized. */
+export const DEFAULT_SHARD_CONCURRENCY = 4;
+
+/**
+ * Lines by which each chunk of a split file extends past its boundary.
+ *
+ * Stryker places a mutant only when its location is ENTIRELY inside a mutation
+ * range (`locationIncluded` in the instrumenter, which requires both ends
+ * inside), so a mutant that straddles a chunk boundary — the block mutant for a
+ * function the split lands inside, say — is dropped by BOTH chunks and simply
+ * never measured. Overlapping the chunks recovers every such mutant whose span
+ * fits in the overlap; {@link mergeFileEntry} in
+ * `scripts/mutation-merge-reports.mjs` dedupes the copies the overlap produces,
+ * so the only cost is re-testing a little code.
+ *
+ * 40 lines is the compromise: it covers ordinary multi-line mutants (arrow
+ * bodies, object literals, small blocks) for roughly a tenth more mutants per
+ * chunk on a producer already bounded by wall time. A mutant spanning MORE than
+ * this at a boundary is still lost — a bounded, documented fidelity cost that
+ * only applies to files too large to measure in one shard at all.
+ */
+export const CHUNK_OVERLAP_LINES = 40;
+
+/**
+ * Stryker concurrency for a producer shard that mutates a file above
+ * {@link LARGE_SOURCE_FILE_LINES}.
+ *
+ * Deliberately 2 (the package-config default) rather than the local runner's 1:
+ * a CI runner is a dedicated 4 vCPU / 16 GB box with nothing else on it, whereas
+ * the local bound of 1 exists to keep a developer's shared machine usable.
+ * Halving the worker count on exactly the shards that hold a multi-GB module
+ * graph is the memory bound; quartering it would only make the shards that are
+ * already closest to the timeout slower. {@link partitionProducerFiles} halves
+ * these shards' line budget to match the halved throughput, so wall time is
+ * unchanged.
+ */
+export const LARGE_FILE_SHARD_CONCURRENCY = 2;
+
+/**
  * Run a git command, returning trimmed stdout.
  *
  * @param {string[]} args - git arguments.
@@ -614,4 +666,136 @@ export function toTestOnlyEntry(pkg, testChanges) {
 export function mutatedLines(entry) {
   if (entry.whole) return entry.lines;
   return entry.ranges.reduce((sum, r) => sum + (r.end - r.start + 1), 0);
+}
+
+/**
+ * Split one source file into scope entries no larger than `budget` lines.
+ *
+ * A file at or under the budget stays a single whole-file entry, so the common
+ * case emits exactly the bare path Stryker was always given. Above the budget it
+ * becomes N `file:start-end` entries with contiguous starts covering every line,
+ * each extended {@link CHUNK_OVERLAP_LINES} past its boundary so a mutant
+ * straddling the split is not lost — the same mutation-range form
+ * {@link scopeParts} already emits for changed hunks, so nothing downstream
+ * needs to learn a new scope shape.
+ *
+ * This is what lets a file that is too big for one shard be measured at all:
+ * the producer previously emitted whole-file scopes only, so a 4000-line module
+ * was an indivisible unit that no shard budget could bring under the CI job
+ * timeout.
+ *
+ * @param {string} file - package-relative source path.
+ * @param {number} lines - total lines in the file.
+ * @param {number} budget - maximum lines per emitted entry, before overlap.
+ * @param {{overlap?: number}} [options] - boundary overlap, for tests that want it off.
+ * @returns {MutationScopeEntry[]} one whole-file entry, or N range entries.
+ * @throws {Error} when `budget` is not a positive integer.
+ */
+export function chunkFileEntry(file, lines, budget, { overlap = CHUNK_OVERLAP_LINES } = {}) {
+  if (!Number.isInteger(budget) || budget < 1) {
+    throw new Error(`chunkFileEntry budget must be a positive integer, got ${budget}`);
+  }
+  const base = { testFile: null, reason: 'producer scope' };
+  if (lines <= budget) return [{ file, lines, whole: true, ranges: [], ...base }];
+  // Equal-sized chunks rather than budget-sized ones: ceil(4069/350) = 12 chunks
+  // of 340 balances better than 11 of 350 plus a 219-line remainder, and the
+  // remainder shard is the one whose measured rate would be least comparable.
+  const chunkCount = Math.ceil(lines / budget);
+  const size = Math.ceil(lines / chunkCount);
+  /** @type {MutationScopeEntry[]} */
+  const chunks = [];
+  for (let start = 1; start <= lines; start += size) {
+    // Only the END is extended: starts stay on the primary boundaries, so the
+    // chunks read as a partition with a stated overlap rather than as an
+    // arbitrary set of windows.
+    const end = Math.min(lines, start + size - 1 + (start + size - 1 < lines ? overlap : 0));
+    chunks.push({ file, lines: end - start + 1, whole: false, ranges: [{ start, end }], ...base });
+  }
+  return chunks;
+}
+
+/**
+ * Partition one package's eligible source files into producer shards.
+ *
+ * Two tiers, because they have different memory profiles and therefore
+ * different budgets:
+ *
+ * - A file above {@link LARGE_SOURCE_FILE_LINES} is **isolated and chunked**:
+ *   it is split into overlapping line ranges of at most half the shard budget
+ *   (plus {@link CHUNK_OVERLAP_LINES}), and each chunk becomes its own shard
+ *   running at {@link LARGE_FILE_SHARD_CONCURRENCY}.
+ *   Halving both the worker count and the mutant budget keeps the projected
+ *   wall time the same as an ordinary shard while halving peak memory. Isolating
+ *   it also means a shard's concurrency is decided by one unambiguous fact
+ *   rather than by whichever file in a batch happens to be biggest.
+ * - Everything else is **batched** by a largest-first (LPT) fill onto the
+ *   currently lightest shard, sized so no shard's projected line count exceeds
+ *   the budget.
+ *
+ * Line count is a proxy for mutant count, and a good one: measured across a full
+ * campaign it holds at **0.46 mutants per source line** overall (0.39-0.60 per
+ * package). It is NOT a proxy for wall time, which is dominated by how many test
+ * files transitively import the mutated module: measured throughput spans 5.55
+ * to 78 mutants/min, and two core shards of essentially IDENTICAL size ran 4.9x
+ * apart (shard 4/9, 5860 lines, 27.20/min; shard 8/9, 5855 lines, 5.55/min).
+ * Line count cannot predict that and no budget can fix it — the budget only sets
+ * how long the tail is, and a shard that still exceeds its job timeout is
+ * reported by name (see scripts/mutation-merge-reports.mjs) rather than
+ * vanishing from the report. Weighting shards by `lines x relatedTestCount`
+ * instead is the tracked follow-up.
+ *
+ * @param {Array<{file: string, lines: number}>} files - eligible files with sizes.
+ * @param {object} options - partitioning options.
+ * @param {number} options.maxShardLines - target maximum source lines per shard.
+ * @param {number} [options.largeFileLines] - the isolate-and-chunk threshold.
+ * @returns {Array<{concurrency: number, entries: MutationScopeEntry[]}>} shards,
+ *   large-file chunks first, each with the Stryker concurrency it must run at.
+ * @throws {Error} when `maxShardLines` is not a positive integer.
+ */
+export function partitionProducerFiles(
+  files,
+  { maxShardLines, largeFileLines = LARGE_SOURCE_FILE_LINES } = {},
+) {
+  if (!Number.isInteger(maxShardLines) || maxShardLines < 1) {
+    throw new Error(`maxShardLines must be a positive integer, got ${maxShardLines}`);
+  }
+  const largeBudget = Math.max(1, Math.ceil(maxShardLines / 2));
+  /** @type {Array<{concurrency: number, entries: MutationScopeEntry[]}>} */
+  const shards = [];
+  /** @type {MutationScopeEntry[]} */
+  const batched = [];
+  // Sort by path so the plan is a pure function of the tree, not of glob order.
+  for (const f of [...files].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0))) {
+    if (f.lines > largeFileLines) {
+      for (const chunk of chunkFileEntry(f.file, f.lines, largeBudget)) {
+        shards.push({ concurrency: LARGE_FILE_SHARD_CONCURRENCY, entries: [chunk] });
+      }
+      continue;
+    }
+    // A file at or under the large-file threshold still gets chunked when the
+    // budget itself is smaller than the file, so an aggressively lowered
+    // MAX_SHARD_LINES cannot be silently ignored by a single oversized entry.
+    batched.push(...chunkFileEntry(f.file, f.lines, maxShardLines));
+  }
+
+  const totalLines = batched.reduce((sum, e) => sum + mutatedLines(e), 0);
+  if (totalLines === 0) return shards;
+  const shardCount = Math.max(1, Math.ceil(totalLines / maxShardLines));
+  const groups = Array.from({ length: shardCount }, () => ({ lines: 0, entries: [] }));
+  for (const entry of [...batched].sort((a, b) => mutatedLines(b) - mutatedLines(a))) {
+    // Linear min-scan rather than a re-sort per entry: same LPT behaviour, and
+    // ties resolve to the earliest shard.
+    let lightest = groups[0];
+    for (let i = 1; i < groups.length; i++) {
+      if (groups[i].lines < lightest.lines) lightest = groups[i];
+    }
+    lightest.lines += mutatedLines(entry);
+    lightest.entries.push(entry);
+  }
+  for (const group of groups) {
+    if (group.entries.length > 0) {
+      shards.push({ concurrency: DEFAULT_SHARD_CONCURRENCY, entries: group.entries });
+    }
+  }
+  return shards;
 }

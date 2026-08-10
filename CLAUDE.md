@@ -518,10 +518,13 @@ All package scripts live in `package.json` — run `pnpm run` to list them
 
   `test:mutate:changed` therefore sets `STRYKER_CONCURRENCY=1` itself on a
   source-change scope whose mutated file exceeds `LARGE_SOURCE_FILE_LINES`
-  (1000, in `scripts/mutate-changed.mjs`). **Do not set it by hand for that
-  path** — an explicit `STRYKER_CONCURRENCY` in the environment always wins, so
-  doing so only overrides a size-aware default with a flat one. Two paths the
-  automatic bound does **not** cover:
+  (1000, in `scripts/lib/mutation-scope.mjs`, re-exported from
+  `scripts/mutate-changed.mjs`). The CI producer's shard planner keys off the
+  **same** constant, dropping a shard that mutates a file over it to concurrency
+  2 — one threshold, two policies, so they cannot drift. **Do not set it by hand
+  for that path** — an explicit `STRYKER_CONCURRENCY` in the environment always
+  wins, so doing so only overrides a size-aware default with a flat one. Two
+  paths the automatic bound does **not** cover:
   - **The test-only tier.** It passes no `--mutate` scope, so it mutates the
     whole package glob — the largest instrumented graph there is, and the worst
     case for the blow-up this bound exists to prevent — at the default 2. There
@@ -594,8 +597,10 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   shifted relative to the file Stryker actually mutated.
 
   Judge the result on survivors **in the lines you changed**, never on the
-  aggregate score: a scope this narrow makes the percentage meaningless, and the
-  70% break threshold will fail the run regardless.
+  aggregate score: a scope this narrow makes the percentage meaningless. Run a
+  hand-rolled scope with `STRYKER_SCOPED=true` (as `test:mutate:changed` does)
+  so `thresholds.break` is nulled and a non-zero exit means the run actually
+  failed; without it the floor judges a partial score and fails a fine run.
 
   **The report lists survivors from outside your scope.** With
   `incremental: true`, the textual report and the per-file table merge cached
@@ -637,6 +642,37 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   than replayed. **Core is included in the per-PR matrix**, as one shard per
   changed file; that workflow is advisory (`continue-on-error` throughout, no
   required check), so it reports but never blocks.
+
+- **The changed-code gates are the whole day-to-day signal.**
+  `pnpm run test:mutate:changed` locally and the advisory per-PR check
+  (`.github/workflows/mutation-pr.yml`) are what you act on. The full-fidelity
+  producer (`.github/workflows/mutation.yml`) is **`workflow_dispatch`-only and
+  deliberately occasional** — an operator runs it to seed the Stryker dashboard
+  baseline the PR check diffs against, and the baseline going stale for weeks is
+  the expected state, not a gap. Its `push`-to-main trigger and weekly cron were
+  deleted (issue #670): the push run planned differentially, so it could never
+  upload a baseline and only re-measured the diff the PR gate had already
+  scored, and five weekly campaigns produced zero `core` and zero `parser`
+  reports. **Do not add an automatic trigger back**, and do not treat a stale
+  dashboard as a reason to start a campaign locally — a full campaign is ~40,000
+  mutants and ~70 machine-hours.
+
+  Numbers worth carrying, all measured (details in
+  [docs/internal/mutation-testing-ci.md](docs/internal/mutation-testing-ci.md)):
+  - **0.46 mutants per source line** across the tree (0.39–0.60 per package).
+    That is the only reliable way to estimate a scope's size; absolute mutant
+    counts go stale fast (core grew 53% in five weeks).
+  - **Throughput spans 5.55–78 mutants/min and line count does not predict it.**
+    Two core shards of essentially identical size (5860 and 5855 lines) ran 4.9x
+    apart, because wall time follows `findRelatedTests` fan-out. Budget for the
+    slow end.
+  - **Total campaign work is flat in the shard budget** — sharding trades setup
+    overhead for a shorter tail. The producer is sized at 2400 lines/shard,
+    which plans **60 jobs** today → ~66 machine-hours, a 240-minute job cap, 3
+    waves of this account's 20 concurrent job slots. Finer sharding buys nothing
+    but waves that starve PR CI. `MAX_SHARD_JOBS` (80) is the **ceiling** at
+    which the planner widens the budget, deliberately above the plan so core's
+    growth does not immediately lengthen the tail.
 
 - `pnpm run plugin:dev -- --no-build` (skip rebuild) /
   `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).

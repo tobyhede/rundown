@@ -111,18 +111,27 @@ for (const configPath of configs) {
     assert.equal((await loadConfig(configPath, undefined)).concurrency, 2);
   });
 
-  test(`${configPath} sets a non-null break threshold (issue #483)`, async () => {
+  test(`${configPath} sets a break threshold that can actually pass (issues #483, #670)`, async () => {
     const config = await loadConfig(configPath, undefined);
-    // break: null lets Stryker exit 0 regardless of score, so a catastrophic
-    // drop can never fail CI. A real floor makes the weekly run fail loudly.
+    // Both directions are load-bearing.
+    //
+    // Not null: `break: null` lets Stryker exit 0 regardless of score, so a
+    // catastrophic drop could never fail anything.
+    //
+    // Not above the measured floor: this was 70, and 70 is ABOVE every score a
+    // module has ever achieved on a campaign that completed — plugin 66.17%,
+    // cli 64.51%. A floor no run can clear is not a floor, it is an unconditional
+    // failure, and it made a flawless producer campaign exit 1.
     assert.equal(
       typeof config.thresholds?.break,
       'number',
       `${configPath}: thresholds.break must be a number, not null`,
     );
+    assert.ok(config.thresholds.break > 0, `${configPath}: thresholds.break must be a real floor`);
     assert.ok(
-      config.thresholds.break >= 70,
-      `${configPath}: thresholds.break should be at least 70`,
+      config.thresholds.break < 64.51,
+      `${configPath}: thresholds.break ${config.thresholds.break} is at or above cli's measured ` +
+        '64.51%, so a flawless campaign fails on it',
     );
   });
 

@@ -6,15 +6,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  CHUNK_OVERLAP_LINES,
+  DEFAULT_SHARD_CONCURRENCY,
+  LARGE_FILE_SHARD_CONCURRENCY,
+  LARGE_SOURCE_FILE_LINES,
   PACKAGES,
   RANGE_MERGE_GAP,
   buildScope,
   changedRanges,
+  chunkFileEntry,
   dedicatedTestPath,
   mergeRanges,
   mutateArg,
   mutatedLines,
   partitionPrEntries,
+  partitionProducerFiles,
   scopeParts,
   toShardEntry,
   toTestOnlyEntry,
@@ -678,4 +684,138 @@ test('buildScope: local ranges come from the working tree, not the last commit',
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('chunkFileEntry leaves a file at or under the budget whole', () => {
+  assert.deepEqual(chunkFileEntry('src/a.ts', 800, 800), [
+    {
+      file: 'src/a.ts',
+      lines: 800,
+      whole: true,
+      ranges: [],
+      testFile: null,
+      reason: 'producer scope',
+    },
+  ]);
+  assert.deepEqual(scopeParts(chunkFileEntry('src/a.ts', 10, 800)[0]), ['src/a.ts']);
+});
+
+test('chunkFileEntry covers every line of an oversized file, with no gap', () => {
+  const chunks = chunkFileEntry('src/big.ts', 4069, 350);
+  assert.ok(chunks.length > 1, 'an oversized file must split');
+  assert.equal(chunks[0].ranges[0].start, 1);
+  assert.equal(chunks.at(-1).ranges[0].end, 4069, 'the split must reach the last line');
+  for (let i = 1; i < chunks.length; i++) {
+    const previous = chunks[i - 1].ranges[0];
+    const current = chunks[i].ranges[0];
+    assert.ok(current.start > previous.start, 'chunk starts must advance');
+    assert.ok(current.start <= previous.end + 1, 'chunks must leave no gap in the mutated lines');
+  }
+  for (const chunk of chunks) {
+    assert.ok(
+      mutatedLines(chunk) <= 350 + CHUNK_OVERLAP_LINES,
+      'no chunk may exceed the budget plus its boundary overlap',
+    );
+    assert.equal(mutatedLines(chunk), chunk.ranges[0].end - chunk.ranges[0].start + 1);
+  }
+});
+
+// Stryker places a mutant only when it fits ENTIRELY inside a mutation range, so
+// without an overlap a mutant straddling a chunk boundary is dropped by BOTH
+// chunks and silently never measured.
+test('chunkFileEntry overlaps chunk boundaries so a straddling mutant survives', () => {
+  const chunks = chunkFileEntry('src/big.ts', 1000, 500);
+  assert.equal(chunks.length, 2);
+  const [first, second] = chunks.map((c) => c.ranges[0]);
+  assert.equal(second.start, first.start + 500, 'starts stay on the primary boundary');
+  assert.equal(first.end, second.start - 1 + CHUNK_OVERLAP_LINES, 'the first chunk overruns');
+  // A mutant spanning the boundary within the overlap is inside chunk 1.
+  assert.ok(first.end >= second.start + 10, 'a boundary-spanning mutant has a home');
+  // The final chunk never overruns: there is nothing past the last line.
+  assert.equal(second.end, 1000);
+});
+
+test('chunkFileEntry can be asked for a bare partition with no overlap', () => {
+  const chunks = chunkFileEntry('src/big.ts', 1000, 500, { overlap: 0 });
+  assert.deepEqual(
+    chunks.map((c) => c.ranges[0]),
+    [
+      { start: 1, end: 500 },
+      { start: 501, end: 1000 },
+    ],
+  );
+});
+
+test('chunkFileEntry rejects a non-positive budget rather than looping forever', () => {
+  assert.throws(() => chunkFileEntry('src/a.ts', 100, 0), /positive integer/);
+  assert.throws(() => chunkFileEntry('src/a.ts', 100, 1.5), /positive integer/);
+});
+
+test('partitionProducerFiles isolates and chunks a file above the large-file threshold', () => {
+  const big = LARGE_SOURCE_FILE_LINES * 3;
+  const shards = partitionProducerFiles(
+    [
+      { file: 'src/big.ts', lines: big },
+      { file: 'src/small-a.ts', lines: 100 },
+      { file: 'src/small-b.ts', lines: 100 },
+    ],
+    { maxShardLines: 800 },
+  );
+  const bigShards = shards.filter((s) => s.entries.some((e) => e.file === 'src/big.ts'));
+  assert.ok(bigShards.length > 1, 'the large file must span several shards');
+  for (const shard of bigShards) {
+    assert.equal(shard.entries.length, 1, 'a large-file chunk is never batched with other files');
+    assert.equal(shard.concurrency, LARGE_FILE_SHARD_CONCURRENCY);
+    // Half the budget, because halving the workers halves the throughput.
+    assert.ok(mutatedLines(shard.entries[0]) <= 400 + CHUNK_OVERLAP_LINES);
+  }
+  const batched = shards.filter((s) => !s.entries.some((e) => e.file === 'src/big.ts'));
+  assert.equal(batched.length, 1, 'the small files fit one shard');
+  assert.equal(batched[0].concurrency, DEFAULT_SHARD_CONCURRENCY);
+});
+
+test('partitionProducerFiles covers every source line of every file', () => {
+  const files = [
+    { file: 'src/a.ts', lines: 2500 },
+    { file: 'src/b.ts', lines: 900 },
+    { file: 'src/c.ts', lines: 40 },
+    { file: 'src/d.ts', lines: 1200 },
+  ];
+  const shards = partitionProducerFiles(files, { maxShardLines: 800 });
+  const scopes = shards.flatMap((s) => s.entries.flatMap(scopeParts));
+  assert.equal(new Set(scopes).size, scopes.length, 'no scope may be planned twice');
+  const covered = new Map();
+  for (const shard of shards) {
+    for (const entry of shard.entries) {
+      const spans = entry.whole ? [{ start: 1, end: entry.lines }] : entry.ranges;
+      covered.set(entry.file, [...(covered.get(entry.file) ?? []), ...spans]);
+    }
+  }
+  for (const { file, lines } of files) {
+    const spans = mergeRanges(covered.get(file) ?? [], 1);
+    assert.equal(spans.length, 1, `${file} must be covered with no gap`);
+    assert.deepEqual(spans[0], { start: 1, end: lines }, `${file} must be covered end to end`);
+  }
+});
+
+test('partitionProducerFiles is a pure function of the file set, not of glob order', () => {
+  const files = [
+    { file: 'src/a.ts', lines: 700 },
+    { file: 'src/b.ts', lines: 500 },
+    { file: 'src/c.ts', lines: 300 },
+  ];
+  const render = (input) =>
+    partitionProducerFiles(input, { maxShardLines: 800 }).map((s) => s.entries.map(mutateArg));
+  assert.deepEqual(render(files), render([...files].reverse()));
+});
+
+test('partitionProducerFiles plans nothing for an empty package', () => {
+  assert.deepEqual(partitionProducerFiles([], { maxShardLines: 800 }), []);
+});
+
+test('partitionProducerFiles rejects a non-positive line budget', () => {
+  assert.throws(
+    () => partitionProducerFiles([{ file: 'src/a.ts', lines: 10 }], { maxShardLines: 0 }),
+    /positive integer/,
+  );
 });

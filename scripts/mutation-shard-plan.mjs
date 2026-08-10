@@ -1,12 +1,20 @@
 // Emit the CI shard matrix for the mutation producer (.github/workflows/mutation.yml).
 //
-// A full `core`/`cli` mutation campaign cannot fit a single 60-min CI job, so
-// the producer fans out across matrix shards. This script decides — for the
-// triggering event — WHICH files each shard mutates, balancing shards by source
-// line count (a cheap proxy for mutant count) so every shard lands well under
-// the 60-min hard cap. Shards mutate DISJOINT file sets, which is what lets the
-// merge job (mutation-merge-reports.mjs) stitch their partial reports back into
-// one full per-module report for the dashboard.
+// A full `core`/`cli` mutation campaign cannot fit a single CI job, so the
+// producer fans out across matrix shards over the package's FULL mutate scope.
+// This script decides WHICH files each shard mutates, balancing shards by source
+// line count (a cheap proxy for mutant count) so every shard lands inside the
+// job cap. Shards mutate DISJOINT scopes, which is what lets the merge job
+// (mutation-merge-reports.mjs) stitch their partial reports back into one full
+// per-module report for the dashboard.
+//
+// There is deliberately NO differential (changed-source-only) producer mode. It
+// existed for the `push: branches: [main]` trigger, which was deleted with issue
+// #670: a differential plan is partial by construction, so the merge could never
+// upload it, and it re-measured the diff the per-PR gate had already scored. The
+// producer now plans one thing — the full scope of the selected packages — and
+// the changed-code signal lives entirely in the `pull_request` path below and in
+// the local `pnpm run test:mutate:changed`.
 //
 // A `pull_request` event plans differently: it emits ONE shard per changed
 // source file, scoped to that file's changed line RANGES and to that file's
@@ -17,21 +25,24 @@
 // a widely-imported module.
 //
 // Inputs (env):
-//   EVENT_NAME       - 'schedule' | 'push' | 'workflow_dispatch' | 'pull_request'
+//   EVENT_NAME       - 'pull_request' selects the per-changed-file planner;
+//                      anything else plans the full producer scope
 //   INPUT_PACKAGE    - dispatch package filter ('all'|'parser'|'core'|'cli'|'plugin')
-//   PUSH_BASE        - github.event.before SHA (push differential diff base)
 //   BASE_REF         - pull_request base ref (e.g. 'origin/main'); PR mode only
-//   MAX_SHARD_LINES  - target max source lines per shard (default 9000)
+//   MAX_SHARD_LINES  - target max source lines per shard (default 2400)
+//   MAX_SHARD_JOBS   - ceiling on producer matrix entries, above which the line
+//                      budget is widened (default 80; the default budget plans 60)
 //   MAX_PR_SHARDS    - cap on pull_request shards (default 16)
 //   GITHUB_OUTPUT    - file to append `matrix=` / `empty=` outputs (optional; else stdout)
 //
 // Output: a GitHub Actions matrix `{ include: [{ package, dir, module, shard,
-// shardCount, mutate }] }` where `mutate` is a comma-separated file (or
-// `file:start-end` range) list passed straight to `stryker run --mutate`. PR
-// entries additionally carry `testFiles` and a human-readable `label`.
+// shardCount, mutate, concurrency }] }` where `mutate` is a comma-separated file
+// (or `file:start-end` range) list passed straight to `stryker run --mutate` and
+// `concurrency` is the size-aware `STRYKER_CONCURRENCY` the shard must run at
+// (see partitionProducerFiles). PR entries additionally carry `testFiles` and a
+// human-readable `label`.
 
 import { readFileSync, appendFileSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { globSync } from 'glob';
 
@@ -39,9 +50,11 @@ import {
   PACKAGES,
   buildScope,
   git,
+  mutateArg,
   toShardEntry,
   toTestOnlyEntry,
   partitionPrEntries,
+  partitionProducerFiles,
   mutatePatterns,
   reachable,
 } from './lib/mutation-scope.mjs';
@@ -50,9 +63,28 @@ import { htmlEscape } from './lib/pr-comment.mjs';
 const repoRoot = process.cwd();
 const eventName = process.env.EVENT_NAME ?? 'workflow_dispatch';
 const inputPackage = process.env.INPUT_PACKAGE ?? 'all';
-const pushBase = process.env.PUSH_BASE ?? '';
 const baseRef = process.env.BASE_REF ?? '';
-const maxShardLines = Number.parseInt(process.env.MAX_SHARD_LINES ?? '', 10) || 9000;
+const maxShardLines = Number.parseInt(process.env.MAX_SHARD_LINES ?? '', 10) || 2400;
+/**
+ * Concurrent job slots this account allows, which is what MAX_SHARD_JOBS is
+ * ultimately denominated in — the cap is a number of WAVES of this, not an
+ * abstract limit. GitHub Free (personal) allows 20; the default ceiling of 80 is
+ * four of them.
+ */
+const CONCURRENT_JOB_SLOTS = 20;
+// A CEILING on the matrix, not a target: the default line budget plans 60 jobs,
+// and this is where the planner starts widening that budget rather than dropping
+// coverage. The campaign's TOTAL work is flat in the budget — sharding only
+// trades per-job setup overhead for a shorter tail — so what this bounds is how
+// many waves of a Free account's 20 concurrent job slots the producer occupies,
+// not GitHub's 256-job matrix hard limit (no longer the binding constraint).
+//
+// 80 rather than the current plan size, because a cap set at the plan binds on
+// the next file added: core grew 53% in five weeks, and widening the budget
+// lengthens the tail toward the shard step cap. Trading a 4th wave for months of
+// headroom is the right side of that: the wave costs wall-clock on a manual run,
+// the tail costs the margin the whole sizing exercise exists to create.
+const maxShardJobs = Number.parseInt(process.env.MAX_SHARD_JOBS ?? '', 10) || 80;
 const maxPrShards = Number.parseInt(process.env.MAX_PR_SHARDS ?? '', 10) || 16;
 const testScope = process.env.TEST_SCOPE ?? 'dedicated';
 const summaryPath = process.env.SUMMARY_PATH ?? '';
@@ -62,87 +94,18 @@ if (testScope !== 'dedicated' && testScope !== 'related') {
 }
 
 /**
- * Which packages this event should run. Schedule and push cover every package;
- * a dispatch covers the chosen one (or all).
+ * Which packages this producer run should mutate.
+ *
+ * `INPUT_PACKAGE` defaults to `'all'`, so an event that supplies no package
+ * filter (anything other than the dispatch) selects every package — which is
+ * what the deleted schedule/push triggers relied on, without needing a
+ * per-event-name special case.
  *
  * @param {{package: string}} pkg - candidate package descriptor.
- * @returns {boolean} true when this event should mutate the package.
+ * @returns {boolean} true when this run should mutate the package.
  */
 function selectedForEvent(pkg) {
-  if (eventName === 'schedule' || eventName === 'push') return true;
   return inputPackage === 'all' || inputPackage === pkg.package;
-}
-
-/**
- * Resolve the diff base for a push, degrading safely: an unset/unreachable
- * pre-push SHA falls back to HEAD~1, and a root commit yields null (→ full run).
- *
- * @returns {string | null} a usable base ref, or null to mutate the full scope.
- */
-function resolveDiffBase() {
-  const reachable = (ref) => {
-    try {
-      execFileSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
-        stdio: 'ignore',
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  const zero = '0000000000000000000000000000000000000000';
-  if (pushBase && pushBase !== zero && reachable(pushBase)) return pushBase;
-  if (reachable('HEAD~1'))
-    return execFileSync('git', ['rev-parse', 'HEAD~1'], { encoding: 'utf8' }).trim();
-  return null;
-}
-
-/**
- * Files changed under `<dir>/src` between base and HEAD (added/modified, not
- * deleted), repo-relative.
- *
- * @param {string} dir - repo-relative package directory.
- * @param {string} base - diff base ref.
- * @returns {Set<string>} changed source file paths.
- */
-function changedSourceFiles(dir, base) {
-  const out = execFileSync(
-    'git',
-    ['diff', '--name-only', '--diff-filter=d', base, 'HEAD', '--', `${dir}/src`],
-    { encoding: 'utf8' },
-  );
-  return new Set(
-    out
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-}
-
-/**
- * Greedily partition files into shards balanced by line count (LPT heuristic):
- * largest files first, each onto the currently-lightest shard. Shard count is
- * sized so no shard's projected lines exceed `maxShardLines`.
- *
- * @param {Array<{file: string, lines: number}>} files - eligible files with sizes.
- * @returns {string[][]} arrays of file paths, one per shard.
- */
-function partition(files) {
-  const totalLines = files.reduce((sum, f) => sum + f.lines, 0);
-  const shardCount = Math.max(1, Math.ceil(totalLines / maxShardLines));
-  const shards = Array.from({ length: shardCount }, () => ({ lines: 0, files: [] }));
-  for (const f of [...files].sort((a, b) => b.lines - a.lines)) {
-    // Place each file on the currently least-loaded shard. A linear min-scan
-    // avoids re-sorting the whole shard array on every file while preserving the
-    // LPT balancing behaviour (ties resolve to the earliest shard, as before).
-    let lightest = shards[0];
-    for (let i = 1; i < shards.length; i++) {
-      if (shards[i].lines < lightest.lines) lightest = shards[i];
-    }
-    lightest.lines += f.lines;
-    lightest.files.push(f.file);
-  }
-  return shards.map((s) => s.files).filter((f) => f.length > 0);
 }
 
 /**
@@ -228,14 +191,22 @@ async function planPullRequest() {
 }
 
 const include = [];
-const base = eventName === 'push' ? resolveDiffBase() : null;
 
 if (eventName === 'pull_request') {
   include.push(...(await planPullRequest()));
 }
 
-for (const pkg of eventName === 'pull_request' ? [] : PACKAGES) {
-  if (!selectedForEvent(pkg)) continue;
+/**
+ * Collect one package's mutate-eligible source files with their sizes.
+ *
+ * Always the package's FULL eligible scope — the producer has no differential
+ * mode (see the module header).
+ *
+ * @param {(typeof PACKAGES)[number]} pkg - the package descriptor.
+ * @returns {Promise<Array<{file: string, lines: number}>>} package-relative files
+ *   with line counts.
+ */
+async function producerFiles(pkg) {
   const patterns = await mutatePatterns(repoRoot, pkg.dir);
   // Split the Stryker mutate array into positive globs and `!` negations and
   // feed them to glob's include + `ignore`, so the eligible set matches exactly
@@ -243,47 +214,118 @@ for (const pkg of eventName === 'pull_request' ? [] : PACKAGES) {
   const positives = patterns.filter((p) => !p.startsWith('!'));
   const ignore = patterns.filter((p) => p.startsWith('!')).map((p) => p.slice(1));
   const eligibleRel = globSync(positives, { cwd: join(repoRoot, pkg.dir), ignore });
-  let eligible = eligibleRel.map((rel) => ({
-    file: rel, // package-relative; stryker runs with working-directory: <dir>
-    repoRel: `${pkg.dir}/${rel}`,
-  }));
 
-  if (eventName === 'push') {
-    if (base === null) {
-      // No usable base → mutate the full scope rather than skip the producer.
-    } else {
-      const changed = changedSourceFiles(pkg.dir, base);
-      eligible = eligible.filter((e) => changed.has(e.repoRel));
-      if (eligible.length === 0) continue; // package unchanged this push
-    }
-  }
-
-  const withSizes = eligible.map((e) => ({
-    file: e.file,
-    lines: readFileSync(join(repoRoot, e.repoRel), 'utf8').split('\n').length,
+  return eligibleRel.map((rel) => ({
+    // package-relative; stryker runs with working-directory: <dir>
+    file: rel,
+    lines: readFileSync(join(repoRoot, pkg.dir, rel), 'utf8').split('\n').length,
   }));
-  const shards = partition(withSizes);
-  shards.forEach((files, i) => {
+}
+
+/** @type {Array<{pkg: (typeof PACKAGES)[number], files: Array<{file: string, lines: number}>}>} */
+const producerPackages = [];
+for (const pkg of eventName === 'pull_request' ? [] : PACKAGES) {
+  if (!selectedForEvent(pkg)) continue;
+  const files = await producerFiles(pkg);
+  if (files.length === 0) continue; // package has no mutate-eligible source
+  producerPackages.push({ pkg, files });
+}
+
+/**
+ * Shard every selected package at one line budget.
+ *
+ * @param {number} budget - the per-shard source-line budget.
+ * @returns {Array<{pkg: object, shards: ReturnType<typeof partitionProducerFiles>}>} per-package shards.
+ */
+function planProducer(budget) {
+  return producerPackages.map(({ pkg, files }) => ({
+    pkg,
+    shards: partitionProducerFiles(files, { maxShardLines: budget }),
+  }));
+}
+
+let shardBudget = maxShardLines;
+let producerPlan = planProducer(shardBudget);
+const shardTotal = (plan) => plan.reduce((sum, p) => sum + p.shards.length, 0);
+/** Widening passes before the loop gives up, whether or not it reached the cap. */
+const WIDEN_ATTEMPTS = 10;
+let widenAttemptsUsed = 0;
+// Widen the budget rather than dropping coverage when the matrix would exceed
+// the cap. Bounded and monotonic: each pass scales the budget by the overshoot
+// ratio, and the loop stops as soon as the budget cannot grow further.
+for (
+  let attempt = 0;
+  attempt < WIDEN_ATTEMPTS && shardTotal(producerPlan) > maxShardJobs;
+  attempt++
+) {
+  widenAttemptsUsed = attempt + 1;
+  const planned = shardTotal(producerPlan);
+  const widened = Math.ceil((shardBudget * planned) / maxShardJobs);
+  if (widened <= shardBudget) break;
+  process.stderr.write(
+    `${planned} producer shards exceed MAX_SHARD_JOBS=${maxShardJobs}; ` +
+      `widening MAX_SHARD_LINES ${shardBudget} -> ${widened}. Each shard now carries more ` +
+      'mutants and is likelier to exceed its job timeout.\n',
+  );
+  shardBudget = widened;
+  producerPlan = planProducer(shardBudget);
+}
+
+// The loop is bounded, so it can stop while the plan is STILL over the cap —
+// and then the matrix is emitted anyway, silently exceeding the wave bound the
+// cap exists to express. One check on the final state rather than one per exit
+// path, so it holds for the attempt limit, for the non-monotonic guard above,
+// and for any exit added later.
+//
+// Widening cannot always converge: every selected package contributes at least
+// one shard, and each file over LARGE_SOURCE_FILE_LINES is isolated onto its own
+// shard no matter how wide the budget gets, so the plan has a floor the budget
+// cannot lower.
+const plannedShardTotal = shardTotal(producerPlan);
+if (plannedShardTotal > maxShardJobs) {
+  // WHY it stopped decides what can honestly be claimed. Only the loop running
+  // out of room proves the count is irreducible; hitting the attempt limit
+  // proves nothing except that the loop stopped looking, which is exactly the
+  // case that widens the budget to an absurd value and then gives up.
+  const why =
+    widenAttemptsUsed >= WIDEN_ATTEMPTS
+      ? `widening stopped after ${WIDEN_ATTEMPTS} attempts without reaching the cap, so the ` +
+        'count is not known to be irreducible — it is only known that widening did not reduce it'
+      : 'widening the budget further cannot reduce the count: each package contributes at least ' +
+        'one shard, and each file over the large-file threshold is isolated onto its own';
+  process.stderr.write(
+    `WARNING: could not reach MAX_SHARD_JOBS=${maxShardJobs}. The plan emits ` +
+      `${plannedShardTotal} shard(s) at MAX_SHARD_LINES=${shardBudget}, and ${why}. ` +
+      `Proceeding over the cap: ${plannedShardTotal} shards is ` +
+      `${Math.ceil(plannedShardTotal / CONCURRENT_JOB_SLOTS)} wave(s) of the ` +
+      `${CONCURRENT_JOB_SLOTS} concurrent job slots this account allows.\n`,
+  );
+}
+
+for (const { pkg, shards } of producerPlan) {
+  shards.forEach((shard, i) => {
     include.push({
       package: pkg.package,
       dir: pkg.dir,
       module: pkg.module,
       shard: i + 1,
       shardCount: shards.length,
-      mutate: files.join(','),
+      mutate: shard.entries.map(mutateArg).join(','),
+      // Size-aware STRYKER_CONCURRENCY for this shard; see partitionProducerFiles.
+      concurrency: shard.concurrency,
     });
   });
 }
 
 const matrix = { include };
 const empty = include.length === 0;
-// PR entries carry `label` (the file list); their `mutate` is a range list, so
-// splitting it on commas would count ranges as files.
+// PR entries carry `label` (the file list). Everything else is counted from
+// `mutate`, whose comma-separated members are Stryker SCOPES — a whole file or
+// one `file:start-end` range — not necessarily distinct files.
 const summary = include
   .map((e) => {
-    const what = e.label
-      ? e.label
-      : `${e.mutate.split(',').length} file${e.mutate.split(',').length === 1 ? '' : 's'}`;
+    const scopes = e.mutate ? e.mutate.split(',').length : 0;
+    const what = e.label ? e.label : `${scopes} scope${scopes === 1 ? '' : 's'}`;
     return `${e.package} shard ${e.shard}/${e.shardCount} (${what})`;
   })
   .join('\n');

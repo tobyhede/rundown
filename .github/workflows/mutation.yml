@@ -1,8 +1,29 @@
 name: Mutation Testing
 
+# The full-fidelity producer. It exists for ONE job: seed the Stryker dashboard
+# baseline that the advisory per-PR gate diffs against. It is deliberately
+# DISPATCH-ONLY and occasional — an operator runs it when the baseline is stale,
+# and nothing runs it automatically.
+#
+# Two automatic triggers were removed on 2026-08-10 (issue #670), both because
+# they burned machine-hours and produced nothing:
+#
+#   - `push: branches: [main]`. 98 runs since 2026-07-02, ~84 machine-hours; 49
+#     planned an empty matrix and 28 were cancelled at exactly 61 minutes. A push
+#     run planned DIFFERENTIALLY (changed source only), so its merge was partial
+#     by construction and the upload gate below never let it publish — it could
+#     not seed a baseline even in principle. What it did measure was the same
+#     diff `.github/workflows/mutation-pr.yml` had already scored on the PR.
+#   - the weekly `schedule` cron. Five weekly campaigns produced ZERO `core` and
+#     ZERO `parser` shard reports. `core`, `cli` and `parser` still 404 on the
+#     dashboard today; `plugin` — small enough to finish — is the only module
+#     that has ever been published. A cadence that has never once produced its
+#     artifact is not a cadence, it is a standing 70-machine-hour bill.
+#
+# The day-to-day mutation signal is the per-PR changed-file gate
+# (`.github/workflows/mutation-pr.yml`, deliberately out of scope here) and the
+# local `pnpm run test:mutate:changed`. See docs/internal/mutation-testing-ci.md.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       package:
@@ -15,19 +36,15 @@ on:
           - core
           - cli
           - plugin
-  schedule:
-    - cron: '0 6 * * 1' # Weekly Monday 06:00 UTC
 
 permissions:
   contents: read
 
 jobs:
-  # A full core/cli campaign cannot finish in a single 60-min CI job, so the
-  # producer fans out across shards. This job decides the shard matrix for the
-  # event: schedule/dispatch shard the full mutate scope; push shards only the
-  # changed source (differential). Each shard mutates a DISJOINT file set, which
-  # is what lets the merge job stitch the partial reports back into one
-  # full-fidelity per-module report.
+  # A full core/cli campaign cannot finish in a single CI job, so the producer
+  # fans out across shards over the package's FULL mutate scope. Each shard
+  # mutates a DISJOINT set of scopes, which is what lets the merge job stitch the
+  # partial reports back into one full-fidelity per-module report.
   plan:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -35,11 +52,12 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       empty: ${{ steps.plan.outputs.empty }}
     steps:
+      # Shallow is enough: the producer plans the full mutate scope from the
+      # config globs and reads no git history. (The differential planning path
+      # that needed `fetch-depth: 0` went with the push trigger.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-          # Full history so the push differential can diff github.event.before.
-          fetch-depth: 0
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
@@ -51,30 +69,84 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_PACKAGE: ${{ github.event.inputs.package }}
-          PUSH_BASE: ${{ github.event.before }}
-          # Source-line budget per shard (a mutant-count proxy). Sized so every
-          # shard lands well under the 60-min hard cap at concurrency 4. Lower it
-          # to add shards if a shard ever times out.
-          MAX_SHARD_LINES: '6000'
+          # Source-line budget per shard, a mutant-count proxy measured at 0.46
+          # mutants per source line over the whole tree (0.39-0.60 per package).
+          #
+          # COARSE ON PURPOSE. The campaign is ~40,000 mutants / ~70 machine-hours
+          # and that total is FLAT in the shard budget — sharding only trades
+          # per-job setup overhead (2.3 h at 161 jobs vs 0.8 h at 60) for a
+          # shorter tail. Measured over a real campaign's per-shard rates:
+          #
+          #   budget | jobs | machine-h | core p50 | core max
+          #   ------ | ---- | --------- | -------- | --------
+          #      800 |  161 |      70.1 |   28 min |   66 min
+          #     1600 |   88 |      67.2 |   56 min |  104 min
+          #     2400 |   60 |      66.3 |   80 min |  179 min
+          #     4000 |   38 |      66.3 |  140 min |  259 min
+          #
+          # 800 was the previous setting and is the wrong direction: it buys a
+          # 66-min tail (which busts a 60-min cap anyway) for 161 jobs, and this
+          # is a Free personal account with a 20-CONCURRENT-JOB limit, so 161 jobs
+          # is 8+ waves that starve PR CI for hours. 2400 lands the tail at ~179
+          # min inside the 240-min job cap below, in 3 waves.
+          MAX_SHARD_LINES: '2400'
+          # A CEILING, not the plan. The 2400-line budget above plans 60 jobs
+          # today; this is the point at which the planner starts WIDENING that
+          # budget (and says so in the log) rather than dropping coverage.
+          #
+          # Deliberately 80, not 60. Setting the cap at the current plan size
+          # would bind on the very next core file added, and core grew 53% in five
+          # weeks (16,885 -> 22,702 mutants, 2026-06-29 to 2026-08-03) — so the
+          # widening loop would trip almost immediately and push the core tail
+          # from ~179 min toward the 225-min step cap, eroding the exact headroom
+          # this sizing exists to create. 80 preserves the 2400-line budget
+          # through several months of that growth at the cost of a 4th wave of the
+          # account's 20 concurrent job slots, and a 4th wave costs wall-clock on a
+          # manual run nobody is waiting on. Still far under GitHub's 256-job
+          # matrix hard limit, which is no longer the binding constraint.
+          MAX_SHARD_JOBS: '80'
         run: node scripts/mutation-shard-plan.mjs
 
-  # One job per shard. Hard-capped at 60 min; a shard that exceeds it is
-  # mis-sized (shrink MAX_SHARD_LINES), not legitimately slow. Shards never hold
-  # the dashboard key, so they cannot upload a partial, scoped report that would
-  # corrupt the baseline — only the merge job uploads.
+  # One job per shard. Shards never hold the dashboard key, so they cannot upload
+  # a partial, scoped report that would corrupt the baseline — only the merge job
+  # uploads.
+  #
+  # The two timeouts are deliberately UNEQUAL, and that is the fix for the
+  # producer's oldest failure mode. They used to both be 60: the job clock starts
+  # ~3 min before the Stryker step, so the JOB timeout always fired first and
+  # CANCELLED the job. Stryker writes its JSON report only on completion, so the
+  # shard then vanished from the merged report with no evidence of why, and
+  # raising only the job cap would have changed nothing because the step cap fired
+  # at the same wall-clock. With the step capped strictly below the job, the step
+  # FAILS (absorbed by continue-on-error) while the job is still alive, and the
+  # status and upload steps below run normally.
   mutate:
     needs: plan
     if: ${{ needs.plan.outputs.empty != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 240 of GitHub's 360-minute per-job maximum. The 2400-line budget projects a
+    # ~179-min worst-case core shard against the slowest rate ever measured
+    # (5.55 mutants/min), so this is ~34% headroom over the projected tail rather
+    # than a round number.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     env:
-      # GitHub's linux runner is 4 vCPU / 16 GB; the config default is a
-      # conservative 2. Safe now that enableFindRelatedTests keeps each in-band
-      # child small and maxTestRunnerReuse recycles it. See issue #485.
-      STRYKER_CONCURRENCY: '4'
+      # Size-aware, decided per shard by the planner: 4 for a shard of
+      # ordinary-sized files, 2 for a shard mutating a file above
+      # LARGE_SOURCE_FILE_LINES, whose instrumented module graph every worker
+      # holds (a ~3600-line file measured 3-4 GB per worker). This mirrors the
+      # local policy in scripts/mutate-changed.mjs off the SAME threshold
+      # constant. An empty value falls back to the package default of 2.
+      STRYKER_CONCURRENCY: ${{ matrix.concurrency }}
+      # A shard measures a FRACTION of a module, so no per-run score floor can be
+      # meaningful on it — `thresholds.break` would judge a partial scope. This is
+      # the same seam the PR gate and the local runner use. With it set, a
+      # non-zero Stryker exit means an EXECUTION failure, which is the only thing
+      # `continue-on-error` should have to absorb here. The aggregate floor lives
+      # on the merged report, in the merge job below.
+      STRYKER_SCOPED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -87,13 +159,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - name: Run mutation shard
-        # A low score makes Stryker exit non-zero on thresholds.break; that floor
-        # belongs on the merged aggregate, not a single shard, so a shard must
-        # not fail the job on score alone. A genuine crash produces no report and
-        # is caught by the merge job's per-module completeness check. The report
-        # uploads regardless via always() below.
+        id: shard
+        # A crash or a step timeout produces no report and is caught by the merge
+        # job's per-shard completeness check, which reads the status recorded
+        # below. The report uploads regardless via always().
         continue-on-error: true
-        timeout-minutes: 60
+        # Strictly below the job cap; see the mutate job comment above.
+        timeout-minutes: 225
         working-directory: ${{ matrix.dir }}
         # The dashboard key is deliberately absent here: shards never upload.
         # ignoreStatic is left unset so static mutants are scored at full fidelity.
@@ -101,7 +173,31 @@ jobs:
         # file path with shell metacharacters can't inject into the command.
         env:
           MUTATE: ${{ matrix.mutate }}
-        run: pnpm exec stryker run --mutate "$MUTATE"
+          SHARD_LOG: ${{ runner.temp }}/shard.log
+        # `tee` under pipefail so the step still reports Stryker's exit status
+        # while the log survives for the status step below. The log is the only
+        # place a killed shard's measured progress can be recovered from.
+        run: |
+          set -o pipefail
+          pnpm exec stryker run --mutate "$MUTATE" 2>&1 | tee "$SHARD_LOG"
+
+      # Runs on EVERY exit path, including a cancelled job, so an unmeasured
+      # shard is reported as such instead of silently missing from the merge.
+      - name: Record shard status
+        if: ${{ always() }}
+        env:
+          MODULE: ${{ matrix.module }}
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ matrix.shardCount }}
+          CONCURRENCY: ${{ matrix.concurrency }}
+          MUTATE: ${{ matrix.mutate }}
+          OUTCOME: ${{ steps.shard.outcome }}
+          SHARD_LOG: ${{ runner.temp }}/shard.log
+          REPORT: ${{ matrix.dir }}/reports/mutation/mutation-report.json
+          STATUS_FILE: ${{ runner.temp }}/shard-status.json
+        run: node scripts/mutation-shard-status.mjs
+
       - name: Upload shard report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -111,16 +207,28 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-  # Stitch every shard's partial report into one full per-module report, apply
-  # the aggregate break floor, and (only on the weekly schedule, on main) upload
-  # the complete baseline to the dashboard. A push is differential, so its merge
-  # is partial by construction and never uploads; a dispatch may run off a
-  # feature branch and never uploads.
+      # Deliberately NOT named `mutation-report-*`: the merge job globs that
+      # pattern for reports, and a status matching it would be counted as one.
+      - name: Upload shard status
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: mutation-status-${{ matrix.module }}-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-status.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  # Stitch every shard's partial report into one full per-module report, apply the
+  # aggregate break floor, and — only from `main` — upload the complete baseline
+  # to the dashboard. A dispatch off a feature branch is advisory: it merges and
+  # reports, but never publishes.
   merge:
     needs: [plan, mutate]
     if: ${{ always() && needs.plan.outputs.empty != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Two artifacts per shard; the download dominates this job rather than the
+    # merge itself.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -136,18 +244,43 @@ jobs:
         with:
           path: shard-reports
           pattern: mutation-report-*
+      # A status exists for every shard, including the ones that produced no
+      # report — that is what turns "absent" into a named, explained shard in the
+      # job summary. Non-fatal: statuses are diagnostics, never the verdict.
+      - name: Download shard statuses
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        continue-on-error: true
+        with:
+          path: shard-status
+          pattern: mutation-status-*
       - name: Merge reports, enforce floor, upload baseline
         env:
           DOWNLOAD_DIR: shard-reports
+          STATUS_DIR: shard-status
           MATRIX: ${{ needs.plan.outputs.matrix }}
           VERSION: main
-          # Upload ONLY on the weekly schedule on main: that is the only run that
-          # shards the FULL scope, so its merge is a complete report safe to
-          # (re)seed the baseline. Gating the key (not just a flag) means a
-          # dispatch/push physically cannot push to the dashboard.
-          UPLOAD: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'schedule') && 'true' || 'false' }}
-          DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'schedule') && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
-          # Enforce the aggregate break floor on the producer run; advisory on
-          # dispatch/push (report the score without failing).
-          APPLY_BREAK: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+          # Upload ONLY from main. The producer shards the FULL scope for every
+          # package it runs, and the dashboard is keyed PER MODULE, so a
+          # `package: core` dispatch publishes a complete `core` report and
+          # touches nothing else. The event check is redundant today (dispatch is
+          # the only trigger) and kept deliberately: it fails safe if an automatic
+          # trigger is ever re-added, which is exactly how the deleted push
+          # trigger was prevented from corrupting the baseline. Gating the KEY
+          # (not just a flag) means a feature-branch dispatch physically cannot
+          # push to the dashboard.
+          UPLOAD: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') && 'true' || 'false' }}
+          DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
+          # Enforce the aggregate floor on the same runs that publish; a
+          # feature-branch dispatch reports its score without failing. The floor
+          # is applied AFTER the upload in the merge script, so a breach reports
+          # the number loudly without withholding the baseline that produced it.
+          APPLY_BREAK: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') && 'true' || 'false' }}
+          # 60, not 70. The only two modules that have ever completed a campaign
+          # scored 66.17% (plugin) and 64.51% (cli), so the old 70 failed a
+          # flawless run by construction. `core` and `parser` have never produced
+          # a complete score at all — seeding those is what this workflow is FOR —
+          # so 60 is the floor that is demonstrably below every measurement that
+          # exists, not a quality target. Raise it from the baseline this run
+          # publishes.
+          BREAK: '60'
         run: node scripts/mutation-merge-reports.mjs
