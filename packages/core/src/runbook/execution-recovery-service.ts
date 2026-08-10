@@ -135,7 +135,7 @@ export class ExecutionRecoveryService {
         message: `Recovery epoch ${String(expectedEpoch)} for run ${runId} was superseded by epoch ${String(pending.epoch)}.`,
       };
     }
-    const reason = validateReason(pending.reason);
+    const reason = validateReason(pending.reason, runId);
 
     // Rehydrate, send ONLY the pure recovery event, capture the new snapshot.
     let actor: RecoveryActor | undefined;
@@ -149,6 +149,13 @@ export class ExecutionRecoveryService {
         interruptedStepId: state.step,
       });
       if (!actor.isInRecoveryState()) {
+        // Carries NO structured defect, deliberately. The `catch` below
+        // converts every `InvalidRunbookStateError` raised inside this `try`
+        // into a `recovery_required` outcome, so this one never escapes to the
+        // CLI wrapper and could never reach an RD-309 envelope. A defect here
+        // would be dead data claiming to be a diagnosis. `validateReason` above
+        // is called OUTSIDE this `try` and does propagate, which is why it
+        // carries one.
         throw new InvalidRunbookStateError(
           `Recovery for run ${runId} did not enter the machine recovery state.`,
         );
@@ -186,11 +193,13 @@ export class ExecutionRecoveryService {
  * public contract.
  *
  * @param value - Persisted reason, or null.
+ * @param runId - Run the reason was read from, carried into the refusal's
+ *   structured defect so RD-309 names it without prose parsing.
  * @returns A recognized recovery reason.
  * @throws {InvalidRunbookStateError} When a non-null value is unrecognized.
  * @internal
  */
-export function validateReason(value: string | null): ExecutionRecoveryReason {
+export function validateReason(value: string | null, runId: RunId): ExecutionRecoveryReason {
   if (value === null) {
     return DEFAULT_REASON;
   }
@@ -200,6 +209,7 @@ export function validateReason(value: string | null): ExecutionRecoveryReason {
   throw new InvalidRunbookStateError(
     `Unrecognized persisted recovery reason ${JSON.stringify(value)}. This run's state is stale ` +
       'or corrupt and cannot be recovered; stop, prune, or restart it.',
+    { runId, reason: 'unrecognized_recovery_reason' },
   );
 }
 

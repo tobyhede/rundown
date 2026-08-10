@@ -26,7 +26,7 @@ import {
 import type { ClaimLookupKey, ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
-import { getErrorMessage, isError, isNodeError } from '../errors.js';
+import { getErrorMessage, isError, isNodeError, type InvalidRunStateDefect } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
@@ -131,13 +131,24 @@ function assertTrustedResolvedCompletions(
  */
 export class LegacySnapshotError extends Error {
   /**
+   * Structured facts about the refusal, lifted from the throw site.
+   *
+   * Surfaces as RD-309's `context` so a consumer never has to parse the run id
+   * out of `message`. `undefined` only where a construction site supplies none
+   * — every production throw site does.
+   */
+  readonly defect: InvalidRunStateDefect | undefined;
+
+  /**
    * Create a new LegacySnapshotError.
    *
    * @param message - Human-readable description of the rejected legacy shape
+   * @param defect - Structured facts about the refused run
    */
-  constructor(message: string) {
+  constructor(message: string, defect?: InvalidRunStateDefect) {
     super(message);
     this.name = 'LegacySnapshotError';
+    this.defect = defect;
   }
 }
 
@@ -146,13 +157,24 @@ export class LegacySnapshotError extends Error {
  */
 export class InvalidRunbookStateError extends Error {
   /**
+   * Structured facts about the refusal, lifted from the throw site.
+   *
+   * Surfaces as RD-309's `context` so a consumer never has to parse the run id
+   * out of `message`. `undefined` only where a construction site supplies none
+   * — every production throw site does.
+   */
+  readonly defect: InvalidRunStateDefect | undefined;
+
+  /**
    * Create a new InvalidRunbookStateError.
    *
    * @param message - Human-readable description of why the state is invalid
+   * @param defect - Structured facts about the refused run
    */
-  constructor(message: string) {
+  constructor(message: string, defect?: InvalidRunStateDefect) {
     super(message);
     this.name = 'InvalidRunbookStateError';
+    this.defect = defect;
   }
 }
 
@@ -317,6 +339,11 @@ export function applyRunbookStateUpdate(
   if (existing.schemaVersion !== CURRENT_SCHEMA_VERSION) {
     throw new InvalidRunbookStateError(
       `Invalid runbook state for "${existing.id}": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
+      {
+        runId: existing.id,
+        reason: 'invalid_schema_version',
+        schemaVersion: existing.schemaVersion,
+      },
     );
   }
   // Pull tagged-op fields out of updates so the subsequent `...updates` spread
@@ -589,6 +616,7 @@ export class RunbookStateManager {
       if (isError(error) && error.name === 'SyntaxError') {
         throw new InvalidRunbookStateError(
           `Invalid runbook state for "${id}": persisted state is not valid JSON.`,
+          { runId, reason: 'unparseable_json' },
         );
       }
       throw error;
@@ -608,18 +636,23 @@ export class RunbookStateManager {
       throw new LegacySnapshotError(
         'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
           'Please restart execution from the runbook entrypoint.',
+        { runId, reason: 'legacy_dynamic_step_snapshot' },
       );
     }
     if (obj.instance !== undefined) {
       throw new LegacySnapshotError(
         'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
           'Please restart execution from the runbook entrypoint.',
+        { runId, reason: 'legacy_dynamic_step_snapshot' },
       );
     }
 
     if (obj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 1.`,
+        // The found version rides in `schemaVersion` and nowhere else: the
+        // message never states it, so a consumer could not recover it at all.
+        { runId, reason: 'invalid_schema_version', schemaVersion: obj.schemaVersion },
       );
     }
 
@@ -632,6 +665,7 @@ export class RunbookStateManager {
       throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": missing templateVars. ` +
           `Prune this run and re-run the runbook.`,
+        { runId, reason: 'missing_template_vars' },
       );
     }
 
@@ -639,6 +673,7 @@ export class RunbookStateManager {
     if (!result.success) {
       throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": schema validation failed.`,
+        { runId, reason: 'schema_validation_failed' },
       );
     }
     // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.

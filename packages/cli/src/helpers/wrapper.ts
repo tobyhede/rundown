@@ -125,8 +125,13 @@ function toRundownError(error: unknown): RundownError {
   // database (`PRAGMA user_version`) and RD-309 is one row inside it. The
   // classes are disjoint so order is not load-bearing for correctness, but the
   // narrower diagnosis must never be able to shadow the broader one.
+  //
+  // The `defect` both classes carry is forwarded so RD-309's envelope names the
+  // run in FIELDS, not only in prose. Every production throw site supplies one;
+  // the parameter is optional, so a site that does not degrades to the
+  // prose-only envelope rather than losing the error.
   if (error instanceof InvalidRunbookStateError || error instanceof LegacySnapshotError) {
-    return Errors.invalidPersistedRunState(error.message);
+    return Errors.invalidPersistedRunState(error.message, error.defect);
   }
 
   // Generic error - wrap it

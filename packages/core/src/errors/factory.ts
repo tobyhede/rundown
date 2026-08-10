@@ -1,5 +1,5 @@
 import { truncateDelegationToken } from '../runbook/delegation-token.js';
-import { RundownError } from './rundown-error.js';
+import { RundownError, type InvalidRunStateDefect } from './rundown-error.js';
 
 /**
  * Factory functions for creating typed errors.
@@ -117,10 +117,33 @@ export const Errors = {
   // `prune.ts` only through the invalid-id path gated on `--inactive` / `--all`.
   // The bare form therefore exits 0 having pruned nothing. `--inactive` also
   // discards other orphaned runs — see docs/reference/cli.md's RD-309 row.
-  invalidPersistedRunState: (detail: string): RundownError => {
+  //
+  // `defect` carries the same facts as FIELDS. RD-309 is the only 3xx state
+  // error scoped to a single run, and it was the only one whose `context` held
+  // nothing but `message` — its siblings already do better (RD-306
+  // `effectiveMode`, RD-307 `driverCode`, RD-308 `runId`), so a consumer
+  // wanting to know which run had to parse English out of `error`. The found
+  // schema version is not even in the prose. The values are threaded from the
+  // throw site rather than pattern-matched back out of `detail`, which is the
+  // shape this exists to remove.
+  //
+  // None of the defect keys is on `RundownError.formatMessage`'s render
+  // whitelist, so this is purely additive: the rendered message is byte-for-byte
+  // what it was before the defect existed (pinned in `factory.test.ts`).
+  invalidPersistedRunState: (detail: string, defect?: InvalidRunStateDefect): RundownError => {
     const cause = detail.trim();
     const terminated = cause.endsWith('.') ? cause : `${cause}.`;
     return new RundownError('INVALID_PERSISTED_RUN_STATE', {
+      ...(defect === undefined
+        ? {}
+        : {
+            runId: defect.runId,
+            reason: defect.reason,
+            // Omitted rather than emitted as `null` when the refusal is not a
+            // version mismatch: an absent key says "not applicable", where a
+            // null would claim the row asserts nothing.
+            ...(defect.schemaVersion === undefined ? {} : { schemaVersion: defect.schemaVersion }),
+          }),
       message:
         `${terminated} Rundown never migrates persisted state, so this run ` +
         `cannot be resumed: finish it with "rundown complete", stop it with ` +

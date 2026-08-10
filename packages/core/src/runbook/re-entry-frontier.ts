@@ -244,6 +244,7 @@ export function readPersistedReEntryFrontier(
   if (!Array.isArray(rawFrontier) || !rawFrontier.every(isPersistedDelegateFrontierEntry)) {
     throw new InvalidRunbookStateError(
       `Run ${state.id} carries a malformed delegateFrontier in its persisted snapshot`,
+      { runId: state.id, reason: 'malformed_delegate_frontier' },
     );
   }
   return rawFrontier;

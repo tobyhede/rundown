@@ -201,6 +201,47 @@ describe('Errors factory - exhaustive coverage', () => {
         const error = Errors.invalidPersistedRunState('  Something is wrong  ');
         expect(error.message).toContain('Something is wrong. Rundown never migrates');
       });
+
+      // RD-309 is the only 3xx STATE error scoped to a single run, and it was
+      // the only one whose JSON envelope carried `"context": {}` — a consumer
+      // wanting to know WHICH run had to parse English out of `error`. Its
+      // siblings already do better (RD-306 `effectiveMode`, RD-307
+      // `driverCode`, RD-308 `runId`).
+      it('lifts the defect facts into context', () => {
+        const error = Errors.invalidPersistedRunState(
+          'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 1.',
+          { runId: 'rd_abc', reason: 'invalid_schema_version', schemaVersion: 2 },
+        );
+
+        expect(error.context.runId).toBe('rd_abc');
+        expect(error.context.reason).toBe('invalid_schema_version');
+        expect(error.context.schemaVersion).toBe(2);
+      });
+
+      it('omits schemaVersion when the defect does not carry one', () => {
+        const error = Errors.invalidPersistedRunState(
+          'Invalid runbook state for "rd_abc": missing templateVars.',
+          { runId: 'rd_abc', reason: 'missing_template_vars' },
+        );
+
+        expect(error.context.runId).toBe('rd_abc');
+        expect(error.context.reason).toBe('missing_template_vars');
+        expect(error.context).not.toHaveProperty('schemaVersion');
+      });
+
+      // `formatMessage` renders a whitelist of context keys, and none of the
+      // defect fields is on it — so structured context must be additive. If
+      // this drifts, every RD-309 message gains duplicated facts.
+      it('renders the same message with and without a defect', () => {
+        const detail = 'Invalid runbook state for "rd_abc": schema validation failed.';
+
+        expect(
+          Errors.invalidPersistedRunState(detail, {
+            runId: 'rd_abc',
+            reason: 'schema_validation_failed',
+          }).message,
+        ).toBe(Errors.invalidPersistedRunState(detail).message);
+      });
     });
 
     // RD-306 is the one factory arm that BRANCHES, and the branch is the whole

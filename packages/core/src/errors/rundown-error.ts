@@ -33,6 +33,61 @@ export interface ErrorContext {
 }
 
 /**
+ * Why one run's persisted state was refused (RD-309).
+ *
+ * A closed union rather than free text: it is the machine-readable half of a
+ * refusal whose prose a consumer would otherwise have to pattern-match. Every
+ * member names exactly one refusal site in `RunbookStateManager.load`,
+ * `applyRunbookStateUpdate`, `readPersistedReEntryFrontier`, or
+ * `validateReason` — and only sites whose refusal can actually escape to the
+ * CLI wrapper. A throw that is caught and downgraded in the same call (the
+ * not-in-recovery-state check inside `ExecutionRecoveryService.recover`) has no
+ * member here, because a reason it could never surface would be dead data.
+ */
+export type InvalidRunStateReason =
+  /** `state_json` is not parseable JSON. */
+  | 'unparseable_json'
+  /** The row claims a `schemaVersion` other than the current one. */
+  | 'invalid_schema_version'
+  /** A current-schema row is missing the required `templateVars` field. */
+  | 'missing_template_vars'
+  /** The row parsed as JSON but failed the `RunbookState` schema. */
+  | 'schema_validation_failed'
+  /** The deprecated dynamic-step snapshot shape (`GOTO_NEXT` or `instance`). */
+  | 'legacy_dynamic_step_snapshot'
+  /** The persisted snapshot's `delegateFrontier` is not a valid entry array. */
+  | 'malformed_delegate_frontier'
+  /** A persisted `execution_attempts.reason` is not a recognized reason. */
+  | 'unrecognized_recovery_reason';
+
+/**
+ * Structured facts about one run's refused persisted state (RD-309).
+ *
+ * RD-309 is the only `3xx` STATE error scoped to a single run, so `runId` is
+ * the field a consumer needs and the one the prose used to hide: before this
+ * existed the error's `context` held nothing but `message`, which names the run
+ * only inside English text and does not carry the found schema version at all.
+ * These fields are lifted from the throw site and ride in
+ * {@link RundownError.context}, so nothing has to be parsed back out of the
+ * message.
+ */
+export interface InvalidRunStateDefect {
+  /** The run whose persisted state was refused. */
+  readonly runId: string;
+  /** Which refusal fired. */
+  readonly reason: InvalidRunStateReason;
+  /**
+   * The schema version the row claims, exactly as persisted.
+   *
+   * Deliberately `unknown` rather than `number`: the value comes from
+   * untrusted persisted JSON, and refusing to narrow it is the point — a row
+   * claiming `"2"` or `null` is exactly the case worth reporting. Present only
+   * for `invalid_schema_version`.
+   */
+  readonly schemaVersion?: unknown;
+}
+
+/**
  * Base error class for all Rundown errors with trackable codes.
  *
  * @example

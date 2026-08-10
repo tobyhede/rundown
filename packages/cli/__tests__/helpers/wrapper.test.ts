@@ -280,6 +280,45 @@ describe('withErrorHandling', () => {
       expect(parsed.code).not.toBe(Errors.unknown('x').code);
       expect(String(parsed.error)).toMatch(/dynamic-step snapshots/);
     });
+
+    // RD-309 used to emit `"context": {}`, alone among the 3xx state codes, so
+    // a consumer wanting to know WHICH run had to parse English out of `error`.
+    // The wrapper forwards the defect both classes carry.
+    it('forwards the structured defect into details.context', async () => {
+      await withErrorHandling(async () => {
+        throw new InvalidRunbookStateError(
+          'Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version 1.',
+          {
+            runId: 'rd_f6dbc58e5e08706a2aa8c7bec5ffd176',
+            reason: 'invalid_schema_version',
+            schemaVersion: 2,
+          },
+        );
+      });
+
+      const parsed = parseStdoutJson();
+      expect(parsed.details).toMatchObject({
+        context: {
+          runId: 'rd_f6dbc58e5e08706a2aa8c7bec5ffd176',
+          reason: 'invalid_schema_version',
+          // Not stated anywhere in the message prose — structured context is
+          // the only way a consumer can learn it.
+          schemaVersion: 2,
+        },
+      });
+      expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);
+    });
+
+    it('degrades to a prose-only envelope when a refusal carries no defect', async () => {
+      await withErrorHandling(async () => {
+        throw new LegacySnapshotError('This runbook used dynamic-step snapshots (GOTO_NEXT).');
+      });
+
+      const parsed = parseStdoutJson();
+      const details = parsed.details as { readonly context: Record<string, unknown> };
+      expect(details.context).not.toHaveProperty('runId');
+      expect(details.context).not.toHaveProperty('reason');
+    });
   });
 
   it('converts EACCES to fileNotReadable', async () => {

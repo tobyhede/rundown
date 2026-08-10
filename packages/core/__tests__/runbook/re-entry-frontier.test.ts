@@ -384,6 +384,22 @@ describe('readPersistedReEntryFrontier', () => {
     );
   });
 
+  // The refusal reaches an operator as RD-309, whose envelope must name the run
+  // in a field rather than only inside the message prose.
+  it('carries the run and reason in the refusal defect', () => {
+    const state = stateWithFrontier([{ id: '1.1' }]);
+
+    let defect: unknown;
+    try {
+      readPersistedReEntryFrontier(state);
+    } catch (error) {
+      if (!(error instanceof InvalidRunbookStateError)) throw error;
+      defect = error.defect;
+    }
+
+    expect(defect).toEqual({ runId: state.id, reason: 'malformed_delegate_frontier' });
+  });
+
   it('rejects the whole frontier when only its last entry is malformed', () => {
     // Pins `.every` rather than `.some`/`.find`: one bad entry among good ones
     // must still refuse, or a corrupt blob would be partially trusted.
