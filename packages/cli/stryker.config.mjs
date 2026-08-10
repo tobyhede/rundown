@@ -56,14 +56,17 @@ const config = {
   // Naming the plugin makes Stryker resolve it from this package's node_modules.
   plugins: ['@stryker-mutator/jest-runner'],
   testRunner: 'jest',
-  // enableFindRelatedTests scopes each mutant run to only the test files that
+  // `true` is the @stryker-mutator/jest-runner 9.6.1 DEFAULT
+  // (dist/schema/jest-runner-options.json declares `"default": true`), stated
+  // explicitly here so it cannot be re-broken silently. Read the history
+  // accordingly: this config had OVERRIDDEN it to `false`, and e0bef7949 removed
+  // that override — recovering from a self-inflicted non-default, not tuning.
+  //
+  // What the option does: it scopes each mutant run to only the test files that
   // *transitively import* the mutated source (jest's inverse module graph),
-  // instead of reloading the entire suite for every mutant. With it `false`,
-  // each mutant reloaded the whole CLI test suite (filtered only by test-name
-  // pattern), which OOM'd the in-band runner and floored throughput; with it
-  // `true` the per-mutant cost and per-run heap drop enough for a full campaign
-  // to finish. This is the single change that lets a full core/cli campaign
-  // finish.
+  // instead of reloading the entire suite for every mutant. Under the `false`
+  // override each mutant reloaded the whole CLI test suite (filtered only by
+  // test-name pattern), which OOM'd the in-band runner and floored throughput.
   //
   // Tradeoff: a mutant whose ONLY killing test reaches the code with no static
   // import path — a subprocess that spawns the CLI, a dynamic `import()`, or a
@@ -91,16 +94,33 @@ const config = {
     // JSON/text output renderers — presentation, low correctness stakes.
     '!src/services/renderers/**',
   ],
+  // The @stryker-mutator/api 9.6.1 DEFAULT, stated explicitly: its
+  // dist/schema/stryker-core.json declares `"default": "perTest"` for this
+  // option and Stryker's OptionsValidator compiles that schema with ajv
+  // `useDefaults: true`. Setting it is a harmless no-op — do not read it as a
+  // tuning decision. (The schema's own prose still reads "'off' (default)"; the
+  // machine-readable `default` is what Stryker actually applies.)
   coverageAnalysis: 'perTest',
   incremental: true,
   incrementalFile: 'reports/stryker-incremental.json',
-  // break: 70 is a catastrophic-drop floor on the project-wide aggregate, not
-  // a quality target. It applies to every `stryker run` (the weekly full run
-  // and the per-PR run), failing loudly instead of silently uploading a red
-  // report. The aggregate cannot catch a single-file regression it absorbs --
-  // the per-PR changed-file gate (scripts/assert-mutation-score.mjs) is that
-  // guard. See issue #483.
-  thresholds: { high: 80, low: 60, break: scoped ? null : 70 },
+  // A catastrophic-drop floor, not a quality target — and 60, not the 70 it used
+  // to be. 70 sat ABOVE every score a module has ever achieved on a campaign that
+  // completed (plugin 66.17%, cli 64.51%), so a flawless full run exited 1 by
+  // construction: a gate that can only fire is not a gate. 60 is below every
+  // measurement that exists. `core` and `parser` have never completed a campaign
+  // at all, so re-derive this from the first baseline the producer publishes
+  // rather than from an aspiration. See issues #483 and #670.
+  //
+  // A SCOPED run disables it outright, because a scoped run measures a FRACTION
+  // of a module and a fraction's score is not the module's: the per-PR gate is
+  // changed-file scoped, the producer's shards are line-range scoped
+  // (.github/workflows/mutation.yml sets STRYKER_SCOPED for exactly this reason),
+  // and `test:mutate:changed` is hunk scoped. The producer's aggregate floor
+  // therefore lives on the MERGED report, in scripts/mutation-merge-reports.mjs,
+  // which is the only place a complete module score exists. A single-file
+  // regression that an aggregate absorbs is caught by the per-PR changed-file
+  // gate (scripts/assert-mutation-score.mjs).
+  thresholds: { high: 80, low: 60, break: scoped ? null : 60 },
   reporters,
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },

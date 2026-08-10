@@ -28,12 +28,12 @@ fixers.
 
 ### Tests & coverage
 
-| Tool                                    | Role                                             |
-| --------------------------------------- | ------------------------------------------------ |
-| Jest                                    | Unit, integration, property tests (per-package). |
-| [Stryker](https://stryker-mutator.io) 9 | Mutation testing per package, scheduled weekly.  |
-| [Playwright](https://playwright.dev)    | Browser tests for the marketing site.            |
-| Codecov                                 | Coverage upload (LCOV from each package).        |
+| Tool                                    | Role                                                                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Jest                                    | Unit, integration, property tests (per-package).                                                         |
+| [Stryker](https://stryker-mutator.io) 9 | Mutation testing: advisory per-PR gate on changed files; full-fidelity producer on manual dispatch only. |
+| [Playwright](https://playwright.dev)    | Browser tests for the marketing site.                                                                    |
+| Codecov                                 | Coverage upload (LCOV from each package).                                                                |
 
 ### Security
 
@@ -143,9 +143,15 @@ is a dated `[[IgnoredVulns]]` entry in `.osv-scanner.toml`, not
 
 ### `mutation.yml` — mutation tests
 
-Triggers: manual + weekly `0 6 * * 1`. Matrix per package, 60-min timeout.
-Caches Stryker incremental file (`reports/stryker-incremental.json`) keyed by
-SHA with `restore-keys` fallback. Reports retained 30 days.
+Trigger: `workflow_dispatch` only — no push trigger, no cron (both deleted under
+issue #670; see
+[internal/mutation-testing-ci.md](internal/mutation-testing-ci.md)). A **plan →
+mutate → merge** pipeline: the plan job shards every selected package's full
+mutate scope at 2400 source lines per shard (~60 jobs), each shard job caps at
+240 min with its Stryker step at 225, and the merge job stitches the shard
+reports into one complete per-module report — publishing it to the Stryker
+dashboard only from `main`. The day-to-day mutation signal is `mutation-pr.yml`,
+not this workflow.
 
 For local CLI mutation setup debugging, run `pnpm run test:mutate:cli:dry`
 before the full CLI mutation suite. The CLI and core packages each generate both
@@ -186,8 +192,11 @@ Packages" PR or publishes with `--provenance`. Permissions: `contents:write`,
 6. **Concurrency cancellation.**
    `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }` —
    supersedes in-flight CI on new pushes.
-7. **Scheduled security/quality.** CodeQL weekly, OSV-Scanner daily, Stryker
-   weekly — heavy stuff off the PR critical path.
+7. **Scheduled security/quality.** CodeQL weekly, OSV-Scanner daily — heavy
+   stuff off the PR critical path. Stryker's full campaign is deliberately NOT
+   scheduled: at ~70 machine-hours against a 20-job concurrency limit, a cron
+   that had never once produced a `core` report was pure cost, so the baseline
+   is seeded by manual dispatch instead.
 8. **`verify` script as ground truth.** The PR-gate sequence runs identically
    locally and in CI.
 9. **Pre-commit only does what's cheap.** lint-staged runs Biome (fast).

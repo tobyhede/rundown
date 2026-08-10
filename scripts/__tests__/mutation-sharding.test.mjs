@@ -136,11 +136,13 @@ test('plan: every producer shard carries a size-aware Stryker concurrency', () =
   );
 });
 
-// GitHub hard-fails a workflow run whose matrix exceeds 256 jobs, so an
-// unbounded budget turns package growth into a producer that cannot start.
+// The cap bounds how many concurrent WAVES the producer occupies (a Free account
+// allows 20 concurrent jobs), so package growth has to cost a longer tail rather
+// than a wider fan-out. It sits well under GitHub's 256-job matrix hard limit,
+// which is no longer the binding constraint.
 test('plan: the producer matrix never exceeds MAX_SHARD_JOBS', () => {
   const { include } = plan({
-    EVENT_NAME: 'schedule',
+    EVENT_NAME: 'workflow_dispatch',
     MAX_SHARD_LINES: '800',
     MAX_SHARD_JOBS: '40',
   });
@@ -148,6 +150,41 @@ test('plan: the producer matrix never exceeds MAX_SHARD_JOBS', () => {
   assert.ok(include.length <= 40, `planned ${include.length} shards over the cap`);
   const all = include.flatMap((e) => e.mutate.split(','));
   assert.equal(new Set(all).size, all.length, 'widening the budget must not duplicate scopes');
+});
+
+// The producer used to plan DIFFERENTIALLY on push: it diffed PUSH_BASE..HEAD and
+// sharded only the changed source. That path was deleted with the push trigger
+// (issue #670) — a differential plan is partial by construction, so the merge
+// could never upload it, and it re-measured the diff the per-PR gate had already
+// scored. PUSH_BASE=HEAD is the sharpest probe available: under the old planner
+// it diffed HEAD against HEAD and planned NOTHING, so a surviving differential
+// branch shows up here as an empty (always-green) matrix.
+test('plan: the producer has no differential mode — a non-PR event plans the full scope', () => {
+  const dispatch = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'all' });
+  const withDiffBase = plan({ EVENT_NAME: 'push', PUSH_BASE: 'HEAD' });
+  assert.ok(dispatch.include.length > 0, 'a full-scope plan must not be empty');
+  assert.deepEqual(
+    withDiffBase,
+    dispatch,
+    'a diff base must not narrow the producer scope; the differential path is gone',
+  );
+});
+
+// The budget is deliberately COARSE. Total campaign work (~40k mutants, ~70
+// machine-hours) is FLAT in the shard budget — sharding only trades per-job setup
+// overhead for a shorter tail — and this repository runs on an account with 20
+// concurrent job slots, so a fine budget buys nothing but extra waves that starve
+// PR CI. The defaults must therefore stay inside a handful of waves without any
+// env override.
+test('plan: the default budget fans the producer out over few concurrency waves', () => {
+  const { include } = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'all' });
+  assert.ok(include.length > 0, 'the default plan must plan shards');
+  assert.ok(
+    include.length <= 60,
+    `the default plan is ${include.length} jobs; over 3 waves of 20 concurrent slots`,
+  );
+  const all = include.flatMap((e) => e.mutate.split(','));
+  assert.equal(new Set(all).size, all.length, 'default shards must mutate disjoint scopes');
 });
 
 // The pull_request planner is a different shape from the producer's: one shard

@@ -215,8 +215,45 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, shards score 
     /STRYKER_IGNORE_STATIC:/,
     'producer must score static mutants (no ignoreStatic env assignment)',
   );
-  assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main');
   assert.doesNotMatch(yml, /--allowEmpty/);
+});
+
+// The producer is DISPATCH-ONLY (issue #670). Both automatic triggers were
+// deleted because they cost machine-hours and produced nothing:
+//   - `push: branches: [main]` planned differentially, so its merge was partial
+//     by construction and the upload gate could never publish it; it re-measured
+//     the diff mutation-pr.yml had already scored. 98 runs, ~84 machine-hours,
+//     28 cancelled at exactly 61 minutes.
+//   - the weekly cron produced ZERO core and ZERO parser shard reports across
+//     five campaigns; core/cli/parser still 404 on the dashboard.
+// Anchored on the `on:` block alone, so the word "push"/"schedule" appearing in
+// a comment or a step cannot satisfy or defeat it.
+test('mutation.yml runs only on workflow_dispatch — no push, no cron', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  const on = /\non:\n([\s\S]*?)\n\w/.exec(yml)?.[1];
+  assert.ok(on, 'mutation.yml must declare an `on:` block');
+  assert.match(on, /^\s{2}workflow_dispatch:/m, 'an operator must still be able to run it');
+  assert.doesNotMatch(
+    on,
+    /^\s{2}push:/m,
+    'a push producer run can never upload (its plan is partial) and duplicates the PR gate',
+  );
+  assert.doesNotMatch(
+    on,
+    /^\s{2}schedule:/m,
+    'the weekly cron never once produced a core or parser report; the baseline is dispatch-seeded',
+  );
+});
+
+// A shard measures a fraction of a module, so `thresholds.break` on a shard
+// judges a partial score. STRYKER_SCOPED is the existing seam that nulls it (the
+// PR gate and scripts/mutate-changed.mjs both use it), which leaves a non-zero
+// Stryker exit meaning an execution failure rather than a low partial score.
+test('mutation.yml runs shards scoped, so no shard is failed by a partial score', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  const mutateJob = yml.match(/\n {2}mutate:\n([\s\S]*?)\n {2}merge:/)?.[1];
+  assert.ok(mutateJob, 'mutate job must precede merge job');
+  assert.match(mutateJob, /STRYKER_SCOPED:\s*'true'/);
 });
 
 test('mutation.yml shards the campaign across a plan/mutate/merge pipeline', async () => {
@@ -267,6 +304,20 @@ test('mutation.yml caps the shard step strictly below the job, so a slow shard f
     `shard step timeout ${stepTimeout} must be below the job timeout ${jobTimeout}, ` +
       'or the job is cancelled before the step can fail and record a status',
   );
+  // GitHub's hard per-job maximum. A larger value is not rejected at parse time;
+  // the job is simply killed at 360 anyway, which reintroduces the cancellation
+  // this whole inequality exists to avoid.
+  assert.ok(
+    jobTimeout <= 360,
+    `mutate job timeout ${jobTimeout} exceeds GitHub's 360-minute per-job maximum`,
+  );
+  // The 2400-line budget projects a ~179-min worst-case core shard against the
+  // slowest rate ever measured (5.55 mutants/min). A step cap under that would
+  // kill the tail the coarser budget was chosen to accommodate.
+  assert.ok(
+    stepTimeout >= 180,
+    `shard step timeout ${stepTimeout} is below the ~179-min projected worst-case shard`,
+  );
 });
 
 // Issue #670 item 3. Stryker writes no report when it is killed, so absence is
@@ -303,7 +354,7 @@ test('mutation.yml records and ships a status for every shard, measured or not',
   assert.match(yml, /STATUS_DIR:\s*shard-status/, 'the merger needs the status directory');
 });
 
-test('mutation.yml shards never upload; only the schedule merge seeds the baseline', async () => {
+test('mutation.yml shards never upload; only a merge on main seeds the baseline', async () => {
   const yml = await read('.github/workflows/mutation.yml');
   // The shard (mutate) job must not carry the dashboard key — a scoped shard
   // report would overwrite the baseline with a partial one.
@@ -314,15 +365,32 @@ test('mutation.yml shards never upload; only the schedule merge seeds the baseli
     /STRYKER_DASHBOARD_API_KEY|DASHBOARD_API_KEY/,
     'shards must not reference the dashboard key (they must not upload)',
   );
-  // Only the weekly schedule on main produces a complete report, so the merge
-  // gates both the upload flag and the key itself on refs/heads/main AND
-  // schedule. Gating the key (not just a flag) means a dispatch/push physically
-  // cannot push to the dashboard.
+  // The producer shards the FULL scope, so its merge is a complete per-module
+  // report — but only from main. Gating the KEY (not just a flag) means a
+  // feature-branch dispatch physically cannot push to the dashboard. The
+  // event_name half is redundant while dispatch is the only trigger and is kept
+  // so re-adding an automatic trigger cannot silently re-open the upload path.
   assert.match(
     yml,
-    /DASHBOARD_API_KEY:\s*\$\{\{\s*\(github\.ref == 'refs\/heads\/main' && github\.event_name == 'schedule'\) && secrets\.STRYKER_DASHBOARD_API_KEY/,
-    'merge must gate the upload key on refs/heads/main AND schedule',
+    /DASHBOARD_API_KEY:\s*\$\{\{\s*\(github\.ref == 'refs\/heads\/main' && github\.event_name == 'workflow_dispatch'\) && secrets\.STRYKER_DASHBOARD_API_KEY/,
+    'merge must gate the upload key on refs/heads/main AND the dispatch event',
   );
+});
+
+// REGRESSION (#670): `thresholds.break: 70` was above every score a module has
+// ever achieved on a completed campaign (plugin 66.17%, cli 64.51%), so the
+// producer exited 1 even when it did everything right. The merged aggregate is
+// the only complete module score in the system, so it is the only place the
+// floor belongs — and it must sit below the measurements that exist.
+test('mutation.yml applies an aggregate floor below every measured module score', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  const floor = Number(/^\s*BREAK:\s*'(\d+)'/m.exec(yml)?.[1]);
+  assert.ok(Number.isInteger(floor), 'the merge must pin an explicit aggregate break floor');
+  assert.ok(
+    floor < 64.51,
+    `aggregate floor ${floor} is at or above cli's measured 64.51%, so a flawless campaign fails`,
+  );
+  assert.ok(floor > 0, 'a floor of 0 is not a floor');
 });
 
 void repoRoot;

@@ -733,13 +733,16 @@ export function chunkFileEntry(file, lines, budget, { overlap = CHUNK_OVERLAP_LI
  *   the budget.
  *
  * Line count is a proxy for mutant count, and a good one: measured across a full
- * campaign it holds at 0.39-0.60 mutants per source line for every package. It
- * is NOT a proxy for wall time, which is dominated by how many test files
- * transitively import the mutated module — that varied 12x across one campaign's
- * core shards (5.6 to 71 mutants/min) and cannot be predicted statically. The
- * budget is therefore calibrated against the SLOWEST observed rate, and a shard
- * that still exceeds its job timeout is reported by name (see
- * scripts/mutation-merge-reports.mjs) rather than vanishing from the report.
+ * campaign it holds at **0.46 mutants per source line** overall (0.39-0.60 per
+ * package). It is NOT a proxy for wall time, which is dominated by how many test
+ * files transitively import the mutated module: measured throughput spans 5.55
+ * to 78 mutants/min, and two core shards of essentially IDENTICAL size ran 4.9x
+ * apart (shard 4/9, 5860 lines, 27.20/min; shard 8/9, 5855 lines, 5.55/min).
+ * Line count cannot predict that and no budget can fix it — the budget only sets
+ * how long the tail is, and a shard that still exceeds its job timeout is
+ * reported by name (see scripts/mutation-merge-reports.mjs) rather than
+ * vanishing from the report. Weighting shards by `lines x relatedTestCount`
+ * instead is the tracked follow-up.
  *
  * @param {Array<{file: string, lines: number}>} files - eligible files with sizes.
  * @param {object} options - partitioning options.
