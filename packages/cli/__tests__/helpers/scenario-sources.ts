@@ -15,8 +15,8 @@
  * @module __tests__/helpers/scenario-sources
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, parse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isNodeErrorCode } from '@rundown-org/core';
 import { extractFrontmatter } from '@rundown-org/parser';
@@ -25,8 +25,36 @@ import { parseScenarios, type Scenarios } from '../../src/schemas/scenarios.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/** Repository root, derived from this file's location (packages/cli/__tests__/helpers). */
-export const REPO_ROOT: string = join(__dirname, '..', '..', '..', '..');
+/**
+ * Locate the repository root by searching upward for the workspace marker.
+ *
+ * Searched, never traversed. A fixed `../../../../` count off this file's
+ * location is correct in the normal tree but lands on `packages/cli` inside
+ * Stryker's sandbox, which copies only the package directory into
+ * `.stryker-tmp/sandbox-*` and so adds two path segments. That miss is worse
+ * than a crash: `packages/cli` EXISTS, so the walks below would silently scan
+ * the wrong tree and report a vacuous pass. Walking up for `pnpm-workspace.yaml`
+ * reaches the same real root from either location, the way Node's `node_modules`
+ * walk does for a dependency.
+ *
+ * @param from - Directory to start the upward search from
+ * @returns Absolute path of the directory holding `pnpm-workspace.yaml`
+ * @throws {Error} When no ancestor directory holds the workspace marker
+ */
+function findRepoRoot(from: string): string {
+  let dir = from;
+  for (;;) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir || dir === parse(dir).root) {
+      throw new Error(`no pnpm-workspace.yaml above ${from}: cannot locate the repository root`);
+    }
+    dir = parent;
+  }
+}
+
+/** Repository root, located by searching upward from this file for the workspace marker. */
+export const REPO_ROOT: string = findRepoRoot(__dirname);
 
 /** The repository's runbook tree — the sole source of frontmatter scenarios. */
 export const RUNBOOKS_DIR: string = join(REPO_ROOT, 'runbooks');

@@ -24,12 +24,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getCliPath } from './helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pluginDir = resolve(__dirname, '..');
-const repoRoot = resolve(pluginDir, '..', '..');
-const cliPath = join(repoRoot, 'packages', 'cli', 'dist', 'cli.js');
+const cliPath = getCliPath();
 const rdpathDist = join(pluginDir, 'dist', 'rdpath.js');
 const rdxDist = join(pluginDir, 'dist', 'rdx.js');
 

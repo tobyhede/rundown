@@ -6,6 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { assertRunId, RunbookStateManager, SessionService } from '@rundown-org/core';
 import type { RunId } from '@rundown-org/core';
@@ -29,10 +30,18 @@ export interface CliResult {
 /**
  * Get the absolute path to the rundown CLI entry point.
  *
+ * Resolved, never traversed. `../../../cli/dist/cli.js` is correct in the normal
+ * tree but lands on `packages/claude-code-plugin/.stryker-tmp/cli/dist/cli.js`
+ * inside Stryker's sandbox (the copy adds two path segments), so every spawned
+ * CLI died and aborted the plugin mutation run at the dry run. `@rundown-org/cli`
+ * is a declared dependency whose `main` is `dist/cli.js`, and Node's resolver
+ * walks `node_modules` up the directory chain — which reaches the workspace link
+ * from either location.
+ *
  * @returns Absolute path to the CLI entry point
  */
 export function getCliPath(): string {
-  return path.join(__dirname, '..', '..', '..', 'cli', 'dist', 'cli.js');
+  return createRequire(import.meta.url).resolve('@rundown-org/cli');
 }
 
 /**

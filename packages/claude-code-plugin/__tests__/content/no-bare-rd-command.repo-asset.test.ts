@@ -1,3 +1,14 @@
+/**
+ * `*.repo-asset.test.ts`: this suite scans `docs/implement/claude-code-plugin`
+ * at the REPOSITORY root, which Stryker's sandbox does not contain (only
+ * `packages/claude-code-plugin/` is copied in, two path segments deeper). A
+ * collected suite reaching for it fails the whole dry run with ENOENT rather
+ * than skipping an assertion, so the name keeps it out of the sandbox while it
+ * still runs under the normal Jest config. It lints authored markdown, not
+ * `src/` behaviour, so it contributes nothing to mutation coverage. See
+ * scripts/__tests__/mutation-sandbox-assets.test.mjs.
+ */
+
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
