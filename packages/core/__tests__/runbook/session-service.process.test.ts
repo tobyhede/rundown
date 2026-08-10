@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import type { BaseStep } from '@rundown-org/parser';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -7,14 +8,28 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { closeRunbookStores, openRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import {
+  closeRunbookStores,
+  getRunbookStore,
+  openRunbookStore,
+} from '../../src/runbook/storage/store-registry.js';
 import { SCHEMA_VERSION } from '../../src/runbook/storage/schema.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
-import type { RunId, Runbook, Step, DelegationLinkage } from '../../src/runbook/types.js';
+import type { RunId, Runbook, DelegationLinkage } from '../../src/runbook/types.js';
+import { RunbookActorService } from '../../src/runbook/actor-service.js';
+import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
+import { RunbookLifecycleCommandService } from '../../src/runbook/lifecycle-command-service.js';
+import { createEffectfulActorMutationRunner } from '../../src/runbook/effectful-actor-mutation-runner.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import { linkageFor, seedLiveDelegation, assertClaimed } from './claim-test-helpers.js';
+import {
+  linkageFor,
+  seedLiveDelegation,
+  assertClaimed,
+  interleaveOnceDuringActorPrepare,
+} from './claim-test-helpers.js';
 import type { ChildOp, ChildResult } from './storage/fixtures/child-protocol.js';
 
 /**
@@ -80,7 +95,7 @@ const CHILD = fileURLToPath(new URL('./storage/fixtures/session-writer-child.ts'
 // `dist/loader.mjs` this used to name by hand.
 const TSX = createRequire(import.meta.url).resolve('tsx');
 
-const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
+const mockSteps: BaseStep[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = {
   title: 'Test',
   description: 'A test',
@@ -102,6 +117,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  jest.restoreAllMocks();
   for (const child of children) {
     if (child.exitCode === null) child.kill('SIGKILL');
   }
@@ -689,6 +705,79 @@ describe('cross-process session write contention (transaction replaces SessionLo
         linkage.parentFrameKey,
       )?.status,
     ).toBe('running');
+  }, 120_000);
+
+  it('refuses a claim-targeted transition when a child claim commits after its fast checks', async () => {
+    // The full #707 composition witness. The run-control claim arm enters through
+    // `runTransition`, while a REAL child process waits on its own SQLite
+    // connection. Actor preparation is the last barrier point this test owns:
+    // reaching it proves both fast checks already returned no open children, and
+    // awaiting the worker there commits the child claim before the guarded
+    // decisive write begins.
+    const parentRunId = await newRun();
+    const linkage = linkageFor(parentRunId, 'a');
+    const childRunId = await newRun({ parentLinkage: linkage });
+    await seedLiveDelegation(manager, linkage);
+    const { claimId } = unwrapSessionMutation(
+      await sessionService.issueRunControlClaim(parentRunId),
+    );
+
+    const actorService = new RunbookActorService(manager);
+    const lifecycleService = new ExecutionLifecycleService(manager);
+    const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const seam = new RunbookLifecycleCommandService({
+      sessionService,
+      actorService,
+      completionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(dir),
+      loadRun: async (runId) => (await manager.load(runId)) ?? undefined,
+      loadSteps: () => mockSteps,
+      resolveChildRunbook: async () => undefined,
+      findDelegationsByTokenHash: async () => ({ current: undefined, superseding: [] }),
+    });
+
+    const goFile = path.join(dir, 'claim-arm-go');
+    const mutationGoFile = path.join(dir, 'claim-arm-mutation-go');
+    const parked = await park(
+      goFile,
+      { kind: 'claimRunbook', childRunId, linkage },
+      { mutationGoFile },
+    );
+    const exit = childExit(parked.child);
+    await fs.writeFile(goFile, 'go');
+    await waitForFile(parked.enteredFile, parked.child);
+
+    const racingClaim = interleaveOnceDuringActorPrepare(actorService, async () => {
+      await fs.writeFile(mutationGoFile, 'go');
+      return collect(parked, exit);
+    });
+
+    const outcome = await seam.runTransition({
+      command: 'pass',
+      callerEvidence: { kind: 'claim_bearer', claimId },
+      targetSelector: { kind: 'claim', claimId },
+      terminalPolicy: {
+        onComplete: { releaseRunbook: true },
+        onStopped: { releaseRunbook: true },
+      },
+    });
+
+    const claimant = racingClaim();
+    expect(claimant).toBeDefined();
+    if (!claimant) throw new Error('claim worker never ran');
+    expect(claimant.pid).not.toBe(process.pid);
+    expect(claimant.ok).toBe(true);
+    if (!claimant.ok) throw new Error(`claim worker failed: ${claimant.error}`);
+    expect(claimant.value).toEqual(expect.objectContaining({ status: 'claimed' }));
+
+    expect(outcome.kind).toBe('open_delegated_children');
+    if (outcome.kind !== 'open_delegated_children') {
+      throw new Error('expected claim-targeted guard refusal');
+    }
+    expect(outcome.claims.map((claim) => claim.controlledRunId)).toEqual([childRunId]);
+    expect((await manager.load(parentRunId))?.step).toBe('1');
+    const store = await getRunbookStore(dir);
+    expect(await store.readPendingRecovery(parentRunId)).toBeNull();
   }, 120_000);
 
   it('reports an unhandled op kind instead of succeeding with no value', async () => {

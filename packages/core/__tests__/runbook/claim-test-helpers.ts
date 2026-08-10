@@ -96,6 +96,38 @@ export async function claimLiveDelegation(
 }
 
 /**
+ * Run one test-controlled interleave when actor preparation is first reached.
+ *
+ * `prepareActorMutation` is the deterministic barrier point after transition
+ * policy and guarded-parent fast checks but before the decisive actor-derived
+ * write. The callback is awaited before real preparation continues, so callers
+ * can commit a competing mutation without relying on scheduler timing. This is
+ * synchronization machinery only: callers assert behavior through the public
+ * lifecycle-command outcome.
+ *
+ * Restored by the caller's `jest.restoreAllMocks()`. The callback runs at most
+ * once however many times the seam is entered.
+ *
+ * @param actorService - Service whose preparation seam is synchronized.
+ * @param interleave - Competing operation to complete before preparation resumes.
+ * @returns Getter for the operation's result, or `undefined` before the seam runs.
+ */
+export function interleaveOnceDuringActorPrepare<T>(
+  actorService: RunbookActorService,
+  interleave: () => Promise<T>,
+): () => T | undefined {
+  const realPrepare = actorService.prepareActorMutation.bind(actorService);
+  let interleavePromise: Promise<T> | undefined;
+  let interleaveResult: T | undefined;
+  jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+    interleavePromise ??= interleave();
+    interleaveResult = await interleavePromise;
+    return realPrepare(...args);
+  });
+  return () => interleaveResult;
+}
+
+/**
  * Land a child claim inside the parent's decisive write, after the resolver's
  * cheap pre-check has already passed.
  *
@@ -135,13 +167,9 @@ export function raceChildClaimDuringActorPrepare(
   childRunId: RunId,
   linkage: DelegationLinkage,
 ): () => Awaited<ReturnType<SessionService['claimRunbook']>> | undefined {
-  const realPrepare = actorService.prepareActorMutation.bind(actorService);
-  let claimResult: Awaited<ReturnType<SessionService['claimRunbook']>> | undefined;
-  jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
-    claimResult ??= await claimant.claimRunbook(childRunId, linkage);
-    return realPrepare(...args);
-  });
-  return () => claimResult;
+  return interleaveOnceDuringActorPrepare(actorService, () =>
+    claimant.claimRunbook(childRunId, linkage),
+  );
 }
 
 const isClaimed = <T extends { status: string }>(
